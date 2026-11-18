@@ -1,8 +1,9 @@
 import fc from 'fast-check';
 import { isGitArg } from '../../src/core/names.ts';
-import { KEY_ORDER, type PropValue } from '../../src/core/schemas.ts';
+import { type Issue, KEY_ORDER, type PropValue } from '../../src/core/schemas.ts';
 import type { State } from '../../src/core/state.ts';
 import type { Operation } from '../../src/ops/operation.ts';
+import { serializeEntityFile } from '../../src/store/frontmatter.ts';
 import { commentFileName } from '../../src/store/layout.ts';
 
 /**
@@ -316,7 +317,7 @@ const arbListSection = someOf({
   blocked_by: arbRefList,
 });
 
-const arbIssueEdit = fc
+const arbIssueEditOp = fc
   .tuple(
     arbIssueRef,
     someOf({
@@ -427,7 +428,7 @@ export function arbOperation(): fc.Arbitrary<Operation> {
         created: arbTimestamp,
       },
     ),
-    arbIssueEdit,
+    arbIssueEditOp,
     variant(
       'issue.move',
       { id: arbIssueRef, from: arbState, to: arbState },
@@ -528,4 +529,61 @@ export function arbOperation(): fc.Arbitrary<Operation> {
   // Die Generatoren sind nur strukturell typisiert; der Roundtrip-Test prüft jede Ausgabe
   // gegen OperationSchema.
   return fc.oneof(...arbs) as fc.Arbitrary<unknown> as fc.Arbitrary<Operation>;
+}
+
+// --- Hand-Edits (backe.md §2.13) ------------------------------------------------------
+
+/**
+ * Das feste Issue für `arbIssueEdit`: mit `rank`, `assignee`, `props`, Body und dem unbekannten
+ * Key `legacy`. Die Assignees der Nachher-Datei kommen aus den Default-Users von `snap()`.
+ */
+export const EDIT_ISSUE: { data: Issue; extra: [string, unknown][]; body: string } = {
+  data: {
+    id: 'bk-t0001',
+    title: 'T',
+    state: 'todo',
+    rank: 1000,
+    creator: 'spw',
+    assignee: 'alice',
+    created: '2026-11-18T10:00:00Z',
+    props: { size: 3, team: 'core' },
+  },
+  extra: [['legacy', 'alt']],
+  body: 'Body.\n',
+};
+
+const EDIT_ASSIGNEES = ['spw', 'alice', 'claude-1'];
+
+/**
+ * Vorher-/Nachher-Datei eines Hand-Edits an `EDIT_ISSUE`: beide kanonisch, in der Nachher-Datei
+ * sind `title`, `rank`, `assignee`, `props` und Body beliebig geändert (`assignee` und `props`
+ * auch entfernt), `legacy` bleibt. Der Rank bleibt gesetzt, weil sein Entfernen keine Operation hat.
+ */
+export function arbIssueEdit(): fc.Arbitrary<{ before: string; after: string }> {
+  const { data, extra, body } = EDIT_ISSUE;
+  const before = serializeEntityFile('issue', data, body, extra);
+  return fc
+    .record({
+      title: fc.option(arbTitle, { nil: undefined }),
+      rank: fc.option(fc.integer(), { nil: undefined }),
+      assignee: fc.option(fc.option(fc.constantFrom(...EDIT_ASSIGNEES), { nil: null }), {
+        nil: undefined,
+      }),
+      props: fc.option(
+        fc.option(fc.dictionary(arbPropKey, arbPropValue, { maxKeys: 4, noNullPrototype: true }), {
+          nil: null,
+        }),
+        { nil: undefined },
+      ),
+      body: fc.option(arbString(), { nil: undefined }),
+    })
+    .map((change) => {
+      const next: Record<string, unknown> = { ...data };
+      if (change.title !== undefined) next.title = change.title;
+      if (change.rank !== undefined) next.rank = change.rank;
+      if (change.assignee !== undefined) next.assignee = change.assignee ?? undefined;
+      if (change.props !== undefined) next.props = change.props ?? undefined;
+      const after = serializeEntityFile('issue', next, change.body ?? body, extra);
+      return { before, after };
+    });
 }

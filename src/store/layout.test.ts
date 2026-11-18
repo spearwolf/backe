@@ -6,6 +6,7 @@ import { entriesInFileOrder, parseEntityFile, serializeEntityFile } from './fron
 import {
   attachmentsDir,
   BACKLOG_CONFIG,
+  classifyPath,
   commentFileName,
   commentsDir,
   issueDir,
@@ -100,5 +101,49 @@ describe('parseCommentFileName', () => {
     ['empty', ''],
   ])('rejects %s', (_, name) => {
     expect(parseCommentFileName(name)).toBeUndefined();
+  });
+});
+
+describe('classifyPath', () => {
+  const dir = 'issues/7f/bk-7f3k2';
+
+  test.each([
+    [`${dir}/issue.md`, { kind: 'issue', id: 'bk-7f3k2' }],
+    [
+      `${dir}/comments/20261118T100400Z-spw-q8x.md`,
+      { kind: 'comment', id: 'bk-7f3k2', file: '20261118T100400Z-spw-q8x.md' },
+    ],
+    [`${dir}/attachments/shot.png`, { kind: 'attachment', id: 'bk-7f3k2', file: 'shot.png' }],
+    ['users/claude-1.md', { kind: 'user', key: 'claude-1' }],
+    ['projects/web/auth.md', { kind: 'project', key: 'web/auth' }],
+    ['sprints/2026-w47.md', { kind: 'sprint', key: '2026-w47' }],
+    ['repos/web.app.md', { kind: 'repo', key: 'web.app' }],
+    ['.backe/backlog.jsonc', { kind: 'config' }],
+    ['.backe/schemas/props.json', { kind: 'config' }],
+  ])('%s', (path, expected) => {
+    expect(classifyPath(path)).toEqual(expected);
+  });
+
+  test.each([
+    ['a file next to issue.md', `${dir}/notes.txt`],
+    ['a nested file in the issue directory', `${dir}/sub/issue.md`],
+    ['an issue in the wrong shard', 'issues/7g/bk-7f3k2/issue.md'],
+    ['an issue directory that is no id', 'issues/7f/nope/issue.md'],
+    ['a comment with an invalid name', `${dir}/comments/note.md`],
+    ['a nested comment', `${dir}/comments/x/20261118T100400Z-spw-q8x.md`],
+    ['a nested attachment', `${dir}/attachments/x/shot.png`],
+    ['an empty attachment name', `${dir}/attachments/`],
+    ['an invalid handle', 'users/Spw.md'],
+    ['a nested user file', 'users/a/spw.md'],
+    ['a user file without .md', 'users/spw.txt'],
+    ['an invalid project path', 'projects/Web.md'],
+    ['an invalid sprint slug', 'sprints/W47.md'],
+    ['an invalid repo name', 'repos/-x.md'],
+    ['a top-level file', 'README.md'],
+    ['an unknown directory', 'docs/x.md'],
+    ['.backe itself', '.backe'],
+    ['an empty path', ''],
+  ])('%s is other', (_, path) => {
+    expect(classifyPath(path)).toEqual({ kind: 'other' });
   });
 });

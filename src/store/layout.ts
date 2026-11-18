@@ -1,8 +1,8 @@
 /**
  * Pfade innerhalb eines Backlogs (backe.md §2.2). Alle relativ zur Backlog-Wurzel, mit `/` getrennt.
  */
-import { CROCKFORD, shardOf } from '../core/ids.ts';
-import { isHandle } from '../core/names.ts';
+import { CROCKFORD, isIssueId, shardOf } from '../core/ids.ts';
+import { isHandle, isProjectPath, isRepoName, isSprintSlug } from '../core/names.ts';
 import { IssueSchema } from '../core/schemas.ts';
 
 export const BACKLOG_CONFIG = '.backe/backlog.jsonc';
@@ -63,4 +63,50 @@ export function sprintFile(slug: string): string {
 
 export function repoFile(name: string): string {
   return `repos/${name}.md`;
+}
+
+/** Was eine Datei im Backlog ist, allein nach ihrem Pfad (backe.md §2.2). */
+export type PathClass =
+  | { kind: 'issue'; id: string }
+  | { kind: 'comment'; id: string; file: string }
+  | { kind: 'attachment'; id: string; file: string }
+  | { kind: 'user' | 'project' | 'sprint' | 'repo'; key: string }
+  | { kind: 'config' }
+  | { kind: 'other' };
+
+const NAMED_DIRS = {
+  users: { kind: 'user', valid: isHandle },
+  projects: { kind: 'project', valid: isProjectPath },
+  sprints: { kind: 'sprint', valid: isSprintSlug },
+  repos: { kind: 'repo', valid: isRepoName },
+} as const;
+
+function classifyIssuePath(parts: readonly string[]): PathClass {
+  const [, shard, id = '', sub, file, ...rest] = parts;
+  if (!isIssueId(id) || shardOf(id) !== shard || rest.length > 0) return { kind: 'other' };
+  if (sub === 'issue.md' && file === undefined) return { kind: 'issue', id };
+  if (sub === 'comments' && file !== undefined && parseCommentFileName(file) !== undefined) {
+    return { kind: 'comment', id, file };
+  }
+  if (sub === 'attachments' && file !== undefined && file !== '') {
+    return { kind: 'attachment', id, file };
+  }
+  return { kind: 'other' };
+}
+
+/**
+ * Ordnet einen Pfad relativ zur Backlog-Wurzel ein. `.backe/**` ist Config; was nicht genau dem
+ * Layout entspricht (falscher Shard, ungültiger Name, fremde Datei), ist `other`.
+ */
+export function classifyPath(path: string): PathClass {
+  if (path.startsWith('.backe/')) return { kind: 'config' };
+  const parts = path.split('/');
+  const [top = ''] = parts;
+  if (top === 'issues') return classifyIssuePath(parts);
+  if (Object.hasOwn(NAMED_DIRS, top) && path.endsWith('.md')) {
+    const { kind, valid } = NAMED_DIRS[top as keyof typeof NAMED_DIRS];
+    const key = path.slice(top.length + 1, -'.md'.length);
+    if (valid(key)) return { kind, key };
+  }
+  return { kind: 'other' };
 }
