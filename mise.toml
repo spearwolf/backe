@@ -1,0 +1,19 @@
+[tools]
+node = "26.13.1"
+pnpm = "12.21.0"
+
+[tasks.lint]
+description = "Biome und tsc"
+run = "pnpm run lint"
+
+[tasks.test]
+description = "Vitest mit Coverage"
+run = "pnpm run test"
+
+[tasks.build]
+description = "tsdown-Build"
+run = "pnpm run build"
+
+[tasks.check]
+description = "lint, build, test"
+run = [{ task = "lint" }, { task = "build" }, { task = "test" }]
