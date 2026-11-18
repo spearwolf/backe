@@ -18,7 +18,10 @@ import { violation } from './invariants.ts';
  *
  * Für alle, auch Admins: Der `operator` eines Agents ist ein existierender Mensch (backe.md §2.12),
  * sobald er neu gesetzt wird; ein User, der noch Operator von Agents ist, wird nicht entfernt.
- * Admins (`config.admins`) dürfen sonst alles. Alle anderen dürfen einen User ändern, wenn sie es
+ * Admin ist nur, wer in `config.admins` steht und als Mensch existiert (bei einer Änderung am
+ * eigenen User zählt der Stand davor); ein Agent oder ein Handle ohne User-Datei im Admin-Eintrag
+ * hat keine Admin-Rechte. Einen User, dessen Handle in `config.admins` steht, legt nur ein Admin
+ * an. Admins dürfen sonst alles. Alle anderen dürfen einen User ändern, wenn sie es
  * selbst sind oder wenn es ihr Agent ist (`operator`, nur wenn der Akteur ein Mensch ist), dabei
  * aber weder `kind` ändern noch den `operator` anders als dessen Mensch; einen neuen User nur
  * anlegen, wenn es ein Agent mit ihnen als `operator` ist und kein bestehender User den Handle
@@ -76,6 +79,17 @@ function checkOperator(s: BacklogSnapshot, before: User | undefined, after: User
   }
 }
 
+/**
+ * Admin ist, wer in `config.admins` steht und als Mensch existiert. Der Datensatz des Akteurs ist
+ * bei einer Änderung am eigenen User der Stand davor, sonst der im Snapshot; fehlt er oder ist er
+ * ein Agent, gilt der Akteur als Nicht-Admin.
+ */
+function isAdmin(s: BacklogSnapshot, actor: string, handle: string, before: User | undefined) {
+  if (!s.config.admins.includes(actor)) return false;
+  const record = actor === handle ? before : s.users.get(actor)?.data;
+  return record?.kind === 'human';
+}
+
 function checkRights(
   s: BacklogSnapshot,
   actor: string,
@@ -83,7 +97,7 @@ function checkRights(
   before: User | undefined,
   after: User | undefined,
 ): void {
-  if (s.config.admins.includes(actor)) return;
+  if (isAdmin(s, actor, handle, before)) return;
   if (before !== undefined && after !== undefined) {
     const operates =
       before.kind === 'agent' &&
@@ -108,6 +122,11 @@ function checkRights(
     return;
   }
   if (before === undefined && after !== undefined) {
+    if (s.config.admins.includes(handle)) {
+      throw violation('policy', `${actor} darf den User ${handle} nicht anlegen`, {
+        hint: `${handle} ist als Admin eingetragen; anlegen darf ihn nur ein Admin.`,
+      });
+    }
     if (after.kind === 'agent' && after.operator === actor) {
       const agents = agentsOf(s, handle);
       if (agents.length === 0) return;

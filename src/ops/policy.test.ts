@@ -139,6 +139,47 @@ describe('checkUserChange', () => {
   });
 });
 
+describe('admin rights', () => {
+  const reason = (fn: () => void) => (catchErr(fn).details as { reason: string }).reason;
+
+  test('a non-admin cannot create a user whose handle is listed in the admins', () => {
+    const custom = snap({ config: { admins: ['spw', 'ghost'] } });
+    const ghost = agent('ghost', 'alice');
+    const err = catchErr(() => checkUserChange(custom, 'alice', 'ghost', undefined, ghost));
+    expect(err.details).toMatchObject({ reason: 'policy' });
+    expect(err.code).toBe('validation');
+  });
+
+  test('an admin may create a handle listed in the admins', () => {
+    const custom = snap({ config: { admins: ['spw', 'ghost'] } });
+    expect(() => checkUserChange(custom, 'spw', 'ghost', undefined, human('ghost'))).not.toThrow();
+  });
+
+  test('an agent listed in the admins has no admin rights', () => {
+    const custom = snap({ config: { admins: ['spw', 'claude-1'] } });
+    const err = catchErr(() => checkUserChange(custom, 'claude-1', 'bob', undefined, human('bob')));
+    expect(err.details).toMatchObject({ reason: 'policy' });
+    expect(err.code).toBe('validation');
+  });
+
+  test('a handle listed in the admins without a user file has no admin rights', () => {
+    const custom = snap({ config: { admins: ['spw', 'ghost'] } });
+    const err = catchErr(() => checkUserChange(custom, 'ghost', 'bob', undefined, human('bob')));
+    expect(err.details).toMatchObject({ reason: 'policy' });
+    expect(err.code).toBe('validation');
+  });
+
+  test('an admin editing the own record is recognised as human through the state before', () => {
+    const without = withUsers(s, { spw: undefined });
+    expect(() =>
+      checkUserChange(without, 'spw', 'spw', human('spw'), withKey(human('spw'))),
+    ).not.toThrow();
+    expect(
+      reason(() => checkUserChange(without, 'spw', 'spw', agent('spw', 'alice'), undefined)),
+    ).toBe('policy');
+  });
+});
+
 describe('orphaned operators', () => {
   const reason = (fn: () => void) => (catchErr(fn).details as { reason: string }).reason;
   /** `bob-1` nennt `bob` als Operator, `users/bob.md` fehlt aber. */
