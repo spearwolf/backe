@@ -40,7 +40,33 @@ test('loadSnapshot reports broken files as problems', async () => {
     {
       path: 'issues/a9/bk-a91c0/issue.md',
       message: expect.stringMatching(/issue\.md:\d+/),
+      kind: 'issue',
+      key: 'bk-a91c0',
     },
+  ]);
+});
+
+test('problems name kind and key of every broken entity kind', async () => {
+  const root = await copyFixture('backlog-basic');
+  const broken = '---\ntitle: [\n---\n';
+  for (const path of [
+    'users/spw.md',
+    'projects/web/auth.md',
+    'sprints/2026-w47.md',
+    'repos/webapp.md',
+    issueFile('bk-x2c8d'),
+  ])
+    await writeFile(join(root, path), broken);
+  // Schema-Verstoß statt Syntaxfehler: auch dann zählt die Identität aus dem Pfad.
+  await put(root, 'users/bad.md', '---\nname: X\nkind: agent\nkeys: []\n---\n');
+  const s = await loadSnapshot(root);
+  expect(s.problems.map(({ path, kind, key }) => ({ path, kind, key }))).toEqual([
+    { path: 'users/bad.md', kind: 'user', key: 'bad' },
+    { path: 'users/spw.md', kind: 'user', key: 'spw' },
+    { path: 'projects/web/auth.md', kind: 'project', key: 'web/auth' },
+    { path: 'sprints/2026-w47.md', kind: 'sprint', key: '2026-w47' },
+    { path: 'repos/webapp.md', kind: 'repo', key: 'webapp' },
+    { path: 'issues/x2/bk-x2c8d/issue.md', kind: 'issue', key: 'bk-x2c8d' },
   ]);
 });
 
@@ -64,6 +90,7 @@ test('issue id must match its directory', async () => {
   expect(s.problems).toHaveLength(1);
   expect(s.problems[0]?.path).toBe('issues/a9/bk-a91c0/issue.md');
   expect(s.problems[0]?.message).toContain('bk-a91c0');
+  expect(s.problems[0]).toMatchObject({ kind: 'issue', key: 'bk-a91c0' });
 });
 
 test('issue directory and shard must be well-formed', async () => {
@@ -74,10 +101,12 @@ test('issue directory and shard must be well-formed', async () => {
   await put(root, 'issues/aa/bk-7f3k3/issue.md', ok('bk-7f3k3'));
   const s = await loadSnapshot(root);
   expect(s.issues.size).toBe(3);
-  expect(s.problems.map((p) => p.path).sort()).toEqual([
-    'issues/7f/not-an-id/issue.md',
-    'issues/aa/bk-7f3k3/issue.md',
+  expect(s.problems.map(({ path, kind, key }) => ({ path, kind, key }))).toEqual([
+    // Kein gültiger Name, also keine Identität — nur die Art steht fest.
+    { path: 'issues/7f/not-an-id/issue.md', kind: 'issue', key: undefined },
+    { path: 'issues/aa/bk-7f3k3/issue.md', kind: 'issue', key: 'bk-7f3k3' },
   ]);
+  expect(s.problems[0]).not.toHaveProperty('key');
 });
 
 test('names derived from paths are checked', async () => {
@@ -97,6 +126,8 @@ test('names derived from paths are checked', async () => {
     'sprints/Bad Slug.md',
     'users/Bad_Name.md',
   ]);
+  expect(s.problems.map(({ kind }) => kind).sort()).toEqual(['project', 'repo', 'sprint', 'user']);
+  for (const p of s.problems) expect(p).not.toHaveProperty('key');
   expect(s.users.size).toBe(2);
 });
 
@@ -108,6 +139,7 @@ test('a subproject without its parent is a problem', async () => {
   expect(s.problems).toHaveLength(1);
   expect(s.problems[0]?.path).toBe('projects/ops/infra.md');
   expect(s.problems[0]?.message).toContain('ops');
+  expect(s.problems[0]).toMatchObject({ kind: 'project', key: 'ops/infra' });
 });
 
 test('unrelated files are neither loaded nor reported', async () => {

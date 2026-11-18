@@ -29,7 +29,12 @@ import { BACKLOG_CONFIG, commentsDir } from './layout.ts';
  * Dateireihenfolge; sie gehören beim Zurückschreiben an `serializeEntityFile` (backe.md §2.3).
  */
 export type StoredEntity<T> = { data: T; extra: [string, unknown][]; body: string; path: string };
-export type Problem = { path: string; message: string };
+/**
+ * Eine Datei, die nicht geladen werden konnte. `kind` und `key` nennen die betroffene Entität,
+ * soweit sie sich aus dem Pfad ableiten lässt — auch wenn der Inhalt kaputt ist. `key` fehlt,
+ * wenn der Name im Pfad selbst ungültig ist.
+ */
+export type Problem = { path: string; message: string; kind?: EntityKind; key?: string };
 
 export type BacklogSnapshot = {
   config: BacklogConfig;
@@ -93,13 +98,14 @@ async function tryEntity<T>(
   root: string,
   path: string,
   kind: EntityKind,
+  key: string,
   problems: Problem[],
 ): Promise<StoredEntity<T> | undefined> {
   try {
     return await readEntity<T>(root, path, kind);
   } catch (err) {
     if (err instanceof BackeError) {
-      problems.push({ path, message: err.message });
+      problems.push({ path, message: err.message, kind, key });
       return undefined;
     }
     throw err;
@@ -124,10 +130,10 @@ async function loadNamed<T>(
   for (const path of await listMarkdown(root, dir, deep)) {
     const name = path.slice(dir.length + 1, -'.md'.length);
     if (!valid(name)) {
-      problems.push({ path, message: `${path}: ungültiger ${label} "${name}"` });
+      problems.push({ path, message: `${path}: ungültiger ${label} "${name}"`, kind });
       continue;
     }
-    const entity = await tryEntity<T>(root, path, kind, problems);
+    const entity = await tryEntity<T>(root, path, kind, name, problems);
     if (entity) out.push([name, entity]);
   }
   return sortedMap(out);
@@ -156,6 +162,8 @@ async function loadProjects(
       problems.push({
         path: entity.path,
         message: `${entity.path}: Elternprojekt "${parent}" fehlt`,
+        kind: 'project',
+        key: name,
       });
       continue;
     }
@@ -180,22 +188,30 @@ async function loadIssues(
       if (!file) continue;
       const id = dir.name;
       if (!isIssueId(id)) {
-        problems.push({ path, message: `${path}: Verzeichnisname "${id}" ist keine Issue-ID` });
+        problems.push({
+          path,
+          message: `${path}: Verzeichnisname "${id}" ist keine Issue-ID`,
+          kind: 'issue',
+        });
         continue;
       }
       if (shardOf(id) !== shard.name) {
         problems.push({
           path,
           message: `${path}: Issue "${id}" gehört in den Shard "${shardOf(id)}", nicht "${shard.name}"`,
+          kind: 'issue',
+          key: id,
         });
         continue;
       }
-      const entity = await tryEntity<Issue>(root, path, 'issue', problems);
+      const entity = await tryEntity<Issue>(root, path, 'issue', id, problems);
       if (!entity) continue;
       if (entity.data.id !== id) {
         problems.push({
           path,
           message: `${path}: id "${entity.data.id}" passt nicht zum Verzeichnis "${id}"`,
+          kind: 'issue',
+          key: id,
         });
         continue;
       }
