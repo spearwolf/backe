@@ -28,9 +28,16 @@ export function expandPath(p: string, opts: { home: string; base: string }): str
 export function resolveHomes(env: Env, cwd: string): Homes {
   const home = envValue(env, 'HOME') ?? homedir();
   const configured = envValue(env, 'BACKE_HOME');
-  const backeHome =
-    configured === undefined ? join(home, '.backe') : expandPath(configured, { home, base: cwd });
-  return { home, backeHome };
+  if (configured === undefined) return { home, backeHome: join(home, '.backe') };
+  try {
+    return { home, backeHome: expandPath(configured, { home, base: cwd }) };
+  } catch (error) {
+    // expandPath wirft nur `usage`; die Variable gehört in die Meldung.
+    const e = error as BackeError;
+    throw new BackeError('usage', `BACKE_HOME: ${e.message}`, {
+      ...(e.hint === undefined ? {} : { hint: e.hint }),
+    });
+  }
 }
 
 /** `realpath`; fehlt `p`, `realpath` des nächsten existierenden Vorfahren plus der Rest. */

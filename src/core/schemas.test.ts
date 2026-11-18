@@ -470,6 +470,9 @@ describe('config schemas carry their patterns and reject malformed values', () =
     { repos: { 'GitHub.com/acme/webapp': '/x' } },
     { project: 'Web' },
     { backlogs: { acme: { sprint: 'w 47' } } },
+    { backlogs: { acme: { paths: { bob: '~bob/acme' } } } },
+    { identities: { acme: { spw: { key: '~spw/.ssh/id.pub' } } } },
+    { repos: { 'github.com/acme/webapp': '~bob/webapp' } },
   ])('user config rejects %o', (d) => expect(UserConfigSchema.safeParse(d).success).toBe(false));
   test('user config accepts project and sprint defaults', () =>
     expect(
@@ -482,7 +485,8 @@ describe('config schemas carry their patterns and reject malformed values', () =
   test('user config accepts canonical repo keys and a normalizable remote', () =>
     expect(
       UserConfigSchema.safeParse({
-        repos: { 'github.com/acme/webapp': '/x', 'file:/srv/x': '/y' },
+        repos: { 'github.com/acme/webapp': '~/x', 'file:/srv/x': '/y', 'github.com/a/b': '~' },
+        identities: { acme: { spw: { key: 'keys/~x' } } },
         backlogs: { acme: { remote: 'git@github.com:acme/backlog.git' } },
       }).success,
     ).toBe(true));

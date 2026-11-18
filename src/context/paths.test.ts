@@ -34,6 +34,11 @@ test.each([
   expect(resolveHomes(env, cwd).backeHome).toBe(backeHome),
 );
 
+test('a ~name in BACKE_HOME names the variable', () => {
+  const err = catchErr(() => resolveHomes({ HOME: '/h', BACKE_HOME: '~bob' }, '/w'));
+  expect([err.code, err.message]).toEqual(['usage', expect.stringContaining('BACKE_HOME')]);
+});
+
 test('resolveHomes returns HOME from env and falls back to os.homedir()', () => {
   expect(resolveHomes({ HOME: '/h' }, '/w').home).toBe('/h');
   expect(resolveHomes({}, '/w').home).toBe(homedir());

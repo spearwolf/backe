@@ -164,7 +164,8 @@ function applyConfigEdit(text: string, path: readonly (string | number)[], value
   for (const [i, segment] of path.entries()) {
     if (node?.type !== 'object' || typeof segment !== 'string') break;
     const props = node.children as Node[];
-    const index = props.findIndex((p) => p.children?.[0]?.value === segment);
+    // Bei doppeltem Key gilt wie beim Parsen das letzte Vorkommen.
+    const index = props.findLastIndex((p) => p.children?.[0]?.value === segment);
     const prop = props[index];
     const rest = path.slice(i + 1);
     if (!prop) {

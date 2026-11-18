@@ -383,6 +383,11 @@ const SchemaRef = z.string().optional();
 const ProjectPath = z.string().regex(PROJECT_PATH_RE, 'ungültiger Projektpfad');
 const SprintSlug = z.string().regex(SPRINT_SLUG_RE, 'ungültiger Sprint-Slug');
 const RepoName = z.string().regex(REPO_NAME_RE, 'ungültiger Repo-Name');
+/** Ein lokaler Pfad; `~name/…` (Home eines anderen Users) wird beim Expandieren nicht unterstützt. */
+const LocalPath = nonEmpty.regex(
+  /^(?!~[^/])/,
+  '~name wird nicht unterstützt, nur ~/… oder ein Pfad',
+);
 /** Eine Repo-URL, die `normalizeRepoUrl` zur kanonischen Form auflösen kann. */
 const RepoUrl = GitArg.refine(normalizesWithoutError, 'keine erkennbare Repo-URL');
 
@@ -468,7 +473,9 @@ export const UserConfigSchema = z.strictObject({
   user: Handle.optional(),
   project: ProjectPath.optional(),
   sprint: SprintSlug.optional(),
-  identities: z.record(BacklogName, z.record(Handle, z.strictObject({ key: nonEmpty }))).optional(),
+  identities: z
+    .record(BacklogName, z.record(Handle, z.strictObject({ key: LocalPath })))
+    .optional(),
   backlogs: z
     .record(
       BacklogName,
@@ -477,13 +484,13 @@ export const UserConfigSchema = z.strictObject({
         user: Handle.optional(),
         project: ProjectPath.optional(),
         sprint: SprintSlug.optional(),
-        paths: z.record(Handle, nonEmpty).optional(),
+        paths: z.record(Handle, LocalPath).optional(),
         sync: z.strictObject({ mode: z.enum(['auto', 'manual']) }).optional(),
       }),
     )
     .optional(),
   repos: z
-    .record(z.string().refine(isCanonicalRepoKey, 'Key ist keine kanonische Repo-URL'), nonEmpty)
+    .record(z.string().refine(isCanonicalRepoKey, 'Key ist keine kanonische Repo-URL'), LocalPath)
     .optional(),
   output: z
     .strictObject({

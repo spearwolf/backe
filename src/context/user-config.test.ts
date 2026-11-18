@@ -108,6 +108,24 @@ test('removing the last property drops the comma before it; absent keys are a no
   ).toBe('{\n  // c\n  "current": "a"\n}\n');
 });
 
+test('a duplicate key is edited at its last occurrence, which is the one the parser reads', async () => {
+  const dup = '{ "current": "acme", "user": "spw", "current": "acme" }\n';
+  expect(await edited(dup, [{ path: ['current'], value: 'beta' }])).toBe(
+    '{ "current": "acme", "user": "spw", "current": "beta" }\n',
+  );
+  expect(
+    await edited(
+      '{ "backlogs": { "a": { "user": "xx" } }, "backlogs": { "a": { "user": "yy" } } }\n',
+      [{ path: ['backlogs', 'a', 'user'], value: 'zz' }],
+    ),
+  ).toBe('{ "backlogs": { "a": { "user": "xx" } }, "backlogs": { "a": { "user": "zz" } } }\n');
+  expect(
+    await edited('{ "current": "beta", "user": "spw", "current": "acme" }\n', [
+      { path: ['current'], value: undefined },
+    ]),
+  ).toBe('{ "current": "beta", "user": "spw" }\n');
+});
+
 test('a path through a non-object value is rejected by the schema, not written', async () => {
   const home = await tempDir();
   await writeFile(userConfigPath(home), HAND);
@@ -140,6 +158,19 @@ test('a typo key names its path', async () => {
   const home = await tempDir();
   await writeFile(userConfigPath(home), '{ "backlogs": { "acme": { "remte": "x" } } }\n');
   expect((await catchErrAsync(() => readUserConfig(home))).message).toContain('backlogs.acme');
+});
+
+test('a ~name path names file and key path', async () => {
+  const home = await tempDir();
+  await writeFile(
+    userConfigPath(home),
+    '{ "backlogs": { "acme": { "paths": { "bob": "~bob/acme" } } } }',
+  );
+  const err = await catchErrAsync(() => readUserConfig(home));
+  expect([err.code, err.message]).toEqual([
+    'validation',
+    expect.stringMatching(/config\.jsonc: backlogs\.acme\.paths\.bob: .*~name/),
+  ]);
 });
 
 test('a syntax error names file and line', async () => {

@@ -38,7 +38,8 @@
           "properties": {
             "key": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^(?!~[^/])"
             }
           },
           "required": [
@@ -81,7 +82,8 @@
             },
             "additionalProperties": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^(?!~[^/])"
             }
           },
           "sync": {
@@ -111,7 +113,8 @@
       },
       "additionalProperties": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "pattern": "^(?!~[^/])"
       }
     },
     "output": {
