@@ -469,18 +469,24 @@ function decode(text: string, where: string): Operation {
 /**
  * Kompaktes JSON in einer Zeile: `op` zuerst, dann die Felder in Schema-Reihenfolge, Maps in
  * ihrer gegebenen Reihenfolge. zod baut die Ausgabe in Shape-Reihenfolge auf; ein Test hält das
- * fest. `content` wird nie kodiert. Die Ausgabe wird selbst wieder dekodiert, damit kein
+ * fest. `content` wird nie kodiert. U+2028, U+2029 und U+0085 lässt `JSON.stringify` roh stehen;
+ * sie werden als `\uXXXX` geschrieben, damit ein zeilenbasierter Trailer-Parser nicht daran
+ * trennt (`JSON.parse` liest beide Formen). Die Ausgabe wird selbst wieder dekodiert, damit kein
  * Trailer entsteht, den das Replay nicht lesen kann.
  */
 export function encodeOp(op: Operation): string {
   const parsed = validate(op, '');
-  let text: string;
+  let json: string;
   if (parsed.op === 'attach.add') {
     const { content: _, ...rest } = parsed;
-    text = JSON.stringify(rest);
+    json = JSON.stringify(rest);
   } else {
-    text = JSON.stringify(parsed);
+    json = JSON.stringify(parsed);
   }
+  const text = json.replace(
+    /[\u2028\u2029\u0085]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
   try {
     decodeOp(text);
   } catch (err) {

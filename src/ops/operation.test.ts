@@ -22,6 +22,8 @@ const ID = 'bk-7f3k2';
 const OTHER = 'bk-a91c0';
 const HASH = 'a'.repeat(64);
 const FILE = '20261118T100400Z-spw-q8x.md';
+/** Zeichen, an denen ein zeilenbasierter Trailer-Parser die Zeile trennen könnte. */
+const LINE_BREAKS = /[\n\r\u2028\u2029\u0085]/;
 
 const create: Operation = { op: 'issue.create', ref: '$f1', title: 'Finding' };
 const move: Operation = { op: 'issue.move', id: ID, from: 'in_progress', to: 'review' };
@@ -86,9 +88,14 @@ describe('encodeOp / decodeOp', () => {
   });
 
   test('trailer stays one line and roundtrips text', () => {
-    const op = { op: 'comment.add', id: 'bk-7f3k2', body: 'a\r\nb c 🐉 "q"' } as const;
+    const op = {
+      op: 'comment.add',
+      id: 'bk-7f3k2',
+      body: 'a\r\nb c 🐉 "q" \u2028x\u2029y\u0085z',
+    } as const;
     const enc = encodeOp(op);
-    expect(enc).not.toMatch(/[\n\r]/);
+    expect(enc).not.toMatch(LINE_BREAKS);
+    expect(enc).toContain('\\u2028x\\u2029y\\u0085z');
     expect(decodeOp(enc)).toEqual(op);
   });
 
@@ -150,7 +157,9 @@ describe('encodeOp / decodeOp', () => {
   test('roundtrip for every catalogue entry', () =>
     fc.assert(
       fc.property(arbOperation(), (op) => {
-        expect(decodeOp(encodeOp(op))).toEqual(withoutContent(op));
+        const enc = encodeOp(op);
+        expect(enc).not.toMatch(LINE_BREAKS);
+        expect(decodeOp(enc)).toEqual(withoutContent(op));
       }),
       { numRuns: 500 },
     ));
