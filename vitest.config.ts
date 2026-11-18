@@ -15,6 +15,7 @@ export default defineConfig({
         'src/core/**': { lines: 90, branches: 90 },
         'src/store/**': { lines: 90, branches: 90 },
         'src/ops/**': { lines: 90, branches: 90 },
+        'src/context/**': { lines: 90, branches: 90 },
       },
     },
   },
