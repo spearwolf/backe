@@ -16,7 +16,8 @@
   "scripts": {
     "lint": "biome check . && tsc --noEmit",
     "test": "vitest run --coverage",
-    "build": "tsdown"
+    "build": "tsdown",
+    "gen:schemas": "node scripts/gen-schemas.ts"
   },
   "dependencies": {
     "commander": "^15.1.0",
