@@ -9,7 +9,12 @@ export default defineConfig({
       include: ['src/**'],
       // Adapter-Code (CLI, MCP) wird über E2E abgedeckt, nicht über Unit-Coverage.
       exclude: ['src/cli/**', 'src/mcp/**', 'src/**/*.test.ts'],
-      thresholds: { lines: 85, branches: 85, 'src/core/**': { lines: 90, branches: 90 } },
+      thresholds: {
+        lines: 85,
+        branches: 85,
+        'src/core/**': { lines: 90, branches: 90 },
+        'src/store/**': { lines: 90, branches: 90 },
+      },
     },
   },
 });
