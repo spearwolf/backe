@@ -9,6 +9,7 @@ import {
   isUnblockable,
   occupyingAncestor,
   openChildren,
+  type Readiness,
   readiness,
 } from './graph.ts';
 
@@ -251,6 +252,56 @@ describe('readiness', () => {
     expect(isReady(snap({ issues: [{ id: I(1), state: 'backlog' }] }), I(1), leaf)).toBe(true);
   });
 
+  test.each([
+    [
+      'state wins over an open dependency',
+      [{ id: I(1), state: 'in_progress', assignee: 'alice', depends_on: [I(5)] }, { id: I(5) }],
+      I(1),
+      { ready: false, reason: 'state', ids: [] },
+    ],
+    [
+      'dependencies win over an open child',
+      [{ id: I(1), depends_on: [I(5)] }, { id: I(2), parent: I(1) }, { id: I(5) }],
+      I(1),
+      { ready: false, reason: 'dependencies', ids: [I(5)] },
+    ],
+    [
+      'open children win over a paused ancestor',
+      [
+        { id: I(1), state: 'on_hold' },
+        { id: I(2), parent: I(1) },
+        { id: I(3), parent: I(2) },
+      ],
+      I(2),
+      { ready: false, reason: 'open_children', ids: [I(3)] },
+    ],
+    [
+      'the nearest ancestor is reported first',
+      [
+        { id: I(1), state: 'on_hold' },
+        { id: I(2), parent: I(1), depends_on: [I(5)] },
+        { id: I(3), parent: I(2) },
+        { id: I(5) },
+      ],
+      I(3),
+      { ready: false, reason: 'ancestor_dependencies', ids: [I(2)] },
+    ],
+    [
+      'a paused ancestor with an open dependency reports paused',
+      [
+        { id: I(1), state: 'on_hold', depends_on: [I(5)] },
+        { id: I(2), parent: I(1) },
+        { id: I(5) },
+      ],
+      I(2),
+      { ready: false, reason: 'ancestor_paused', ids: [I(1)] },
+    ],
+  ] satisfies [string, SnapIssue[], string, Readiness][])(
+    'reason order: %s',
+    (_name, issues, id, expected) =>
+      expect(readiness(snap({ issues }), id, leaf)).toEqual(expected),
+  );
+
   test('an unknown id throws not_found', () => {
     for (const call of [
       () => readiness(snap(), I(1), leaf),
@@ -339,6 +390,39 @@ describe('occupation and claim', () => {
       issues: [
         { id: I(1), state: 'in_progress', assignee: 'alice' },
         { id: I(2), parent: I(1) },
+        { id: I(3), parent: I(2) },
+      ],
+    });
+    expect(occupyingAncestor(s, I(3), 'claude-1')).toBe(I(1));
+  });
+
+  test('the nearest qualifying ancestor is reported', () => {
+    const s = snap({
+      issues: [
+        { id: I(1), state: 'in_progress', assignee: 'alice' },
+        { id: I(2), parent: I(1), state: 'review', assignee: 'spw' },
+        { id: I(3), parent: I(2) },
+      ],
+    });
+    expect(occupyingAncestor(s, I(3), 'claude-1')).toBe(I(2));
+  });
+
+  test('an own nearer ancestor is skipped in favour of a farther foreign one', () => {
+    const s = snap({
+      issues: [
+        { id: I(1), state: 'in_progress', assignee: 'alice' },
+        { id: I(2), parent: I(1), state: 'in_progress', assignee: 'claude-1' },
+        { id: I(3), parent: I(2) },
+      ],
+    });
+    expect(occupyingAncestor(s, I(3), 'claude-1')).toBe(I(1));
+  });
+
+  test('a nearer ancestor without assignee is skipped in favour of a farther foreign one', () => {
+    const s = snap({
+      issues: [
+        { id: I(1), state: 'in_progress', assignee: 'alice' },
+        { id: I(2), parent: I(1), state: 'in_progress' },
         { id: I(3), parent: I(2) },
       ],
     });
