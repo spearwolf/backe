@@ -22,6 +22,7 @@ import {
   commentsDir,
   issueDir,
   issueFile,
+  parseCommentFileName,
   projectFile,
   repoFile,
   sprintFile,
@@ -70,18 +71,7 @@ const LABEL_OF: Record<NamedKind, string> = {
 
 const MAP_NAMES: readonly MapName[] = ['issues', 'users', 'projects', 'sprints', 'repos'];
 const MAX_NAME_ATTEMPTS = 100;
-const COMMENT_FILE_RE = new RegExp(`^(\\d{8}T\\d{6}Z)-(.+)-[${CROCKFORD}]{3}\\.md$`);
-
 export type CommentHead = { kind?: 'transition'; from?: State; to?: State };
-
-/** Autor und Zeitstempel aus `YYYYMMDDTHHMMSSZ-<author>-<rnd>.md` (backe.md §2.7). */
-function parseCommentFileName(file: string): { author: string; created: string } | undefined {
-  const m = COMMENT_FILE_RE.exec(file);
-  if (m === null) return undefined;
-  const [, t = '', author = ''] = m;
-  const created = `${t.slice(0, 4)}-${t.slice(4, 6)}-${t.slice(6, 8)}T${t.slice(9, 11)}:${t.slice(11, 13)}:${t.slice(13, 15)}Z`;
-  return { author, created };
-}
 
 function byKey<T>([a]: [string, T], [b]: [string, T]): number {
   return a < b ? -1 : a > b ? 1 : 0;

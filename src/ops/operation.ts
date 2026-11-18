@@ -6,7 +6,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { BackeError } from '../core/errors.ts';
-import { CROCKFORD, isIssueId } from '../core/ids.ts';
+import { isIssueId } from '../core/ids.ts';
 import { isHandle, isProjectPath, isRepoName, isSprintSlug, PROP_KEY_RE } from '../core/names.ts';
 import {
   IssueSchema,
@@ -16,6 +16,7 @@ import {
   SprintSchema,
   UserSchema,
 } from '../core/schemas.ts';
+import { parseCommentFileName } from '../store/layout.ts';
 
 /** Platzhalter für ein Issue, das erst im selben Batch entsteht (backe.md §2.16.6). */
 export const PLACEHOLDER_RE = /^\$[A-Za-z0-9_-]{1,32}$/;
@@ -51,18 +52,9 @@ const Placeholder = z.string().regex(PLACEHOLDER_RE, 'kein gültiger Platzhalter
 const Hash = z.string().regex(/^[0-9a-f]{64}$/, 'erwartet SHA-256 als 64 Hex-Zeichen');
 const Reason = z.string().min(1);
 
-const COMMENT_FILE_RE = new RegExp(`^(\\d{8}T\\d{6}Z)-(.+)-[${CROCKFORD}]{3}\\.md$`);
-
-/** `YYYYMMDDTHHMMSSZ-<handle>-<3 Crockford>.md` mit echtem Zeitstempel (backe.md §2.7). */
-function isCommentFileName(s: string): boolean {
-  const m = COMMENT_FILE_RE.exec(s);
-  if (m === null) return false;
-  const [, t = '', author = ''] = m;
-  const created = `${t.slice(0, 4)}-${t.slice(4, 6)}-${t.slice(6, 8)}T${t.slice(9, 11)}:${t.slice(11, 13)}:${t.slice(13, 15)}Z`;
-  return isHandle(author) && Timestamp.safeParse(created).success;
-}
-
-const CommentFile = z.string().refine(isCommentFileName, 'kein gültiger Kommentar-Dateiname');
+const CommentFile = z
+  .string()
+  .refine((s) => parseCommentFileName(s) !== undefined, 'kein gültiger Kommentar-Dateiname');
 
 /** Liste von Issue-Referenzen: nicht leer, ohne Duplikate. */
 const RefList = z

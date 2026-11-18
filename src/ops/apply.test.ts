@@ -90,13 +90,8 @@ describe('applyOperation', () => {
   });
 
   test('operations of later stages are not implemented yet', () => {
-    const err = catchErr(() =>
-      applyOperation(snap({ issues: [{ id: I(1) }] }), { op: 'issue.delete', id: I(1) }, ctx()),
-    );
-    expect([err.code, err.message]).toEqual([
-      'unexpected',
-      'issue.delete noch nicht implementiert',
-    ]);
+    const err = catchErr(() => applyOperation(snap({}), { op: 'repo.rm', name: 'web' }, ctx()));
+    expect([err.code, err.message]).toEqual(['unexpected', 'repo.rm noch nicht implementiert']);
   });
 
   test('the input snapshot is left untouched', () => {

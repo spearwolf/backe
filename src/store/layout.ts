@@ -1,7 +1,9 @@
 /**
  * Pfade innerhalb eines Backlogs (backe.md §2.2). Alle relativ zur Backlog-Wurzel, mit `/` getrennt.
  */
-import { shardOf } from '../core/ids.ts';
+import { CROCKFORD, shardOf } from '../core/ids.ts';
+import { isHandle } from '../core/names.ts';
+import { IssueSchema } from '../core/schemas.ts';
 
 export const BACKLOG_CONFIG = '.backe/backlog.jsonc';
 export const QUARANTINE = '.backe/quarantine.jsonc';
@@ -27,6 +29,24 @@ export function attachmentsDir(id: string): string {
 /** `<created als YYYYMMDDTHHMMSSZ>-<author>-<rnd>.md` (backe.md §2.7). */
 export function commentFileName(created: string, author: string, rnd: string): string {
   return `${created.replace(/[-:]/g, '')}-${author}-${rnd}.md`;
+}
+
+const COMMENT_FILE_RE = new RegExp(`^(\\d{8}T\\d{6}Z)-(.+)-([${CROCKFORD}]{3})\\.md$`);
+const Timestamp = IssueSchema.shape.created;
+
+/**
+ * Umkehrung von `commentFileName`; `undefined` bei falschem Format, ungültigem Handle oder
+ * unmöglichem Zeitstempel.
+ */
+export function parseCommentFileName(
+  name: string,
+): { created: string; author: string; rnd: string } | undefined {
+  const m = COMMENT_FILE_RE.exec(name);
+  if (m === null) return undefined;
+  const [, t = '', author = '', rnd = ''] = m;
+  const created = `${t.slice(0, 4)}-${t.slice(4, 6)}-${t.slice(6, 8)}T${t.slice(9, 11)}:${t.slice(11, 13)}:${t.slice(13, 15)}Z`;
+  if (!isHandle(author) || !Timestamp.safeParse(created).success) return undefined;
+  return { created, author, rnd };
 }
 
 export function userFile(handle: string): string {

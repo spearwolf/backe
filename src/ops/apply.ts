@@ -7,6 +7,8 @@ import { BackeError } from '../core/errors.ts';
 import { type Comment, IssueSchema } from '../core/schemas.ts';
 import type { FileChange } from '../store/files.ts';
 import type { BacklogSnapshot, StoredEntity } from '../store/snapshot.ts';
+import { attachAdd, attachRm, commentAdd, commentDelete, commentEdit } from './comment-ops.ts';
+import { issueDelete } from './delete-op.ts';
 import { Draft } from './draft.ts';
 import { violation } from './invariants.ts';
 import { issueCreate, issueEdit, issueLink, issueRank, issueUnlink } from './issue-ops.ts';
@@ -65,11 +67,17 @@ function dispatch(d: Draft, op: Operation): Operation {
     case 'issue.unlink':
       return issueUnlink(d, op);
     case 'issue.delete':
+      return issueDelete(d, op);
     case 'comment.add':
+      return commentAdd(d, op);
     case 'comment.edit':
+      return commentEdit(d, op);
     case 'comment.delete':
+      return commentDelete(d, op);
     case 'attach.add':
+      return attachAdd(d, op);
     case 'attach.rm':
+      return attachRm(d, op);
     case 'project.create':
     case 'project.mv':
     case 'project.rm':

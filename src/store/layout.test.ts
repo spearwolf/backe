@@ -11,6 +11,7 @@ import {
   issueDir,
   issueFile,
   localStateDir,
+  parseCommentFileName,
   projectFile,
   QUARANTINE,
   repoFile,
@@ -72,4 +73,32 @@ test('the backlog-basic fixture is canonical (serializer roundtrip is byte-ident
     checked++;
   }
   expect(checked).toBe(10);
+});
+
+describe('parseCommentFileName', () => {
+  test('inverts commentFileName', () => {
+    expect(parseCommentFileName('20261118T100400Z-claude-1-q8x.md')).toEqual({
+      created: '2026-11-18T10:04:00Z',
+      author: 'claude-1',
+      rnd: 'q8x',
+    });
+    const name = commentFileName('2026-01-02T03:04:05Z', 'spw', 'abc');
+    expect(parseCommentFileName(name)).toEqual({
+      created: '2026-01-02T03:04:05Z',
+      author: 'spw',
+      rnd: 'abc',
+    });
+  });
+
+  test.each([
+    ['wrong extension', '20261118T100400Z-spw-q8x.txt'],
+    ['no random part', '20261118T100400Z-spw.md'],
+    ['random part with a non-Crockford letter', '20261118T100400Z-spw-q8u.md'],
+    ['random part of the wrong length', '20261118T100400Z-spw-q8xx.md'],
+    ['impossible timestamp', '20261340T100400Z-spw-q8x.md'],
+    ['invalid handle', '20261118T100400Z-Spw-q8x.md'],
+    ['empty', ''],
+  ])('rejects %s', (_, name) => {
+    expect(parseCommentFileName(name)).toBeUndefined();
+  });
 });
