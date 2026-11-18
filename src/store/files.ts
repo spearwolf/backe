@@ -63,7 +63,7 @@ function assertRecursiveAllowed(change: FileChange): void {
   }
 }
 
-async function writeAtomic(abs: string, content: string | Uint8Array): Promise<void> {
+export async function writeFileAtomic(abs: string, content: string | Uint8Array): Promise<void> {
   const tmp = join(
     dirname(abs),
     `.${basename(abs)}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`,
@@ -109,7 +109,7 @@ export async function applyFileChanges(
       await pruneEmptyDirs(root, path);
     } else {
       await mkdir(dirname(abs), { recursive: true });
-      await writeAtomic(abs, content);
+      await writeFileAtomic(abs, content);
     }
   }
 }
