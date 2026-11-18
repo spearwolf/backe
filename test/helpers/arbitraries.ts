@@ -42,8 +42,8 @@ const TRICKY_PIECES = [
   '\r\n',
   '\0',
   '\u0085',
-  ' ',
-  '﻿',
+  '\u2028',
+  '\ufeff',
   'true',
   'false',
   'null',

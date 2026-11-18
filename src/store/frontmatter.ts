@@ -57,7 +57,7 @@ const FORBIDDEN_TOKENS: Readonly<Record<string, string>> = {
 export type ParsedEntityFile = { data: Record<string, unknown>; keys: string[]; body: string };
 
 export function parseEntityFile(text: string, file: string): ParsedEntityFile {
-  const src = toLf(text.startsWith('﻿') ? text.slice(1) : text);
+  const src = toLf(text.startsWith('\ufeff') ? text.slice(1) : text);
   if (!src.startsWith(`${FENCE}\n`)) {
     throw new BackeError('validation', `${file}:1: Frontmatter muss mit "---" in Zeile 1 beginnen`);
   }
