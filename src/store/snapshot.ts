@@ -78,6 +78,26 @@ async function listMarkdown(root: string, dir: string, deep: boolean): Promise<s
   return out;
 }
 
+const MAX_CONCURRENT_READS = 32;
+
+/** Wendet `fn` auf alle Elemente an, mit höchstens `limit` gleichzeitig laufenden Aufrufen. */
+async function mapPool<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i] as T);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 // --- Einzelne Entität --------------------------------------------------------------------
 
 /** Liest, parst und validiert eine Entitätsdatei; wirft `BackeError('validation')`. */
@@ -86,7 +106,10 @@ async function readEntity<T>(
   path: string,
   kind: EntityKind,
 ): Promise<StoredEntity<T>> {
-  const text = await readFile(join(root, path), 'utf8');
+  return parseStored<T>(await readFile(join(root, path), 'utf8'), path, kind);
+}
+
+function parseStored<T>(text: string, path: string, kind: EntityKind): StoredEntity<T> {
   const parsed = parseEntityFile(text, path);
   const { data, unknownKeys } = validateEntity(kind, parsed.data, path);
   const extra = entriesInFileOrder(parsed, unknownKeys);
@@ -101,14 +124,44 @@ async function tryEntity<T>(
   key: string,
   problems: Problem[],
 ): Promise<StoredEntity<T> | undefined> {
+  const text = await readFile(join(root, path), 'utf8');
+  return tryParse<T>(text, path, kind, key, problems);
+}
+
+/** Wie `parseStored`, aber Prüffehler werden als Problem gesammelt statt geworfen. */
+function tryParse<T>(
+  text: string,
+  path: string,
+  kind: EntityKind,
+  key: string,
+  problems: Problem[],
+): StoredEntity<T> | undefined {
   try {
-    return await readEntity<T>(root, path, kind);
+    return parseStored<T>(text, path, kind);
   } catch (err) {
     if (err instanceof BackeError) {
       problems.push({ path, message: err.message, kind, key });
       return undefined;
     }
     throw err;
+  }
+}
+
+/**
+ * Führt `collect` mit einer frischen Problem-Liste aus und hängt sie nach Pfad sortiert an
+ * `problems` an. Parallele Reads liefern Problems in Abschlussreihenfolge; die Sortierung macht
+ * sie unabhängig davon deterministisch, die Reihenfolge der Entitätsarten bleibt erhalten.
+ */
+async function withSortedProblems<R>(
+  problems: Problem[],
+  collect: (local: Problem[]) => Promise<R>,
+): Promise<R> {
+  const local: Problem[] = [];
+  try {
+    return await collect(local);
+  } finally {
+    local.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    problems.push(...local);
   }
 }
 
@@ -126,17 +179,20 @@ async function loadNamed<T>(
   label: string,
   problems: Problem[],
 ): Promise<Map<string, StoredEntity<T>>> {
-  const out: [string, StoredEntity<T>][] = [];
+  const candidates: { path: string; name: string }[] = [];
   for (const path of await listMarkdown(root, dir, deep)) {
     const name = path.slice(dir.length + 1, -'.md'.length);
-    if (!valid(name)) {
+    if (valid(name)) {
+      candidates.push({ path, name });
+    } else {
       problems.push({ path, message: `${path}: ungültiger ${label} "${name}"`, kind });
-      continue;
     }
-    const entity = await tryEntity<T>(root, path, kind, name, problems);
-    if (entity) out.push([name, entity]);
   }
-  return sortedMap(out);
+  const loaded = await mapPool(candidates, MAX_CONCURRENT_READS, async ({ path, name }) => {
+    const entity = await tryEntity<T>(root, path, kind, name, problems);
+    return entity ? ([name, entity] as [string, StoredEntity<T>]) : undefined;
+  });
+  return sortedMap(loaded.filter((e) => e !== undefined));
 }
 
 async function loadProjects(
@@ -176,36 +232,53 @@ async function loadIssues(
   root: string,
   problems: Problem[],
 ): Promise<Map<string, StoredEntity<Issue>>> {
-  const out: [string, StoredEntity<Issue>][] = [];
-  for (const shard of await readDirSorted(join(root, 'issues'))) {
-    if (!shard.isDirectory()) continue;
-    for (const dir of await readDirSorted(join(root, 'issues', shard.name))) {
+  const candidates: { shard: string; id: string; path: string }[] = [];
+  const shards = (await readDirSorted(join(root, 'issues'))).filter((e) => e.isDirectory());
+  const listings = await mapPool(shards, MAX_CONCURRENT_READS, (shard) =>
+    readDirSorted(join(root, 'issues', shard.name)),
+  );
+  for (const [i, shard] of shards.entries()) {
+    for (const dir of listings[i] ?? []) {
       if (!dir.isDirectory()) continue;
-      const path = `issues/${shard.name}/${dir.name}/issue.md`;
-      const file = (await readDirSorted(join(root, 'issues', shard.name, dir.name))).find(
-        (e) => e.name === 'issue.md' && e.isFile(),
-      );
-      if (!file) continue;
-      const id = dir.name;
+      candidates.push({
+        shard: shard.name,
+        id: dir.name,
+        path: `issues/${shard.name}/${dir.name}/issue.md`,
+      });
+    }
+  }
+
+  const loaded = await mapPool(
+    candidates,
+    MAX_CONCURRENT_READS,
+    async ({ shard, id, path }): Promise<[string, StoredEntity<Issue>] | undefined> => {
+      // Ohne issue.md ist das Verzeichnis kein Issue und bleibt unbeachtet.
+      let text: string;
+      try {
+        text = await readFile(join(root, path), 'utf8');
+      } catch (err) {
+        if (isMissing(err)) return undefined;
+        throw err;
+      }
       if (!isIssueId(id)) {
         problems.push({
           path,
           message: `${path}: Verzeichnisname "${id}" ist keine Issue-ID`,
           kind: 'issue',
         });
-        continue;
+        return undefined;
       }
-      if (shardOf(id) !== shard.name) {
+      if (shardOf(id) !== shard) {
         problems.push({
           path,
-          message: `${path}: Issue "${id}" gehört in den Shard "${shardOf(id)}", nicht "${shard.name}"`,
+          message: `${path}: Issue "${id}" gehört in den Shard "${shardOf(id)}", nicht "${shard}"`,
           kind: 'issue',
           key: id,
         });
-        continue;
+        return undefined;
       }
-      const entity = await tryEntity<Issue>(root, path, 'issue', id, problems);
-      if (!entity) continue;
+      const entity = tryParse<Issue>(text, path, 'issue', id, problems);
+      if (!entity) return undefined;
       if (entity.data.id !== id) {
         problems.push({
           path,
@@ -213,12 +286,12 @@ async function loadIssues(
           kind: 'issue',
           key: id,
         });
-        continue;
+        return undefined;
       }
-      out.push([id, entity]);
-    }
-  }
-  return sortedMap(out);
+      return [id, entity];
+    },
+  );
+  return sortedMap(loaded.filter((e) => e !== undefined));
 }
 
 // --- Öffentliche API ---------------------------------------------------------------------
@@ -251,27 +324,17 @@ async function loadConfig(root: string): Promise<BacklogConfig> {
 export async function loadSnapshot(root: string): Promise<BacklogSnapshot> {
   const config = await loadConfig(root);
   const problems: Problem[] = [];
-  const users = await loadNamed<User>(root, 'users', 'user', false, isHandle, 'Handle', problems);
-  const projects = await loadProjects(root, problems);
-  const sprints = await loadNamed<Sprint>(
-    root,
-    'sprints',
-    'sprint',
-    false,
-    isSprintSlug,
-    'Sprint-Slug',
-    problems,
+  const users = await withSortedProblems(problems, (p) =>
+    loadNamed<User>(root, 'users', 'user', false, isHandle, 'Handle', p),
   );
-  const repos = await loadNamed<Repo>(
-    root,
-    'repos',
-    'repo',
-    false,
-    isRepoName,
-    'Repo-Name',
-    problems,
+  const projects = await withSortedProblems(problems, (p) => loadProjects(root, p));
+  const sprints = await withSortedProblems(problems, (p) =>
+    loadNamed<Sprint>(root, 'sprints', 'sprint', false, isSprintSlug, 'Sprint-Slug', p),
   );
-  const issues = await loadIssues(root, problems);
+  const repos = await withSortedProblems(problems, (p) =>
+    loadNamed<Repo>(root, 'repos', 'repo', false, isRepoName, 'Repo-Name', p),
+  );
+  const issues = await withSortedProblems(problems, (p) => loadIssues(root, p));
   return { config, users, projects, sprints, repos, issues, problems };
 }
 

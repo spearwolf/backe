@@ -46,6 +46,14 @@ test('loadSnapshot reports broken files as problems', async () => {
   ]);
 });
 
+test('problems are sorted by path regardless of load order', async () => {
+  const root = await copyFixture('backlog-basic');
+  await writeFile(join(root, issueFile('bk-x2c8d')), '---\nid: [\n---\n');
+  await writeFile(join(root, issueFile('bk-a91c0')), '---\nid: [\n---\n');
+  const s = await loadSnapshot(root);
+  expect(s.problems.map((p) => p.path)).toEqual([issueFile('bk-a91c0'), issueFile('bk-x2c8d')]);
+});
+
 test('problems name kind and key of every broken entity kind', async () => {
   const root = await copyFixture('backlog-basic');
   const broken = '---\ntitle: [\n---\n';

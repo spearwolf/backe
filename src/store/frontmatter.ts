@@ -5,6 +5,8 @@
  * Formatierung; ein kanonischer Roundtrip `parse → serialize` ist byte-identisch.
  */
 import {
+  Composer,
+  type CST,
   Document,
   isMap,
   isScalar,
@@ -12,7 +14,6 @@ import {
   type Node,
   Pair,
   Parser,
-  parseDocument,
   Scalar,
   type ToStringOptions,
   YAMLMap,
@@ -95,16 +96,20 @@ function parseFrontmatter(
     throw new BackeError('validation', `${file}:${line}: ${reason}`);
   };
 
-  const forbidden = findForbiddenToken(yaml);
+  // Ein Parse-Durchgang: dieselben Token dienen dem CST-Scan und dem Composer.
+  const tokens = [...new Parser().parse(yaml)];
+  const forbidden = findForbiddenToken(tokens);
   if (forbidden) fail(forbidden.offset, forbidden.reason);
 
-  const doc = parseDocument(yaml, {
+  const composer = new Composer({
     schema: 'core',
     version: '1.2',
     uniqueKeys: true,
     intAsBigInt: false,
     prettyErrors: false,
   });
+  // forceDoc: auch ein leerer Text ergibt ein Dokument (mit `contents === null`).
+  const doc = composer.compose(tokens, true, yaml.length).next().value as Document.Parsed;
   const [error] = doc.errors;
   if (error) fail(error.pos[0], `ungültiges YAML: ${error.message}`);
 
@@ -118,7 +123,9 @@ function parseFrontmatter(
 }
 
 /** Sucht im CST das erste Token, das das Subset verbietet, samt zweitem Dokument. */
-function findForbiddenToken(yaml: string): { offset: number; reason: string } | undefined {
+function findForbiddenToken(
+  tokens: readonly CST.Token[],
+): { offset: number; reason: string } | undefined {
   const hits: { offset: number; reason: string }[] = [];
   const visit = (x: unknown): void => {
     if (Array.isArray(x)) {
@@ -137,7 +144,7 @@ function findForbiddenToken(yaml: string): { offset: number; reason: string } | 
     for (const child of Object.values(x)) visit(child);
   };
   let documents = 0;
-  for (const token of new Parser().parse(yaml)) {
+  for (const token of tokens) {
     if (token.type === 'document' && ++documents > 1) {
       hits.push({ offset: token.offset, reason: 'mehrere Dokumente sind nicht erlaubt' });
     }
