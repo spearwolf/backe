@@ -42,6 +42,26 @@ describe('Brief', () => {
     );
   });
 
+  test('multiline string inside a list of maps roundtrips', () => {
+    const data = {
+      ...minimalIssue,
+      attachments: [{ name: 'a', url: 'https://example.com/:\n.inf' }],
+    };
+    const out = serializeEntityFile('issue', data, '');
+    expect(parseEntityFile(out, 'f').data).toEqual(data);
+    expect(serializeEntityFile('issue', parseEntityFile(out, 'f').data, '')).toBe(out);
+  });
+
+  test.each(['  \n', ' \n', ' \nb', 'a\n \nb', 'a\n\t\n'])(
+    'multiline string with a whitespace-only line roundtrips: %j',
+    (value) => {
+      const data = { ...minimalIssue, props: { a: value } };
+      const out = serializeEntityFile('issue', data, '');
+      expect(parseEntityFile(out, 'f').data).toEqual(data);
+      expect(serializeEntityFile('issue', parseEntityFile(out, 'f').data, '')).toBe(out);
+    },
+  );
+
   test.each([
     'true',
     'null',

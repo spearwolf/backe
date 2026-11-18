@@ -82,13 +82,20 @@ const arbScalar: fc.Arbitrary<PropValue> = fc.oneof(arbString(), arbNumber, fc.b
 
 const arbPropKey = fc.stringMatching(/^[a-z][a-z0-9_.-]{0,15}$/);
 
-/** Verschachtelte Property-Werte: Skalare, Listen und Maps beliebiger Strings. */
+/**
+ * Verschachtelte Property-Werte: Skalare, Listen und Maps beliebiger Strings. `__proto__` ist
+ * als Key ausgenommen, wie beim Top-Level-Generator (validateEntity lehnt ihn ab).
+ */
 const { propValue: arbPropValue } = fc.letrec<{ propValue: PropValue }>((tie) => ({
   propValue: fc.oneof(
     { depthSize: 'small', withCrossShrink: true },
     arbScalar,
     fc.array(tie('propValue'), { maxLength: 5 }),
-    fc.dictionary(arbString(), tie('propValue'), { maxKeys: 4, noNullPrototype: true }),
+    fc.dictionary(
+      arbString().filter((k) => k !== '__proto__'),
+      tie('propValue'),
+      { maxKeys: 4, noNullPrototype: true },
+    ),
   ),
 }));
 

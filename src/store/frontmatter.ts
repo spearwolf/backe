@@ -253,6 +253,11 @@ function render(contents: Node): string {
 function scalar(value: unknown): Scalar {
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     const node = new Scalar(value);
+    // Eine Zeile nur aus Leerraum übersteht den Block-Stil nicht (der Parser liest sie als leer
+    // oder als Einrückung): solche mehrzeiligen Strings stehen in doppelten Anführungszeichen.
+    if (typeof value === 'string' && /(?:^|\n)[ \t]+(?=\n|$)/.test(value) && value.includes('\n')) {
+      node.type = Scalar.QUOTE_DOUBLE;
+    }
     // Ganzzahlen jenseits von Number.MAX_SAFE_INTEGER als Exponentenform, denn ein
     // Ganzzahl-Literal dieser Größe lehnt der Parser als nicht verlustfrei ab.
     if (typeof value === 'number' && Number.isInteger(value) && !Number.isSafeInteger(value)) {
@@ -304,14 +309,21 @@ function fitsOnLine(col: number, key: string | null, node: Node): boolean {
  * Knoten für einen Wert, dessen Zeile in Spalte `col` beginnt. Listen und Maps stehen als
  * Flow, wenn die Zeile ≤ 100 Zeichen bleibt, sonst als Block; Kinder eines Blocks beginnen
  * zwei Spalten weiter rechts. Listen, deren Elemente alle Maps sind, stehen immer als
- * Block-Sequenz mit je einer Flow-Map pro Element.
+ * Block-Sequenz mit je einer Flow-Map pro Element, außer die Flow-Map ginge über mehrere
+ * Zeilen (mehrzeiliger String): dann steht das Element als Block-Map.
  */
 function place(value: unknown, col: number, key: string | null, sorted: boolean): Node {
   if (Array.isArray(value)) {
     const items = value.filter((v) => v !== undefined);
     const seq = new YAMLSeq();
     if (items.length > 0 && items.every(isPlainObject)) {
-      for (const item of items) seq.items.push(flowNode(item, sorted));
+      for (const item of items) {
+        const flow = flowNode(item, sorted);
+        // Ein Flow-Mapping kann keinen mehrzeiligen String tragen: dann steht das Element als Block-Map.
+        seq.items.push(
+          render(flow).trimEnd().includes('\n') ? blockMap(item as Plain, col + 2, sorted) : flow,
+        );
+      }
       return seq;
     }
     const flow = flowNode(items, sorted);
