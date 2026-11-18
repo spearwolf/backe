@@ -113,13 +113,14 @@ function dispatch(d: Draft, op: Operation): Operation {
 }
 
 /**
- * Wendet `op` auf `s` an, ohne `s` zu verändern. Vorab: Der Akteur ist ein User (`policy`), `now`
- * ist ein gültiger Zeitstempel, die Operation nennt keinen Batch-Platzhalter mehr (`schema`).
- * `noop` heißt: Der Endstand unterscheidet sich nicht vom Basis-Snapshot (`changes` ist leer);
- * eine Operation, die schreibt und im selben Draft zurückschreibt, ist also ein No-op.
+ * Ein Operationsschritt auf einem bestehenden Draft, gemeinsam für `applyOperation` und den
+ * Batch: Vorab ist der Akteur ein User (`policy`), `now` ein gültiger Zeitstempel und die
+ * Operation nennt keinen Batch-Platzhalter mehr (`schema`); danach Dispatch. Gibt die Operation
+ * so zurück, wie sie aufgezeichnet wird.
  */
-export function applyOperation(s: BacklogSnapshot, op: Operation, ctx: ApplyContext): ApplyResult {
-  if (!s.users.has(ctx.actor)) {
+export function applyStep(d: Draft, op: Operation): Operation {
+  const { ctx } = d;
+  if (!d.snapshot.users.has(ctx.actor)) {
     throw violation('policy', `Akteur "${ctx.actor}" ist kein User dieses Backlogs`);
   }
   if (!Timestamp.safeParse(ctx.now).success) {
@@ -131,8 +132,17 @@ export function applyOperation(s: BacklogSnapshot, op: Operation, ctx: ApplyCont
       hint: 'Platzhalter gibt es nur im Batch; dort werden sie vor dem Anwenden ersetzt.',
     });
   }
+  return dispatch(d, op);
+}
+
+/**
+ * Wendet `op` auf `s` an, ohne `s` zu verändern (ein Schritt auf einem frischen Draft, siehe
+ * `applyStep`). `noop` heißt: Der Endstand unterscheidet sich nicht vom Basis-Snapshot (`changes`
+ * ist leer); eine Operation, die schreibt und im selben Draft zurückschreibt, ist also ein No-op.
+ */
+export function applyOperation(s: BacklogSnapshot, op: Operation, ctx: ApplyContext): ApplyResult {
   const d = new Draft(s, ctx);
-  const recorded = dispatch(d, op);
+  const recorded = applyStep(d, op);
   const { snapshot, changes, notices } = d.finish();
   return { snapshot, changes, recorded, notices, noop: changes.length === 0 };
 }
