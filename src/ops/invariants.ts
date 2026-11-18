@@ -180,5 +180,5 @@ export function checkIssueInvariants(d: Draft, before: Issue | undefined, after:
     }
   }
 
-  checkProps(d.snapshot.config, touchedProps(before, after));
+  checkProps(d.config, touchedProps(before, after));
 }

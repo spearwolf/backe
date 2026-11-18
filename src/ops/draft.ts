@@ -146,6 +146,11 @@ export class Draft {
     return this.#snapshot;
   }
 
+  /** Config des Basis-Snapshots; ein Draft ändert sie nie, das Lesen kopiert also keine Maps. */
+  get config(): BacklogSnapshot['config'] {
+    return this.#base.config;
+  }
+
   /** Anzahl wirksamer Änderungen; bleibt sie 0, war die Operation ein No-op. */
   get revision(): number {
     return this.#revision;

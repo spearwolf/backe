@@ -91,9 +91,12 @@ describe('applyOperation', () => {
 
   test('operations of later stages are not implemented yet', () => {
     const err = catchErr(() =>
-      applyOperation(snap({ issues: [{ id: I(1) }] }), { op: 'issue.claim', id: I(1) }, ctx()),
+      applyOperation(snap({ issues: [{ id: I(1) }] }), { op: 'issue.delete', id: I(1) }, ctx()),
     );
-    expect([err.code, err.message]).toEqual(['unexpected', 'issue.claim noch nicht implementiert']);
+    expect([err.code, err.message]).toEqual([
+      'unexpected',
+      'issue.delete noch nicht implementiert',
+    ]);
   });
 
   test('the input snapshot is left untouched', () => {
@@ -157,6 +160,23 @@ describe('Draft', () => {
     expect(d.issue(I(1)).body).toBe('Text\n');
     d.putIssue(I(1), base.issues.get(I(1))?.data as Issue, 'Text');
     expect(d.revision).toBe(1);
+  });
+
+  test('a write that is reverted inside one draft leaves no file change', () => {
+    const base = snap({ issues: [{ id: I(1) }] });
+    const d = new Draft(base, ctx());
+    const original = base.issues.get(I(1))?.data as Issue;
+    d.putIssue(I(1), { ...original, title: 'anders' });
+    d.putIssue(I(1), original);
+    expect(d.revision).toBe(2);
+    expect(d.finish().changes).toEqual([]);
+  });
+
+  test('the config is the one of the base snapshot', () => {
+    const base = snap({});
+    const d = new Draft(base, ctx());
+    d.putIssue(I(1), issueData(I(1)));
+    expect(d.config).toBe(base.config);
   });
 
   test('bodies are stored the way the serializer writes them', () => {

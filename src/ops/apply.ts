@@ -9,9 +9,10 @@ import type { FileChange } from '../store/files.ts';
 import type { BacklogSnapshot, StoredEntity } from '../store/snapshot.ts';
 import { Draft } from './draft.ts';
 import { violation } from './invariants.ts';
-import { issueCreate, issueEdit } from './issue-ops.ts';
+import { issueCreate, issueEdit, issueLink, issueRank, issueUnlink } from './issue-ops.ts';
 import type { Notice } from './notice.ts';
 import { type Operation, type OpName, PLACEHOLDER_RE, referencedIds } from './operation.ts';
+import { issueClaim, issueMove, issueReopen, issueResume } from './state-ops.ts';
 
 export type ApplyContext = {
   /** Handle des Akteurs; muss ein User im Snapshot sein. */
@@ -50,12 +51,19 @@ function dispatch(d: Draft, op: Operation): Operation {
     case 'issue.edit':
       return issueEdit(d, op);
     case 'issue.move':
+      return issueMove(d, op);
     case 'issue.resume':
+      return issueResume(d, op);
     case 'issue.reopen':
+      return issueReopen(d, op);
     case 'issue.claim':
+      return issueClaim(d, op);
     case 'issue.rank':
+      return issueRank(d, op);
     case 'issue.link':
+      return issueLink(d, op);
     case 'issue.unlink':
+      return issueUnlink(d, op);
     case 'issue.delete':
     case 'comment.add':
     case 'comment.edit':
@@ -80,7 +88,8 @@ function dispatch(d: Draft, op: Operation): Operation {
 /**
  * Wendet `op` auf `s` an, ohne `s` zu verändern. Vorab: Der Akteur ist ein User (`policy`), `now`
  * ist ein gültiger Zeitstempel, die Operation nennt keinen Batch-Platzhalter mehr (`schema`).
- * `noop` heißt: Es gab keine wirksame Änderung.
+ * `noop` heißt: Der Endstand unterscheidet sich nicht vom Basis-Snapshot (`changes` ist leer);
+ * eine Operation, die schreibt und im selben Draft zurückschreibt, ist also ein No-op.
  */
 export function applyOperation(s: BacklogSnapshot, op: Operation, ctx: ApplyContext): ApplyResult {
   if (!s.users.has(ctx.actor)) {
@@ -98,5 +107,5 @@ export function applyOperation(s: BacklogSnapshot, op: Operation, ctx: ApplyCont
   const d = new Draft(s, ctx);
   const recorded = dispatch(d, op);
   const { snapshot, changes, notices } = d.finish();
-  return { snapshot, changes, recorded, notices, noop: d.revision === 0 };
+  return { snapshot, changes, recorded, notices, noop: changes.length === 0 };
 }

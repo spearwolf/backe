@@ -523,3 +523,147 @@ test('without a random source issue ids come from the default source', () => {
   );
   expect((r.recorded as OpOf<'issue.create'>).id).toMatch(/^bk-[0-9a-hjkmnp-tv-z]{5}$/);
 });
+
+describe('issue.rank', () => {
+  const ranked = () =>
+    snap({ issues: [{ id: I(1), rank: 1000 }, { id: I(2), rank: 2000 }, { id: I(3) }] });
+  const rank = (s: BacklogSnapshot, fields: Partial<OpOf<'issue.rank'>>, id = I(3)) =>
+    applyOperation(s, { op: 'issue.rank', id, from: null, top: true, ...fields }, ctx());
+
+  test('top places the issue first and writes only changed files', () => {
+    const r = rank(ranked(), { top: true });
+    expect(data(r, I(3)).rank).toBe(0);
+    expect(r.changes.map((c) => c.path)).toEqual([issueFile(I(3))]);
+  });
+
+  test('before renumbers only what is needed', () => {
+    const r = rank(ranked(), { top: undefined, before: I(2) });
+    expect(data(r, I(3)).rank).toBeGreaterThan(1000);
+    expect(data(r, I(3)).rank).toBeLessThan(2000);
+    expect(r.changes.map((c) => c.path)).toEqual([issueFile(I(3))]);
+  });
+
+  test('a crowded gap pushes neighbours and writes their files', () => {
+    const s = snap({ issues: [{ id: I(1), rank: 5 }, { id: I(2), rank: 6 }, { id: I(3) }] });
+    const r = rank(s, { top: undefined, after: I(1) });
+    expect(r.changes.length).toBeGreaterThan(1);
+    expect(r.changes.map((c) => c.path)).toContain(issueFile(I(3)));
+  });
+
+  test('value sets the rank directly', () => {
+    const r = rank(ranked(), { top: undefined, value: 1500 });
+    expect(data(r, I(3)).rank).toBe(1500);
+    expect(r.changes).toHaveLength(1);
+  });
+
+  test('value already set is a no-op', () => {
+    const r = rank(ranked(), { top: undefined, from: 1000, value: 1000 }, I(1));
+    expect([r.noop, r.changes]).toEqual([true, []]);
+  });
+
+  test('rank with stale from is a precondition conflict', () => {
+    const err = catchErr(() => rank(ranked(), { from: 7, bottom: true, top: undefined }));
+    expect([err.exitCode, err.details]).toEqual([4, { reason: 'precondition', ids: [I(3)] }]);
+  });
+
+  test('from matches the current rank', () => {
+    const r = rank(ranked(), { from: 1000, bottom: true, top: undefined }, I(1));
+    expect(data(r, I(1)).rank).toBe(3000);
+  });
+
+  test('a missing issue is not found', () => {
+    expect(catchErr(() => rank(ranked(), {}, I(9))).exitCode).toBe(3);
+  });
+
+  test('an unknown anchor is not found', () => {
+    const err = catchErr(() => rank(ranked(), { top: undefined, before: I(9) }));
+    expect(err.exitCode).toBe(3);
+  });
+});
+
+describe('issue.link', () => {
+  const link = (s: BacklogSnapshot, fields: Partial<OpOf<'issue.link'>>) =>
+    applyOperation(s, { op: 'issue.link', id: I(1), ...fields } as OpOf<'issue.link'>, ctx());
+
+  test('link with an unknown url registers the repo in the same result', () => {
+    const r = link(snap({ issues: [{ id: I(1) }] }), {
+      url: 'git@github.com:acme/webapp.git',
+      ref: 'feat/sso',
+    });
+    expect(r.changes.map((c) => c.path)).toEqual([issueFile(I(1)), 'repos/webapp.md']);
+    expect(r.snapshot.issues.get(I(1))?.data.repos).toEqual(['webapp@feat/sso']);
+    expect(r.snapshot.repos.get('webapp')?.data.url).toBe('git@github.com:acme/webapp.git');
+  });
+
+  test('an unknown url takes the next free derived name', () => {
+    const s = snap({ issues: [{ id: I(1) }], repos: { webapp: REPOS.infra } });
+    const r = link(s, { url: 'https://github.com/acme/webapp' });
+    expect(data(r).repos).toEqual(['acme-webapp']);
+    expect(r.snapshot.repos.has('acme-webapp')).toBe(true);
+  });
+
+  test('link reuses the name of a registered canonical url and replaces the ref', () => {
+    const s = snap({ issues: [{ id: I(1), repos: ['infra', 'webapp@old'] }], repos: REPOS });
+    const r = link(s, { url: 'git@example.com:acme/webapp', ref: 'new' });
+    expect(data(r).repos).toEqual(['infra', 'webapp@new']);
+    expect(r.changes.map((c) => c.path)).toEqual([issueFile(I(1))]);
+  });
+
+  test('a repo by name is appended', () => {
+    const s = snap({ issues: [{ id: I(1), repos: ['infra'] }], repos: REPOS });
+    expect(data(link(s, { repo: 'webapp' })).repos).toEqual(['infra', 'webapp']);
+  });
+
+  test('the same entry again is a no-op', () => {
+    const s = snap({ issues: [{ id: I(1), repos: ['webapp@x'] }], repos: REPOS });
+    const r = link(s, { repo: 'webapp', ref: 'x' });
+    expect([r.noop, r.changes]).toEqual([true, []]);
+  });
+
+  test('a repo name that is not registered is a missing reference', () => {
+    const err = catchErr(() => link(snap({ issues: [{ id: I(1) }] }), { repo: 'webapp' }));
+    expect([err.exitCode, err.details]).toEqual([3, { reason: 'missing_ref', ids: ['webapp'] }]);
+  });
+
+  test('an unusable url is rejected', () => {
+    const err = catchErr(() => link(snap({ issues: [{ id: I(1) }] }), { url: 'kein url' }));
+    expect(err.exitCode).toBe(2);
+  });
+
+  test('a missing issue is not found', () => {
+    expect(catchErr(() => link(snap({ repos: REPOS }), { repo: 'webapp' })).exitCode).toBe(3);
+  });
+
+  test('a registered repo with an unusable stored url does not match', () => {
+    const s = snap({ issues: [{ id: I(1) }], repos: { odd: REPOS.infra } });
+    const odd = s.repos.get('odd');
+    if (odd) s.repos.set('odd', { ...odd, data: { url: 'kaputt' } });
+    const r = link(s, { url: 'https://example.com/acme/webapp' });
+    expect(data(r).repos).toEqual(['webapp']);
+  });
+});
+
+describe('issue.unlink', () => {
+  const unlink = (s: BacklogSnapshot, repo: string) =>
+    applyOperation(s, { op: 'issue.unlink', id: I(1), repo }, ctx());
+
+  test('removes the entry with that name, with or without ref', () => {
+    const s = snap({ issues: [{ id: I(1), repos: ['infra', 'webapp@x'] }], repos: REPOS });
+    expect(data(unlink(s, 'webapp')).repos).toEqual(['infra']);
+  });
+
+  test('the last entry leaves no repos key', () => {
+    const s = snap({ issues: [{ id: I(1), repos: ['infra'] }], repos: REPOS });
+    expect(data(unlink(s, 'infra')).repos).toBeUndefined();
+  });
+
+  test('an absent name is a no-op', () => {
+    const s = snap({ issues: [{ id: I(1), repos: ['infra'] }], repos: REPOS });
+    const r = unlink(s, 'webapp');
+    expect([r.noop, r.changes]).toEqual([true, []]);
+  });
+
+  test('a missing issue is not found', () => {
+    expect(catchErr(() => unlink(snap({}), 'webapp')).exitCode).toBe(3);
+  });
+});

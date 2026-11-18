@@ -2,12 +2,16 @@
  * `issue.create` und `issue.edit` (Operationskatalog, backe.md §2.16.4): neue Issues mit
  * Vorgaben und Vererbung vom Parent anlegen, Felder mit Vorbedingung setzen und Listen ändern.
  */
+import { BackeError } from '../core/errors.ts';
 import { defaultRandomBytes, generateIssueId } from '../core/ids.ts';
+import { parseRepoRef } from '../core/names.ts';
 import type { Issue, PropValue } from '../core/schemas.ts';
+import { deriveRepoName, normalizeRepoUrl } from '../core/url.ts';
 import { canonicalBody } from '../store/frontmatter.ts';
 import type { Draft } from './draft.ts';
 import { sameValue, violation } from './invariants.ts';
 import { bodyHash, type OpOf } from './operation.ts';
+import { type RankPosition, rankPlacement } from './rank.ts';
 
 /** Belegt: ein Issue im Draft oder ein Issue-Verzeichnis, dessen Datei nicht ladbar war. */
 function idTaken(d: Draft, id: string): boolean {
@@ -72,24 +76,26 @@ function show(value: unknown): string {
   return value === null ? 'nicht gesetzt' : JSON.stringify(value);
 }
 
+/** Ist-Wert ≠ `from` → `precondition`. */
+export function expectFrom<T>(id: string, field: string, current: T | null, from: T | null): void {
+  if (sameValue(current, from)) return;
+  throw violation('precondition', `${id}: ${field} ist ${show(current)}, erwartet ${show(from)}`, {
+    ids: [id],
+  });
+}
+
 /**
  * Vorbedingung eines Setzens: Zielwert schon erreicht → `false` (No-op); Ist-Wert ≠ `from` →
  * `precondition`; sonst `true`.
  */
-function settle<T>(
+export function settle<T>(
   id: string,
   field: string,
   current: T | null,
   change: { from: T | null; to: T | null },
 ): boolean {
   if (sameValue(current, change.to)) return false;
-  if (!sameValue(current, change.from)) {
-    throw violation(
-      'precondition',
-      `${id}: ${field} ist ${show(current)}, erwartet ${show(change.from)}`,
-      { ids: [id] },
-    );
-  }
+  expectFrom(id, field, current, change.from);
   return true;
 }
 
@@ -180,5 +186,74 @@ export function issueEdit(d: Draft, op: OpOf<'issue.edit'>): OpOf<'issue.edit'> 
   }
 
   d.putIssue(op.id, next, body);
+  return op;
+}
+
+/**
+ * `issue.rank` (backe.md §2.22): neue Ranks aus `rankPlacement`. Ändert sich nichts, ist es ein
+ * No-op; sonst muss `from` zum aktuellen Rank des Issues passen.
+ */
+export function issueRank(d: Draft, op: OpOf<'issue.rank'>): OpOf<'issue.rank'> {
+  const current = d.issue(op.id).data.rank ?? null;
+  const position: RankPosition =
+    op.top === true
+      ? { top: true }
+      : op.bottom === true
+        ? { bottom: true }
+        : op.before !== undefined
+          ? { before: op.before }
+          : op.after !== undefined
+            ? { after: op.after }
+            : { value: op.value as number };
+  const placement = rankPlacement(d.snapshot, op.id, position);
+  if (placement.size === 0) return op;
+  expectFrom(op.id, 'rank', current, op.from);
+  for (const [id, rank] of placement) d.putIssue(id, { ...d.issue(id).data, rank });
+  return op;
+}
+
+/** Kanonische URL eines registrierten Repos; eine nicht normalisierbare gilt als kein Treffer. */
+function canonicalOf(url: string): string | undefined {
+  try {
+    return normalizeRepoUrl(url);
+  } catch (err) {
+    if (err instanceof BackeError) return undefined;
+    throw err;
+  }
+}
+
+/** Name des Repos mit dieser kanonischen URL; sonst wird es unter abgeleitetem Namen angelegt. */
+function repoNameForUrl(d: Draft, url: string): string {
+  const canonical = normalizeRepoUrl(url);
+  for (const [name, repo] of d.snapshot.repos) {
+    if (canonicalOf(repo.data.url) === canonical) return name;
+  }
+  const name = deriveRepoName(canonical, new Set(d.snapshot.repos.keys()));
+  d.putEntity('repo', name, { url });
+  return name;
+}
+
+/**
+ * `issue.link`: ein Eintrag `name[@ref]` ersetzt den vorhandenen mit gleichem Namen an derselben
+ * Stelle, sonst wird er angehängt. Mit `url` wird ein unbekanntes Repo implizit registriert
+ * (backe.md §2.11).
+ */
+export function issueLink(d: Draft, op: OpOf<'issue.link'>): OpOf<'issue.link'> {
+  const before = d.issue(op.id).data;
+  const name = op.url === undefined ? (op.repo as string) : repoNameForUrl(d, op.url);
+  const entry = op.ref === undefined ? name : `${name}@${op.ref}`;
+  const repos = [...(before.repos ?? [])];
+  const index = repos.findIndex((e) => parseRepoRef(e).name === name);
+  if (index < 0) repos.push(entry);
+  else repos[index] = entry;
+  d.putIssue(op.id, { ...before, repos }, undefined);
+  return op;
+}
+
+/** `issue.unlink`: entfernt den Eintrag mit dem Namen; fehlt er, passiert nichts. */
+export function issueUnlink(d: Draft, op: OpOf<'issue.unlink'>): OpOf<'issue.unlink'> {
+  const before = d.issue(op.id).data;
+  const repos = (before.repos ?? []).filter((e) => parseRepoRef(e).name !== op.repo);
+  d.putIssue(op.id, { ...before, repos: nonEmpty(repos) });
   return op;
 }
