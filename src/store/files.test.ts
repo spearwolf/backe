@@ -102,6 +102,33 @@ test('rejects absolute and parent-escaping paths before writing anything', async
   expect(existsSync(join(root, 'repos'))).toBe(false);
 });
 
+test('rejects paths with a .git segment before writing anything', async () => {
+  const root = await tempDir();
+  for (const bad of ['.git/hooks/pre-commit', 'a/.git/x', '.git', 'a/.git']) {
+    for (const content of ['y', null]) {
+      const err = await catchErrAsync(() =>
+        applyFileChanges(root, [
+          { path: 'repos/ok.md', content: 'x' },
+          { path: bad, content },
+        ]),
+      );
+      expect(err.code).toBe('validation');
+      expect(err.message).toContain(bad);
+    }
+  }
+  expect(await readdir(root)).toEqual([]);
+});
+
+test('names that merely contain .git are fine', async () => {
+  const root = await tempDir();
+  await applyFileChanges(root, [
+    { path: 'repos/x.git', content: 'a' },
+    { path: 'a/.gitignore', content: 'b' },
+    { path: 'a/.git-x/y', content: 'c' },
+  ]);
+  expect(await readFile(join(root, 'a/.git-x/y'), 'utf8')).toBe('c');
+});
+
 test('deleting the last file of a shard keeps issues/ in place', async () => {
   const root = await tempDir();
   await applyFileChanges(root, [{ path: issueFile('bk-7f3k2'), content: 'x' }]);

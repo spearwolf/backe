@@ -19,16 +19,22 @@ const PROTECTED_DIRS: ReadonlySet<string> = new Set([
 ]);
 
 function assertRelative(path: string): void {
+  const segments = path.split('/');
   if (
     path === '' ||
     path === '.' ||
     path.startsWith('/') ||
     path.endsWith('/') ||
-    path.split('/').includes('..') ||
+    segments.includes('..') ||
     posix.normalize(path) !== path
   ) {
     throw new BackeError('validation', `Ungültiger Pfad im Backlog: "${path}"`, {
       hint: 'Erlaubt sind nur normalisierte, relative Pfade ohne "..", ".", "//" und Schrägstrich am Ende.',
+    });
+  }
+  if (segments.includes('.git')) {
+    throw new BackeError('validation', `Pfad unter .git im Backlog: "${path}"`, {
+      hint: 'Unter ".git" liegen Git-Interna; dorthin schreibt und löscht backe nie.',
     });
   }
 }
