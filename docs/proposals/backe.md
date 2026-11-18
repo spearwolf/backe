@@ -1,7 +1,7 @@
 # backe — Git-basiertes Backlog für Menschen und Agents
 
-> **Status: Entwurf.**
-> Nichts gebaut, das Repo ist leer. Alle Entscheidungen, die den Bau blockieren, sind getroffen.
+> **Status: spezifiziert.**
+> Verbindlicher Spec, nichts gebaut. Keine offenen Entscheidungen.
 > Bezug: — (erstes Proposal des Projekts)
 
 ## 0. Problem & Abgrenzung
@@ -187,6 +187,8 @@ Schreibweise in Dateien: `snake_case`. Das CLI akzeptiert zusätzlich `kebab-cas
 
 - **Hauptlinie:** frei vor und zurück, auch mit Sprüngen (`backlog → in_progress` beim Claim). Mit `workflow.strict: true` in `backlog.jsonc` nur zum direkten Nachbarn.
 - **→ `blocked`/`on_hold`:** `backe` setzt `paused_from`. `backe issue resume <id>` kehrt dorthin zurück und entfernt `paused_from` und `blocked_by`. Ein expliziter Übergang in einen anderen Hauptlinien-Zustand ist ebenso erlaubt.
+- **Zwischen Seitenzuständen:** `blocked ↔ on_hold` ist erlaubt; `paused_from` bleibt dabei erhalten, `blocked_by` entfällt beim Wechsel nach `on_hold`. Aus `blocked` und `on_hold` geht es direkt nach `cancelled` oder `rejected`; `paused_from` und `blocked_by` entfallen. Jeder Übergang, der `blocked` verlässt, entfernt `blocked_by`.
+- **Letzter Blocker gelöscht:** Entfernt `issue delete` die letzte ID aus `blocked_by` eines anderen Issues, setzt dieselbe Operation dieses Issue auf `on_hold` (mit erhaltenem `paused_from`) und schreibt einen Transition-Kommentar »Blocker <id> gelöscht«. Ein `blocked` ohne Blocker gibt es nie.
 - **Blocker erledigt:** Erledigt heißt hier dasselbe wie bei `depends_on` (§2.22): `done`, `cancelled` oder `rejected`. Sind alle Issues in `blocked_by` erledigt, wird das blockierte Issue **nicht** automatisch entsperrt (jeder Write braucht einen signierenden Akteur), aber `backe issue list --unblockable` findet es und `backe next` meldet es als Hinweis. Ist ein Blocker `cancelled` oder `rejected` statt `done`, sagt der Hinweis das ausdrücklich — das Hindernis ist dann nicht beseitigt, nur nicht mehr in Arbeit.
 - **Zyklen** in `blocked_by` werden beim Setzen abgelehnt.
 - **Issue mit offenen Sub-Issues → `done`** wird abgelehnt (Exit-Code 4, Liste der offenen Sub-Issues); `--force` setzt es trotzdem. Offen heißt: nicht `done`, `cancelled` oder `rejected` (§2.23).
@@ -280,8 +282,8 @@ Arbeitet Sprints im Projekt web ab.
 - `kind`: `human` oder `agent`. Agents haben Pflichtfeld `operator` (verantwortlicher Mensch).
 - Schlüssel: SSH-Public-Keys, v1 nur `ssh-ed25519`. Private Keys liegen nie im Backlog.
 - `backe user add <handle> --key <pubfile> [--agent --operator <handle>]` registriert einen vorhandenen Key.
-- `backe user create-agent <handle>` erzeugt ein Ed25519-Keypair via `ssh-keygen` unter `~/.backe/keys/<backlog>/<handle>` (Modus 0600), registriert den Public Key und trägt die Identität in die User-Config ein. Signiert wird dieser Commit vom ausführenden Menschen (Operator).
-- `backe user revoke-key <handle> <fingerprint>` verschiebt einen Key nach `revoked_keys`. Commits, die mit diesem Key **nach** `revoked` signiert wurden, sind ungültig; frühere bleiben gültig.
+- `backe user create-agent <handle>` erzeugt ein Ed25519-Keypair via `ssh-keygen` unter `~/.backe/keys/<backlog>/<handle>` (Modus 0600), registriert den Public Key mit `operator` = ausführender User und trägt die Identität unter `identities` in die User-Config ein (§2.15.1). Signiert wird dieser Commit vom ausführenden Menschen. Jedes Mitglied darf so eigene Agents anlegen; menschliche User legen nur Admins an (§2.13).
+- `backe user revoke-key <handle> <fingerprint>` verschiebt einen Key nach `revoked_keys`. Ab dem Widerrufs-Commit ist der Key ungültig: Ein Commit ist nur gültig, wenn sein Key im `users/`-Stand seines **Parent-Commits** nicht widerrufen ist (§2.13). Maßgeblich ist die Position in der Historie, nicht die Uhrzeit — Commit-Zeitstempel setzt der Signierer selbst. Das Feld `revoked` ist nur Information.
 - **Bootstrap:** `backe init` legt das Backlog an, registriert den ausführenden User und trägt ihn als Admin ein. Dieser erste Commit ist der Vertrauensanker (§2.13).
 
 ### 2.13 Signaturen und Verifikation
@@ -298,19 +300,22 @@ Arbeitet Sprints im Projekt web ab.
   Backe-Op: {"op":"issue.move","id":"bk-7f3k2","from":"in_progress","to":"review"}
   ```
 
-  `Backe-Op` ist die serialisierte Operation (§2.16.4). Fehlt sie (Hand-Edit über `backe commit`), steht `Backe-Op: manual`.
+  `Backe-Op` ist die serialisierte Operation (§2.16.4). Ein Batch trägt `Backe-Op: batch` und die Operationen im Body (§2.16.6). Nur Änderungen, die sich nicht als Operation ausdrücken lassen, tragen `Backe-Op: manual` (s. »Hand-Edits«).
+- **Lineare Historie.** Der Sync-Branch enthält keine Merge-Commits; `backe` integriert per Replay (§2.16.2). `verify` lehnt Merge-Commits ab. Erst dadurch ist »der `users/`-Stand des Parent-Commits« eindeutig.
+- **Vertrauensanker.** Der erste Commit des Backlogs. `backe backlog clone` und `backe init` merken seinen Hash in `.git/backe/anchor`; `verify` prüft gegen diesen gemerkten Anker, nicht gegen den ersten Commit der gerade vorliegenden Historie. Ein Remote, dessen Stand kein Nachfahre des zuletzt verifizierten lokalen Stands ist (Force-Push, umgeschriebene Historie), wird abgelehnt (Exit-Code 5).
 - **Verifikation** `backe verify [--since <rev>]` prüft jeden Commit seit dem Vertrauensanker:
   1. Signatur gültig;
-  2. der signierende Key gehört laut `users/` **im Stand des Parent-Commits** zu einem User und war zum Commit-Zeitpunkt nicht widerrufen;
+  2. der signierende Key gehört laut `users/` **im Stand des Parent-Commits** zu einem User und ist dort nicht widerrufen;
   3. `Backe-Actor` ist dieser User;
   4. Identitätsschutz — genau die Regeln, ohne die sich jemand als ein anderer ausgeben könnte, und keine weiteren (§3.10):
      - `users/<handle>.md` ändern nur dieser User selbst, bei Agents ihr `operator`, oder ein Admin (sonst könnte jemand seinen Key bei einem fremden User eintragen);
-     - neue User anlegen, User entfernen und `.backe/**` ändern nur Admins (`admins` in `backlog.jsonc`) — sonst ließe sich die Verifikation abschalten;
+     - neue Agent-User legt jedes Mitglied an, sofern `operator` es selbst ist; neue menschliche User anlegen, User entfernen und `.backe/**` ändern nur Admins (`admins` in `backlog.jsonc`) — sonst ließe sich die Verifikation abschalten;
      - `creator` eines neuen Issues = Akteur; `creator`, `id`, `created` sind danach unveränderlich;
-     - Kommentare ändern oder löschen nur ihre Autoren (sonst ließen sich jemandem Worte in den Mund legen).
+     - einen Kommentar ändern oder einzeln löschen nur sein Autor (sonst ließen sich jemandem Worte in den Mund legen). Wer ein ganzes Issue löscht, löscht dessen Kommentare mit — das ist keine Anmaßung, die Historie zeigt, wer gelöscht hat.
   Technisch: `allowed_signers` je relevantem Users-Stand nach `.git/backe/` generieren, Signatur über `git verify-commit` bzw. `git log --format='%G? %GK %GS'` auswerten; Policy-Prüfung über den Diff des Commits.
 - **Wann geprüft wird:** `backe sync` prüft eingehende Commits **vor** dem Übernehmen; ein ungültiger Commit stoppt den Sync mit Exit-Code 5 und Bericht. `verify` in `backlog.jsonc`: `strict` (Default; Sync stoppt), `warn` (Sync läuft, Warnung), `off`.
-- **Hand-Edits:** Menschen dürfen Dateien direkt im Editor ändern. `backe commit [-m <msg>]` validiert alle geänderten Dateien gegen das Schema, normalisiert sie kanonisch und erzeugt einen signierten Commit. `backe issue edit <id>` ohne Flags öffnet `$EDITOR` und macht dasselbe. Mit nacktem `git commit` erzeugte unsignierte Commits blockieren im Modus `strict` den Push; `backe commit --resign` signiert die lokalen, noch nicht gepushten Commits neu.
+- **Quarantäne — der Weg zurück.** Ein ungültiger Commit auf dem Remote würde im Modus `strict` jeden Client dauerhaft anhalten, und Historie umzuschreiben ist ausgeschlossen. Deshalb führt `.backe/quarantine.jsonc` (nur Admins ändern es) eine Liste `{sha, decision: "accepted" | "reverted", reason}`. `backe verify --accept <sha> --reason <text>` trägt ein, dass der Commit inhaltlich hingenommen wird; `--revert <sha>` trägt ihn ein und erzeugt im selben signierten Commit die Umkehrung seiner Änderungen. `verify` lässt eingetragene Commits passieren und meldet sie als Hinweis. Ein Client, der hängt, läuft weiter, sobald der Quarantäne-Commit eines Admins auf dem Remote liegt — dieser Commit ist selbst gültig und steht hinter dem ungültigen.
+- **Hand-Edits:** Menschen dürfen Dateien direkt im Editor ändern. `backe commit [-m <msg>]` validiert alle geänderten Dateien, normalisiert sie kanonisch und **übersetzt die Änderungen in Operationen**: Frontmatter-Änderungen in Feld-Operationen, eine Body-Änderung in `issue.body` (Vorbedingung: Hash des alten Bodys), neue Kommentar-Dateien in `comment.add`. Dasselbe gilt für `backe issue edit <id>` per `$EDITOR` und `--body-file`. Damit sind auch Hand-Edits replaybar. `Backe-Op: manual` bleibt nur für Änderungen ohne Operations-Entsprechung (Dateien außerhalb des Layouts, Anhänge, die von Hand ersetzt wurden). Mit nacktem `git commit` erzeugte unsignierte Commits blockieren im Modus `strict` den Push; `backe commit --resign` übersetzt die lokalen, noch nicht gepushten Commits nachträglich und signiert sie neu.
 - **Konsequenzen für den Betrieb:** Backlog-Repos werden direkt auf den Sync-Branch gepusht. Squash-Merges über eine Forge-UI oder Web-Edits auf GitHub zerstören bzw. ersetzen Signaturen und werden von `verify` als ungültig gemeldet. Ein Branch-Protection-Setup, das nur signierte Commits zulässt, ist empfohlen.
 
 ### 2.14 Kontext-Auflösung
@@ -326,7 +331,7 @@ Jeder Aufruf löst einen Kontext aus fünf Werten auf: **backlog**, **user** (Id
 5. `current` in `~/.backe/config.jsonc`
 6. sonst Fehler mit Hinweis auf `backe backlog use` / `backe init`
 
-**User, project, sprint** — erster Treffer gewinnt: Flag (`--as`, `--project`, `--sprint`) → Env (`BACKE_USER`, `BACKE_PROJECT`, `BACKE_SPRINT`) → `.backlog.local.jsonc` → `.backlog.jsonc` → Backlog-Eintrag in `~/.backe/config.jsonc` → globaler Default in `~/.backe/config.jsonc`.
+**User, project, sprint** — erster Treffer gewinnt: Flag (`--as`, `--project`, `--sprint`) → Env (`BACKE_USER`, `BACKE_PROJECT`, `BACKE_SPRINT`) → `.backlog.local.jsonc` → `.backlog.jsonc` → Backlog-Eintrag in `~/.backe/config.jsonc` → globaler Default in `~/.backe/config.jsonc`. Der aufgelöste User-Handle wird über `identities` der User-Config (§2.15.1) zu einem Key; ein Handle ohne Eintrag dort darf lesen, aber nicht schreiben.
 
 **Repo** — liegt das aktuelle Verzeichnis in einem Git-Repo, dessen Remote (kanonische URL) im aktiven Backlog registriert ist, ist dieses Repo Kontext. `.backlog.jsonc` kann es mit `"repo": "<name>"` festlegen oder mit `"repo": null` abschalten.
 
@@ -341,8 +346,8 @@ Jeder Aufruf löst einen Kontext aus fünf Werten auf: **backlog**, **user** (Id
 ```
 backe backlog list                       registrierte Backlogs, aktuelles markiert
 backe backlog use <name>                 setzt current
-backe backlog clone <url> [--name n]     klont nach ~/.backe/backlogs/<n> und registriert
-backe backlog add <name> <pfad>          registriert einen vorhandenen Clone
+backe backlog clone <url> [--name n]     registriert; geklont wird je Identität bei Bedarf (§2.16.1)
+backe backlog add <name> <pfad> [--as h] bindet einen vorhandenen Clone an eine Identität
 backe backlog remove <name> [--purge]    deregistriert; --purge löscht verwalteten Clone
 backe init [pfad] --name n --prefix p [--remote url]
 ```
@@ -357,11 +362,18 @@ Ort überschreibbar mit `BACKE_HOME`. Wird nie eingecheckt.
 {
   "$schema": "https://…/schemas/user-config.schema.json",
   "current": "acme",
-  "identity": { "user": "spw", "key": "~/.ssh/id_ed25519.pub" },  // globaler Default
+  "user": "spw",                          // globaler Default-Handle
+  "identities": {                         // Handle → Key; je Backlog, weil Handles nur dort eindeutig sind
+    "acme": {
+      "spw":      { "key": "~/.ssh/id_ed25519.pub" },        // Public Key → ssh-agent
+      "claude-1": { "key": "~/.backe/keys/acme/claude-1" }   // von create-agent eingetragen
+    }
+  },
   "backlogs": {
     "acme": {
-      "path": "~/.backe/backlogs/acme",
-      "identity": { "user": "spw", "key": "~/.ssh/id_ed25519.pub" },
+      "remote": "git@github.com:acme/backlog.git",
+      "user": "spw",                      // Default-Handle für dieses Backlog
+      "paths": { "spw": "~/code/acme-backlog" },  // optional: eigene Arbeitskopie statt verwalteter (§2.16.1)
       "sync": { "mode": "manual" }        // optional: überschreibt backlog.jsonc lokal
     }
   },
@@ -424,9 +436,11 @@ Liegt in einem Code-Repo oder Arbeitsverzeichnis. `.backlog.jsonc` ist zum Einch
 
 #### 2.16.1 Schreibpfad
 
+**Eine Arbeitskopie je Identität.** Jede Arbeitskopie gehört genau einer Identität (`.git/backe/identity`, gesetzt beim ersten Write). Nur so kann der Sync lokale Commits mit dem Key ihres eigenen Akteurs neu signieren (§2.16.2), ohne Zugriff auf fremde Keys. `backe` verwaltet die Clones selbst unter `~/.backe/backlogs/<backlog>/<handle>/` und legt sie beim ersten Zugriff einer Identität an (`git clone --reference` auf einen vorhandenen Clone desselben Backlogs, damit Objekte nicht doppelt liegen). Zwei Agents auf einer Maschine arbeiten damit transparent in zwei Clones. Eine eigene Arbeitskopie lässt sich per `backe backlog add … --as <handle>` binden; ein Write mit einer anderen Identität darin wird abgelehnt (Exit-Code 2, mit dem Pfad der passenden Arbeitskopie).
+
 Jede schreibende Operation:
 
-1. holt den Arbeitskopie-Lock `.git/backe/write.lock` (exklusiv angelegte Datei mit PID und Zeitstempel; verwaiste Locks toter Prozesse werden übernommen). Damit können mehrere Agents dieselbe Arbeitskopie nutzen.
+1. holt den Arbeitskopie-Lock `.git/backe/write.lock` (exklusiv angelegte Datei mit PID und Zeitstempel; verwaiste Locks toter Prozesse werden übernommen). Er serialisiert mehrere Prozesse derselben Identität — CLI-Aufrufe, MCP-Server, Hintergrund-Sync.
 2. prüft, dass der Sync-Branch ausgecheckt ist (kein detached HEAD, kein laufender Rebase) — sonst Abbruch mit Hinweis.
 3. lädt den Zustand, prüft Vorbedingungen, schreibt die Dateien kanonisch.
 4. `git add` exakt der betroffenen Pfade, signierter Commit (§2.13).
@@ -440,13 +454,17 @@ Writes sind damit local-first und schnell; die Verteilung passiert danach.
 `backe sync --background` wird als detached Prozess gestartet (`child_process.spawn` mit `detached: true`, `unref()`), Ausgabe nach `.git/backe/sync.log`.
 
 - **Debounce:** Hält bereits ein Sync-Prozess `.git/backe/sync.lock`, setzt der neue nur ein Dirty-Flag und beendet sich; der laufende Sync dreht nach Abschluss eine weitere Runde, solange das Flag gesetzt ist.
-- **Ablauf einer Runde:** `fetch` → eingehende Commits verifizieren (§2.13) → lokale Commits auf den Remote-Stand rebasen, dabei mit der eigenen Identität neu signieren → `push`. Push abgelehnt (jemand war schneller) → bis zu 5 Runden mit Backoff.
-- **Rebase-Konflikt:** Rebase abbrechen, auf Remote-Stand zurücksetzen und die lokalen Operationen semantisch wiederholen (§2.16.4).
-- **Fehler** (Netz weg, Verify fehlgeschlagen) blockieren nie lokale Writes. `backe sync status` und ein Hinweis in der Kopfzeile jeder Text-Ausgabe zeigen ungepushte Commits, letzte Sync-Zeit und offene Konflikte.
+- **Ablauf einer Runde:**
+  1. `fetch`, eingehende Commits verifizieren (§2.13).
+  2. Gibt es keine ungepushten lokalen Commits: Fast-Forward, fertig.
+  3. Sonst **immer Replay**, nicht nur bei einem Textkonflikt: Die Operationen der lokalen Commits werden gesammelt, die Arbeitskopie auf den Remote-Stand gesetzt und die Operationen in Reihenfolge erneut ausgeführt — mit voller Validierung gegen den neuen Stand (Vorbedingungen und Invarianten, §2.16.4) und je Operation bzw. Batch einem neuen, mit der eigenen Identität signierten Commit. Ein Git-Rebase allein sähe nicht, dass zwei textuell saubere Änderungen zusammen einen Zyklus bilden oder auf ein inzwischen gelöschtes Issue zeigen.
+  4. `push`. Abgelehnt (jemand war schneller) → zurück zu 1, bis zu 5 Runden mit Backoff.
+- **`manual`-Commits** unter den lokalen: Sie werden an ihrer Stelle in der Reihe per Cherry-Pick übernommen und neu signiert. Gibt es dabei einen Textkonflikt, bricht der Sync die Runde ab und lässt die Arbeitskopie im Zustand vor der Runde — sauber, auf dem lokalen Stand, ohne laufenden Rebase. Lokale Writes gehen weiter (sie stapeln sich ungepusht), `backe sync status` meldet den Konflikt, und `backe sync --interactive` führt im Vordergrund durch die Auflösung.
+- **Fehler** (Netz weg, Verify fehlgeschlagen, manueller Konflikt) blockieren nie lokale Writes. `backe sync status` und ein Hinweis in der Kopfzeile jeder Text-Ausgabe zeigen ungepushte Commits, letzte Sync-Zeit und offene Konflikte.
 
 #### 2.16.3 Frische beim Lesen
 
-Lesende Befehle arbeiten auf dem lokalen Stand. Bei `sync.mode: auto` stößt ein Read einen Hintergrund-Fetch an, wenn der letzte älter als `pull_interval` ist (nicht blockierend). `--sync` erzwingt einen blockierenden Pull vor dem Lesen. Der MCP-Server (§2.19) synchronisiert zusätzlich periodisch im Takt von `pull_interval`.
+Lesende Befehle arbeiten auf dem lokalen Stand. Bei `sync.mode: auto` stößt ein Read eine volle Hintergrund-Sync-Runde an (§2.16.2, inklusive Übernahme in die Arbeitskopie), wenn die letzte älter als `pull_interval` ist (nicht blockierend) — der nächste Read sieht dann den neuen Stand. `--sync` erzwingt einen blockierenden Pull vor dem Lesen. Der MCP-Server (§2.19) synchronisiert zusätzlich periodisch im Takt von `pull_interval`.
 
 #### 2.16.4 Operationen und semantisches Replay
 
@@ -454,30 +472,33 @@ Jede Mutation ist eine serialisierbare Operation mit Vorbedingungen, z. B.:
 
 ```json
 {"op":"issue.move","id":"bk-7f3k2","from":"in_progress","to":"review"}
-{"op":"issue.set","id":"bk-7f3k2","field":"assignee","from":null,"to":"claude-1"}
-{"op":"issue.add","id":"bk-7f3k2","field":"projects","value":"api"}
+{"op":"issue.edit","id":"bk-7f3k2","set":{"assignee":{"from":null,"to":"claude-1"}},"add":{"projects":["api"]}}
+{"op":"issue.body","id":"bk-7f3k2","from_hash":"9c1e…","body":"…"}
 {"op":"comment.add","id":"bk-7f3k2","file":"20261118T100400Z-spw-q8x.md"}
+{"op":"project.mv","from":"web/auth","to":"platform/auth"}
+{"op":"issue.rank","id":"bk-7f3k2","before":"bk-a91c0"}
 ```
 
-Die Operation steht im Trailer `Backe-Op` ihres Commits. Kommt es beim Rebase zu einem Konflikt, setzt `backe` auf den Remote-Stand zurück und führt die lokalen Operationen in Reihenfolge erneut aus:
+**Eine Operation je Befehl, aufgezeichnet als Absicht.** Ein CLI-Befehl oder MCP-Aufruf ergibt genau eine Operation; sie beschreibt, was der Akteur wollte, nicht welche Dateien sich änderten. Zusammengesetzte Befehle bleiben eine Operation: `issue edit` mit mehreren Flags (jedes Feld mit eigener Vorbedingung, alles atomar), `project mv`, `issue delete --orphan/--recursive` samt Referenzbereinigung, `issue link` mit implizitem Repo-Eintrag, `sprint close --carry-over`, `issue rank` samt Neunummerierung. Beim Replay wird die Absicht gegen den neuen Stand neu ausgewertet: `project.mv` erfasst dann auch Issues, die inzwischen jemand dem alten Pfad zugeordnet hat; `issue.rank --before` rechnet den Wert gegen die aktuellen Nachbarn neu.
 
-- **Vorbedingung erfüllt** (z. B. `from` stimmt noch) → neuer signierter Commit.
-- **Mengen-Operationen** (`add`/`remove` auf Listen) sind kommutativ und gelingen immer.
-- **Vorbedingung verletzt** (ein anderer Akteur hat denselben Wert anders gesetzt, Issue gelöscht) → die Operation wird nicht angewendet, sondern nach `.git/backe/conflicts/<ts>.json` geschrieben; `backe sync status` listet sie, `backe sync resolve` bietet *verwerfen* oder *trotzdem anwenden* an.
-- **`manual`-Commits** (Hand-Edits) lassen sich nicht wiederholen → klassischer Git-Konflikt, den ein Mensch auflöst; `backe` hält den Sync an und sagt es.
+Die Operation steht im Trailer `Backe-Op` ihres Commits. Beim Replay (§2.16.2) gilt je Operation:
 
-Da Frontmatter-Felder je eine Zeile belegen und es kein `updated`-Feld gibt (§2.3), merged Git die meisten parallelen Änderungen an verschiedenen Feldern ohnehin konfliktfrei; Replay ist der Fallback, nicht der Normalfall.
+- **Vorbedingungen und Invarianten erfüllt** → neuer signierter Commit. Invarianten sind die Regeln, die beim direkten Ausführen auch gelten: keine Zyklen in `blocked_by`, `depends_on`, `parent`; keine Referenz auf ein nicht existierendes Issue, Projekt, Sprint oder Repo; kein `done` an einem Parent mit offenen Sub-Issues; gültige Werte deklarierter Properties, die die Operation berührt (§2.24).
+- **Mengen-Operationen** (`add`/`remove` auf Listen) haben keine Wert-Vorbedingung und kollidieren nie miteinander — an den Invarianten können sie trotzdem scheitern, etwa wenn zwei parallele `depends_on`-Ergänzungen zusammen einen Zyklus bilden.
+- **Verletzt** → die Operation wird nicht angewendet, sondern nach `.git/backe/conflicts/<ts>.json` geschrieben; `backe sync status` listet sie, `backe sync resolve` bietet *verwerfen* oder *trotzdem anwenden* (mit erneuter Prüfung) an.
+- **Folgeoperationen:** Spätere lokale Operationen, die sich auf eine abgelegte beziehen — dasselbe Issue, ein von ihr erzeugtes Issue, ein Batch-Platzhalter —, landen ebenfalls in der Konfliktablage, gemeinsam mit ihr. Unabhängige Operationen laufen weiter.
+- **ID-Kollision beim Replay** (§2.5): Das lokal erzeugte Issue bekommt eine neue ID; spätere lokale Operationen, die die alte ID nennen, werden mit umgeschrieben.
 
 #### 2.16.5 Claim
 
 `backe issue claim <id>` und `backe next --claim` sind die einzigen **synchronen** Writes:
 
-1. blockierender `fetch` + Fast-Forward;
-2. Prüfung: Issue nicht blockiert, nicht terminal, Assignee leer oder ich;
-3. Commit: `assignee = ich`, `state = in_progress`;
-4. sofortiger `push`. Abgelehnt → `fetch`, erneut prüfen; hat inzwischen jemand anderes geclaimt → lokalen Commit verwerfen, Exit-Code 4.
+1. blockierende Sync-Runde (§2.16.2), samt Replay ungepushter lokaler Operationen;
+2. Prüfung: Das Issue ist claimbar (§2.22) — bereit, oder bereits `in_progress` mit Assignee = ich;
+3. Commit: `assignee = ich`, `state = in_progress`. Der Sprung aus `backlog` oder `todo` ist auch bei `workflow.strict: true` erlaubt — Claim ist der vorgesehene Einstieg in die Arbeit;
+4. sofortiger `push` aller ungepushten Commits, der Claim zuletzt. Abgelehnt → zurück zu 1; hat inzwischen jemand anderes geclaimt → Claim-Operation verwerfen, Exit-Code 4. Die übrigen lokalen Operationen bleiben und gehen mit dem nächsten Sync raus.
 
-Bei einem gemeinsamen Remote gibt es damit pro Issue genau einen Gewinner. Ohne Remote (`sync.mode: manual` oder kein Remote) ist Claim ein normaler lokaler Write.
+Bei einem gemeinsamen Remote gibt es damit pro Issue genau einen Gewinner — unter den Clients, die synchronisieren. Wer lokal `sync.mode: manual` setzt oder ohne Remote arbeitet, claimt nur lokal; die Garantie gilt für ihn nicht, und `backe` sagt das bei jedem Claim in einer Zeile.
 
 #### 2.16.6 Batch
 
@@ -499,7 +520,7 @@ backe init | doctor | context | verify | commit | batch | mcp
 backe backlog  list | use | clone | add | remove | show
 backe issue    create | list | show | edit | move | resume | reopen
               | assign | claim | rank | link | unlink | delete
-backe next     [--sprint s] [--project p] [--claim]
+backe next     [--sprint s] [--project p] [--level leaf|top] [--claim]
 backe comment  add | list | edit | delete
 backe attach   add | list | get | rm
 backe project  create | list | show | mv | rm
@@ -616,9 +637,10 @@ Die Reihenfolge ergibt sich aus zwei Feldern: `depends_on` legt harte Zwänge fe
 
 - **Richtung:** `depends_on` steht am abhängigen Issue. `B.depends_on: [A]` heißt: B ist erst dran, wenn A erledigt ist. Die Gegenrichtung (`dependents`) wird beim Lesen berechnet und nie gespeichert — so ändert eine neue Abhängigkeit genau eine Datei.
 - **Erledigt** im Sinne von `depends_on` ist eine Abhängigkeit in `done`, `cancelled` oder `rejected`. Hängt ein Issue an einer `cancelled`- oder `rejected`-Abhängigkeit, gilt es als bereit, aber `backe next` und `issue show` weisen darauf hin, weil die Voraussetzung vielleicht nie geliefert wurde.
-- **Bereit** (`issue list --ready`): State `todo` oder `backlog`, nicht `blocked`/`on_hold`, alle `depends_on` erledigt, keine offenen Sub-Issues (§2.23).
+- **Bereit** (`issue list --ready`): State `todo` oder `backlog`, alle `depends_on` erledigt, keine offenen Sub-Issues (§2.23) — und dasselbe für die Vorfahren: Kein Parent bis zur Wurzel ist `blocked` oder `on_hold`, und die `depends_on` aller Parents sind erledigt. Hängt ein Paket an einer offenen Entscheidung oder ist es pausiert, sind damit auch seine Sub-Issues nicht bereit.
+- **Claimbar** (§2.16.5): bereit, oder bereits `in_progress` mit Assignee = ich — und nicht belegt (§2.23, »Arbeitseinheit Teilbaum«), außer die Belegung ist meine eigene.
 - **Grenzen:** Abhängigkeiten dürfen über Sprints und Projekte hinweg zeigen; `next --sprint X` berücksichtigt auch Abhängigkeiten außerhalb von X. Zyklen werden beim Setzen abgelehnt, die Fehlermeldung nennt den Zyklus. Eine Abhängigkeit auf sich selbst ist verboten.
-- **`backe next`** wählt aus den bereiten Issues des Kontexts (Sprint, Projekt, Repo) mit Assignee leer oder ich:
+- **`backe next`** liefert zuerst ein Issue, das ich schon bearbeite (`in_progress`, Assignee = ich, Vorfahren nicht pausiert) — ein Agent, der nach einem Absturz neu startet, setzt so dort fort, wo er war. Sonst wählt es aus den bereiten Issues des Kontexts (Sprint, Projekt, Repo) mit Assignee leer oder ich:
   1. `todo` vor `backlog`;
   2. `rank` aufsteigend, Issues ohne `rank` zuletzt;
   3. danach topologisch: Issues, von denen viele andere (transitiv) abhängen, zuerst — sie geben am meisten frei;
@@ -645,10 +667,18 @@ Ein Issue hat höchstens einen Parent; ein Parent beliebig viele Sub-Issues. Die
 - **Umhängen:** `issue edit --parent <id>` bzw. `--no-parent`. Als Operation ist das ein Setzen mit Vorbedingung (`from`, §2.16.4), nicht kommutativ: Zwei parallele Umhängungen desselben Issues ergeben einen Konflikt, ebenso ein Zyklus, der erst durch zwei parallele Änderungen entsteht.
 - **Zusammenspiel mit dem State:**
   - Kein automatischer Übergang — weder schließt der Parent sich, wenn alle Sub-Issues erledigt sind, noch erben Sub-Issues den State des Parents. Jeder Write braucht einen signierenden Akteur.
-  - Ein Parent mit offenen Sub-Issues ist nicht bereit (§2.22): Die Arbeit passiert in den Sub-Issues. Sind alle erledigt, wird der Parent bereit und von `backe next` vorgeschlagen — zum Abschließen oder Prüfen.
+  - Ein Parent mit offenen Sub-Issues ist nicht bereit (§2.22): Die Arbeit passiert in den Sub-Issues. Sind alle erledigt, wird der Parent bereit und von `backe next` vorgeschlagen — zum Abschließen oder Prüfen. Ausnahme ist die Arbeitseinheit Teilbaum (unten).
   - `done` am Parent mit offenen Sub-Issues wird abgelehnt (§2.6). `cancelled`/`rejected` am Parent ist erlaubt; `backe` nennt dabei die offenen Sub-Issues, ändert sie aber nicht.
 - **Anzeige:** `issue show` listet die Sub-Issues mit State und Fortschritt (`3/5 erledigt`) und den Pfad der Parents bis zur Wurzel. `issue list --tree` stellt die Hierarchie eingerückt dar; `--parent <id>` zeigt die direkten Sub-Issues, `--top-level` nur Issues ohne Parent.
 - **Abgrenzung:** `parent` ist Gliederung (»gehört zu«), `depends_on` ist Reihenfolge (»kommt nach«). Beide dürfen gleichzeitig zwischen denselben Issues bestehen, sind aber unabhängig.
+
+**Arbeitseinheit Teilbaum.** Per Default ist ein Blatt die Arbeitseinheit: `next` verteilt Sub-Issues, der Parent ist Container. Manche Arbeit wird aber als Ganzes erledigt — ein Remediation-Paket behebt seine Findings in einem Commit (§2.25). Dafür:
+
+- **`backe next --level top`** wählt unter den obersten Issues des Kontexts (ohne `parent`) und behandelt jedes samt Teilbaum als eine Einheit. Bereit ist ein solches Issue nach den Regeln von §2.22, nur dass offene Sub-Issues es nicht ausschließen. Reihenfolge wie bei `next` (eigenes laufendes zuerst, dann `todo` vor `backlog`, `rank`, Topologie, `created`). `--level leaf` ist der Default.
+- **Claim eines Parents mit offenen Sub-Issues** ist erlaubt, wenn er so bereit ist; der Claim setzt `assignee` und `in_progress` nur am Parent.
+- **Belegung:** Ein Issue ist belegt, wenn ein Vorfahre `in_progress` oder `review` ist und einen anderen Assignee hat als ich. Belegte Issues sind nicht claimbar (Exit-Code 4, mit dem belegenden Vorfahren) und `next --level leaf` überspringt sie. Wer den Parent hält, arbeitet im Teilbaum frei: Sub-Issues schließen, neue anlegen, umhängen.
+- **Ende der Belegung:** sobald der Parent `in_progress`/`review` verlässt. Geht er auf `blocked` oder `on_hold`, ist der Teilbaum ohnehin nicht bereit (§2.22); wird er `done`, sind alle Sub-Issues erledigt (§2.6).
+- MCP: `issue_next` mit Parameter `level: "leaf" | "top"`.
 
 ### 2.24 Custom Properties
 
@@ -660,7 +690,7 @@ Ein Issue darf beliebige eigene Properties tragen — etwa die ID eines gespiege
 - **Kanonische Form:** `props` steht als letzter Key im Frontmatter, als Block-Map, Keys alphabetisch sortiert. Jede Property belegt mindestens eine eigene Zeile; parallele Änderungen verschiedener Properties mergen in Git meist konfliktfrei.
 - **CLI:** `--prop key=wert` setzt einen String, `--prop key:=<json>` einen getypten Wert (`--prop estimate_h:=4`, `--prop tags:='["sso","auth"]'`) — die Konvention von HTTPie. `--unset-prop key` entfernt. Leere `props` werden nicht geschrieben.
 - **Filter:** `issue list --prop key=wert` (Gleichheit, Vergleich auf der JSON-Darstellung; bei Strings exakt), `--prop key=a,b` (einer der Werte; ein Komma im Wert über die JSON-Form `--prop key:='"a,b"'`), `--prop key>=wert` / `key<=wert` für Zahlen und geordnete Enums (s. u.), `--has-prop key`. Mehrere `--prop` sind UND-verknüpft.
-- **Deklarierte Properties:** `backlog.jsonc` darf Properties deklarieren (§2.15.3). Eine deklarierte Property wird bei jedem Write gegen ihren Typ geprüft; nicht deklarierte bleiben frei, außer `props_strict: true`. Typen: `string`, `integer`, `number`, `boolean`, `enum` (mit `values`, optional `ordered: true` für `>=`/`<=`; die Liste steht dann vom höchsten zum niedrigsten Wert), `json` (beliebig). Jede Deklaration hat eine `description`; `backe context --props` und das MCP-Tool `context_get` liefern sie aus, damit ein Agent weiß, was eine Property bedeutet. Wird eine Deklaration verschärft, meldet `backe verify` die Issues, deren Werte nicht mehr passen; der nächste Write auf ein solches Issue muss den Wert korrigieren.
+- **Deklarierte Properties:** `backlog.jsonc` darf Properties deklarieren (§2.15.3). Eine deklarierte Property wird bei jedem Write gegen ihren Typ geprüft; nicht deklarierte bleiben frei, außer `props_strict: true`. Typen: `string`, `integer`, `number`, `boolean`, `enum` (mit `values`, optional `ordered: true` für `>=`/`<=`; die Liste steht dann vom höchsten zum niedrigsten Wert), `json` (beliebig). Jede Deklaration hat eine `description`; `backe context --props` und das MCP-Tool `context_get` liefern sie aus, damit ein Agent weiß, was eine Property bedeutet. Wird eine Deklaration verschärft, meldet `backe verify` (als Hinweis, nicht als Fehler) die Issues, deren Werte nicht mehr passen. Geprüft wird bei einem Write nur, was er berührt: Eine Operation, die eine solche Property setzt, muss einen gültigen Wert setzen; `claim`, `move`, `comment add` und jede andere Operation, die die Property nicht anfasst, laufen ungehindert — auch beim Replay. Agents, die eine Property nicht kennen, werden so nie von ihr blockiert.
 - **Ausgabe:** JSON enthält `props` als Objekt; Text-`show` listet sie unter den eingebauten Feldern.
 - **Operation:** `{"op":"issue.prop","id":…,"key":…,"from":…,"to":…}` — Setzen mit Vorbedingung pro Key (§2.16.4). Zwei Akteure, die verschiedene Keys setzen, kommen sich nie in die Quere; derselbe Key mit verschiedenen Werten ergibt einen Konflikt.
 - `backe` legt keine Bedeutung in einzelne Properties; v1 kennt keine reservierten Property-Namen.
@@ -677,7 +707,7 @@ Die Skills `js-ts-project-audit` (erzeugt Findings) und `js-ts-audit-remediation
 | behoben — aus dem Backlog entfernt, gezählt in `resolvedCount` | `done`; die Zahl ergibt sich aus der Git-Historie |
 | akzeptiert (`acknowledged`) | `rejected` mit Begründung |
 | Remediation-Lauf; Plan-Kopf mit Scope-Regel, Baseline, Konventionen | Sprint (§2.10), Kopf als Sprint-Body |
-| Paket | Parent-Issue; die Findings sind seine Sub-Issues (§2.23) |
+| Paket | Parent-Issue; die Findings sind seine Sub-Issues (§2.23). Der Runner holt Pakete mit `next --level top --sprint <lauf> --claim` und belegt damit den Teilbaum |
 | Reihenfolge der Pakete (Phase, Stellung im Plan) | `rank` |
 | »Hängt ab von« (echter Zwang) | `depends_on` |
 | Paketmarken `[ ]` `[~]` `[r]` `[x]` `[!]` | `todo`, `in_progress`, `review`, `done`, `on_hold` |
@@ -732,7 +762,7 @@ Keine eigene Kryptographie, keine Kanonisierungsprobleme, keine Signaturfelder i
 - **Signatur pro Datei im Frontmatter** — bläht jede Datei auf, jeder Hand-Edit invalidiert sie, braucht eigene Kanonisierung.
 - **Signiertes Append-only-Operationslog als Wahrheit**, Issue-Dateien nur als Projektion — maximal merge-fest, aber die Datei, die Menschen editieren, wäre nicht mehr die Wahrheit.
 
-Preis: Signaturen hängen an Commits; Workflows, die Commits umschreiben (Squash, Web-Edits), sind ausgeschlossen. Rebase beim Sync signiert neu (§2.16.2) und ist deshalb unkritisch.
+Preis: Signaturen hängen an Commits; Workflows, die Commits umschreiben (Squash, Web-Edits), sind ausgeschlossen. Das Replay beim Sync erzeugt neue Commits mit der Identität der Arbeitskopie (§2.16.1, §2.16.2) und ist deshalb unkritisch.
 
 ### 3.6 Local-first-Writes, Hintergrund-Sync, synchroner Claim
 
@@ -795,7 +825,7 @@ Keine. Der Name `backe` ist eine Format-Entscheidung: Er steckt in `~/.backe/`, 
 - Batch: Platzhalter-Auflösung, Alles-oder-nichts bei einer ungültigen Zeile, ein Commit mit vollständigem Op-Body, Replay als Einheit.
 - Deklarierte Properties: Typprüfung je Typ, `props_strict`, Bereichsfilter auf geordneten Enums und Zahlen, Meldung nach verschärfter Deklaration.
 - Custom Properties: Key-Validierung, `=`/`:=`-Parsing, Roundtrip verschachtelter Werte, alphabetische Ordnung, Filter `--prop`/`--has-prop`, parallele Änderungen verschiedener Keys.
-- Sub-Issues: Zykluserkennung in `parent`, Vorbelegung beim Anlegen, `done`-Sperre bei offenen Sub-Issues, Bereitschaft eines Parents, `delete --orphan`/`--recursive`.
+- Sub-Issues: Zykluserkennung in `parent`, Vorbelegung beim Anlegen, `done`-Sperre bei offenen Sub-Issues, Bereitschaft eines Parents, `delete --orphan`/`--recursive`; `next --level top` mit offenen Sub-Issues, Belegung des Teilbaums (Blatt-`next` überspringt, fremder Claim → Exit-Code 4, eigener Claim erlaubt), Ende der Belegung.
 - Abhängigkeitsgraph: Zykluserkennung in `depends_on`, `--ready`-Berechnung (inkl. `cancelled`/`rejected`-Abhängigkeiten), Auswahlreihenfolge von `next` an konstruierten Graphen.
 - IDs: Format, Kurzform-Auflösung, Mehrdeutigkeit.
 - URL-Normalisierung als Tabelle.
@@ -805,7 +835,10 @@ Keine. Der Name `backe` ist eine Format-Entscheidung: Er steckt in `~/.backe/`, 
 **Integration** (echtes Git, Bare-Remote im Temp-Verzeichnis, zwei oder mehr Clones):
 
 - `init`, `clone`, signierte Commits, `verify` gegen unsignierte, fremd signierte und nach Widerruf signierte Commits; Policy-Verstöße (Nicht-Admin ändert `users/`, `creator` geändert).
-- Parallele Änderungen verschiedener Felder → konfliktfreier Merge; gleiches Feld → Konflikt-Eintrag.
+- Parallele Änderungen verschiedener Felder → konfliktfreies Replay; gleiches Feld → Konflikt-Eintrag; zwei textuell saubere `depends_on`-/`parent`-Änderungen, die zusammen einen Zyklus bilden → Konflikt-Eintrag samt Folgeoperationen; `project.mv` erfasst ein parallel dem alten Pfad zugeordnetes Issue.
+- Identität je Arbeitskopie: automatischer Clone je Handle, Ablehnung eines fremden Handles, Re-Signatur beim Replay mit dem eigenen Key.
+- Verify: Merge-Commit abgelehnt; Force-Push gegen den gemerkten Anker erkannt; Widerruf topologisch (ein Commit mit widerrufenem Key auf einem Parent nach dem Widerruf ist ungültig, unabhängig vom Commit-Datum); Quarantäne `accepted`/`reverted` lässt einen hängenden Client weiterlaufen.
+- Hand-Edits: `backe commit` übersetzt Frontmatter-, Body- und Kommentar-Änderungen in Operationen; ein `manual`-Konflikt lässt die Arbeitskopie sauber und blockiert keine Writes.
 - Paralleler Claim aus zwei Clones → genau ein Gewinner, Exit-Code 4 beim Verlierer. Die Reihenfolge der Pushes wird über einen Test-Hook im Sync deterministisch gesteuert, nicht über Last oder Timing.
 - Hintergrund-Sync: Debounce und Dirty-Flag über einen Hook, der den laufenden Sync anhält; Fake Timers für `pull_interval`.
 - Anhänge inkl. Größenlimit; LFS-Pfad nur, wenn `git-lfs` vorhanden ist (sonst skip mit Meldung).
