@@ -124,14 +124,14 @@ export function parsePropAssignment(expr: string): [key: string, value: PropValu
 }
 
 export type PropFilter =
-  | { key: string; op: 'eq'; values: PropValue[] }
+  | { key: string; op: 'eq'; values: PropValue[]; structural: boolean }
   | { key: string; op: 'ge' | 'le'; value: string | number }
   | { key: string; op: 'has' };
 
 export function parsePropFilter(expr: string): PropFilter {
   const [key, op, rest] = splitExpr(expr);
-  if (op === '=') return { key, op: 'eq', values: rest.split(',') };
-  if (op === ':=') return { key, op: 'eq', values: [parseJsonValue(key, rest)] };
+  if (op === '=') return { key, op: 'eq', values: rest.split(','), structural: false };
+  if (op === ':=') return { key, op: 'eq', values: [parseJsonValue(key, rest)], structural: true };
   const n = Number(rest);
   const value = rest.trim() !== '' && Number.isFinite(n) ? n : rest;
   return { key, op: op === '>=' ? 'ge' : 'le', value };
@@ -187,8 +187,10 @@ function structurallyEqual(a: PropValue, b: PropValue): boolean {
   return true;
 }
 
-function eqMatches(actual: PropValue, wanted: PropValue): boolean {
-  if (typeof wanted !== 'string') return structurallyEqual(actual, wanted);
+/** `=`: Textvergleich (Strings exakt, sonst JSON-Text); `:=`: strukturell, ohne JSON-Text-Abkürzung. */
+function eqMatches(actual: PropValue, wanted: PropValue, structural: boolean): boolean {
+  if (structural) return structurallyEqual(actual, wanted);
+  if (typeof wanted !== 'string') return false;
   return typeof actual === 'string' ? actual === wanted : JSON.stringify(actual) === wanted;
 }
 
@@ -218,7 +220,7 @@ export function propMatches(
   if (props === undefined || !Object.hasOwn(props, f.key)) return false;
   const actual = props[f.key] as PropValue;
   if (f.op === 'has') return true;
-  if (f.op === 'eq') return f.values.some((w) => eqMatches(actual, w));
+  if (f.op === 'eq') return f.values.some((w) => eqMatches(actual, w, f.structural));
   return rangeMatches(actual, { op: f.op, value: f.value, key: f.key }, config);
 }
 

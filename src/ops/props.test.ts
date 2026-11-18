@@ -113,10 +113,20 @@ describe('parsePropAssignment', () => {
 
 describe('parsePropFilter', () => {
   test('k=a,b lists string alternatives', () =>
-    expect(parsePropFilter('k=a,b')).toEqual({ key: 'k', op: 'eq', values: ['a', 'b'] }));
+    expect(parsePropFilter('k=a,b')).toEqual({
+      key: 'k',
+      op: 'eq',
+      values: ['a', 'b'],
+      structural: false,
+    }));
 
   test('k:=json carries exactly one parsed value, commas included', () =>
-    expect(parsePropFilter('k:="a,b"')).toEqual({ key: 'k', op: 'eq', values: ['a,b'] }));
+    expect(parsePropFilter('k:="a,b"')).toEqual({
+      key: 'k',
+      op: 'eq',
+      values: ['a,b'],
+      structural: true,
+    }));
 
   test('k:=json rejects invalid values', () =>
     expect(catchErr(() => parsePropFilter('k:=null')).code).toBe('usage'));
@@ -217,6 +227,31 @@ describe('propMatches', () => {
     expect(propMatches({ k: '4' }, parsePropFilter('k:=4'), config)).toBe(false);
     expect(propMatches({ k: [1, 2] }, parsePropFilter('k:=[1,2]'), config)).toBe(true);
     expect(propMatches({ k: [1, 2] }, parsePropFilter('k:=[1,2,3]'), config)).toBe(false);
+  });
+
+  test('a := string filter matches only the string, a := number only the number', () => {
+    const str = parsePropFilter('k:="4"');
+    expect([propMatches({ k: '4' }, str, config), propMatches({ k: 4 }, str, config)]).toEqual([
+      true,
+      false,
+    ]);
+    const num = parsePropFilter('k:=4');
+    expect([propMatches({ k: 4 }, num, config), propMatches({ k: '4' }, num, config)]).toEqual([
+      true,
+      false,
+    ]);
+  });
+
+  test('a := array filter respects element order', () => {
+    const f = parsePropFilter('k:=["a","b"]');
+    expect(propMatches({ k: ['a', 'b'] }, f, config)).toBe(true);
+    expect(propMatches({ k: ['b', 'a'] }, f, config)).toBe(false);
+  });
+
+  test('a := object filter ignores key order', () => {
+    const f = parsePropFilter('k:={"x":1,"y":2}');
+    expect(propMatches({ k: { y: 2, x: 1 } }, f, config)).toBe(true);
+    expect(propMatches({ k: { x: 1 } }, f, config)).toBe(false);
   });
 
   test('has matches a present key', () => {
