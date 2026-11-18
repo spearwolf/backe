@@ -109,3 +109,20 @@ export function snap(spec: SnapSpec = {}): BacklogSnapshot {
     problems: [],
   };
 }
+
+/** Deterministische Byte-Quelle für `ApplyContext.randomBytes`: 0, 1, 2, … über alle Aufrufe. */
+export function seqBytes(start = 0): (n: number) => Uint8Array {
+  let next = start;
+  return (n) => Uint8Array.from({ length: n }, () => next++ & 0xff);
+}
+
+/** Kopie des Snapshots, in der Issue `id` die unbekannten Keys `extra` trägt. */
+export function withExtra(
+  s: BacklogSnapshot,
+  id: string,
+  extra: [string, unknown][],
+): BacklogSnapshot {
+  const entity = s.issues.get(id);
+  if (entity === undefined) throw new Error(`withExtra: Issue ${id} fehlt im Snapshot`);
+  return { ...s, issues: new Map(s.issues).set(id, { ...entity, extra }) };
+}
