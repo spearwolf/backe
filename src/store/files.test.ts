@@ -150,3 +150,41 @@ test('a failing write rethrows, cleans its temp file and keeps earlier changes',
   expect(await readFile(join(root, 'repos/first.md'), 'utf8')).toBe('ok');
   expect((await readdir(join(root, 'repos'))).sort()).toEqual(['blocked.md', 'first.md']);
 });
+
+test('recursive delete removes a whole issue dir', async () => {
+  const root = await copyFixture('backlog-basic');
+  await applyFileChanges(root, [{ path: 'issues/7f/bk-7f3k2', content: null, recursive: true }]);
+  expect(existsSync(join(root, 'issues/7f'))).toBe(false);
+});
+
+test.each(['issues/7f', 'projects/web', 'issues/7f/bk-7f3k2/comments', 'issues/zz/bk-7f3k2'])(
+  'recursive delete refuses %s',
+  async (path) => {
+    const root = await copyFixture('backlog-basic');
+    expect(
+      (
+        await catchErrAsync(() =>
+          applyFileChanges(root, [{ path, content: null, recursive: true }]),
+        )
+      ).code,
+    ).toBe('validation');
+  },
+);
+
+test('recursive without null content is refused', async () => {
+  const root = await tempDir();
+  expect(
+    (
+      await catchErrAsync(() =>
+        applyFileChanges(root, [{ path: 'issues/7f/bk-7f3k2', content: 'x', recursive: true }]),
+      )
+    ).code,
+  ).toBe('validation');
+});
+
+test.each(['.GIT/config', 'a/.Git/x'])('rejects %s case-insensitively', async (path) => {
+  const root = await tempDir();
+  expect((await catchErrAsync(() => applyFileChanges(root, [{ path, content: 'x' }]))).code).toBe(
+    'validation',
+  );
+});

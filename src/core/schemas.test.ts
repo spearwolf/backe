@@ -461,3 +461,10 @@ test('backlog JSON schema describes the input side: defaulted fields are not req
     expect(schema.required).not.toContain(k);
   expect(schema.properties.sync.required ?? []).toEqual([]);
 });
+
+test('nested __proto__ in props is rejected', () => {
+  const props = JSON.parse('{"a":{"b":[{"__proto__":{"x":1}}]}}');
+  expect(catchErr(() => validateEntity('issue', { ...base, props }, 'f')).message).toContain(
+    'props.a.b.0.__proto__',
+  );
+});

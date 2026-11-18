@@ -217,7 +217,9 @@ function toPlain(node: unknown, ctx: PlainContext): unknown {
 type Plain = Record<string, unknown>;
 
 function isPlainObject(v: unknown): v is Plain {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
 }
 
 function compareCodepoints(a: string, b: string): number {

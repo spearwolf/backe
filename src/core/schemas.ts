@@ -328,6 +328,29 @@ const ENTITY_SCHEMAS = {
 } as const satisfies Record<EntityKind, z.ZodType>;
 
 /**
+ * Lehnt `__proto__` als Key in `props` in jeder Tiefe ab. Zod verwirft den Key sonst still,
+ * dann ginge er beim Schreiben unbemerkt verloren. Iterativ, damit die Tiefe keine Rolle spielt.
+ */
+function assertNoProtoKey(data: unknown, file: string): void {
+  const props = (data as { props?: unknown } | null)?.props;
+  const stack: [unknown, string][] = [[props, 'props']];
+  for (let top = stack.pop(); top !== undefined; top = stack.pop()) {
+    const [value, path] = top;
+    if (typeof value !== 'object' || value === null) continue;
+    for (const [k, v] of Object.entries(value)) {
+      const childPath = `${path}.${k}`;
+      if (k === '__proto__') {
+        throw new BackeError(
+          'validation',
+          `${file}: ${childPath}: Key "__proto__" ist nicht erlaubt`,
+        );
+      }
+      stack.push([v, childPath]);
+    }
+  }
+}
+
+/**
  * Prüft eine geparste Entität. Unbekannte Top-Level-Keys bleiben aus `data` draußen
  * und werden in Originalreihenfolge als `unknownKeys` gemeldet.
  */
@@ -336,6 +359,7 @@ export function validateEntity(
   data: unknown,
   file: string,
 ): { data: object; unknownKeys: string[] } {
+  if (kind === 'issue') assertNoProtoKey(data, file);
   const result = ENTITY_SCHEMAS[kind].safeParse(data);
   if (!result.success) {
     const lines = result.error.issues.map((i) => {

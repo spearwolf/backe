@@ -5,8 +5,13 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, rename, rm, rmdir, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, posix } from 'node:path';
 import { BackeError } from '../core/errors.ts';
+import { isIssueId, shardOf } from '../core/ids.ts';
 
-export type FileChange = { path: string; content: string | Uint8Array | null };
+/**
+ * `recursive` gilt nur zusammen mit `content: null` und nur für ein Issue-Verzeichnis
+ * `issues/<shard>/<id>`; es löscht das Verzeichnis samt Inhalt.
+ */
+export type FileChange = { path: string; content: string | Uint8Array | null; recursive?: true };
 
 /** Verzeichnisse, die beim Aufräumen nie entfernt werden. */
 const PROTECTED_DIRS: ReadonlySet<string> = new Set([
@@ -32,9 +37,28 @@ function assertRelative(path: string): void {
       hint: 'Erlaubt sind nur normalisierte, relative Pfade ohne "..", ".", "//" und Schrägstrich am Ende.',
     });
   }
-  if (segments.includes('.git')) {
+  // Groß-/Kleinschreibung egal, weil APFS und NTFS `.GIT` auf `.git` abbilden. Die NTFS-Aliase
+  // (`git~1`, `.git::$INDEX_ALLOCATION`) sind Aufgabe des Windows-Supports (backe.md §4.2).
+  if (segments.some((s) => s.toLowerCase() === '.git')) {
     throw new BackeError('validation', `Pfad unter .git im Backlog: "${path}"`, {
       hint: 'Unter ".git" liegen Git-Interna; dorthin schreibt und löscht backe nie.',
+    });
+  }
+}
+
+function assertRecursiveAllowed(change: FileChange): void {
+  if (change.recursive !== true) return;
+  const [dir, shard, id, ...rest] = change.path.split('/');
+  if (
+    change.content !== null ||
+    dir !== 'issues' ||
+    rest.length > 0 ||
+    id === undefined ||
+    !isIssueId(id) ||
+    shardOf(id) !== shard
+  ) {
+    throw new BackeError('validation', `Rekursives Löschen nicht erlaubt: "${change.path}"`, {
+      hint: 'Rekursiv gelöscht wird nur ein Issue-Verzeichnis "issues/<shard>/<id>" (content: null).',
     });
   }
 }
@@ -74,11 +98,14 @@ export async function applyFileChanges(
   root: string,
   changes: readonly FileChange[],
 ): Promise<void> {
-  for (const change of changes) assertRelative(change.path);
-  for (const { path, content } of changes) {
+  for (const change of changes) {
+    assertRelative(change.path);
+    assertRecursiveAllowed(change);
+  }
+  for (const { path, content, recursive } of changes) {
     const abs = join(root, path);
     if (content === null) {
-      await rm(abs, { force: true });
+      await rm(abs, recursive ? { recursive: true, force: true } : { force: true });
       await pruneEmptyDirs(root, path);
     } else {
       await mkdir(dirname(abs), { recursive: true });

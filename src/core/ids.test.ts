@@ -84,3 +84,19 @@ test('catchErr fails when nothing or a foreign error is thrown', () => {
     }),
   ).toThrow(/expected BackeError/);
 });
+
+test('generateIssueId gives up after 100 rerolls', () => {
+  const err = catchErr(() => generateIssueId('bk', { exists: () => true, issueCount: 0 }));
+  expect(err.code).toBe('unexpected');
+});
+
+test('generateIssueId rejects a short byte source', () =>
+  expect(
+    catchErr(() =>
+      generateIssueId('bk', {
+        exists: () => false,
+        issueCount: 0,
+        randomBytes: () => Uint8Array.of(1, 2),
+      }),
+    ).code,
+  ).toBe('unexpected'));

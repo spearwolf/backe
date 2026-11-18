@@ -518,3 +518,9 @@ describe('serializeEntityFile', () => {
     }
   });
 });
+
+test('serializer refuses non-plain objects', () =>
+  expect(
+    catchErr(() => serializeEntityFile('issue', { ...minimalIssue, props: { d: new Date(0) } }, ''))
+      .code,
+  ).toBe('unexpected'));

@@ -7,6 +7,7 @@ const PREFIX_RE = /^[a-z]{2,6}$/;
 const ID_RE = /^([a-z]{2,6})-([0-9a-hjkmnp-tv-z]{5,6})$/;
 const MIN_SHORT_LENGTH = 3;
 const LONG_ID_THRESHOLD = 50_000;
+const MAX_ID_ATTEMPTS = 100;
 
 export function isValidPrefix(p: string): boolean {
   return PREFIX_RE.test(p);
@@ -28,8 +29,14 @@ export function generateIssueId(
 ): string {
   const length = opts.issueCount > LONG_ID_THRESHOLD ? 6 : 5;
   const source = opts.randomBytes ?? cryptoRandomBytes;
-  for (;;) {
+  for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
     const bytes = source(length);
+    if (bytes.length < length) {
+      throw new BackeError(
+        'unexpected',
+        `Zufallsquelle lieferte ${bytes.length} statt ${length} Bytes`,
+      );
+    }
     let rand = '';
     for (let i = 0; i < length; i++) {
       // 256 ist durch 32 teilbar, `& 31` ist also gleichverteilt.
@@ -38,6 +45,10 @@ export function generateIssueId(
     const id = `${prefix}-${rand}`;
     if (!opts.exists(id)) return id;
   }
+  throw new BackeError(
+    'unexpected',
+    `Keine freie Issue-ID nach ${MAX_ID_ATTEMPTS} Versuchen gefunden`,
+  );
 }
 
 export function shardOf(id: string): string {
