@@ -2,6 +2,8 @@ import { catchErr } from '../../test/helpers/catch.ts';
 import {
   ATTACHMENT_NAME_RE,
   HANDLE_RE,
+  isBacklogName,
+  isGitArg,
   isHandle,
   isProjectPath,
   isRepoName,
@@ -69,6 +71,45 @@ test('parseRepoRef without ref', () => expect(parseRepoRef('webapp')).toEqual({ 
 test('parseRepoRef splits at first @', () =>
   expect(parseRepoRef('webapp@a@b')).toEqual({ name: 'webapp', ref: 'a@b' }));
 
-test.each(['webapp@', '@main', 'Web@x', '', 'a b@x'])('parseRepoRef(%j) is validation error', (s) =>
+test.each([
+  'webapp@',
+  '@main',
+  'Web@x',
+  '',
+  'a b@x',
+  'webapp@--upload-pack=x',
+  'webapp@-x',
+  'webapp@a b',
+  'webapp@a\nb',
+  'webapp@\u0001',
+])('parseRepoRef(%j) is validation error', (s) =>
   expect(catchErr(() => parseRepoRef(s)).code).toBe('validation'),
 );
+
+test.each(['main', 'feat/sso', '4e1f9c2', 'v1.2.3', 'a@b'])('parseRepoRef accepts ref %j', (ref) =>
+  expect(parseRepoRef(`webapp@${ref}`)).toEqual({ name: 'webapp', ref }),
+);
+
+test('backlog names', () => {
+  for (const s of ['acme', 'a', '0-x', 'a'.repeat(64)]) expect(isBacklogName(s)).toBe(true);
+  for (const s of ['../../.ssh', 'a b', '\u0001', '', 'Acme', '-a', 'a_b', 'a'.repeat(65)])
+    expect(isBacklogName(s)).toBe(false);
+});
+
+test('git arguments', () => {
+  for (const s of ['origin', 'main', 'feat/sso', '4e1f9c2', 'a-b', 'x@y'])
+    expect(isGitArg(s)).toBe(true);
+  for (const s of [
+    '--upload-pack=x',
+    '-',
+    'a b',
+    ' a',
+    'a\t',
+    '\u0001',
+    '\u007f',
+    '\u0085',
+    '\u00a0',
+    '',
+  ])
+    expect(isGitArg(s)).toBe(false);
+});

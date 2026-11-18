@@ -1,4 +1,5 @@
 import fc from 'fast-check';
+import { isGitArg } from '../../src/core/names.ts';
 import { KEY_ORDER, type PropValue } from '../../src/core/schemas.ts';
 
 /**
@@ -101,10 +102,7 @@ const arbProject = fc
   .map((segs) => segs.join('/'));
 const arbSprint = fc.stringMatching(/^[a-z0-9][a-z0-9-]{0,20}$/);
 const arbRepo = fc
-  .tuple(
-    fc.stringMatching(/^[a-z0-9][a-z0-9._-]{0,20}$/),
-    fc.option(arbString().filter((s) => s !== '')),
-  )
+  .tuple(fc.stringMatching(/^[a-z0-9][a-z0-9._-]{0,20}$/), fc.option(arbString().filter(isGitArg)))
   .map(([name, ref]) => (ref === null ? name : `${name}@${ref}`));
 const arbTimestamp = fc
   .date({

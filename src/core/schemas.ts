@@ -3,6 +3,8 @@ import { BackeError } from './errors.ts';
 import { isIssueId, isValidPrefix } from './ids.ts';
 import {
   ATTACHMENT_NAME_RE,
+  BACKLOG_NAME_RE,
+  GIT_ARG_RE,
   isHandle,
   isProjectPath,
   isSprintSlug,
@@ -58,6 +60,11 @@ const StateSchema = z.enum(STATES);
 const PausedFromSchema = z.enum(['backlog', 'todo', 'in_progress', 'review']);
 
 const nonEmpty = z.string().min(1);
+/** Als `regex`, nicht als `refine`, damit das Muster ins JSON Schema übernommen wird. */
+const BacklogName = z.string().regex(BACKLOG_NAME_RE, 'ungültiger Backlog-Name');
+const GitArg = z
+  .string()
+  .regex(GIT_ARG_RE, 'nicht leer, ohne führendes "-", ohne Leer- und Steuerzeichen erwartet');
 const Handle = z.string().refine(isHandle, 'kein gültiger Handle');
 const IssueIdSchema = z.string().refine((s) => isIssueId(s), 'keine gültige Issue-ID');
 
@@ -301,7 +308,7 @@ export const RepoSchema = z.object({
       return false;
     }
   }, 'keine gültige Repo-URL'),
-  default_ref: nonEmpty.optional(),
+  default_ref: GitArg.optional(),
 });
 
 export type Issue = z.infer<typeof IssueSchema>;
@@ -375,15 +382,15 @@ const PropDeclarationSchema = z
 export const BacklogConfigSchema = z.strictObject({
   $schema: SchemaRef,
   version: z.number().int().min(1),
-  name: nonEmpty,
+  name: BacklogName,
   id_prefix: z.string().refine(isValidPrefix, 'ungültiges Präfix'),
   admins: z.array(Handle).min(1),
   workflow: z.strictObject({ strict: z.boolean().default(false) }).default({ strict: false }),
   sync: z
     .strictObject({
       mode: z.enum(['auto', 'manual']).default('auto'),
-      remote: nonEmpty.default('origin'),
-      branch: nonEmpty.default('main'),
+      remote: GitArg.default('origin'),
+      branch: GitArg.default('main'),
       pull_interval: z.number().int().min(0).default(60),
     })
     .default({ mode: 'auto', remote: 'origin', branch: 'main', pull_interval: 60 }),
@@ -410,10 +417,10 @@ export const UserConfigSchema = z.strictObject({
   $schema: SchemaRef,
   current: nonEmpty.optional(),
   user: Handle.optional(),
-  identities: z.record(z.string(), z.record(Handle, z.strictObject({ key: nonEmpty }))).optional(),
+  identities: z.record(BacklogName, z.record(Handle, z.strictObject({ key: nonEmpty }))).optional(),
   backlogs: z
     .record(
-      z.string(),
+      BacklogName,
       z.strictObject({
         remote: nonEmpty.optional(),
         user: Handle.optional(),

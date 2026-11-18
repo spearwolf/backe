@@ -8,6 +8,16 @@ const MAX_PROJECT_DEPTH = 5;
 const SPRINT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const REPO_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
+/** Name eines Backlogs; wird später Verzeichnis- und Dateiname. */
+export const BACKLOG_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/**
+ * Strings, die später Git-Argumente werden (Remote, Branch, Ref): nicht leer, kein führendes
+ * "-" (sonst liest Git sie als Option), kein Whitespace, keine Steuerzeichen (C0, DEL, C1).
+ */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: Steuerzeichen werden hier gerade ausgeschlossen
+export const GIT_ARG_RE = /^(?!-)[^\s\u0000-\u001f\u007f-\u009f]+$/;
+
 export const ATTACHMENT_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 export const PROP_KEY_RE = /^[a-z][a-z0-9_.-]{0,63}$/;
 
@@ -38,6 +48,14 @@ export function isRepoName(s: string): boolean {
   return REPO_NAME_RE.test(s);
 }
 
+export function isBacklogName(s: string): boolean {
+  return BACKLOG_NAME_RE.test(s);
+}
+
+export function isGitArg(s: string): boolean {
+  return GIT_ARG_RE.test(s);
+}
+
 /** Zerlegt `name` oder `name@ref` am ersten `@`; der Ref darf `/` und weitere `@` enthalten. */
 export function parseRepoRef(s: string): { name: string; ref?: string } {
   const at = s.indexOf('@');
@@ -49,9 +67,9 @@ export function parseRepoRef(s: string): { name: string; ref?: string } {
   }
   if (at < 0) return { name };
   const ref = s.slice(at + 1);
-  if (ref === '') {
-    throw new BackeError('validation', `Leerer Ref in "${s}"`, {
-      hint: 'Form: <repo>@<ref>, z. B. webapp@main.',
+  if (!isGitArg(ref)) {
+    throw new BackeError('validation', `Ungültiger Ref in "${s}"`, {
+      hint: 'Form: <repo>@<ref>, z. B. webapp@main. Der Ref ist nicht leer, beginnt nicht mit "-" und enthält weder Leer- noch Steuerzeichen.',
     });
   }
   return { name, ref };

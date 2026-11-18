@@ -12,7 +12,7 @@
     },
     "name": {
       "type": "string",
-      "minLength": 1
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
     },
     "id_prefix": {
       "type": "string"
@@ -57,12 +57,12 @@
         "remote": {
           "default": "origin",
           "type": "string",
-          "minLength": 1
+          "pattern": "^(?!-)[^\\s\\u0000-\\u001f\\u007f-\\u009f]+$"
         },
         "branch": {
           "default": "main",
           "type": "string",
-          "minLength": 1
+          "pattern": "^(?!-)[^\\s\\u0000-\\u001f\\u007f-\\u009f]+$"
         },
         "pull_interval": {
           "default": 60,
