@@ -3,6 +3,7 @@ import { I, type SnapSpec, snap } from '../../test/helpers/snapshot.ts';
 import {
   ancestors,
   findCycle,
+  findPath,
   graphOf,
   isClaimable,
   isReady,
@@ -121,6 +122,57 @@ describe('findCycle', () => {
     const s = longChain();
     expect(findCycle(s, 'parent', I(9_999))).toBeUndefined();
     expect(findCycle(s, 'depends_on', I(9_999))).toBeUndefined();
+  });
+});
+
+describe('findPath', () => {
+  test('returns the path along the field', () => {
+    const s = snap({
+      issues: [
+        { id: I(1), depends_on: [I(4), I(2)] },
+        { id: I(2), depends_on: [I(3)] },
+        { id: I(3) },
+        { id: I(4) },
+      ],
+    });
+    expect(findPath(s, 'depends_on', I(1), I(3))).toEqual([I(1), I(2), I(3)]);
+    expect(findPath(s, 'depends_on', I(3), I(1))).toBeUndefined();
+    expect(findPath(s, 'parent', I(1), I(3))).toBeUndefined();
+  });
+
+  test('a node reaches itself with a one-element path', () => {
+    expect(findPath(snap(), 'parent', I(1), I(1))).toEqual([I(1)]);
+  });
+
+  test('follows parent and blocked_by', () => {
+    const s = snap({
+      issues: [
+        { id: I(1), parent: I(2), state: 'blocked', blocked_by: [I(3)] },
+        { id: I(2), parent: I(3) },
+        { id: I(3), state: 'blocked', blocked_by: [I(2)] },
+      ],
+    });
+    expect(findPath(s, 'parent', I(1), I(3))).toEqual([I(1), I(2), I(3)]);
+    expect(findPath(s, 'blocked_by', I(1), I(2))).toEqual([I(1), I(3), I(2)]);
+  });
+
+  test('ends at missing issues and does not loop on existing cycles', () => {
+    const s = snap({
+      issues: [
+        { id: I(1), depends_on: [I(9), I(2)] },
+        { id: I(2), depends_on: [I(1)] },
+        { id: I(3) },
+      ],
+    });
+    expect(findPath(s, 'depends_on', I(1), I(3))).toBeUndefined();
+    expect(findPath(s, 'depends_on', I(1), I(9))).toEqual([I(1), I(9)]);
+    expect(findPath(s, 'depends_on', I(8), I(1))).toBeUndefined();
+  });
+
+  test('long chains do not overflow the stack', () => {
+    const s = longChain();
+    expect(findPath(s, 'parent', I(9_999), I(0))).toHaveLength(10_000);
+    expect(findPath(s, 'depends_on', I(0), I(9_999))).toBeUndefined();
   });
 });
 

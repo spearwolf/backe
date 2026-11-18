@@ -3,7 +3,12 @@ import { arbIssueData } from '../../test/helpers/arbitraries.ts';
 import { catchErr } from '../../test/helpers/catch.ts';
 import { readFixture } from '../../test/helpers/fixtures.ts';
 import { validateEntity } from '../core/schemas.ts';
-import { entriesInFileOrder, parseEntityFile, serializeEntityFile } from './frontmatter.ts';
+import {
+  canonicalBody,
+  entriesInFileOrder,
+  parseEntityFile,
+  serializeEntityFile,
+} from './frontmatter.ts';
 
 const minimalIssue = {
   id: 'bk-7f3k2',
@@ -568,3 +573,21 @@ test('serializer refuses non-plain objects', () =>
     catchErr(() => serializeEntityFile('issue', { ...minimalIssue, props: { d: new Date(0) } }, ''))
       .code,
   ).toBe('unexpected'));
+
+describe('canonicalBody', () => {
+  test.each([
+    ['', ''],
+    ['a', 'a\n'],
+    ['a\n', 'a\n'],
+    ['a\r\nb', 'a\nb\n'],
+    ['a\r', 'a\n'],
+    ['a\n\n', 'a\n\n'],
+  ])('%j becomes %j', (body, expected) => expect(canonicalBody(body)).toBe(expected));
+
+  test('is what the serializer writes and the parser reads back', () => {
+    for (const body of ['', 'x', 'a\r\nb', 'c\r', 'd\n\n']) {
+      const text = serializeEntityFile('project', { title: 'T' }, body);
+      expect(parseEntityFile(text, 'p.md').body).toBe(canonicalBody(body));
+    }
+  });
+});

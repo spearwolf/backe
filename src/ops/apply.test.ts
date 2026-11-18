@@ -152,9 +152,22 @@ describe('Draft', () => {
     d.putIssue(I(1), { ...(base.issues.get(I(1))?.data as Issue) });
     d.putIssue(I(1), base.issues.get(I(1))?.data as Issue, '');
     expect(d.revision).toBe(0);
+    d.putIssue(I(1), base.issues.get(I(1))?.data as Issue, 'Text\n');
+    expect(d.revision).toBe(1);
+    expect(d.issue(I(1)).body).toBe('Text\n');
     d.putIssue(I(1), base.issues.get(I(1))?.data as Issue, 'Text');
     expect(d.revision).toBe(1);
-    expect(d.issue(I(1)).body).toBe('Text');
+  });
+
+  test('bodies are stored the way the serializer writes them', () => {
+    const d = new Draft(snap({ issues: [{ id: I(1) }], projects: ['web'] }), ctx());
+    d.putIssue(I(1), d.issue(I(1)).data, 'a\r\nb');
+    d.putEntity('project', 'web', { title: 'web' }, 'c\r');
+    expect(d.snapshot.issues.get(I(1))?.body).toBe('a\nb\n');
+    expect(d.snapshot.projects.get('web')?.body).toBe('c\n');
+    const [issue, project] = d.finish().changes;
+    expect(issue?.content).toMatch(/---\na\nb\n$/);
+    expect(project?.content).toMatch(/---\nc\n$/);
   });
 
   test('putIssue rejects data that does not fit the id or the schema', () => {

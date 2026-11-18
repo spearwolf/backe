@@ -4,7 +4,7 @@
  * Ein Draft wird nach jedem geworfenen Fehler verworfen; er kennt kein Zurückrollen.
  */
 import { BackeError } from '../core/errors.ts';
-import { CROCKFORD } from '../core/ids.ts';
+import { CROCKFORD, defaultRandomBytes } from '../core/ids.ts';
 import {
   type EntityKind,
   type Issue,
@@ -16,7 +16,7 @@ import {
 } from '../core/schemas.ts';
 import type { State } from '../core/state.ts';
 import type { FileChange } from '../store/files.ts';
-import { serializeEntityFile } from '../store/frontmatter.ts';
+import { canonicalBody, serializeEntityFile } from '../store/frontmatter.ts';
 import {
   commentFileName,
   commentsDir,
@@ -90,10 +90,6 @@ function byKey<T>([a]: [string, T], [b]: [string, T]): number {
 /** Top-Level-Keys mit `undefined` entfallen, damit gleiche Daten auch gleich aussehen. */
 function compact<T extends object>(o: T): T {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
-}
-
-function defaultRandomBytes(n: number): Uint8Array {
-  return crypto.getRandomValues(new Uint8Array(n));
 }
 
 export class Draft {
@@ -180,13 +176,7 @@ export class Draft {
       throw violation('schema', `${file}: id: erwartet ${id}, bekam ${parsed.id}`);
     }
     const before = this.findIssue(id);
-    if (this.#unchanged(before, parsed, body)) return;
-    this.#store('issues', id, {
-      data: parsed,
-      extra: before?.extra ?? [],
-      body: body ?? before?.body ?? '',
-      path: before?.path ?? file,
-    });
+    if (!this.#put('issues', id, file, before, parsed, body)) return;
     checkIssueInvariants(this, before?.data, parsed);
   }
 
@@ -213,14 +203,7 @@ export class Draft {
   putEntity<K extends NamedKind>(kind: K, key: string, data: NamedData[K], body?: string): void {
     const file = FILE_OF[kind](key);
     const parsed = this.#validated(kind, data, file);
-    const before = this.findEntity(kind, key);
-    if (this.#unchanged(before, parsed, body)) return;
-    this.#store(MAP_OF[kind], key, {
-      data: parsed,
-      extra: before?.extra ?? [],
-      body: body ?? before?.body ?? '',
-      path: before?.path ?? file,
-    });
+    this.#put(MAP_OF[kind], key, file, this.findEntity(kind, key), parsed, body);
   }
 
   removeEntity(kind: NamedKind, key: string): void {
@@ -333,12 +316,29 @@ export class Draft {
     return compact(result.data as Record<string, unknown>);
   }
 
-  #unchanged(before: StoredEntity<unknown> | undefined, data: unknown, body?: string): boolean {
-    return (
-      before !== undefined &&
-      sameValue(before.data, data) &&
-      (body === undefined || body === before.body)
-    );
+  /**
+   * Schreibt Daten und Body (so normalisiert, wie der Serializer ihn schreibt) in die Map; `false`,
+   * wenn beides schon so dasteht. Unbekannte Keys und Pfad bleiben.
+   */
+  #put(
+    name: MapName,
+    key: string,
+    file: string,
+    before: StoredEntity<unknown> | undefined,
+    data: object,
+    body: string | undefined,
+  ): boolean {
+    const nextBody = body === undefined ? (before?.body ?? '') : canonicalBody(body);
+    if (before !== undefined && sameValue(before.data, data) && nextBody === before.body) {
+      return false;
+    }
+    this.#store(name, key, {
+      data,
+      extra: before?.extra ?? [],
+      body: nextBody,
+      path: before?.path ?? file,
+    });
+    return true;
   }
 
   #sameStored(a: StoredEntity<unknown>, b: StoredEntity<unknown>): boolean {

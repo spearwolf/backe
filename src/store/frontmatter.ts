@@ -403,7 +403,13 @@ export function serializeEntityFile(
   }
 
   const yaml = root.items.length > 0 ? render(root) : '';
-  let text = body;
-  if (text !== '' && !text.endsWith('\n')) text += '\n';
-  return `${FENCE}\n${yaml}${FENCE}\n${toLf(text)}`;
+  return `${FENCE}\n${yaml}${FENCE}\n${canonicalBody(body)}`;
+}
+
+/**
+ * Der Body, wie `serializeEntityFile` ihn schreibt und `parseEntityFile` ihn zurückliest: ein
+ * nicht leerer Body endet auf `\n`, CRLF wird LF.
+ */
+export function canonicalBody(body: string): string {
+  return toLf(body !== '' && !body.endsWith('\n') ? `${body}\n` : body);
 }

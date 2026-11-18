@@ -1,5 +1,12 @@
 import { catchErr } from '../../test/helpers/catch.ts';
-import { generateIssueId, isIssueId, isValidPrefix, resolveShortId, shardOf } from './ids.ts';
+import {
+  defaultRandomBytes,
+  generateIssueId,
+  isIssueId,
+  isValidPrefix,
+  resolveShortId,
+  shardOf,
+} from './ids.ts';
 
 const bytes =
   (...v: number[]) =>
@@ -100,3 +107,8 @@ test('generateIssueId rejects a short byte source', () =>
       }),
     ).code,
   ).toBe('unexpected'));
+
+test('defaultRandomBytes delivers the requested number of bytes', () => {
+  expect(defaultRandomBytes(3)).toHaveLength(3);
+  expect(defaultRandomBytes(0)).toHaveLength(0);
+});

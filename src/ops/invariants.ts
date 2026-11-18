@@ -7,7 +7,7 @@ import { BackeError, type ErrorCode } from '../core/errors.ts';
 import { parseRepoRef } from '../core/names.ts';
 import type { Issue, PropValue } from '../core/schemas.ts';
 import type { Draft } from './draft.ts';
-import { findCycle } from './graph.ts';
+import { findPath } from './graph.ts';
 import { checkProps } from './props.ts';
 
 export type Violation =
@@ -148,7 +148,7 @@ function touchedProps(before: Issue | undefined, after: Issue): Record<string, P
  * Prüft, was `after` gegenüber `before` neu einführt (backe.md §2.16.4): Referenzen müssen
  * existieren, neue Kanten dürfen keinen Zyklus schließen, je Repo-Name höchstens ein Eintrag in
  * `repos`, berührte Properties passen zu ihrer Deklaration (backe.md §2.24). Der Draft enthält
- * `after` bereits, damit die Zyklensuche den neuen Stand sieht.
+ * `after` bereits, damit die Pfadsuche den neuen Stand sieht.
  */
 export function checkIssueInvariants(d: Draft, before: Issue | undefined, after: Issue): void {
   const missing = missingRefs(d, before, after);
@@ -159,10 +159,13 @@ export function checkIssueInvariants(d: Draft, before: Issue | undefined, after:
     });
   }
 
+  // Eine neue Kante id -> t schließt einen Zyklus, wenn t schon zu id zurückführt. Ein alter
+  // Zyklus, an dem keine neue Kante beteiligt ist, blockiert nicht.
   for (const field of EDGE_FIELDS) {
-    if (added(edgeTargets(before, field), edgeTargets(after, field)).length === 0) continue;
-    const cycle = findCycle(d.snapshot, field, after.id);
-    if (cycle !== undefined) {
+    for (const target of added(edgeTargets(before, field), edgeTargets(after, field))) {
+      const back = findPath(d.snapshot, field, target, after.id);
+      if (back === undefined) continue;
+      const cycle = [after.id, ...back];
       throw violation('cycle', `Zyklus in ${field}: ${cycle.join(' -> ')}`, { ids: cycle });
     }
   }

@@ -2,8 +2,9 @@
  * `issue.create` und `issue.edit` (Operationskatalog, backe.md §2.16.4): neue Issues mit
  * Vorgaben und Vererbung vom Parent anlegen, Felder mit Vorbedingung setzen und Listen ändern.
  */
-import { generateIssueId } from '../core/ids.ts';
+import { defaultRandomBytes, generateIssueId } from '../core/ids.ts';
 import type { Issue, PropValue } from '../core/schemas.ts';
+import { canonicalBody } from '../store/frontmatter.ts';
 import type { Draft } from './draft.ts';
 import { sameValue, violation } from './invariants.ts';
 import { bodyHash, type OpOf } from './operation.ts';
@@ -29,7 +30,7 @@ export function issueCreate(d: Draft, op: OpOf<'issue.create'>): OpOf<'issue.cre
     generateIssueId(s.config.id_prefix, {
       exists: (candidate) => idTaken(d, candidate),
       issueCount: s.issues.size,
-      ...(ctx.randomBytes === undefined ? {} : { randomBytes: ctx.randomBytes }),
+      randomBytes: ctx.randomBytes ?? defaultRandomBytes,
     });
   const parent = op.parent === undefined ? undefined : d.issue(op.parent).data;
   // Nur ein fehlendes Feld erbt; `[]` heißt ausdrücklich »keine«.
@@ -171,7 +172,7 @@ export function issueEdit(d: Draft, op: OpOf<'issue.edit'>): OpOf<'issue.edit'> 
   if (op.props !== undefined) next.props = editProps(op.id, before.props, op.props);
 
   let body: string | undefined;
-  if (op.body !== undefined && bodyHash(current.body) !== bodyHash(op.body.to)) {
+  if (op.body !== undefined && current.body !== canonicalBody(op.body.to)) {
     if (bodyHash(current.body) !== op.body.from_hash) {
       throw violation('precondition', `${op.id}: Body wurde inzwischen geändert`, { ids: [op.id] });
     }

@@ -59,21 +59,27 @@ export function ancestors(s: BacklogSnapshot, id: string): string[] {
   return out;
 }
 
-function edges(issue: Issue, field: 'parent' | 'depends_on' | 'blocked_by'): readonly string[] {
+type EdgeField = 'parent' | 'depends_on' | 'blocked_by';
+
+function edges(issue: Issue, field: EdgeField): readonly string[] {
   if (field === 'parent') return issue.parent === undefined ? [] : [issue.parent];
   return issue[field] ?? [];
 }
 
-/** Ein Pfad `[start, …, start]` entlang `field`, falls `start` auf einem Zyklus liegt. */
-export function findCycle(
+/**
+ * Tiefensuche über die Kanten von `from` (ohne `from` selbst als Treffer): Pfad `[from, …, to]`,
+ * sobald eine Kante auf `to` zeigt. Fehlende Issues haben keine Kanten; `to` selbst darf fehlen.
+ */
+function walk(
   s: BacklogSnapshot,
-  field: 'parent' | 'depends_on' | 'blocked_by',
-  start: string,
+  field: EdgeField,
+  from: string,
+  to: string,
 ): string[] | undefined {
-  const first = s.issues.get(start);
+  const first = s.issues.get(from);
   if (!first) return undefined;
-  const visited = new Set<string>([start]);
-  const path: string[] = [start];
+  const visited = new Set<string>([from]);
+  const path: string[] = [from];
   const stack: { next: readonly string[]; index: number }[] = [
     { next: edges(first.data, field), index: 0 },
   ];
@@ -85,7 +91,7 @@ export function findCycle(
       path.pop();
       continue;
     }
-    if (target === start) return [...path, start];
+    if (target === to) return [...path, to];
     const entity = s.issues.get(target);
     if (!entity || visited.has(target)) continue;
     visited.add(target);
@@ -93,6 +99,25 @@ export function findCycle(
     stack.push({ next: edges(entity.data, field), index: 0 });
   }
   return undefined;
+}
+
+/** Ein Pfad `[start, …, start]` entlang `field`, falls `start` auf einem Zyklus liegt. */
+export function findCycle(
+  s: BacklogSnapshot,
+  field: EdgeField,
+  start: string,
+): string[] | undefined {
+  return walk(s, field, start, start);
+}
+
+/** Ein Pfad `[from, …, to]` entlang `field`, falls `to` von `from` aus erreichbar ist. */
+export function findPath(
+  s: BacklogSnapshot,
+  field: EdgeField,
+  from: string,
+  to: string,
+): string[] | undefined {
+  return from === to ? [from] : walk(s, field, from, to);
 }
 
 /** Direkte Sub-Issues, die nicht erledigt sind. */

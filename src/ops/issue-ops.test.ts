@@ -332,6 +332,18 @@ describe('issue.edit', () => {
     expect(err.details).toMatchObject({ ids: [I(1), I(2), I(1)] });
   });
 
+  test('an existing cycle the new edge is not part of does not block', () => {
+    const s = snap({
+      issues: [{ id: I(1), depends_on: [I(2)] }, { id: I(2), depends_on: [I(1)] }, { id: I(3) }],
+    });
+    const r = edit(s, { add: { depends_on: [I(3)] } });
+    expect(data(r).depends_on).toEqual([I(2), I(3)]);
+    const err = editErr(r.snapshot, { add: { depends_on: [I(1)] } }, I(3));
+    expect([err.code, reasonOf(err)]).toEqual(['validation', 'cycle']);
+    expect(err.message).toContain('bk-t0003 -> bk-t0001 -> bk-t0003');
+    expect(err.details).toMatchObject({ ids: [I(3), I(1), I(3)] });
+  });
+
   test('setting a parent that closes a cycle is rejected', () => {
     const s = snap({ issues: [{ id: I(1) }, { id: I(2), parent: I(1) }] });
     const err = editErr(s, { set: { parent: { from: null, to: I(2) } } });
@@ -467,6 +479,10 @@ describe('issue.edit', () => {
 
     test('the current body is a no-op even with a stale hash', () => {
       expect(edit(s(), { body: { from_hash: bodyHash('anders\n'), to: 'alt\n' } }).noop).toBe(true);
+      expect(edit(s(), { body: { from_hash: bodyHash('anders\n'), to: 'alt' } }).noop).toBe(true);
+      expect(edit(s(), { body: { from_hash: bodyHash('anders\n'), to: 'alt\r\n' } }).noop).toBe(
+        true,
+      );
     });
   });
 
@@ -497,4 +513,13 @@ describe('issue.edit', () => {
       expect(err.details).toEqual({ reason: 'missing_ref', ids: [I(9)] });
     });
   });
+});
+
+test('without a random source issue ids come from the default source', () => {
+  const r = applyOperation(
+    snap({}),
+    { op: 'issue.create', title: 'x' },
+    { actor: 'spw', now: '2026-11-19T08:00:00Z' },
+  );
+  expect((r.recorded as OpOf<'issue.create'>).id).toMatch(/^bk-[0-9a-hjkmnp-tv-z]{5}$/);
 });

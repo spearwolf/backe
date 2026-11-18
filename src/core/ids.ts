@@ -19,6 +19,11 @@ export function isIssueId(s: string, prefix?: string): boolean {
   return prefix === undefined || m[1] === prefix;
 }
 
+/** Standard-Zufallsquelle für IDs und Dateinamen, wenn der Aufrufer keine eigene mitgibt. */
+export function defaultRandomBytes(n: number): Uint8Array {
+  return cryptoRandomBytes(n);
+}
+
 export function generateIssueId(
   prefix: string,
   opts: {
@@ -28,7 +33,7 @@ export function generateIssueId(
   },
 ): string {
   const length = opts.issueCount > LONG_ID_THRESHOLD ? 6 : 5;
-  const source = opts.randomBytes ?? cryptoRandomBytes;
+  const source = opts.randomBytes ?? defaultRandomBytes;
   for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
     const bytes = source(length);
     if (bytes.length < length) {
