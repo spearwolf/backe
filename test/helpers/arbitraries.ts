@@ -1,6 +1,9 @@
 import fc from 'fast-check';
 import { isGitArg } from '../../src/core/names.ts';
 import { KEY_ORDER, type PropValue } from '../../src/core/schemas.ts';
+import type { State } from '../../src/core/state.ts';
+import type { Operation } from '../../src/ops/operation.ts';
+import { commentFileName } from '../../src/store/layout.ts';
 
 /**
  * Bausteine, an denen YAML-Quoting typischerweise scheitert: Indikatoren am Anfang,
@@ -220,4 +223,268 @@ export function arbIssueData(): fc.Arbitrary<Record<string, unknown>> {
       const own = (list: unknown) => Array.isArray(list) && list.includes(d.id);
       return d.parent !== d.id && !own(d.blocked_by) && !own(d.depends_on);
     });
+}
+
+// --- Operationen (backe.md §2.16.4) ---------------------------------------------------
+
+const arbPlaceholder = fc.stringMatching(/^\$[A-Za-z0-9_-]{1,32}$/);
+const arbIssueRef = fc.oneof(arbIssueId, arbPlaceholder);
+const arbState: fc.Arbitrary<State> = fc.constantFrom(
+  'backlog',
+  'todo',
+  'in_progress',
+  'review',
+  'done',
+  'blocked',
+  'on_hold',
+  'cancelled',
+  'rejected',
+);
+const arbHash = fc.stringMatching(/^[0-9a-f]{64}$/);
+const arbCommentFile = fc
+  .tuple(
+    arbTimestamp,
+    arbHandle,
+    fc.string({ unit: fc.constantFrom(...ID_ALPHABET), minLength: 3, maxLength: 3 }),
+  )
+  .map(([created, author, rnd]) => commentFileName(created, author, rnd));
+const arbRepoName = fc.stringMatching(/^[a-z0-9][a-z0-9._-]{0,20}$/);
+const arbAttachName = fc.stringMatching(/^[a-z0-9][a-z0-9._-]{0,20}$/);
+const arbAttachFile = arbString().filter(
+  (s) => s !== '' && s !== '.' && s !== '..' && !s.includes('/'),
+);
+const arbHttpUrl = arbString().map((s) => `https://example.com/${s}`);
+const arbRepoUrl = fc
+  .tuple(
+    fc.constantFrom('https://github.com/', 'ssh://git@example.com/', 'gh:', '/srv/git/'),
+    fc.stringMatching(/^[a-z0-9][a-z0-9-]{0,10}$/),
+    fc.stringMatching(/^[a-z0-9][a-z0-9_-]{0,10}$/),
+  )
+  .map(([base, owner, repo]) => `${base}${owner}/${repo}`);
+const arbGitArg = arbString().filter(isGitArg);
+const arbSshKey = fc
+  .tuple(
+    fc.stringMatching(/^[A-Za-z0-9+/]{4,40}={0,2}$/),
+    fc.option(arbString().filter((s) => !/[\r\n]/.test(s))),
+  )
+  .map(([b64, comment]) => `ssh-ed25519 ${b64}${comment === null ? '' : ` ${comment}`}`);
+const arbDate = arbTimestamp.map((t) => t.slice(0, 10));
+const arbReason = arbString().filter((s) => s !== '');
+const arbRefList = nonEmptyUnique(arbIssueRef, 4);
+const arbPropOrNull = fc.option(arbPropValue, { nil: null });
+
+function fromTo<T>(arb: fc.Arbitrary<T>) {
+  return fc.record({ from: arb, to: arb });
+}
+
+const arbBodyEdit = fc.record({ from_hash: arbHash, to: arbString() });
+
+/** Record, dessen Schlüssel alle optional sind. */
+function opt<T extends Record<string, fc.Arbitrary<unknown>>>(model: T) {
+  return fc.record(model, { requiredKeys: [] });
+}
+
+/** Wie `opt`, aber mit mindestens einem gesetzten Schlüssel. */
+function someOf<T extends Record<string, fc.Arbitrary<unknown>>>(model: T) {
+  return opt(model).filter((o) => Object.keys(o).length > 0);
+}
+
+/** Pflichtfelder plus optionale Felder einer Katalogzeile. */
+function variant<N extends string>(
+  op: N,
+  required: Record<string, fc.Arbitrary<unknown>>,
+  optional: Record<string, fc.Arbitrary<unknown>> = {},
+) {
+  return fc
+    .tuple(fc.record(required), opt(optional))
+    .map(([req, rest]) => ({ op, ...req, ...rest }));
+}
+
+/** Hängt genau eine der Alternativen an den Kopf. */
+function withOneOf(
+  head: fc.Arbitrary<Record<string, unknown>>,
+  ...alternatives: fc.Arbitrary<Record<string, unknown>>[]
+) {
+  return fc.tuple(head, fc.oneof(...alternatives)).map(([h, alt]) => ({ ...h, ...alt }));
+}
+
+const arbListSection = someOf({
+  projects: nonEmptyUnique(arbProject, 3),
+  sprints: nonEmptyUnique(arbSprint, 3),
+  repos: nonEmptyUnique(arbRepo, 3),
+  depends_on: arbRefList,
+  blocked_by: arbRefList,
+});
+
+const arbIssueEdit = fc
+  .tuple(
+    arbIssueRef,
+    someOf({
+      set: someOf({
+        title: fromTo(arbTitle),
+        parent: fromTo(fc.option(arbIssueRef, { nil: null })),
+        assignee: fromTo(fc.option(arbHandle, { nil: null })),
+      }),
+      add: arbListSection,
+      remove: arbListSection,
+      props: fc.dictionary(arbPropKey, fromTo(arbPropOrNull), {
+        minKeys: 1,
+        maxKeys: 4,
+        noNullPrototype: true,
+      }),
+      body: arbBodyEdit,
+    }),
+  )
+  .map(([id, sections]) => ({ op: 'issue.edit', id, ...sections }));
+
+const ENTITY_KEY_ARBS = {
+  project: arbProject,
+  sprint: arbSprint,
+  repo: arbRepoName,
+  user: arbHandle,
+} as const;
+
+const arbEntityEdit = fc
+  .constantFrom(...(['project', 'sprint', 'repo', 'user'] as const))
+  .chain((kind) => {
+    const arbSet = fc
+      .shuffledSubarray([...KEY_ORDER[kind]], { minLength: 1 })
+      .chain((fields) => fc.tuple(...fields.map((f) => fromTo(arbPropOrNull).map((v) => [f, v]))))
+      .map((entries) => Object.fromEntries(entries));
+    return fc
+      .tuple(ENTITY_KEY_ARBS[kind], someOf({ set: arbSet, body: arbBodyEdit }))
+      .map(([key, sections]) => ({ op: 'entity.edit', kind, key, ...sections }));
+  });
+
+/** Gültige Operationen aus allen Einträgen des Operationskatalogs, `content` inklusive. */
+export function arbOperation(): fc.Arbitrary<Operation> {
+  const pausedFrom = fc.constantFrom('backlog', 'todo', 'in_progress', 'review');
+  const reasons = { reason: arbReason, reason_file: arbCommentFile };
+  const arbs = [
+    variant(
+      'issue.create',
+      { title: arbTitle },
+      {
+        ref: arbPlaceholder,
+        id: arbIssueId,
+        body: arbString(),
+        state: arbState,
+        blocked_by: arbRefList,
+        paused_from: pausedFrom,
+        parent: arbIssueRef,
+        depends_on: arbRefList,
+        rank: fc.integer(),
+        assignee: arbHandle,
+        projects: fc.uniqueArray(arbProject, { maxLength: 3 }),
+        sprints: fc.uniqueArray(arbSprint, { maxLength: 3 }),
+        repos: fc.uniqueArray(arbRepo, { maxLength: 3 }),
+        props: fc.dictionary(arbPropKey, arbPropValue, {
+          minKeys: 1,
+          maxKeys: 4,
+          noNullPrototype: true,
+        }),
+        created: arbTimestamp,
+      },
+    ),
+    arbIssueEdit,
+    variant(
+      'issue.move',
+      { id: arbIssueRef, from: arbState, to: arbState },
+      { blocked_by: arbRefList, force: fc.constant(true), ...reasons },
+    ),
+    variant(
+      'issue.resume',
+      { id: arbIssueRef, from: fc.constantFrom('blocked', 'on_hold') },
+      reasons,
+    ),
+    variant(
+      'issue.reopen',
+      { id: arbIssueRef, from: fc.constantFrom('done', 'cancelled', 'rejected') },
+      { to: pausedFrom, ...reasons },
+    ),
+    variant('issue.claim', { id: arbIssueRef }),
+    withOneOf(
+      variant('issue.rank', { id: arbIssueRef, from: fc.option(fc.integer(), { nil: null }) }),
+      fc.record({ top: fc.constant(true) }),
+      fc.record({ bottom: fc.constant(true) }),
+      fc.record({ before: arbIssueRef }),
+      fc.record({ after: arbIssueRef }),
+      fc.record({ value: fc.integer() }),
+    ),
+    withOneOf(
+      variant('issue.link', { id: arbIssueRef }, { ref: arbGitArg }),
+      fc.record({ repo: arbRepoName }),
+      fc.record({ url: arbRepoUrl }),
+    ),
+    variant('issue.unlink', { id: arbIssueRef, repo: arbRepoName }),
+    variant(
+      'issue.delete',
+      { id: arbIssueRef },
+      {
+        force: fc.constant(true),
+        children: fc.constantFrom('orphan', 'recursive'),
+        blocker_comments: fc.dictionary(arbIssueRef, arbCommentFile, {
+          maxKeys: 3,
+          noNullPrototype: true,
+        }),
+      },
+    ),
+    variant('comment.add', { id: arbIssueRef, body: arbString() }, { file: arbCommentFile }),
+    variant('comment.edit', {
+      id: arbIssueRef,
+      file: arbCommentFile,
+      from_hash: arbHash,
+      body: arbString(),
+    }),
+    variant('comment.delete', { id: arbIssueRef, file: arbCommentFile }),
+    withOneOf(
+      variant('attach.add', { id: arbIssueRef, name: arbAttachName }),
+      fc.record(
+        { file: arbAttachFile, content: fc.uint8Array({ maxLength: 8 }) },
+        { requiredKeys: ['file'] },
+      ),
+      fc.record({ url: arbHttpUrl }),
+    ),
+    variant('attach.rm', { id: arbIssueRef, name: arbAttachName }),
+    variant(
+      'project.create',
+      { path: arbProject, title: arbTitle },
+      { lead: arbHandle, body: arbString() },
+    ),
+    variant('project.mv', { from: arbProject, to: arbProject }),
+    withOneOf(
+      variant('project.rm', { path: arbProject }),
+      fc.constant({}),
+      fc.record({ reassign: arbProject }),
+      fc.record({ detach: fc.constant(true) }),
+    ),
+    variant(
+      'sprint.create',
+      { slug: arbSprint, title: arbTitle },
+      { start: arbDate, end: arbDate, body: arbString() },
+    ),
+    variant('sprint.close', { slug: arbSprint }, { carry_over: arbSprint }),
+    variant(
+      'repo.add',
+      { url: arbRepoUrl },
+      { name: arbRepoName, default_ref: arbGitArg, body: arbString() },
+    ),
+    variant('repo.rm', { name: arbRepoName }),
+    variant(
+      'user.add',
+      {
+        handle: arbHandle,
+        name: arbTitle,
+        kind: fc.constantFrom('human', 'agent'),
+        keys: nonEmptyUnique(arbSshKey, 2),
+      },
+      { operator: arbHandle, body: arbString() },
+    ),
+    variant('user.revoke_key', { handle: arbHandle, key: arbSshKey }, { revoked: arbTimestamp }),
+    variant('user.rm', { handle: arbHandle }),
+    arbEntityEdit,
+  ];
+  // Die Generatoren sind nur strukturell typisiert; der Roundtrip-Test prüft jede Ausgabe
+  // gegen OperationSchema.
+  return fc.oneof(...arbs) as fc.Arbitrary<unknown> as fc.Arbitrary<Operation>;
 }
