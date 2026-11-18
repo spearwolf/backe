@@ -600,6 +600,29 @@ describe('issue.rank', () => {
     const err = catchErr(() => rank(ranked(), { top: undefined, before: I(9) }));
     expect(err.exitCode).toBe(3);
   });
+
+  test('an anchor deleted before the replay is a missing reference', () => {
+    const afterDelete = applyOperation(ranked(), { op: 'issue.delete', id: I(2) }, ctx()).snapshot;
+    const err = catchErr(() => rank(afterDelete, { top: undefined, after: I(2) }));
+    expect([err.exitCode, err.details]).toEqual([3, { reason: 'missing_ref', ids: [I(2)] }]);
+  });
+
+  test('an anchor without rank is a schema violation with the hint', () => {
+    const s = snap({ issues: [{ id: I(1), rank: 1000 }, { id: I(2) }, { id: I(3) }] });
+    const err = catchErr(() => rank(s, { top: undefined, before: I(2) }));
+    expect([err.exitCode, err.details]).toEqual([2, { reason: 'schema', ids: [I(3)] }]);
+    expect(err.hint).toBe(`backe issue rank ${I(2)} --bottom`);
+  });
+
+  test('the issue itself as anchor is a schema violation', () => {
+    const err = catchErr(() => rank(ranked(), { top: undefined, before: I(3) }));
+    expect([err.exitCode, err.details]).toEqual([2, { reason: 'schema', ids: [I(3)] }]);
+  });
+
+  test('a non-integer value is a schema violation', () => {
+    const err = catchErr(() => rank(ranked(), { top: undefined, value: 2.5 }));
+    expect([err.exitCode, err.details]).toEqual([2, { reason: 'schema', ids: [I(3)] }]);
+  });
 });
 
 describe('issue.link', () => {

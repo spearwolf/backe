@@ -192,6 +192,29 @@ export function issueEdit(d: Draft, op: OpOf<'issue.edit'>): OpOf<'issue.edit'> 
 }
 
 /**
+ * `rankPlacement` mit Fehlern als Verletzung: ein fehlender Anker ist `missing_ref`, ein Anker ohne
+ * `rank`, das Issue selbst als Anker oder ein nicht ganzzahliger Wert `schema` mit dem Hinweis.
+ */
+function placeRank(
+  d: Draft,
+  id: string,
+  position: RankPosition,
+  anchor: string | undefined,
+): Map<string, number> {
+  try {
+    return rankPlacement(d.snapshot, id, position);
+  } catch (err) {
+    if (!(err instanceof BackeError)) throw err;
+    const hint = err.hint === undefined ? {} : { hint: err.hint };
+    if (err.code === 'not_found') {
+      throw violation('missing_ref', err.message, { ids: [anchor ?? id], ...hint });
+    }
+    if (err.code === 'validation') throw violation('schema', err.message, { ids: [id], ...hint });
+    throw err;
+  }
+}
+
+/**
  * `issue.rank` (backe.md §2.22): neue Ranks aus `rankPlacement`. Ändert sich nichts, ist es ein
  * No-op; sonst muss `from` zum aktuellen Rank des Issues passen.
  */
@@ -207,7 +230,7 @@ export function issueRank(d: Draft, op: OpOf<'issue.rank'>): OpOf<'issue.rank'> 
           : op.after !== undefined
             ? { after: op.after }
             : { value: op.value as number };
-  const placement = rankPlacement(d.snapshot, op.id, position);
+  const placement = placeRank(d, op.id, position, op.before ?? op.after);
   if (placement.size === 0) return op;
   expectFrom(op.id, 'rank', current, op.from);
   for (const [id, rank] of placement) d.putIssue(id, { ...d.issue(id).data, rank });
