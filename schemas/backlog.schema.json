@@ -35,9 +35,6 @@
           "type": "boolean"
         }
       },
-      "required": [
-        "strict"
-      ],
       "additionalProperties": false
     },
     "sync": {
@@ -74,12 +71,6 @@
           "maximum": 9007199254740991
         }
       },
-      "required": [
-        "mode",
-        "remote",
-        "branch",
-        "pull_interval"
-      ],
       "additionalProperties": false
     },
     "verify": {
@@ -116,10 +107,6 @@
           "type": "boolean"
         }
       },
-      "required": [
-        "max_bytes",
-        "lfs"
-      ],
       "additionalProperties": false
     },
     "props_strict": {
@@ -173,13 +160,7 @@
     "version",
     "name",
     "id_prefix",
-    "admins",
-    "workflow",
-    "sync",
-    "verify",
-    "attachments",
-    "props_strict",
-    "props"
+    "admins"
   ],
   "additionalProperties": false
 }

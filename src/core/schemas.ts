@@ -101,7 +101,7 @@ export type PropValue = string | number | boolean | PropValue[] | { [key: string
 const PropValueSchema: z.ZodType<PropValue> = z.lazy(() =>
   z.union([
     z.string(),
-    z.number().finite(),
+    z.number(),
     z.boolean(),
     z.array(PropValueSchema),
     z.record(z.string(), PropValueSchema),

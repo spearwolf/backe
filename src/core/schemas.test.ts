@@ -404,7 +404,20 @@ test('generated JSON schemas are up to date', async () => {
   ]);
   for (const [file, schema] of SCHEMA_FILES) {
     const text = await readFile(`schemas/${file}`, 'utf8');
-    expect(JSON.parse(text)).toEqual(z.toJSONSchema(schema));
-    expect(text).toBe(`${JSON.stringify(z.toJSONSchema(schema), null, 2)}\n`);
+    expect(JSON.parse(text)).toEqual(z.toJSONSchema(schema, { io: 'input' }));
+    expect(text).toBe(`${JSON.stringify(z.toJSONSchema(schema, { io: 'input' }), null, 2)}\n`);
   }
+});
+
+test('backlog JSON schema describes the input side: defaulted fields are not required', async () => {
+  const schema = JSON.parse(await readFile('schemas/backlog.schema.json', 'utf8')) as {
+    required: string[];
+    properties: { sync: { required?: string[] } };
+  };
+  expect(schema.required).toEqual(
+    expect.arrayContaining(['version', 'name', 'id_prefix', 'admins']),
+  );
+  for (const k of ['workflow', 'sync', 'verify', 'attachments', 'props_strict', 'props'])
+    expect(schema.required).not.toContain(k);
+  expect(schema.properties.sync.required ?? []).toEqual([]);
 });

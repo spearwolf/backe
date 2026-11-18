@@ -12,6 +12,9 @@ if (import.meta.main) {
   const dir = new URL('../schemas/', import.meta.url);
   await mkdir(dir, { recursive: true });
   for (const [file, schema] of SCHEMA_FILES) {
-    await writeFile(new URL(file, dir), `${JSON.stringify(z.toJSONSchema(schema), null, 2)}\n`);
+    await writeFile(
+      new URL(file, dir),
+      `${JSON.stringify(z.toJSONSchema(schema, { io: 'input' }), null, 2)}\n`,
+    );
   }
 }
