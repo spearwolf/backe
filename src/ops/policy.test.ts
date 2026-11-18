@@ -1,6 +1,8 @@
 import { catchErr } from '../../test/helpers/catch.ts';
 import { snap } from '../../test/helpers/snapshot.ts';
 import type { User } from '../core/schemas.ts';
+import { userFile } from '../store/layout.ts';
+import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { checkUserChange } from './policy.ts';
 
 const KEY = 'ssh-ed25519 AAAAkey';
@@ -14,6 +16,19 @@ const agent = (name: string, operator: string): User => ({
 const withKey = (u: User): User => ({ ...u, keys: [KEY] });
 
 const s = snap();
+
+/** Snapshot mit zusätzlichen (oder ohne, bei `undefined`) Users; Stand nach einer Änderung. */
+function withUsers(
+  base: BacklogSnapshot,
+  users: Record<string, User | undefined>,
+): BacklogSnapshot {
+  const map = new Map(base.users);
+  for (const [handle, data] of Object.entries(users)) {
+    if (data === undefined) map.delete(handle);
+    else map.set(handle, { data, extra: [], body: '', path: userFile(handle) });
+  }
+  return { ...base, users: map };
+}
 
 describe('checkUserChange', () => {
   test.each<[string, string, User | undefined, User | undefined, 'policy' | undefined]>([
@@ -121,5 +136,41 @@ describe('checkUserChange', () => {
         checkUserChange(s, 'spw', 'claude-1', claude, agent('claude-1', 'alice')),
       ).not.toThrow();
     });
+  });
+});
+
+describe('orphaned operators', () => {
+  const reason = (fn: () => void) => (catchErr(fn).details as { reason: string }).reason;
+  /** `bob-1` nennt `bob` als Operator, `users/bob.md` fehlt aber. */
+  const orphan = withUsers(s, { 'bob-1': agent('bob-1', 'bob') });
+
+  test('a non-human named as operator gets no operator rights', () => {
+    const after = withUsers(orphan, { bob: agent('bob', 'alice') });
+    const bob1 = agent('bob-1', 'bob');
+    expect(reason(() => checkUserChange(after, 'bob', 'bob-1', bob1, withKey(bob1)))).toBe(
+      'policy',
+    );
+    const sub = agent('sub-1', 'claude-1');
+    const withSub = withUsers(s, { 'sub-1': sub });
+    expect(reason(() => checkUserChange(withSub, 'claude-1', 'sub-1', sub, withKey(sub)))).toBe(
+      'policy',
+    );
+  });
+
+  test('a non-admin cannot create a user that an existing user names as operator', () => {
+    const bob = agent('bob', 'alice');
+    const after = withUsers(orphan, { bob });
+    expect(reason(() => checkUserChange(after, 'alice', 'bob', undefined, bob))).toBe('policy');
+  });
+
+  test('a user who still operates agents cannot be removed, for admins as well', () => {
+    const after = withUsers(s, {
+      'z-1': agent('z-1', 'alice'),
+      'a-2': agent('a-2', 'alice'),
+      alice: undefined,
+    });
+    const err = catchErr(() => checkUserChange(after, 'spw', 'alice', human('alice'), undefined));
+    expect(err.details).toEqual({ reason: 'references', ids: ['a-2', 'z-1'] });
+    expect(err.code).toBe('conflict');
   });
 });

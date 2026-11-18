@@ -9,13 +9,20 @@ import { violation } from './invariants.ts';
 /**
  * Prüft jede Änderung an `users/<handle>.md`; sie muss bei jedem Schreiben dieser Datei aufgerufen
  * werden, auch bei reinen Body- oder unbekannten-Key-Änderungen (die Entscheidung hängt nur von
- * Akteur und den Daten davor und danach ab). Ein Verstoß ist `policy`, `schema` oder `missing_ref`.
+ * Akteur und den Daten davor und danach ab). Ein Verstoß ist `policy`, `schema`, `missing_ref`
+ * oder `references`.
+ *
+ * `s` ist der Stand **nach** der Änderung: Ein neuer User steht schon darin, ein entfernter nicht
+ * mehr. Jeder Aufrufer übergibt diesen Stand, damit die Prüfung fremder Commits dieselbe
+ * Entscheidung trifft wie `applyOperation`.
  *
  * Für alle, auch Admins: Der `operator` eines Agents ist ein existierender Mensch (backe.md §2.12),
- * sobald er neu gesetzt wird. Admins (`config.admins`) dürfen sonst alles. Alle anderen dürfen
- * einen User ändern, wenn sie es selbst sind oder wenn es ihr Agent ist (`operator`), dabei aber
- * weder `kind` ändern noch den `operator` anders als dessen Mensch; einen neuen User nur anlegen,
- * wenn es ein Agent mit ihnen als `operator` ist; entfernen nie.
+ * sobald er neu gesetzt wird; ein User, der noch Operator von Agents ist, wird nicht entfernt.
+ * Admins (`config.admins`) dürfen sonst alles. Alle anderen dürfen einen User ändern, wenn sie es
+ * selbst sind oder wenn es ihr Agent ist (`operator`, nur wenn der Akteur ein Mensch ist), dabei
+ * aber weder `kind` ändern noch den `operator` anders als dessen Mensch; einen neuen User nur
+ * anlegen, wenn es ein Agent mit ihnen als `operator` ist und kein bestehender User den Handle
+ * als `operator` nennt (sonst übernähme der Neue fremde Agents); entfernen nie.
  */
 export function checkUserChange(
   s: BacklogSnapshot,
@@ -26,6 +33,26 @@ export function checkUserChange(
 ): void {
   checkRights(s, actor, handle, before, after);
   checkOperator(s, before, after);
+  if (after === undefined) checkNoAgents(s, handle);
+}
+
+/** Handles der Users, die `handle` als `operator` nennen, sortiert. */
+function agentsOf(s: BacklogSnapshot, handle: string): string[] {
+  return [...s.users]
+    .filter(([key, { data }]) => key !== handle && data.operator === handle)
+    .map(([key]) => key)
+    .sort();
+}
+
+/** Ein entfernter User darf keine Agents zurücklassen, deren Handle ein Neuer übernehmen könnte. */
+function checkNoAgents(s: BacklogSnapshot, handle: string): void {
+  const agents = agentsOf(s, handle);
+  if (agents.length > 0) {
+    throw violation('references', `${handle} ist Operator von ${agents.join(', ')}`, {
+      ids: agents,
+      hint: 'Erst die Agents entfernen oder ihren Operator ändern.',
+    });
+  }
 }
 
 /** Der `operator` eines neuen oder geänderten Agents ist ein existierender Mensch. */
@@ -58,7 +85,11 @@ function checkRights(
 ): void {
   if (s.config.admins.includes(actor)) return;
   if (before !== undefined && after !== undefined) {
-    const allowed = actor === handle || (before.kind === 'agent' && before.operator === actor);
+    const operates =
+      before.kind === 'agent' &&
+      before.operator === actor &&
+      s.users.get(actor)?.data.kind === 'human';
+    const allowed = actor === handle || operates;
     if (!allowed) {
       throw violation('policy', `${actor} darf den User ${handle} nicht ändern`, {
         hint: 'Ändern dürfen den User er selbst, bei einem Agent sein Operator und Admins.',
@@ -77,7 +108,14 @@ function checkRights(
     return;
   }
   if (before === undefined && after !== undefined) {
-    if (after.kind === 'agent' && after.operator === actor) return;
+    if (after.kind === 'agent' && after.operator === actor) {
+      const agents = agentsOf(s, handle);
+      if (agents.length === 0) return;
+      throw violation('policy', `${actor} darf den User ${handle} nicht anlegen`, {
+        ids: agents,
+        hint: `${handle} ist als Operator von ${agents.join(', ')} eingetragen; anlegen darf ihn nur ein Admin.`,
+      });
+    }
     throw violation('policy', `${actor} darf den User ${handle} nicht anlegen`, {
       hint: 'Anlegen dürfen Nutzer nur eigene Agents (operator = sie selbst); Menschen legen Admins an.',
     });

@@ -219,13 +219,13 @@ export function userRevokeKey(d: Draft, op: OpOf<'user.revoke_key'>): OpOf<'user
     throw violation('missing_ref', `User ${op.handle} hat diesen Key nicht`, { ids: [op.handle] });
   }
   const revoked = op.revoked ?? d.ctx.now;
-  const after: User = {
+  d.putEntity('user', op.handle, {
     ...before,
     keys: before.keys.filter((k) => k !== op.key),
     revoked_keys: [...(before.revoked_keys ?? []), { key: op.key, revoked }],
-  };
+  });
+  const after = d.entity('user', op.handle).data;
   checkUserChange(d.snapshot, d.ctx.actor, op.handle, before, after);
-  d.putEntity('user', op.handle, after);
   return { ...op, revoked };
 }
 
@@ -237,18 +237,8 @@ export function userRm(d: Draft, op: OpOf<'user.rm'>): OpOf<'user.rm'> {
       hint: 'Erst die Admin-Rolle in der Config entziehen.',
     });
   }
-  checkUserChange(d.snapshot, d.ctx.actor, op.handle, before, undefined);
-  const agents = [...d.snapshot.users]
-    .filter(([, { data }]) => data.operator === op.handle)
-    .map(([handle]) => handle)
-    .sort();
-  if (agents.length > 0) {
-    throw violation('references', `${op.handle} ist Operator von ${agents.join(', ')}`, {
-      ids: agents,
-      hint: 'Erst die Agents entfernen oder ihren Operator ändern.',
-    });
-  }
   d.removeEntity('user', op.handle);
+  checkUserChange(d.snapshot, d.ctx.actor, op.handle, before, undefined);
   return op;
 }
 

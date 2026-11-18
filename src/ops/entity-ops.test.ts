@@ -590,6 +590,59 @@ describe('user.rm', () => {
   });
 });
 
+describe('orphaned operator', () => {
+  /** `bob-1` ist Agent von `bob`, `users/bob.md` fehlt (etwa nach einem rohen Admin-Commit). */
+  function orphanSnap(): BacklogSnapshot {
+    const base = snap();
+    const data: User = {
+      name: 'bob-1',
+      kind: 'agent',
+      operator: 'bob',
+      keys: ['ssh-ed25519 AAAAbob1 bob-1'],
+    };
+    const users = new Map(base.users).set('bob-1', {
+      data,
+      extra: [],
+      body: '',
+      path: userFile('bob-1'),
+    });
+    return { ...base, users: new Map([...users].sort(([a], [b]) => (a < b ? -1 : 1))) };
+  }
+  const addBob: Operation = {
+    op: 'user.add',
+    handle: 'bob',
+    name: 'Bob',
+    kind: 'agent',
+    keys: [KEY],
+    operator: 'alice',
+  };
+
+  test('a non-admin cannot take over the handle of an orphaned operator', () => {
+    const err = fail(orphanSnap(), addBob, 'alice');
+    expect(reasonOf(err)).toBe('policy');
+  });
+
+  test('an agent carrying the handle of an orphaned operator cannot edit its agents', () => {
+    const withBob = run(orphanSnap(), addBob, 'spw').snapshot;
+    const err = fail(
+      withBob,
+      {
+        op: 'entity.edit',
+        kind: 'user',
+        key: 'bob-1',
+        set: {
+          keys: {
+            from: ['ssh-ed25519 AAAAbob1 bob-1'],
+            to: ['ssh-ed25519 AAAAbob1 bob-1', KEY],
+          },
+        },
+      },
+      'bob',
+    );
+    expect(reasonOf(err)).toBe('policy');
+  });
+});
+
 describe('entity.edit', () => {
   test('sets a field with its precondition', () => {
     const r = run(snap({ projects: ['web'] }), {
