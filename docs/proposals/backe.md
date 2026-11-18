@@ -127,8 +127,8 @@ attachments:
   - {name: figma, url: "https://www.figma.com/file/…"}
 created: 2026-11-18T10:04:00Z
 props:
-  github_issue: acme/webapp#123
   estimate_h: 4
+  github_issue: acme/webapp#123
 ---
 Nach dem Refresh des Access-Tokens landet der User wieder auf `/login`.
 
