@@ -1,4 +1,5 @@
-import { mkdir, open, readFile, rm } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { link, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { BackeError } from '../core/errors.ts';
@@ -30,24 +31,58 @@ async function readLock(lockPath: string): Promise<string | undefined> {
   }
 }
 
-async function tryCreate(lockPath: string): Promise<boolean> {
-  let handle: Awaited<ReturnType<typeof open>>;
+/** Ein Reap-Lock älter als dies gilt als verwaist (Reaping dauert Millisekunden). */
+const ORPHANED_REAP_MS = 10_000;
+
+/**
+ * Veröffentlicht den Lock atomar: vollständiger Inhalt in eine Temp-Datei, dann `link`.
+ * Die Zieldatei existiert so nie ohne ihren Inhalt; `EEXIST` heißt: gehalten.
+ */
+async function publish(lockPath: string): Promise<boolean> {
+  const tmp = `${lockPath}.${process.pid}.${randomBytes(6).toString('hex')}`;
   try {
-    handle = await open(lockPath, 'wx');
+    await writeFile(tmp, `${process.pid}\n${new Date().toISOString()}\n`, { flag: 'wx' });
+    await link(tmp, lockPath);
+    return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
     throw error;
-  }
-  try {
-    await handle.writeFile(`${process.pid}\n${new Date().toISOString()}\n`);
   } finally {
-    await handle.close();
+    await rm(tmp, { force: true });
   }
-  return true;
 }
 
 /**
- * Führt `fn` unter einem exklusiven Lock aus (PID-Datei, exklusiv angelegt).
+ * Entfernt den veralteten Lock `stale` serialisiert über `<lock>.reap`. Gelöscht wird nur, wenn
+ * die Datei noch genau diesen Inhalt hat und der Halter tot ist. Liefert, ob gelöscht wurde.
+ */
+async function reap(
+  lockPath: string,
+  stale: string,
+  pid: number,
+  isAlive: (pid: number) => boolean,
+): Promise<boolean> {
+  const reapPath = `${lockPath}.reap`;
+  if (!(await publish(reapPath))) {
+    try {
+      const { mtimeMs } = await stat(reapPath);
+      if (Date.now() - mtimeMs > ORPHANED_REAP_MS) await rm(reapPath, { force: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    return false;
+  }
+  try {
+    if ((await readLock(lockPath)) !== stale || isAlive(pid)) return false;
+    await rm(lockPath, { force: true });
+    return true;
+  } finally {
+    await rm(reapPath, { force: true });
+  }
+}
+
+/**
+ * Führt `fn` unter einem exklusiven Lock aus (PID-Datei, atomar veröffentlicht).
  * Die Datei eines toten Prozesses wird übernommen. Nicht reentrant: Steht die eigene PID
  * in der Datei, gilt der Lock als von einem lebenden Prozess gehalten.
  */
@@ -62,21 +97,23 @@ export async function withFileLock<T>(
   const deadline = Date.now() + timeoutMs;
 
   await mkdir(dirname(lockPath), { recursive: true });
-  while (!(await tryCreate(lockPath))) {
+  while (!(await publish(lockPath))) {
     const content = await readLock(lockPath);
-    // Zwischen Anlegeversuch und Lesen freigegeben: sofort neu versuchen.
-    if (content === undefined) continue;
-    const pid = Number.parseInt(content.split('\n')[0] ?? '', 10);
-    // Ohne lesbare PID (Datei gerade erst angelegt) gilt der Lock als gehalten.
-    if (Number.isInteger(pid) && pid > 0 && !isAlive(pid)) {
-      // Nur löschen, wenn nicht inzwischen jemand anderes den Lock übernommen hat.
-      if ((await readLock(lockPath)) === content) await rm(lockPath, { force: true });
+    const pid = Number.parseInt((content ?? '').split('\n')[0] ?? '', 10);
+    const valid = Number.isInteger(pid) && pid > 0;
+    // Ein eigenes Reaping bringt Fortschritt und wird sofort neu versucht; jeder andere Pfad prüft die Frist.
+    if (
+      content !== undefined &&
+      valid &&
+      !isAlive(pid) &&
+      (await reap(lockPath, content, pid, isAlive))
+    ) {
       continue;
     }
     if (Date.now() >= deadline) {
       throw new BackeError(
         'conflict',
-        `Lock ${lockPath} gehalten von PID ${Number.isInteger(pid) ? pid : 'unbekannt'}`,
+        `Lock ${lockPath} gehalten von PID ${valid ? pid : 'unbekannt'}`,
         {
           hint: 'Läuft noch ein anderer backe-Prozess?',
         },

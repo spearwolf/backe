@@ -1,5 +1,5 @@
 import { existsSync, writeFileSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
@@ -112,7 +112,7 @@ test('a stale lock whose content changed in between is not deleted', async () =>
   await writeFile(lock, '111\n');
   const isAlive = (pid: number): boolean => {
     if (pid === 111) {
-      // Ein anderer Prozess übernimmt den Lock zwischen erstem Lesen und Löschen.
+      // Ein anderer Prozess übernimmt den Lock zwischen erstem Lesen und Reaping.
       writeFileSync(lock, '222\n');
       return false;
     }
@@ -121,8 +121,83 @@ test('a stale lock whose content changed in between is not deleted', async () =>
   const err = await catchErrAsync(() =>
     withFileLock(lock, async () => 1, { timeoutMs: 0, isAlive }),
   );
-  expect(err.message).toContain('PID 222');
+  expect(err.code).toBe('conflict');
   expect(await readFile(lock, 'utf8')).toBe('222\n');
+});
+
+test('a stale lock whose holder turns out alive during reaping is kept', async () => {
+  const lock = join(await tempDir(), 'x.lock');
+  await writeFile(lock, '111\n');
+  let probes = 0;
+  const isAlive = (): boolean => ++probes > 1;
+  const err = await catchErrAsync(() =>
+    withFileLock(lock, async () => 1, { timeoutMs: 0, isAlive }),
+  );
+  expect(err.code).toBe('conflict');
+  expect(await readFile(lock, 'utf8')).toBe('111\n');
+});
+
+test('concurrent takeovers of a stale lock never run fn at the same time', async () => {
+  const dir = await tempDir();
+  const lock = join(dir, 'x.lock');
+  await writeFile(lock, '111\n');
+  let inside = 0;
+  let maxInside = 0;
+  const done: number[] = [];
+  const run = (n: number) =>
+    withFileLock(
+      lock,
+      async () => {
+        inside += 1;
+        maxInside = Math.max(maxInside, inside);
+        for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
+        inside -= 1;
+        done.push(n);
+      },
+      { isAlive: (pid) => pid !== 111, retryMs: 1 },
+    );
+  await Promise.all([run(1), run(2), run(3), run(4)]);
+  expect(maxInside).toBe(1);
+  expect(done.sort()).toEqual([1, 2, 3, 4]);
+  expect(existsSync(lock)).toBe(false);
+  expect(await readdir(dir)).toEqual([]);
+});
+
+test('an orphaned reap lock with an old mtime does not block a takeover', async () => {
+  const dir = await tempDir();
+  const lock = join(dir, 'x.lock');
+  await writeFile(lock, '111\n');
+  await writeFile(`${lock}.reap`, `${process.pid}\n`);
+  const old = new Date(Date.now() - 60_000);
+  await utimes(`${lock}.reap`, old, old);
+  expect(
+    await withFileLock(lock, async () => 'ok', { isAlive: (pid) => pid !== 111, retryMs: 1 }),
+  ).toBe('ok');
+  expect(await readdir(dir)).toEqual([]);
+});
+
+test('a fresh reap lock blocks the takeover like a held lock', async () => {
+  const dir = await tempDir();
+  const lock = join(dir, 'x.lock');
+  await writeFile(lock, '111\n');
+  await writeFile(`${lock}.reap`, `${process.pid}\n`);
+  const err = await catchErrAsync(() =>
+    withFileLock(lock, async () => 1, { timeoutMs: 0, isAlive: () => false }),
+  );
+  expect(err.code).toBe('conflict');
+  expect(await readFile(lock, 'utf8')).toBe('111\n');
+});
+
+test('the lock file is published complete and no temp file is left behind', async () => {
+  const dir = await tempDir();
+  const lock = join(dir, 'x.lock');
+  const seen = await withFileLock(lock, async () => ({
+    content: await readFile(lock, 'utf8'),
+    files: await readdir(dir),
+  }));
+  expect(seen.content).toMatch(/^\d+\n.+\n$/);
+  expect(seen.files).toEqual(['x.lock']);
+  expect(await readdir(dir)).toEqual([]);
 });
 
 test('the lock is released when fn throws', async () => {
@@ -133,4 +208,25 @@ test('the lock is released when fn throws', async () => {
     }),
   ).rejects.toThrow('x');
   expect(existsSync(lock)).toBe(false);
+});
+
+test('a lock path that is a directory surfaces the read error', async () => {
+  const lock = join(await tempDir(), 'x.lock');
+  await mkdir(lock);
+  await expect(withFileLock(lock, async () => 1, { timeoutMs: 0 })).rejects.toMatchObject({
+    code: 'EISDIR',
+  });
+});
+
+test('a failure to publish other than EEXIST is rethrown and leaves nothing behind', async () => {
+  const dir = await tempDir();
+  await chmod(dir, 0o500);
+  try {
+    await expect(withFileLock(join(dir, 'x.lock'), async () => 1)).rejects.toMatchObject({
+      code: 'EACCES',
+    });
+  } finally {
+    await chmod(dir, 0o700);
+  }
+  expect(await readdir(dir)).toEqual([]);
 });
