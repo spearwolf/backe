@@ -512,19 +512,19 @@ export function translateEdits(
     const { path } = f;
     if (f.before === null && f.after === null) continue;
     const cls = classifyPath(path);
-    if (cls.kind === 'config' || cls.kind === 'other' || cls.kind === 'attachment') {
-      const absorbed = cls.kind === 'attachment' && f.after === null && deletedIssues.has(cls.id);
-      if (f.before !== f.after && !absorbed) manual.push(path);
-      continue;
-    }
-    if (cls.kind === 'comment' && deletedIssues.has(cls.id)) {
-      if (f.after === null) continue;
-      // Sonst schriebe die Kommentar-Op einen Text, den `issue.delete` gleich wieder entfernt.
+    if ((cls.kind === 'comment' || cls.kind === 'attachment') && deletedIssues.has(cls.id)) {
+      if (f.after === null || f.before === f.after) continue;
+      // Sonst landete der neue Inhalt im Commit und `issue.delete` entfernte ihn gleich wieder.
+      const label = cls.kind === 'comment' ? 'Kommentar' : 'Anhang';
       throw new BackeError(
         'usage',
-        `${path}: Kommentar unter ${cls.id}, das im selben Edit gelöscht wird, ginge verloren`,
-        { hint: `Den Kommentar verwerfen oder ${cls.id} nicht löschen.` },
+        `${path}: ${label} unter ${cls.id}, das im selben Edit gelöscht wird, ginge verloren`,
+        { hint: `Den ${label} verwerfen oder ${cls.id} nicht löschen.` },
       );
+    }
+    if (cls.kind === 'config' || cls.kind === 'other' || cls.kind === 'attachment') {
+      if (f.before !== f.after) manual.push(path);
+      continue;
     }
 
     const kind = cls.kind;

@@ -589,6 +589,7 @@ describe('translateEdits', () => {
             after: null,
           },
           { path: `${attachmentsDir(I(2))}/shot.png`, before: 'png', after: null },
+          { path: `${attachmentsDir(I(2))}/same.png`, before: 'png', after: 'png' },
         ],
         asSpw,
       );
@@ -912,6 +913,21 @@ describe('translateEdits', () => {
           ],
           asSpw,
         ),
+      );
+      expect([err.code, err.message.includes(path), err.message.includes(I(2))]).toEqual([
+        'usage',
+        true,
+        true,
+      ]);
+    });
+
+    test.each([
+      ['a new attachment', null],
+      ['a changed attachment', 'alt'],
+    ])('%s under a deleted issue is a usage error', (_, before) => {
+      const path = `${attachmentsDir(I(2))}/shot.png`;
+      const err = catchErr(() =>
+        translateEdits(s, [removed(issueFile(I(2))), { path, before, after: 'neu' }], asSpw),
       );
       expect([err.code, err.message.includes(path), err.message.includes(I(2))]).toEqual([
         'usage',
