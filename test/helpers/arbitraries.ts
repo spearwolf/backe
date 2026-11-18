@@ -1,5 +1,5 @@
 import fc from 'fast-check';
-import type { PropValue } from '../../src/core/schemas.ts';
+import { KEY_ORDER, type PropValue } from '../../src/core/schemas.ts';
 
 /**
  * Bausteine, an denen YAML-Quoting typischerweise scheitert: Indikatoren am Anfang,
@@ -157,8 +157,21 @@ const arbStateFields = fc.oneof(
 );
 
 /**
+ * Unbekannte Top-Level-Keys (backe.md §2.3), auch integer-artige wie `"2"`, die JS-Objekte
+ * vor alle anderen Keys stellen. Werte wie bei `props`, oben ohne leere Liste (kanonisch).
+ */
+const arbUnknownTopLevel = fc.dictionary(
+  fc
+    .oneof(fc.stringMatching(/^[a-z_][a-z0-9_]{0,10}$/), fc.nat({ max: 999 }).map(String))
+    .filter((k) => !KEY_ORDER.issue.includes(k) && k !== '__proto__'),
+  arbPropValue.filter((v) => !(Array.isArray(v) && v.length === 0)),
+  { maxKeys: 3, noNullPrototype: true },
+);
+
+/**
  * Gültige, kanonische Issue-Frontmatter (backe.md §2.4): keine leeren Listen, keine leeren
- * `props`, kein `null`, kein `undefined`, nur endliche Zahlen ohne `-0`.
+ * `props`, kein `null`, kein `undefined`, nur endliche Zahlen ohne `-0`. Dazu bis zu drei
+ * unbekannte Top-Level-Keys.
  */
 export function arbIssueData(): fc.Arbitrary<Record<string, unknown>> {
   const optional = fc.record(
@@ -188,9 +201,11 @@ export function arbIssueData(): fc.Arbitrary<Record<string, unknown>> {
       fc.record({ id: arbIssueId, title: arbTitle, creator: arbHandle, created: arbTimestamp }),
       arbStateFields,
       optional,
+      arbUnknownTopLevel,
     )
     .map(
-      ([base, stateFields, rest]): Record<string, unknown> => ({
+      ([base, stateFields, rest, unknown]): Record<string, unknown> => ({
+        ...unknown,
         ...base,
         ...stateFields,
         ...rest,

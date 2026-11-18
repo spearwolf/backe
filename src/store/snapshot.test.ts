@@ -1,7 +1,8 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { copyFixture, fixture, tempDir } from '../../test/helpers/backlog.ts';
 import { catchErr, catchErrAsync } from '../../test/helpers/catch.ts';
+import { serializeEntityFile } from './frontmatter.ts';
 import { readJsonc } from './jsonc.ts';
 import { BACKLOG_CONFIG, issueFile } from './layout.ts';
 import { listComments, listIssueIds, loadSnapshot } from './snapshot.ts';
@@ -149,9 +150,20 @@ test('a snapshot without entity directories is empty', async () => {
   expect(s.problems).toEqual([]);
 });
 
-test('unknown keys survive a load/serialize cycle and are listed', async () => {
-  const s = await loadSnapshot(fixture('backlog-unknown-key'));
-  expect(s.issues.get('bk-7f3k2')?.unknownKeys).toEqual(['legacy']);
+test('unknown keys survive a load/serialize cycle with values and file order', async () => {
+  const root = fixture('backlog-unknown-key');
+  const s = await loadSnapshot(root);
+  expect(s.problems).toEqual([]);
+  const issue = s.issues.get('bk-7f3k2');
+  if (!issue) throw new Error('Issue fehlt');
+  // "2" steht in der Datei hinter "legacy", obwohl JS-Objekte integer-artige Keys voranstellen.
+  expect(issue.extra).toEqual([
+    ['legacy', 'yes'],
+    ['2', 'x'],
+  ]);
+  expect(issue.data).not.toHaveProperty('legacy');
+  const text = await readFile(join(root, issue.path), 'utf8');
+  expect(serializeEntityFile('issue', issue.data, issue.body, issue.extra)).toBe(text);
 });
 
 test('listIssueIds by shard', async () => {

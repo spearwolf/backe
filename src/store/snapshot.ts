@@ -20,11 +20,15 @@ import {
   type User,
   validateEntity,
 } from '../core/schemas.ts';
-import { parseEntityFile } from './frontmatter.ts';
+import { entriesInFileOrder, parseEntityFile } from './frontmatter.ts';
 import { readJsonc } from './jsonc.ts';
 import { BACKLOG_CONFIG, commentsDir } from './layout.ts';
 
-export type StoredEntity<T> = { data: T; body: string; unknownKeys: string[]; path: string };
+/**
+ * Eine geladene Entität. `extra` sind die unbekannten Top-Level-Keys samt Werten in
+ * Dateireihenfolge; sie gehören beim Zurückschreiben an `serializeEntityFile` (backe.md §2.3).
+ */
+export type StoredEntity<T> = { data: T; extra: [string, unknown][]; body: string; path: string };
 export type Problem = { path: string; message: string };
 
 export type BacklogSnapshot = {
@@ -80,7 +84,8 @@ async function readEntity<T>(
   const text = await readFile(join(root, path), 'utf8');
   const parsed = parseEntityFile(text, path);
   const { data, unknownKeys } = validateEntity(kind, parsed.data, path);
-  return { data: data as T, body: parsed.body, unknownKeys, path };
+  const extra = entriesInFileOrder(parsed, unknownKeys);
+  return { data: data as T, extra, body: parsed.body, path };
 }
 
 /** Wie `readEntity`, aber Prüffehler werden als Problem gesammelt statt geworfen. */

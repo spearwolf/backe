@@ -49,10 +49,14 @@ const FORBIDDEN_TOKENS: Readonly<Record<string, string>> = {
   'doc-end': 'mehrere Dokumente sind nicht erlaubt',
 };
 
-export function parseEntityFile(
-  text: string,
-  file: string,
-): { data: Record<string, unknown>; body: string } {
+/**
+ * Eine gelesene Entitätsdatei. `keys` sind die Top-Level-Keys in Dateireihenfolge — die
+ * Reihenfolge von `Object.keys(data)` weicht davon ab, weil JS integer-artige Keys wie `"2"`
+ * voranstellt.
+ */
+export type ParsedEntityFile = { data: Record<string, unknown>; keys: string[]; body: string };
+
+export function parseEntityFile(text: string, file: string): ParsedEntityFile {
   const src = toLf(text.startsWith('﻿') ? text.slice(1) : text);
   if (!src.startsWith(`${FENCE}\n`)) {
     throw new BackeError('validation', `${file}:1: Frontmatter muss mit "---" in Zeile 1 beginnen`);
@@ -62,8 +66,8 @@ export function parseEntityFile(
     const nl = src.indexOf('\n', pos);
     const end = nl === -1 ? src.length : nl;
     if (src.slice(pos, end) === FENCE) {
-      const data = parseFrontmatter(src.slice(FENCE.length + 1, pos), file);
-      return { data, body: nl === -1 ? '' : src.slice(nl + 1) };
+      const { data, keys } = parseFrontmatter(src.slice(FENCE.length + 1, pos), file);
+      return { data, keys, body: nl === -1 ? '' : src.slice(nl + 1) };
     }
     if (nl === -1) {
       throw new BackeError('validation', `${file}:1: Frontmatter ohne schließende "---"-Zeile`);
@@ -72,7 +76,19 @@ export function parseEntityFile(
   }
 }
 
-function parseFrontmatter(yaml: string, file: string): Record<string, unknown> {
+/** Die Einträge `[key, Rohwert]` der Keys aus `wanted`, in Dateireihenfolge. */
+export function entriesInFileOrder(
+  parsed: Pick<ParsedEntityFile, 'data' | 'keys'>,
+  wanted: Iterable<string>,
+): [string, unknown][] {
+  const set = new Set(wanted);
+  return parsed.keys.filter((k) => set.has(k)).map((k) => [k, parsed.data[k]]);
+}
+
+function parseFrontmatter(
+  yaml: string,
+  file: string,
+): { data: Record<string, unknown>; keys: string[] } {
   // Zeile 1 der Datei ist die öffnende "---"-Zeile, das Frontmatter beginnt in Zeile 2.
   const fail = (offset: number, reason: string): never => {
     const line = yaml.slice(0, offset).split('\n').length + 1;
@@ -93,9 +109,12 @@ function parseFrontmatter(yaml: string, file: string): Record<string, unknown> {
   if (error) fail(error.pos[0], `ungültiges YAML: ${error.message}`);
 
   const root = doc.contents;
-  if (root === null) return {};
+  if (root === null) return { data: {}, keys: [] };
   if (!isMap(root)) return fail(offsetOf(root), 'Frontmatter muss eine Map sein');
-  return toPlain(root, { yaml, fail }) as Record<string, unknown>;
+  const data = toPlain(root, { yaml, fail }) as Record<string, unknown>;
+  // toPlain hat bereits geprüft, dass jeder Key ein String-Skalar ist.
+  const keys = root.items.map((pair) => (pair.key as Scalar<string>).value);
+  return { data, keys };
 }
 
 /** Sucht im CST das erste Token, das das Subset verbietet, samt zweitem Dokument. */
@@ -306,23 +325,51 @@ function blockMap(obj: Plain, col: number, sorted: boolean): YAMLMap {
   return map;
 }
 
+/** Prüft, dass `extra` weder bekannte Keys noch Keys aus `data` noch Duplikate enthält. */
+function assertDistinctExtra(
+  kind: EntityKind,
+  data: Record<string, unknown>,
+  extra: readonly (readonly [string, unknown])[],
+): void {
+  const seen = new Set<string>();
+  for (const [key] of extra) {
+    if (KEY_ORDER[kind].includes(key) || Object.hasOwn(data, key) || seen.has(key)) {
+      throw new BackeError('unexpected', `extra-Key "${key}" kollidiert mit einem anderen Key`);
+    }
+    seen.add(key);
+  }
+}
+
+/**
+ * Schreibt eine Entitätsdatei kanonisch: bekannte Keys aus `data` in `KEY_ORDER`, dann
+ * unbekannte Keys aus `data`, dann `extra` in der gegebenen Reihenfolge, zuletzt `props`.
+ * `extra` trägt die unbekannten Top-Level-Keys einer gelesenen Datei (backe.md §2.3) und wird
+ * wörtlich geschrieben; leere Listen entfallen dort nicht.
+ */
 export function serializeEntityFile(
   kind: EntityKind,
   data: Record<string, unknown>,
   body: string,
+  extra: readonly (readonly [string, unknown])[] = [],
 ): string {
+  assertDistinctExtra(kind, data, extra);
   const known = KEY_ORDER[kind].filter((k) => k !== 'props');
   const knownSet = new Set(known);
-  const keys = [
-    ...known.filter((k) => Object.hasOwn(data, k)),
-    ...Object.keys(data).filter((k) => !knownSet.has(k) && k !== 'props'),
-    ...(Object.hasOwn(data, 'props') ? ['props'] : []),
+  type Entry = readonly [key: string, value: unknown, verbatim: boolean];
+  const fromData = (k: string): Entry => [k, data[k], false];
+  const entries: Entry[] = [
+    ...known.filter((k) => Object.hasOwn(data, k)).map(fromData),
+    ...Object.keys(data)
+      .filter((k) => !knownSet.has(k) && k !== 'props')
+      .map(fromData),
+    ...extra.map(([k, v]): Entry => [k, v, true]),
+    ...(Object.hasOwn(data, 'props') ? [fromData('props')] : []),
   ];
 
   const root = new YAMLMap();
-  for (const key of keys) {
-    const value = data[key];
-    if (value === undefined || (Array.isArray(value) && value.length === 0)) continue;
+  for (const [key, value, verbatim] of entries) {
+    if (value === undefined) continue;
+    if (!verbatim && Array.isArray(value) && value.length === 0) continue;
     let node: Node;
     if (key === 'props' && isPlainObject(value)) {
       if (entriesOf(value, false).length === 0) continue;

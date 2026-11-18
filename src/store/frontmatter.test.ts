@@ -3,7 +3,7 @@ import { arbIssueData } from '../../test/helpers/arbitraries.ts';
 import { catchErr } from '../../test/helpers/catch.ts';
 import { readFixture } from '../../test/helpers/fixtures.ts';
 import { validateEntity } from '../core/schemas.ts';
-import { parseEntityFile, serializeEntityFile } from './frontmatter.ts';
+import { entriesInFileOrder, parseEntityFile, serializeEntityFile } from './frontmatter.ts';
 
 const minimalIssue = {
   id: 'bk-7f3k2',
@@ -31,6 +31,13 @@ describe('Brief', () => {
         const p = parseEntityFile(once, 'f');
         expect(p.data).toEqual(data);
         expect(serializeEntityFile('issue', p.data, p.body)).toBe(once);
+        // Wie loadSnapshot: geprüfte Daten plus unbekannte Keys samt Werten als `extra`.
+        const { data: known, unknownKeys } = validateEntity('issue', p.data, 'f');
+        const extra = entriesInFileOrder(p, unknownKeys);
+        expect(extra.map(([k]) => k)).toEqual(p.keys.filter((k) => unknownKeys.includes(k)));
+        expect(serializeEntityFile('issue', known as Record<string, unknown>, p.body, extra)).toBe(
+          once,
+        );
       }),
     );
   });
@@ -134,6 +141,21 @@ describe('parseEntityFile', () => {
     ]);
   });
 
+  test('keys hält die Dateireihenfolge, auch für integer-artige Keys', () => {
+    const p = parse('state: todo\n"2": x\nid: x\n"10": y\n');
+    expect(p.keys).toEqual(['state', '2', 'id', '10']);
+    expect(Object.keys(p.data)).toEqual(['2', '10', 'state', 'id']);
+  });
+
+  test('entriesInFileOrder liefert die gewünschten Keys samt Rohwert in Dateireihenfolge', () => {
+    const p = parse('legacy: [a, 1]\nid: x\n"2": {k: v}\n');
+    expect(entriesInFileOrder(p, ['2', 'legacy'])).toEqual([
+      ['legacy', ['a', 1]],
+      ['2', { k: 'v' }],
+    ]);
+    expect(entriesInFileOrder(p, [])).toEqual([]);
+  });
+
   test('Block-Sequenzen, Flow-Maps und Block-Maps werden gelesen', () => {
     expect(parse('l:\n  - a\n  - {x: 1}\nm:\n  k: [1, b]\n').data).toEqual({
       l: ['a', { x: 1 }],
@@ -142,7 +164,7 @@ describe('parseEntityFile', () => {
   });
 
   test('leeres Frontmatter ist eine leere Map', () => {
-    expect(parse('')).toEqual({ data: {}, body: '' });
+    expect(parse('')).toEqual({ data: {}, keys: [], body: '' });
   });
 
   test('der Body bleibt unverändert, auch ohne abschließenden Newline', () => {
@@ -390,6 +412,47 @@ describe('serializeEntityFile', () => {
     );
   });
 
+  test('extra steht hinter den bekannten und unbekannten Keys aus data, vor props', () => {
+    const out = serializeEntityFile('issue', { ...minimalIssue, zeta: 1, props: { a: 1 } }, '', [
+      ['legacy', 'yes'],
+      ['2', 'x'],
+      ['alt', { b: 1, a: [] }],
+    ]);
+    expect(out).toBe(
+      `---\n${MINIMAL_YAML}zeta: 1\nlegacy: yes\n"2": x\nalt: {b: 1, a: []}\nprops:\n  a: 1\n---\n`,
+    );
+  });
+
+  test('extra bleibt wörtlich: leere Listen und Maps entfallen nicht', () => {
+    const extra: [string, unknown][] = [
+      ['l', []],
+      ['m', {}],
+    ];
+    const out = serializeEntityFile('issue', minimalIssue, '', extra);
+    expect(out).toBe(`---\n${MINIMAL_YAML}l: []\nm: {}\n---\n`);
+    const p = parseEntityFile(out, 'f');
+    expect(entriesInFileOrder(p, ['l', 'm'])).toEqual(extra);
+  });
+
+  test.each<[string, [string, unknown][]]>([
+    ['einem bekannten Key aus data', [['id', 'bk-a91c0']]],
+    ['einem unbekannten Key aus data', [['zeta', 2]]],
+    ['einem bekannten Key, der in data fehlt', [['assignee', 'spw']]],
+    ['props', [['props', { a: 1 }]]],
+    [
+      'doppeltem Key',
+      [
+        ['x', 1],
+        ['x', 2],
+      ],
+    ],
+  ])('extra mit %s ist ein Programmierfehler', (_, extra) => {
+    const err = catchErr(() =>
+      serializeEntityFile('issue', { ...minimalIssue, zeta: 1 }, '', extra),
+    );
+    expect(err.code).toBe('unexpected');
+  });
+
   test('lange Strings werden nicht umbrochen', () => {
     const title = 'wort '.repeat(60).trim();
     expect(frontmatter({ ...minimalIssue, title })).toContain(`\ntitle: ${title}\n`);
@@ -419,7 +482,7 @@ describe('serializeEntityFile', () => {
       const data = { ...minimalIssue, zeta: s, props: { v: s, l: [s, 'x'] } };
       const out = ser(data, 'Body');
       expect(out.split('\n').filter((l) => l === '---')).toHaveLength(2);
-      expect(parseEntityFile(out, 'f')).toEqual({ data, body: 'Body\n' });
+      expect(parseEntityFile(out, 'f')).toEqual({ data, keys: Object.keys(data), body: 'Body\n' });
     }
   });
 

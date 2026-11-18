@@ -1,8 +1,8 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fixture } from '../../test/helpers/backlog.ts';
-import type { EntityKind } from '../core/schemas.ts';
-import { parseEntityFile, serializeEntityFile } from './frontmatter.ts';
+import { type EntityKind, validateEntity } from '../core/schemas.ts';
+import { entriesInFileOrder, parseEntityFile, serializeEntityFile } from './frontmatter.ts';
 import {
   attachmentsDir,
   BACKLOG_CONFIG,
@@ -62,8 +62,13 @@ test('the backlog-basic fixture is canonical (serializer roundtrip is byte-ident
     const kind = kindOf(rel);
     if (!kind) continue;
     const text = readFileSync(file, 'utf8');
-    const { data, body } = parseEntityFile(text, rel);
-    expect(serializeEntityFile(kind, data, body), rel).toBe(text);
+    const parsed = parseEntityFile(text, rel);
+    const { data, unknownKeys } = validateEntity(kind, parsed.data, rel);
+    const extra = entriesInFileOrder(parsed, unknownKeys);
+    expect(
+      serializeEntityFile(kind, data as Record<string, unknown>, parsed.body, extra),
+      rel,
+    ).toBe(text);
     checked++;
   }
   expect(checked).toBe(10);
