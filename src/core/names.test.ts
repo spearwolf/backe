@@ -1,7 +1,7 @@
 import { catchErr } from '../../test/helpers/catch.ts';
 import {
   ATTACHMENT_NAME_RE,
-  HANDLE_RE,
+  HANDLE_PATTERN,
   isBacklogName,
   isGitArg,
   isHandle,
@@ -27,7 +27,7 @@ test('handle rules', () => {
   expect(isHandle('Ab')).toBe(false);
   expect(isHandle('a'.repeat(32))).toBe(true);
   expect(isHandle('a'.repeat(33))).toBe(false);
-  expect(HANDLE_RE.test('ab')).toBe(true);
+  expect(HANDLE_PATTERN.test('ab')).toBe(true);
 });
 
 test('project depth max 5', () => {

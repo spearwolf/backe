@@ -3,7 +3,7 @@ import { BackeError } from './errors.ts';
 
 export const CROCKFORD = '0123456789abcdefghjkmnpqrstvwxyz';
 
-const PREFIX_RE = /^[a-z]{2,6}$/;
+export const PREFIX_RE = /^[a-z]{2,6}$/;
 const ID_RE = /^([a-z]{2,6})-([0-9a-hjkmnp-tv-z]{5,6})$/;
 const MIN_SHORT_LENGTH = 3;
 const LONG_ID_THRESHOLD = 50_000;

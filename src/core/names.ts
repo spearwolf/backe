@@ -1,12 +1,13 @@
 import { BackeError } from './errors.ts';
 
-export const HANDLE_RE = /^[a-z0-9][a-z0-9-]{1,31}$/;
+/** Handle-Muster inkl. Ausschluss des reservierten `me`; als Muster, damit es ins JSON Schema wandert. */
+export const HANDLE_PATTERN = /^(?!me$)[a-z0-9][a-z0-9-]{1,31}$/;
 export const RESERVED_HANDLES: readonly string[] = ['me'];
 
-const PROJECT_SEGMENT_RE = /^[a-z0-9][a-z0-9-]*$/;
-const MAX_PROJECT_DEPTH = 5;
-const SPRINT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const REPO_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+/** Projektpfad: 1 bis 5 Segmente, durch `/` getrennt. */
+export const PROJECT_PATH_RE = /^[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*){0,4}$/;
+export const SPRINT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+export const REPO_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 /** Name eines Backlogs; wird später Verzeichnis- und Dateiname. */
 export const BACKLOG_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -22,14 +23,11 @@ export const ATTACHMENT_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 export const PROP_KEY_RE = /^[a-z][a-z0-9_.-]{0,63}$/;
 
 export function isHandle(s: string): boolean {
-  return HANDLE_RE.test(s) && !RESERVED_HANDLES.includes(s);
+  return HANDLE_PATTERN.test(s);
 }
 
 export function isProjectPath(s: string): boolean {
-  const segments = s.split('/');
-  return (
-    segments.length <= MAX_PROJECT_DEPTH && segments.every((seg) => PROJECT_SEGMENT_RE.test(seg))
-  );
+  return PROJECT_PATH_RE.test(s);
 }
 
 /** Echte Vorfahren eines Projektpfads, Wurzel zuerst; leer für ein Top-Level-Projekt. */

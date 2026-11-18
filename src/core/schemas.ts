@@ -1,15 +1,18 @@
 import { z } from 'zod';
 import { BackeError } from './errors.ts';
-import { isIssueId, isValidPrefix } from './ids.ts';
+import { isIssueId, PREFIX_RE } from './ids.ts';
 import {
   ATTACHMENT_NAME_RE,
   BACKLOG_NAME_RE,
   GIT_ARG_RE,
-  isHandle,
+  HANDLE_PATTERN,
   isProjectPath,
   isSprintSlug,
+  PROJECT_PATH_RE,
   PROP_KEY_RE,
   parseRepoRef,
+  REPO_NAME_RE,
+  SPRINT_SLUG_RE,
 } from './names.ts';
 import type { State } from './state.ts';
 import { normalizeRepoUrl } from './url.ts';
@@ -65,7 +68,7 @@ const BacklogName = z.string().regex(BACKLOG_NAME_RE, 'ungültiger Backlog-Name'
 const GitArg = z
   .string()
   .regex(GIT_ARG_RE, 'nicht leer, ohne führendes "-", ohne Leer- und Steuerzeichen erwartet');
-const Handle = z.string().refine(isHandle, 'kein gültiger Handle');
+const Handle = z.string().regex(HANDLE_PATTERN, 'kein gültiger Handle');
 const IssueIdSchema = z.string().refine((s) => isIssueId(s), 'keine gültige Issue-ID');
 
 const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
@@ -377,6 +380,34 @@ export function validateEntity(
 
 const SchemaRef = z.string().optional();
 
+const ProjectPath = z.string().regex(PROJECT_PATH_RE, 'ungültiger Projektpfad');
+const SprintSlug = z.string().regex(SPRINT_SLUG_RE, 'ungültiger Sprint-Slug');
+const RepoName = z.string().regex(REPO_NAME_RE, 'ungültiger Repo-Name');
+/** Eine Repo-URL, die `normalizeRepoUrl` zur kanonischen Form auflösen kann. */
+const RepoUrl = GitArg.refine(normalizesWithoutError, 'keine erkennbare Repo-URL');
+
+/**
+ * Kanonische Formen (`<host>/<pfad>`, `file:<abs-pfad>`) sind selbst keine gültigen Eingaben für
+ * `normalizeRepoUrl`; ein Key ist kanonisch, wenn die Normalisierung ihn unverändert zurückgibt.
+ */
+function isCanonicalRepoKey(k: string): boolean {
+  try {
+    const input = k.startsWith('file:') ? k.slice('file:'.length) : `https://${k}`;
+    return normalizeRepoUrl(input) === k;
+  } catch {
+    return false;
+  }
+}
+
+function normalizesWithoutError(s: string): boolean {
+  try {
+    normalizeRepoUrl(s);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const PropDeclarationSchema = z
   .strictObject({
     type: z.enum(['string', 'integer', 'number', 'boolean', 'enum', 'json']),
@@ -407,7 +438,7 @@ export const BacklogConfigSchema = z.strictObject({
   $schema: SchemaRef,
   version: z.number().int().min(1),
   name: BacklogName,
-  id_prefix: z.string().refine(isValidPrefix, 'ungültiges Präfix'),
+  id_prefix: z.string().regex(PREFIX_RE, 'ungültiges Präfix'),
   admins: z.array(Handle).min(1),
   workflow: z.strictObject({ strict: z.boolean().default(false) }).default({ strict: false }),
   sync: z
@@ -427,33 +458,33 @@ export const BacklogConfigSchema = z.strictObject({
     .default({ max_bytes: 10485760, lfs: false }),
   props_strict: z.boolean().default(false),
   props: z
-    .record(z.string(), PropDeclarationSchema)
-    .superRefine((props, ctx) => {
-      for (const k of Object.keys(props)) {
-        if (!PROP_KEY_RE.test(k))
-          ctx.addIssue({ code: 'custom', path: [k], message: 'ungültiger Property-Key' });
-      }
-    })
+    .record(z.string().regex(PROP_KEY_RE, 'ungültiger Property-Key'), PropDeclarationSchema)
     .default({}),
 });
 
 export const UserConfigSchema = z.strictObject({
   $schema: SchemaRef,
-  current: nonEmpty.optional(),
+  current: BacklogName.optional(),
   user: Handle.optional(),
+  project: ProjectPath.optional(),
+  sprint: SprintSlug.optional(),
   identities: z.record(BacklogName, z.record(Handle, z.strictObject({ key: nonEmpty }))).optional(),
   backlogs: z
     .record(
       BacklogName,
       z.strictObject({
-        remote: nonEmpty.optional(),
+        remote: RepoUrl.optional(),
         user: Handle.optional(),
+        project: ProjectPath.optional(),
+        sprint: SprintSlug.optional(),
         paths: z.record(Handle, nonEmpty).optional(),
         sync: z.strictObject({ mode: z.enum(['auto', 'manual']) }).optional(),
       }),
     )
     .optional(),
-  repos: z.record(z.string(), nonEmpty).optional(),
+  repos: z
+    .record(z.string().refine(isCanonicalRepoKey, 'Key ist keine kanonische Repo-URL'), nonEmpty)
+    .optional(),
   output: z
     .strictObject({
       format: z.enum(['text', 'json', 'md']).optional(),
@@ -464,10 +495,10 @@ export const UserConfigSchema = z.strictObject({
 
 const projectConfigShape = {
   $schema: SchemaRef,
-  backlog: nonEmpty.optional(),
-  project: nonEmpty.optional(),
-  sprint: nonEmpty.optional(),
-  repo: nonEmpty.nullable().optional(),
+  backlog: z.union([BacklogName, RepoUrl]).optional(),
+  project: ProjectPath.optional(),
+  sprint: SprintSlug.optional(),
+  repo: RepoName.nullable().optional(),
 };
 
 /** `.backlog.jsonc` — eingecheckt, daher ohne `user`. */

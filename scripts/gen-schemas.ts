@@ -1,11 +1,17 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
-import { BacklogConfigSchema, ProjectConfigSchema, UserConfigSchema } from '../src/core/schemas.ts';
+import {
+  BacklogConfigSchema,
+  ProjectConfigSchema,
+  ProjectLocalConfigSchema,
+  UserConfigSchema,
+} from '../src/core/schemas.ts';
 
 export const SCHEMA_FILES: ReadonlyArray<readonly [string, z.ZodType]> = [
   ['backlog.schema.json', BacklogConfigSchema],
   ['user-config.schema.json', UserConfigSchema],
   ['project-config.schema.json', ProjectConfigSchema],
+  ['project-local-config.schema.json', ProjectLocalConfigSchema],
 ];
 
 if (import.meta.main) {

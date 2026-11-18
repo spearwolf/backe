@@ -436,11 +436,76 @@ describe('names and refs that later become paths or git arguments', () => {
   });
 });
 
+describe('config schemas carry their patterns and reject malformed values', () => {
+  test.each([
+    ['backlog.schema.json', ['properties', 'admins', 'items', 'pattern']],
+    ['backlog.schema.json', ['properties', 'id_prefix', 'pattern']],
+    ['backlog.schema.json', ['properties', 'props', 'propertyNames', 'pattern']],
+    ['user-config.schema.json', ['properties', 'user', 'pattern']],
+    ['user-config.schema.json', ['properties', 'current', 'pattern']],
+    ['project-config.schema.json', ['properties', 'project', 'pattern']],
+    ['project-local-config.schema.json', ['properties', 'user', 'pattern']],
+  ])('%s carries a pattern at %j', async (file, path) => {
+    const schema = JSON.parse(await readFile(`schemas/${file}`, 'utf8'));
+    expect(
+      path.reduce<unknown>((o, k) => (o as Record<string, unknown> | undefined)?.[k], schema),
+    ).toBeTypeOf('string');
+  });
+  test('the handle pattern in the JSON schema rejects the reserved handle', async () => {
+    const schema = JSON.parse(await readFile('schemas/user-config.schema.json', 'utf8'));
+    const re = new RegExp(schema.properties.user.pattern, 'u');
+    expect(re.test('spw')).toBe(true);
+    expect(re.test('me')).toBe(false);
+  });
+  test('the entity handle still rejects the reserved handle', () => {
+    expect(ProjectSchema.safeParse({ title: 'x', lead: 'me' }).success).toBe(false);
+    expect(ProjectSchema.safeParse({ title: 'x', lead: 'spw' }).success).toBe(true);
+  });
+  test.each([
+    { current: 'Acme' },
+    { backlogs: { acme: { remote: '-x' } } },
+    { backlogs: { acme: { remote: 'not a url' } } },
+    { repos: { 'git@github.com:acme/webapp.git': '/x' } },
+    { repos: { 'github.com/acme/webapp.git': '/x' } },
+    { repos: { 'GitHub.com/acme/webapp': '/x' } },
+    { project: 'Web' },
+    { backlogs: { acme: { sprint: 'w 47' } } },
+  ])('user config rejects %o', (d) => expect(UserConfigSchema.safeParse(d).success).toBe(false));
+  test('user config accepts project and sprint defaults', () =>
+    expect(
+      UserConfigSchema.safeParse({
+        project: 'web',
+        sprint: 'w47',
+        backlogs: { acme: { project: 'web/auth', sprint: '2026-w47' } },
+      }).success,
+    ).toBe(true));
+  test('user config accepts canonical repo keys and a normalizable remote', () =>
+    expect(
+      UserConfigSchema.safeParse({
+        repos: { 'github.com/acme/webapp': '/x', 'file:/srv/x': '/y' },
+        backlogs: { acme: { remote: 'git@github.com:acme/backlog.git' } },
+      }).success,
+    ).toBe(true));
+  test.each([
+    { project: 'web//auth' },
+    { sprint: '-x' },
+    { repo: 'Web App' },
+    { backlog: 'not a url' },
+  ])('project config rejects %o', (d) =>
+    expect(ProjectConfigSchema.safeParse(d).success).toBe(false),
+  );
+  test.each([{ backlog: 'acme' }, { backlog: 'git@github.com:acme/backlog.git' }, { repo: null }])(
+    'project config accepts %o',
+    (d) => expect(ProjectConfigSchema.safeParse(d).success).toBe(true),
+  );
+});
+
 test('generated JSON schemas are up to date', async () => {
   expect(SCHEMA_FILES.map(([f]) => f)).toEqual([
     'backlog.schema.json',
     'user-config.schema.json',
     'project-config.schema.json',
+    'project-local-config.schema.json',
   ]);
   for (const [file, schema] of SCHEMA_FILES) {
     const text = await readFile(`schemas/${file}`, 'utf8');
