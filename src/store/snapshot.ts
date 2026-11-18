@@ -341,6 +341,11 @@ export async function loadSnapshot(root: string): Promise<BacklogSnapshot> {
   return { config, users, projects, sprints, repos, issues, problems };
 }
 
+/** Lädt nur `repos/`, ohne die Backlog-Config zu verlangen; kaputte Dateien fehlen in der Map. */
+export async function loadRepoRegistry(root: string): Promise<Map<string, StoredEntity<Repo>>> {
+  return loadNamed<Repo>(root, 'repos', 'repo', false, isRepoName, 'Repo-Name', []);
+}
+
 /** Kommentare eines Issues, chronologisch nach Dateiname; ein kaputter Kommentar wirft. */
 export async function listComments(root: string, id: string): Promise<StoredEntity<Comment>[]> {
   const out: StoredEntity<Comment>[] = [];

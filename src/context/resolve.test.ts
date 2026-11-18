@@ -1,3 +1,4 @@
+import { symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { contextTree, gitInit } from '../../test/helpers/context.ts';
@@ -272,4 +273,115 @@ test('readBacklogName reads only the name', async () => {
   expect(await readBacklogName(t.at('missing'))).toBeUndefined();
   expect((await catchErrAsync(() => readBacklogName(t.at('b')))).code).toBe('validation');
   expect((await catchErrAsync(() => readBacklogName(t.at('c')))).code).toBe('validation');
+});
+
+const WC = 'home/.backe/backlogs/acme/spw';
+const REPO = '---\nurl: git@github.com:acme/webapp.git\n---\n';
+const withBacklog = (extra: Record<string, string> = {}) =>
+  setup({
+    [`${WC}/.backe/backlog.jsonc`]: BACKLOG('acme'),
+    [`${WC}/repos/webapp.md`]: REPO,
+    ...extra,
+  });
+
+test.each<[string, ContextFlags, Env, Record<string, string>, string | undefined, SourceKind]>([
+  ['flag', { project: 'web' }, { BACKE_PROJECT: 'api' }, {}, 'web', 'flag'],
+  ['env', {}, { BACKE_PROJECT: 'api' }, {}, 'api', 'env'],
+  [
+    'local beats shared',
+    {},
+    {},
+    {
+      'work/.backlog.jsonc': '{ "project": "a" }',
+      'work/.backlog.local.jsonc': '{ "project": "b" }',
+    },
+    'b',
+    'project-local',
+  ],
+  ['shared', {}, {}, { 'work/.backlog.jsonc': '{ "project": "a" }' }, 'a', 'project'],
+  ['empty env vars count as unset', {}, { BACKE_PROJECT: '' }, {}, undefined, 'none'],
+])('project from %s', async (_n, flags, env, files, value, kind) => {
+  const ctx = await (await setup(files)).run(flags, env);
+  expect([ctx.project.value, ctx.project.source.kind]).toEqual([value, kind]);
+});
+test('sprint from the backlog entry, then the global default', async () => {
+  const s = await setup({
+    'home/.backe/config.jsonc': CFG.replace(
+      '"user": "spw" }',
+      '"user": "spw", "sprint": "w47" }',
+    ).replace('"current"', '"sprint": "w1", "current"'),
+  });
+  expect((await s.run()).sprint).toEqual({ value: 'w47', source: { kind: 'user-backlog' } });
+  expect((await s.run({ backlog: 'beta' })).sprint).toEqual({
+    value: 'w1',
+    source: { kind: 'user-default' },
+  });
+});
+test('invalid project from env names the source', async () => {
+  const err = await catchErrAsync(async () => (await setup()).run({}, { BACKE_PROJECT: 'Web' }));
+  expect([err.code, err.message]).toEqual(['usage', expect.stringContaining('BACKE_PROJECT')]);
+});
+test('invalid sprint from a flag is a usage error', async () => {
+  const err = await catchErrAsync(async () => (await setup()).run({ sprint: 'No Sprint' }));
+  expect([err.code, err.message]).toEqual(['usage', expect.stringContaining('flag')]);
+});
+
+test('repo context from a registered remote', async () => {
+  const s = await withBacklog({ 'code/webapp/src/.keep': '' });
+  await gitInit(s.at('code/webapp'), { upstream: 'https://github.com/acme/webapp' });
+  const ctx = await s.run({}, {}, s.at('code/webapp/src'));
+  expect(ctx.repo).toEqual({ value: 'webapp', source: { kind: 'remote', detail: 'upstream' } });
+});
+test('repo context through a symlinked checkout', async () => {
+  const s = await withBacklog({ 'code/webapp/.keep': '' });
+  await gitInit(s.at('code/webapp'), { origin: 'gh:acme/webapp' });
+  await symlink(s.at('code/webapp'), s.at('wa'));
+  expect((await s.run({}, {}, s.at('wa'))).repo.value).toBe('webapp');
+});
+test('repo from the project config, null switches it off', async () => {
+  const s = await withBacklog({ 'code/webapp/.backlog.jsonc': '{ "repo": null }' });
+  await gitInit(s.at('code/webapp'), { origin: 'gh:acme/webapp' });
+  expect((await s.run({}, {}, s.at('code/webapp'))).repo).toEqual({
+    value: null,
+    source: { kind: 'project', detail: s.at('code/webapp/.backlog.jsonc') },
+  });
+});
+test('a known repo name in the project config resolves with its source', async () => {
+  const s = await withBacklog({ 'work/.backlog.local.jsonc': '{ "repo": "webapp" }' });
+  expect((await s.run()).repo).toEqual({
+    value: 'webapp',
+    source: { kind: 'project-local', detail: s.at('work/.backlog.local.jsonc') },
+  });
+});
+test('an unknown repo name in the project config is not found', async () => {
+  const s = await withBacklog({ 'work/.backlog.jsonc': '{ "repo": "nope" }' });
+  const err = await catchErrAsync(() => s.run());
+  expect([err.code, err.hint]).toEqual(['not_found', 'backe repo list']);
+});
+test('no git repo means no repo context', async () => {
+  const s = await withBacklog();
+  expect((await s.run()).repo).toEqual({ value: undefined, source: { kind: 'none' } });
+});
+test('unregistered remote means no repo context', async () => {
+  const s = await withBacklog({ 'code/other/.keep': '' });
+  await gitInit(s.at('code/other'), { origin: 'gh:acme/other' });
+  expect((await s.run({}, {}, s.at('code/other'))).repo.value).toBeUndefined();
+});
+test('unparsable remotes are skipped, later ones still match', async () => {
+  const s = await withBacklog({ 'code/webapp/.keep': '' });
+  await gitInit(s.at('code/webapp'), { origin: 'not a url', upstream: 'gh:acme/webapp' });
+  expect((await s.run({}, {}, s.at('code/webapp'))).repo.source).toEqual({
+    kind: 'remote',
+    detail: 'upstream',
+  });
+});
+test('a checkout of the backlog itself yields no repo context', async () => {
+  const s = await withBacklog();
+  await gitInit(s.at(WC), { origin: 'gh:acme/webapp' });
+  expect((await s.run({}, {}, s.at(WC))).repo.value).toBeUndefined();
+});
+test('without a backlog root there is no repo context', async () => {
+  const s = await setup({ 'code/webapp/.keep': '' });
+  await gitInit(s.at('code/webapp'), { origin: 'gh:acme/webapp' });
+  expect((await s.run({}, {}, s.at('code/webapp'))).repo.value).toBeUndefined();
 });

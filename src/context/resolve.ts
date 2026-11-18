@@ -1,13 +1,14 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BackeError } from '../core/errors.ts';
-import { BACKLOG_NAME_RE, isHandle } from '../core/names.ts';
+import { BACKLOG_NAME_RE, isHandle, isProjectPath, isSprintSlug } from '../core/names.ts';
 import type { UserConfig } from '../core/schemas.ts';
 import { normalizeRepoUrl } from '../core/url.ts';
-import { gitToplevel } from '../git/query.ts';
+import { gitRemotes, gitToplevel } from '../git/query.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
-import { type Env, envValue, expandPath, type Homes, resolveHomes } from './paths.ts';
+import { loadRepoRegistry } from '../store/snapshot.ts';
+import { type Env, envValue, expandPath, type Homes, physicalPath, resolveHomes } from './paths.ts';
 import { findProjectConfig, type ProjectConfigLevel } from './project-config.ts';
 import { findBacklogByRemote, managedClonePath, workingCopyPath } from './registry.ts';
 import { readUserConfig, userConfigPath } from './user-config.ts';
@@ -212,6 +213,103 @@ function findUser(
   return { value: undefined, source: NONE };
 }
 
+type ScopedKey = 'project' | 'sprint';
+const SCOPED: Record<ScopedKey, { env: string; valid: (value: string) => boolean; label: string }> =
+  {
+    project: { env: 'BACKE_PROJECT', valid: isProjectPath, label: 'Projektpfad' },
+    sprint: { env: 'BACKE_SPRINT', valid: isSprintSlug, label: 'Sprint-Slug' },
+  };
+
+/** project/sprint: Flag, Env, lokale und geteilte Projekt-Config, Backlog-Eintrag, globaler Default. */
+function findScoped(
+  key: ScopedKey,
+  input: ContextInput,
+  cfg: UserConfig,
+  backlog: string,
+  level: Level,
+): Resolved<string | undefined> {
+  const { env: envName, valid, label } = SCOPED[key];
+  const pick = (value: string, source: Source): Resolved<string> => {
+    if (!valid(value)) {
+      throw new BackeError('usage', `Ungültiger ${label} "${value}" (Quelle: ${describe(source)})`);
+    }
+    return { value, source };
+  };
+  const flag = input.flags[key];
+  if (flag !== undefined) return pick(flag, { kind: 'flag' });
+  const fromEnv = envValue(input.env, envName);
+  if (fromEnv !== undefined) return pick(fromEnv, { kind: 'env', detail: envName });
+  const local = level?.local;
+  if (local?.config[key] !== undefined) {
+    return pick(local.config[key], { kind: 'project-local', detail: local.file });
+  }
+  const shared = level?.shared;
+  if (shared?.config[key] !== undefined) {
+    return pick(shared.config[key], { kind: 'project', detail: shared.file });
+  }
+  const perBacklog = cfg.backlogs?.[backlog]?.[key];
+  if (perBacklog !== undefined) return pick(perBacklog, { kind: 'user-backlog' });
+  const global = cfg[key];
+  if (global !== undefined) return pick(global, { kind: 'user-default' });
+  return { value: undefined, source: NONE };
+}
+
+/** `repo` einer Projekt-Config-Ebene; `null` schaltet den Repo-Kontext ab. */
+function levelRepo(level: Level): Resolved<string | null> | undefined {
+  const local = level?.local;
+  if (local?.config.repo !== undefined) {
+    return { value: local.config.repo, source: { kind: 'project-local', detail: local.file } };
+  }
+  const shared = level?.shared;
+  if (shared?.config.repo !== undefined) {
+    return { value: shared.config.repo, source: { kind: 'project', detail: shared.file } };
+  }
+  return undefined;
+}
+
+/** Kanonische URL oder `undefined`; `normalizeRepoUrl` ist nicht idempotent, daher nur Rohwerte übergeben. */
+function canonicalOrUndefined(raw: string): string | undefined {
+  try {
+    return normalizeRepoUrl(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+async function findRepo(
+  cwd: string,
+  root: string | undefined,
+  level: Level,
+): Promise<Resolved<string | null | undefined>> {
+  const none = { value: undefined, source: NONE };
+  const registry = root === undefined ? undefined : await loadRepoRegistry(root);
+  const configured = levelRepo(level);
+  if (configured !== undefined) {
+    if (configured.value !== null && registry !== undefined && !registry.has(configured.value)) {
+      throw new BackeError(
+        'not_found',
+        `Repo "${configured.value}" steht nicht im Backlog (Quelle: ${describe(configured.source)})`,
+        { hint: 'backe repo list' },
+      );
+    }
+    return configured;
+  }
+  if (root === undefined || registry === undefined) return none;
+  const top = await gitToplevel(cwd);
+  if (top === undefined || top === (await physicalPath(root))) return none;
+  const byUrl = new Map<string, string>();
+  for (const [name, entry] of registry) {
+    const canonical = canonicalOrUndefined(entry.data.url);
+    if (canonical !== undefined && !byUrl.has(canonical)) byUrl.set(canonical, name);
+  }
+  for (const remote of await gitRemotes(cwd)) {
+    const canonical = canonicalOrUndefined(remote.url);
+    const name = canonical === undefined ? undefined : byUrl.get(canonical);
+    if (name !== undefined) return { value: name, source: { kind: 'remote', detail: remote.name } };
+  }
+  return none;
+}
+
 const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** Erste vorhandene andere Arbeitskopie desselben Backlogs: gebundene Pfade, dann verwaltete Klone. */
@@ -275,15 +373,14 @@ export async function resolveContext(input: ContextInput): Promise<ResolvedConte
     keyRaw === undefined
       ? undefined
       : expandPath(keyRaw, { home: homes.home, base: homes.backeHome });
-  const unresolved = { value: undefined, source: NONE };
   return {
     homes,
     userConfig,
     backlog: { value: found.name, source: found.source, root, workingCopy },
     user: { ...user, key },
-    project: unresolved,
-    sprint: unresolved,
-    repo: unresolved,
+    project: findScoped('project', input, userConfig, found.name, level),
+    sprint: findScoped('sprint', input, userConfig, found.name, level),
+    repo: await findRepo(input.cwd, root, level),
   };
 }
 

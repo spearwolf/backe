@@ -5,7 +5,7 @@ import { catchErr, catchErrAsync } from '../../test/helpers/catch.ts';
 import { serializeEntityFile } from './frontmatter.ts';
 import { readJsonc } from './jsonc.ts';
 import { BACKLOG_CONFIG, issueFile } from './layout.ts';
-import { listComments, listIssueIds, loadSnapshot } from './snapshot.ts';
+import { listComments, listIssueIds, loadRepoRegistry, loadSnapshot } from './snapshot.ts';
 
 async function put(root: string, path: string, content: string): Promise<void> {
   await mkdir(join(root, path, '..'), { recursive: true });
@@ -282,4 +282,11 @@ test('readJsonc rejects an empty document', () => {
   const err = catchErr(() => readJsonc('', 'x.jsonc'));
   expect(err.code).toBe('validation');
   expect(err.message).toContain('x.jsonc:1');
+});
+
+test('loadRepoRegistry loads only repos and skips broken files', async () => {
+  const root = await copyFixture('backlog-basic');
+  await writeFile(join(root, 'repos/broken.md'), '---\nurl: [\n---\n');
+  await rm(join(root, '.backe/backlog.jsonc'));
+  expect([...(await loadRepoRegistry(root)).keys()]).toEqual(['webapp']);
 });
