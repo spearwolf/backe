@@ -445,11 +445,17 @@ function orderDeletes(deleted: ReadonlyMap<string, Issue>): Operation[] {
 const byPath = (a: Item, b: Item) => compare(a.path, b.path);
 const depth = (path: string) => path.split('/').length;
 
+/** 1 für einen neuen Agent, sonst 0: Sein Operator kann ein im selben Edit neuer Mensch sein. */
+function newAgent({ ops: [first] }: Item): number {
+  return first?.op === 'user.add' && first.kind === 'agent' ? 1 : 0;
+}
+
 // --- Übersetzung ---------------------------------------------------------------------------
 
 /**
  * Übersetzt Hand-Edits in Operationen gegen `s`, den Stand von `HEAD`. Jede Nachher-Datei wird
- * geparst und geprüft; Fehler tragen `datei:zeile`. Reihenfolge der Operationen: Users →
+ * geparst und geprüft; Fehler tragen `datei:zeile`. Jeder Pfad darf nur einmal vorkommen.
+ * Reihenfolge der Operationen: Users (neue Agents nach den übrigen) →
  * Projekte (flach vor tief) → Sprints → Repos → neue Issues (topologisch) → Issue-Änderungen →
  * Kommentare → gelöschte Issues → gelöschte Repos, Projekte (tief vor flach), Users.
  */
@@ -471,7 +477,12 @@ export function translateEdits(
 
   // Kommentare und Anhänge eines gelöschten Issues verschwinden mit seinem Verzeichnis.
   const deletedIssues = new Set<string>();
+  const seen = new Set<string>();
   for (const f of files) {
+    if (seen.has(f.path)) {
+      throw new BackeError('usage', `${f.path} steht mehrfach in den Hand-Edits`);
+    }
+    seen.add(f.path);
     const cls = classifyPath(f.path);
     if (cls.kind === 'issue' && f.before !== null && f.after === null) deletedIssues.add(cls.id);
   }
@@ -549,8 +560,9 @@ export function translateEdits(
   const flat = (items: Item[]) => items.flatMap((i) => i.ops);
   const flatFirst = (a: Item, b: Item) => depth(a.path) - depth(b.path) || byPath(a, b);
   const deepFirst = (a: Item, b: Item) => depth(b.path) - depth(a.path) || byPath(a, b);
+  const humansFirst = (a: Item, b: Item) => newAgent(a) - newAgent(b) || byPath(a, b);
   const ops: Operation[] = [
-    ...flat(named.user.sort(byPath)),
+    ...flat(named.user.sort(humansFirst)),
     ...flat(named.project.sort(flatFirst)),
     ...flat(named.sprint.sort(byPath)),
     ...flat(named.repo.sort(byPath)),

@@ -801,6 +801,31 @@ describe('translateEdits', () => {
     });
   });
 
+  test('new humans come before new agents, so a new operator exists first', () => {
+    const r = translateEdits(
+      s,
+      [
+        added(
+          userFile('a-1'),
+          '---\nname: A1\nkind: agent\noperator: zed\nkeys:\n  - ssh-ed25519 AAAAa1 a-1\n---\n',
+        ),
+        added(
+          userFile('zed'),
+          '---\nname: Zed\nkind: human\nkeys:\n  - ssh-ed25519 AAAAzed zed\n---\n',
+        ),
+      ],
+      asSpw,
+    );
+    expect(r.ops.map((o) => (o as { handle: string }).handle)).toEqual(['zed', 'a-1']);
+    expect(applyBatch(s, r.ops, ctx()).snapshot.users.get('a-1')?.data.operator).toBe('zed');
+  });
+
+  test('a path given twice is a usage error naming the path', () => {
+    const file = editIssue(I(1), { title: 'Neu' });
+    const err = catchErr(() => translateEdits(s, [file, { ...file, after: null }], asSpw));
+    expect([err.code, err.message.includes(issueFile(I(1)))]).toEqual(['usage', true]);
+  });
+
   test('operations follow the global order', () => {
     const files: EditedFile[] = [
       removed(userFile('alice')),
