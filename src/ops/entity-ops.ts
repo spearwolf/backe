@@ -174,10 +174,13 @@ export function repoAdd(d: Draft, op: OpOf<'repo.add'>): OpOf<'repo.add'> {
       throw violation('exists', `Die URL ist schon als Repo ${name} registriert`, { ids: [name] });
     }
   }
-  const taken = new Set(d.snapshot.repos.keys());
-  if (op.name !== undefined && taken.has(op.name)) {
+  if (op.name !== undefined && d.findEntity('repo', op.name) !== undefined) {
     throw violation('exists', `Repo ${op.name} existiert bereits`, { ids: [op.name] });
   }
+  // Ein abgeleiteter Name meidet auch Repos, deren Datei nicht ladbar war.
+  const taken = new Set(d.snapshot.repos.keys());
+  for (const p of d.snapshot.problems)
+    if (p.kind === 'repo' && p.key !== undefined) taken.add(p.key);
   const name = op.name ?? deriveRepoName(canonical, taken);
   d.putEntity('repo', name, { url: op.url, default_ref: op.default_ref }, op.body ?? '');
   return { ...op, name };

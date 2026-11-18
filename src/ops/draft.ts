@@ -28,7 +28,7 @@ import {
   sprintFile,
   userFile,
 } from '../store/layout.ts';
-import type { BacklogSnapshot, StoredEntity } from '../store/snapshot.ts';
+import type { BacklogSnapshot, Problem, StoredEntity } from '../store/snapshot.ts';
 import type { ApplyContext } from './apply.ts';
 import { checkIssueInvariants, sameValue, violation } from './invariants.ts';
 import type { Notice } from './notice.ts';
@@ -62,7 +62,8 @@ const FILE_OF: Record<NamedKind, (key: string) => string> = {
   repo: repoFile,
 };
 
-const LABEL_OF: Record<NamedKind, string> = {
+const LABEL_OF: Record<NamedKind | 'issue', string> = {
+  issue: 'Issue',
   user: 'User',
   project: 'Projekt',
   sprint: 'Sprint',
@@ -148,8 +149,12 @@ export class Draft {
 
   // --- Issues ------------------------------------------------------------------------------
 
+  /**
+   * Das Issue im aktuellen Stand oder `undefined`. War seine Datei nicht ladbar, ist das ein
+   * `schema`-Fehler: Ein Write darf sie weder überschreiben noch so tun, als fehle sie.
+   */
   findIssue(id: string): StoredEntity<Issue> | undefined {
-    return this.#maps.issues.get(id) as StoredEntity<Issue> | undefined;
+    return this.#lookup('issues', id) as StoredEntity<Issue> | undefined;
   }
 
   issue(id: string): StoredEntity<Issue> {
@@ -182,8 +187,17 @@ export class Draft {
 
   // --- Benannte Entitäten ------------------------------------------------------------------
 
+  /** Wie `findIssue` für benannte Entitäten, ebenfalls mit `schema` bei nicht ladbarer Datei. */
   findEntity<K extends NamedKind>(kind: K, key: string): StoredEntity<NamedData[K]> | undefined {
-    return this.#maps[MAP_OF[kind]].get(key) as StoredEntity<NamedData[K]> | undefined;
+    return this.#lookup(MAP_OF[kind], key) as StoredEntity<NamedData[K]> | undefined;
+  }
+
+  /**
+   * Das Ladeproblem der Datei von `kind`/`key` im Basis-Snapshot, sonst `undefined`. Eine kaputte
+   * Datei lässt `loadSnapshot` aus und meldet sie; Writes auf ihre Entität scheitern.
+   */
+  brokenFile(kind: EntityKind, key: string): Problem | undefined {
+    return this.#base.problems.find((p) => p.kind === kind && p.key === key);
   }
 
   entity<K extends NamedKind>(kind: K, key: string): StoredEntity<NamedData[K]> {
@@ -305,6 +319,20 @@ export class Draft {
   }
 
   // --- Intern ------------------------------------------------------------------------------
+
+  /** Eintrag der Map; fehlt er, weil die Datei nicht ladbar war, ein `schema`-Fehler. */
+  #lookup(name: MapName, key: string): StoredEntity<unknown> | undefined {
+    const found = this.#maps[name].get(key);
+    if (found !== undefined) return found;
+    const kind = KIND_OF[name];
+    const problem = this.brokenFile(kind, key);
+    if (problem === undefined) return undefined;
+    throw violation(
+      'schema',
+      `${LABEL_OF[kind]} ${key} ist nicht ladbar (${problem.path}): ${problem.message}`,
+      { ids: [key], hint: 'Erst die Datei reparieren; bis dahin scheitert jeder Write darauf.' },
+    );
+  }
 
   #validated(kind: EntityKind, data: object, file: string): Record<string, unknown> {
     let result: { data: object; unknownKeys: string[] };

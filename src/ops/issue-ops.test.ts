@@ -81,6 +81,17 @@ describe('issue.create', () => {
     expect((r.recorded as OpOf<'issue.create'>).id).toBe('bk-abcde');
   });
 
+  test('an explicit id whose issue file is broken is a schema violation', () => {
+    const s = snap();
+    s.problems.push({ path: issueFile(I(1)), message: 'kaputt', kind: 'issue', key: I(1) });
+    const err = catchErr(() =>
+      applyOperation(s, { op: 'issue.create', id: I(1), title: 'x' }, ctx()),
+    );
+    expect(reasonOf(err)).toBe('schema');
+    expect(err.exitCode).toBe(2);
+    expect(err.message).toContain(issueFile(I(1)));
+  });
+
   test('creator is the actor, given created and body are kept', () => {
     const r = applyOperation(
       snap({}),
@@ -226,6 +237,16 @@ describe('issue.create', () => {
 });
 
 describe('issue.edit', () => {
+  test('editing an issue whose file is broken is a schema violation', () => {
+    const s = snap();
+    s.problems.push({ path: issueFile(I(1)), message: 'kaputt', kind: 'issue', key: I(1) });
+    const err = editErr(s, { set: { title: { from: 'a', to: 'b' } } });
+    expect(reasonOf(err)).toBe('schema');
+    expect(err.exitCode).toBe(2);
+    expect(err.message).toContain(issueFile(I(1)));
+    expect(err.message).toContain('kaputt');
+  });
+
   test('a missing issue is a missing reference', () => {
     const err = editErr(snap({}), { set: { title: { from: 'a', to: 'b' } } });
     expect([err.code, err.details]).toEqual(['not_found', { reason: 'missing_ref', ids: [I(1)] }]);

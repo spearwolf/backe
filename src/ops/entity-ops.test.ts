@@ -590,6 +590,55 @@ describe('user.rm', () => {
   });
 });
 
+describe('entities with a broken file', () => {
+  /** Snapshot, in dem die Datei von `kind`/`key` nicht ladbar war. */
+  function broken(kind: 'user' | 'project' | 'repo', key: string, path: string): BacklogSnapshot {
+    const s = snap();
+    return { ...s, problems: [{ path, message: `${path}: kaputtes YAML`, kind, key }] };
+  }
+
+  test.each<[string, BacklogSnapshot, Operation]>([
+    [
+      'user.add over a broken user file',
+      broken('user', 'bob', userFile('bob')),
+      { op: 'user.add', handle: 'bob', name: 'Bob', kind: 'human', keys: [KEY] },
+    ],
+    [
+      'project.create over a broken project file',
+      broken('project', 'web', projectFile('web')),
+      { op: 'project.create', path: 'web', title: 'Web' },
+    ],
+    [
+      'entity.edit of a broken user file',
+      broken('user', 'bob', userFile('bob')),
+      { op: 'entity.edit', kind: 'user', key: 'bob', set: { name: { from: 'b', to: 'Bob' } } },
+    ],
+    [
+      'issue.create with a parent whose file is broken',
+      broken('project', 'web', projectFile('web')),
+      { op: 'issue.create', id: I(1), title: 'x', projects: ['web'] },
+    ],
+    [
+      'repo.add with the name of a broken repo file',
+      broken('repo', 'shop', repoFile('shop')),
+      { op: 'repo.add', url: 'gh:acme/webapp', name: 'shop' },
+    ],
+  ])('%s is a schema violation naming the file', (_name, s, op) => {
+    const err = fail(s, op);
+    expect(reasonOf(err)).toBe('schema');
+    expect(err.exitCode).toBe(2);
+    const path = s.problems[0]?.path ?? '';
+    expect(err.message).toContain(path);
+    expect(err.message).toContain('kaputtes YAML');
+  });
+
+  test('a derived repo name skips the name of a broken repo file', () => {
+    const s = broken('repo', 'webapp', repoFile('webapp'));
+    const r = run(s, { op: 'repo.add', url: 'https://github.com/acme/webapp.git' });
+    expect(r.recorded).toMatchObject({ name: 'acme-webapp' });
+  });
+});
+
 describe('orphaned operator', () => {
   /** `bob-1` ist Agent von `bob`, `users/bob.md` fehlt (etwa nach einem rohen Admin-Commit). */
   function orphanSnap(): BacklogSnapshot {

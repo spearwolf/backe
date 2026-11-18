@@ -13,10 +13,12 @@ import { sameValue, violation } from './invariants.ts';
 import { bodyHash, type OpOf } from './operation.ts';
 import { type RankPosition, rankPlacement } from './rank.ts';
 
-/** Belegt: ein Issue im Draft oder ein Issue-Verzeichnis, dessen Datei nicht ladbar war. */
+/**
+ * Belegt: ein Issue im Draft oder ein Issue-Verzeichnis, dessen Datei nicht ladbar war. Für
+ * erzeugte IDs; eine vorgegebene ID auf einer kaputten Datei ist ein `schema`-Fehler (`findIssue`).
+ */
 function idTaken(d: Draft, id: string): boolean {
-  if (d.findIssue(id) !== undefined) return true;
-  return d.snapshot.problems.some((p) => p.kind === 'issue' && p.key === id);
+  return d.brokenFile('issue', id) !== undefined || d.findIssue(id) !== undefined;
 }
 
 function nonEmpty<T>(list: readonly T[]): T[] | undefined {
@@ -26,7 +28,7 @@ function nonEmpty<T>(list: readonly T[]): T[] | undefined {
 export function issueCreate(d: Draft, op: OpOf<'issue.create'>): OpOf<'issue.create'> {
   const { ctx } = d;
   const s = d.snapshot;
-  if (op.id !== undefined && idTaken(d, op.id)) {
+  if (op.id !== undefined && d.findIssue(op.id) !== undefined) {
     throw violation('id_collision', `Issue ${op.id} existiert bereits`, { ids: [op.id] });
   }
   const id =
