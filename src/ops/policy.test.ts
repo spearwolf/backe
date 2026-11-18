@@ -71,4 +71,55 @@ describe('checkUserChange', () => {
     expect(() => checkUserChange(custom, 'alice', 'bob', undefined, human('bob'))).not.toThrow();
     expect(() => checkUserChange(custom, 'spw', 'bob', undefined, human('bob'))).toThrow();
   });
+
+  describe('agents and operators', () => {
+    const claude = agent('claude-1', 'spw');
+    const reason = (fn: () => void) => (catchErr(fn).details as { reason: string }).reason;
+
+    test('an agent cannot turn itself into a human or drop its operator', () => {
+      const asHuman: User = { name: 'claude-1', kind: 'human', keys: [] };
+      expect(reason(() => checkUserChange(s, 'claude-1', 'claude-1', claude, asHuman))).toBe(
+        'policy',
+      );
+    });
+
+    test('an agent cannot make itself its own operator', () => {
+      const self = agent('claude-1', 'claude-1');
+      expect(reason(() => checkUserChange(s, 'claude-1', 'claude-1', claude, self))).toBe('policy');
+    });
+
+    test('a non-admin operator cannot turn the agent into a human', () => {
+      const custom = snap({ config: { admins: ['alice'] } });
+      const asHuman: User = { name: 'claude-1', kind: 'human', keys: [] };
+      expect(reason(() => checkUserChange(custom, 'spw', 'claude-1', claude, asHuman))).toBe(
+        'policy',
+      );
+    });
+
+    test('an operator may hand the agent to another human, an admin may change the kind', () => {
+      const custom = snap({ config: { admins: ['alice'] } });
+      expect(() =>
+        checkUserChange(custom, 'spw', 'claude-1', claude, agent('claude-1', 'alice')),
+      ).not.toThrow();
+      const asHuman: User = { name: 'claude-1', kind: 'human', keys: [] };
+      expect(() => checkUserChange(custom, 'alice', 'claude-1', claude, asHuman)).not.toThrow();
+    });
+
+    test('an agent is not accepted as operator, for admins as well', () => {
+      const sub = agent('sub-1', 'claude-1');
+      expect(reason(() => checkUserChange(s, 'claude-1', 'sub-1', undefined, sub))).toBe('schema');
+      expect(reason(() => checkUserChange(s, 'spw', 'sub-1', undefined, sub))).toBe('schema');
+    });
+
+    test('an unknown operator is a missing reference', () => {
+      const sub = agent('sub-1', 'nobody');
+      expect(reason(() => checkUserChange(s, 'spw', 'sub-1', undefined, sub))).toBe('missing_ref');
+    });
+
+    test('a human operator is accepted when set on an existing agent', () => {
+      expect(() =>
+        checkUserChange(s, 'spw', 'claude-1', claude, agent('claude-1', 'alice')),
+      ).not.toThrow();
+    });
+  });
 });

@@ -205,7 +205,6 @@ export function userAdd(d: Draft, op: OpOf<'user.add'>): OpOf<'user.add'> {
   if (d.findEntity('user', op.handle) !== undefined) {
     throw violation('exists', `User ${op.handle} existiert bereits`, { ids: [op.handle] });
   }
-  if (op.operator !== undefined) requireUser(d, op.operator);
   const user: User = { name: op.name, kind: op.kind, operator: op.operator, keys: [...op.keys] };
   d.putEntity('user', op.handle, user, op.body ?? '');
   checkUserChange(d.snapshot, d.ctx.actor, op.handle, undefined, d.entity('user', op.handle).data);
@@ -239,16 +238,26 @@ export function userRm(d: Draft, op: OpOf<'user.rm'>): OpOf<'user.rm'> {
     });
   }
   checkUserChange(d.snapshot, d.ctx.actor, op.handle, before, undefined);
+  const agents = [...d.snapshot.users]
+    .filter(([, { data }]) => data.operator === op.handle)
+    .map(([handle]) => handle)
+    .sort();
+  if (agents.length > 0) {
+    throw violation('references', `${op.handle} ist Operator von ${agents.join(', ')}`, {
+      ids: agents,
+      hint: 'Erst die Agents entfernen oder ihren Operator ändern.',
+    });
+  }
   d.removeEntity('user', op.handle);
   return op;
 }
 
 // --- entity.edit ---------------------------------------------------------------------------
 
-/** Felder, in denen ein neu gesetzter Wert einen User bezeichnet. */
+/** Felder, in denen ein neu gesetzter Wert einen User bezeichnet; der `operator` prüft `policy.ts`. */
 const USER_REF_FIELDS: Record<NamedKind, readonly string[]> = {
   project: ['lead'],
-  user: ['operator'],
+  user: [],
   sprint: [],
   repo: [],
 };
@@ -292,7 +301,7 @@ export function entityEdit(d: Draft, op: OpOf<'entity.edit'>): OpOf<'entity.edit
       }
     }
   }
-  if (kind === 'user' && !sameValue(before, next)) {
+  if (kind === 'user' && (body !== undefined || !sameValue(before, next))) {
     checkUserChange(d.snapshot, d.ctx.actor, key, before as User, next as User);
   }
   return op;

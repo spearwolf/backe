@@ -573,6 +573,21 @@ describe('user.rm', () => {
   test('rejects a missing user', () => {
     expect(reasonOf(fail(snap(), { op: 'user.rm', handle: 'nobody' }))).toBe('missing_ref');
   });
+
+  test('refuses while agents name the user as operator, so nobody can take them over', () => {
+    const s = snap({ users: ['bob'] });
+    const withAgent = run(s, {
+      op: 'user.add',
+      handle: 'x',
+      name: 'X',
+      kind: 'agent',
+      keys: [KEY],
+      operator: 'bob',
+    }).snapshot;
+    const err = fail(withAgent, { op: 'user.rm', handle: 'bob' });
+    expect(reasonOf(err)).toBe('references');
+    expect(err.details).toMatchObject({ ids: ['x'] });
+  });
 });
 
 describe('entity.edit', () => {
@@ -722,6 +737,41 @@ describe('entity.edit', () => {
     expect(run(snap(), edit('alice'), 'alice').snapshot.users.get('alice')?.data.name).toBe('Neu');
     expect(reasonOf(fail(snap(), edit('spw'), 'alice'))).toBe('policy');
     expect(run(snap(), edit('claude-1'), 'spw').noop).toBe(false);
+  });
+
+  test('a body-only edit of another user file is a policy violation', () => {
+    const err = fail(
+      snap({ users: ['bob'] }),
+      {
+        op: 'entity.edit',
+        kind: 'user',
+        key: 'spw',
+        body: { from_hash: bodyHash(''), to: 'übernommen' },
+      },
+      'bob',
+    );
+    expect(reasonOf(err)).toBe('policy');
+    const own = run(
+      snap({ users: ['bob'] }),
+      {
+        op: 'entity.edit',
+        kind: 'user',
+        key: 'bob',
+        body: { from_hash: bodyHash(''), to: 'ich' },
+      },
+      'bob',
+    );
+    expect(own.snapshot.users.get('bob')?.body).toBe('ich\n');
+  });
+
+  test('an agent is not accepted as a new operator', () => {
+    const err = fail(snap(), {
+      op: 'entity.edit',
+      kind: 'user',
+      key: 'claude-1',
+      set: { operator: { from: 'spw', to: 'claude-1' } },
+    });
+    expect(reasonOf(err)).toBe('schema');
   });
 
   test('a new operator must exist', () => {
