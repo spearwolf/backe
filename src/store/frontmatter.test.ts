@@ -63,6 +63,30 @@ describe('Brief', () => {
   );
 
   test.each([
+    `${'x'.repeat(50)}\n \n  y  \nb`,
+    `${'x'.repeat(50)}z  \n \n`,
+    `  ${'x'.repeat(50)}\n \n  lead`,
+  ])('long multiline string with a one-space line roundtrips: %j', (value) => {
+    const data = { ...minimalIssue, props: { a: value } };
+    const out = serializeEntityFile('issue', data, '');
+    expect(parseEntityFile(out, 'f').data).toEqual(data);
+    expect(serializeEntityFile('issue', parseEntityFile(out, 'f').data, '')).toBe(out);
+  });
+
+  test('block map inside a list of maps measures its flow lines from the right column', () => {
+    const lineOf = (n: number) => {
+      const data = { ...minimalIssue, props: { l: [{ m: 'a\nb', k: ['y'.repeat(n)] }] } };
+      const out = serializeEntityFile('issue', data, '');
+      expect(parseEntityFile(out, 'f').data).toEqual(data);
+      return out.split('\n').find((l) => l.includes('k:')) as string;
+    };
+    const flowing = lineOf(89);
+    expect(flowing).toBe(`    - k: [${'y'.repeat(89)}]`);
+    expect([...flowing].length).toBe(100);
+    expect(lineOf(90)).toBe('    - k:');
+  });
+
+  test.each([
     'true',
     'null',
     '~',

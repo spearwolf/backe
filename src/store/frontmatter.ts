@@ -30,6 +30,7 @@ const STRINGIFY: ToStringOptions = {
   flowCollectionPadding: false,
   indent: 2,
   indentSeq: true,
+  doubleQuotedMinMultiLineLength: Number.POSITIVE_INFINITY,
 };
 
 /** CRLF → LF; auch `\r\r\n`, damit die Ausgabe ein Fixpunkt der Normalisierung beim Lesen ist. */
@@ -321,7 +322,7 @@ function place(value: unknown, col: number, key: string | null, sorted: boolean)
         const flow = flowNode(item, sorted);
         // Ein Flow-Mapping kann keinen mehrzeiligen String tragen: dann steht das Element als Block-Map.
         seq.items.push(
-          render(flow).trimEnd().includes('\n') ? blockMap(item as Plain, col + 2, sorted) : flow,
+          render(flow).trimEnd().includes('\n') ? blockMap(item as Plain, col + 4, sorted) : flow,
         );
       }
       return seq;
