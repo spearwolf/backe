@@ -95,7 +95,7 @@ function parseFrontmatter(yaml: string, file: string): Record<string, unknown> {
   const root = doc.contents;
   if (root === null) return {};
   if (!isMap(root)) return fail(offsetOf(root), 'Frontmatter muss eine Map sein');
-  return toPlain(root, fail) as Record<string, unknown>;
+  return toPlain(root, { yaml, fail }) as Record<string, unknown>;
 }
 
 /** Sucht im CST das erste Token, das das Subset verbietet, samt zweitem Dokument. */
@@ -132,13 +132,43 @@ function offsetOf(node: unknown): number {
   return (node as { range?: [number, number, number] } | null)?.range?.[0] ?? 0;
 }
 
-function toPlain(node: unknown, fail: (offset: number, reason: string) => never): unknown {
+/** Signifikante Ziffern eines Dezimal-Literals: ohne Vorzeichen, Punkt, Exponent und Randnullen. */
+function significantDigits(literal: string): string {
+  const mantissa = literal.replace(/^[-+]/, '').split(/e/i)[0] ?? '';
+  return mantissa.replace('.', '').replace(/^0+/, '').replace(/0+$/, '') || '0';
+}
+
+/**
+ * Liest die Zahl genau das, was in der Datei steht? Ganzzahl-Literale (dezimal, hex, oktal)
+ * müssen sichere Ganzzahlen sein; Dezimalbrüche und Exponentenformen müssen dieselben
+ * signifikanten Ziffern haben wie die kürzeste Darstellung der gelesenen Zahl. Umschreibungen,
+ * die den Wert erhalten (`0x1f` → 31, `1.0` → 1), sind erlaubt.
+ */
+function isLosslessNumber(literal: string, value: number): boolean {
+  if (/^[-+]?(?:[0-9]+|0x[0-9a-fA-F]+|0o[0-7]+)$/.test(literal)) return Number.isSafeInteger(value);
+  if (!Number.isFinite(value)) return /^[-+]?\.(?:inf|Inf|INF|nan|NaN|NAN)$/.test(literal);
+  return significantDigits(literal) === significantDigits(String(value));
+}
+
+type PlainContext = { yaml: string; fail: (offset: number, reason: string) => never };
+
+function toPlain(node: unknown, ctx: PlainContext): unknown {
+  const { fail } = ctx;
   if (isScalar(node)) {
     const v = node.value;
+    if (typeof v === 'number' && node.range) {
+      const literal = ctx.yaml.slice(node.range[0], node.range[1]);
+      if (!isLosslessNumber(literal, v)) {
+        return fail(
+          node.range[0],
+          `Zahl ${literal} ist nicht verlustfrei darstellbar; als String in Anführungszeichen schreiben ("${literal}")`,
+        );
+      }
+    }
     if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return v;
     return fail(offsetOf(node), 'leere Werte und null sind nicht erlaubt');
   }
-  if (isSeq(node)) return node.items.map((item) => toPlain(item, fail));
+  if (isSeq(node)) return node.items.map((item) => toPlain(item, ctx));
   if (isMap(node)) {
     const obj: Record<string, unknown> = {};
     for (const pair of node.items) {
@@ -151,7 +181,7 @@ function toPlain(node: unknown, fail: (offset: number, reason: string) => never)
       }
       // defineProperty statt Zuweisung: ein Key "__proto__" wird so ein gewöhnliches Feld.
       Object.defineProperty(obj, key.value, {
-        value: toPlain(pair.value, fail),
+        value: toPlain(pair.value, ctx),
         enumerable: true,
         writable: true,
         configurable: true,
@@ -194,7 +224,13 @@ function render(contents: Node): string {
 
 function scalar(value: unknown): Scalar {
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-    return new Scalar(value);
+    const node = new Scalar(value);
+    // Ganzzahlen jenseits von Number.MAX_SAFE_INTEGER als Exponentenform, denn ein
+    // Ganzzahl-Literal dieser Größe lehnt der Parser als nicht verlustfrei ab.
+    if (typeof value === 'number' && Number.isInteger(value) && !Number.isSafeInteger(value)) {
+      node.format = 'EXP';
+    }
+    return node;
   }
   throw new BackeError('unexpected', `nicht serialisierbarer Wert: ${String(value)}`);
 }

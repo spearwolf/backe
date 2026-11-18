@@ -222,6 +222,51 @@ describe('parseEntityFile', () => {
     expect(err.message).toMatch(/^f\.md:3: /);
   });
 
+  test.each([
+    ['12345678901234567890'],
+    ['9007199254740993'],
+    ['-9007199254740993'],
+    ['0x20000000000001'],
+    ['0.10000000000000000555'],
+    ['1e400'],
+    ['1e-400'],
+  ])('lehnt die nicht verlustfrei darstellbare Zahl %s mit Zeile und Hinweis ab', (n) => {
+    const err = fail(`a: 1\nn: ${n}\n`);
+    expect(err.code).toBe('validation');
+    expect(err.message).toMatch(/^f\.md:3: /);
+    expect(err.message).toContain(n);
+    expect(err.message).toMatch(/String/);
+  });
+
+  test('verlustbehaftete Zahlen auch in Listen und verschachtelten Maps', () => {
+    expect(fail('a: [1, 12345678901234567890]\n').message).toMatch(/^f\.md:2: /);
+    expect(fail('a:\n  b: {c: 0.10000000000000000555}\n').message).toMatch(/^f\.md:3: /);
+  });
+
+  test.each([
+    ['9007199254740991', 9007199254740991],
+    ['-9007199254740991', -9007199254740991],
+    ['0x1f', 31],
+    ['0o17', 15],
+    ['1.0', 1],
+    ['1e3', 1000],
+    ['0.1', 0.1],
+    ['-0.0125', -0.0125],
+    ['12.5e-3', 0.0125],
+    ['1e21', 1e21],
+    ['.5', 0.5],
+    ['0.0', 0],
+    ['.inf', Number.POSITIVE_INFINITY],
+    ['-.inf', Number.NEGATIVE_INFINITY],
+    ['"12345678901234567890"', '12345678901234567890'],
+  ])('verlustfreie Zahl %s wird akzeptiert', (src, value) => {
+    expect(parse(`n: ${src}\n`).data).toEqual({ n: value });
+  });
+
+  test('.nan bleibt NaN', () => {
+    expect(parse('n: .nan\n').data.n).toBeNaN();
+  });
+
   test('# und & innerhalb von Strings sind keine Kommentare oder Anker', () => {
     expect(parse('a: x#1\nb: "y # z"\nc: a&b\nd: \'*q\'\n').data).toEqual({
       a: 'x#1',
@@ -392,6 +437,15 @@ describe('serializeEntityFile', () => {
       props: { n: 4, s: '4', b: true, t: 'true', f: 1.5 },
     });
     expect(out).toContain('props:\n  b: true\n  f: 1.5\n  n: 4\n  s: "4"\n  t: "true"\n');
+  });
+
+  test('Ganzzahlen jenseits von MAX_SAFE_INTEGER stehen in Exponentenform und kommen verlustfrei zurück', () => {
+    const props = { a: 2 ** 53, b: -(2 ** 53), c: 1e20, d: 1e21, e: 9007199254740991 };
+    const out = ser({ ...minimalIssue, props });
+    expect(out).toContain(
+      'props:\n  a: 9.007199254740992e+15\n  b: -9.007199254740992e+15\n  c: 1e+20\n  d: 1e+21\n  e: 9007199254740991\n',
+    );
+    expect(parseEntityFile(out, 'f').data.props).toEqual(props);
   });
 
   test('nicht darstellbare Werte sind ein Programmierfehler', () => {
