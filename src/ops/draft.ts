@@ -194,11 +194,20 @@ export class Draft {
     return found;
   }
 
-  /** Wie `putIssue`, ohne Issue-Invarianten; die prüft die jeweilige Operation selbst. */
-  putEntity<K extends NamedKind>(kind: K, key: string, data: NamedData[K], body?: string): void {
+  /**
+   * Wie `putIssue`, ohne Issue-Invarianten; die prüft die jeweilige Operation selbst. `extra`
+   * überschreibt die unbekannten Keys; fehlt es, bleiben die der bisherigen Entität.
+   */
+  putEntity<K extends NamedKind>(
+    kind: K,
+    key: string,
+    data: NamedData[K],
+    body?: string,
+    extra?: StoredEntity<unknown>['extra'],
+  ): void {
     const file = FILE_OF[kind](key);
     const parsed = this.#validated(kind, data, file);
-    this.#put(MAP_OF[kind], key, file, this.findEntity(kind, key), parsed, body);
+    this.#put(MAP_OF[kind], key, file, this.findEntity(kind, key), parsed, body, extra);
   }
 
   removeEntity(kind: NamedKind, key: string): void {
@@ -322,14 +331,21 @@ export class Draft {
     before: StoredEntity<unknown> | undefined,
     data: object,
     body: string | undefined,
+    extra?: StoredEntity<unknown>['extra'],
   ): boolean {
     const nextBody = body === undefined ? (before?.body ?? '') : canonicalBody(body);
-    if (before !== undefined && sameValue(before.data, data) && nextBody === before.body) {
+    const nextExtra = extra ?? before?.extra ?? [];
+    if (
+      before !== undefined &&
+      sameValue(before.data, data) &&
+      nextBody === before.body &&
+      sameValue(before.extra, nextExtra)
+    ) {
       return false;
     }
     this.#store(name, key, {
       data,
-      extra: before?.extra ?? [],
+      extra: nextExtra,
       body: nextBody,
       path: before?.path ?? file,
     });

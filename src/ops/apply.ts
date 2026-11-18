@@ -10,10 +10,23 @@ import type { BacklogSnapshot, StoredEntity } from '../store/snapshot.ts';
 import { attachAdd, attachRm, commentAdd, commentDelete, commentEdit } from './comment-ops.ts';
 import { issueDelete } from './delete-op.ts';
 import { Draft } from './draft.ts';
+import {
+  entityEdit,
+  projectCreate,
+  projectMv,
+  projectRm,
+  repoAdd,
+  repoRm,
+  sprintClose,
+  sprintCreate,
+  userAdd,
+  userRevokeKey,
+  userRm,
+} from './entity-ops.ts';
 import { violation } from './invariants.ts';
 import { issueCreate, issueEdit, issueLink, issueRank, issueUnlink } from './issue-ops.ts';
 import type { Notice } from './notice.ts';
-import { type Operation, type OpName, PLACEHOLDER_RE, referencedIds } from './operation.ts';
+import { type Operation, PLACEHOLDER_RE, referencedIds } from './operation.ts';
 import { issueClaim, issueMove, issueReopen, issueResume } from './state-ops.ts';
 
 export type ApplyContext = {
@@ -40,10 +53,6 @@ const Timestamp = IssueSchema.shape.created;
 /** Issue-IDs, deren Kommentare der Aufrufer vorab in `ctx.comments` laden muss. */
 export function commentsNeeded(op: Operation): string[] {
   return op.op === 'comment.edit' || op.op === 'comment.delete' ? [op.id] : [];
-}
-
-function notYet(name: OpName): never {
-  throw new BackeError('unexpected', `${name} noch nicht implementiert`);
 }
 
 function dispatch(d: Draft, op: Operation): Operation {
@@ -79,17 +88,27 @@ function dispatch(d: Draft, op: Operation): Operation {
     case 'attach.rm':
       return attachRm(d, op);
     case 'project.create':
+      return projectCreate(d, op);
     case 'project.mv':
+      return projectMv(d, op);
     case 'project.rm':
+      return projectRm(d, op);
     case 'sprint.create':
+      return sprintCreate(d, op);
     case 'sprint.close':
+      return sprintClose(d, op);
     case 'repo.add':
+      return repoAdd(d, op);
     case 'repo.rm':
+      return repoRm(d, op);
     case 'user.add':
+      return userAdd(d, op);
     case 'user.revoke_key':
+      return userRevokeKey(d, op);
     case 'user.rm':
+      return userRm(d, op);
     case 'entity.edit':
-      return notYet(op.op);
+      return entityEdit(d, op);
   }
 }
 

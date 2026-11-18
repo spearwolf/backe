@@ -213,7 +213,7 @@ export function issueRank(d: Draft, op: OpOf<'issue.rank'>): OpOf<'issue.rank'> 
 }
 
 /** Kanonische URL eines registrierten Repos; eine nicht normalisierbare gilt als kein Treffer. */
-function canonicalOf(url: string): string | undefined {
+export function canonicalOf(url: string): string | undefined {
   try {
     return normalizeRepoUrl(url);
   } catch (err) {

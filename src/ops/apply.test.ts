@@ -89,11 +89,6 @@ describe('applyOperation', () => {
     expect(r.recorded).toMatchObject({ ref: '$f1' });
   });
 
-  test('operations of later stages are not implemented yet', () => {
-    const err = catchErr(() => applyOperation(snap({}), { op: 'repo.rm', name: 'web' }, ctx()));
-    expect([err.code, err.message]).toEqual(['unexpected', 'repo.rm noch nicht implementiert']);
-  });
-
   test('the input snapshot is left untouched', () => {
     const s = snap({ issues: [{ id: I(1) }] });
     const before = s.issues;
