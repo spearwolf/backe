@@ -344,12 +344,53 @@ const ENTITY_KEY_ARBS = {
   user: arbHandle,
 } as const;
 
+type FieldArb = { value: fc.Arbitrary<unknown>; optional: boolean };
+const required = (value: fc.Arbitrary<unknown>): FieldArb => ({ value, optional: false });
+const optional = (value: fc.Arbitrary<unknown>): FieldArb => ({ value, optional: true });
+
+/** Gültige Werte je Feld der Entität, wie die Kernschemas sie verlangen. */
+const ENTITY_FIELD_ARBS: Record<
+  'project' | 'sprint' | 'repo' | 'user',
+  Record<string, FieldArb>
+> = {
+  project: { title: required(arbTitle), lead: optional(arbHandle) },
+  sprint: {
+    title: required(arbTitle),
+    start: optional(arbDate),
+    end: optional(arbDate),
+    closed: optional(fc.boolean()),
+  },
+  repo: { url: required(arbRepoUrl), default_ref: optional(arbGitArg) },
+  user: {
+    name: required(arbTitle),
+    kind: required(fc.constantFrom('human', 'agent')),
+    operator: optional(arbHandle),
+    keys: required(fc.uniqueArray(arbSshKey, { maxLength: 2 })),
+    revoked_keys: optional(
+      fc.array(fc.record({ key: arbSshKey, revoked: arbTimestamp }), { maxLength: 2 }),
+    ),
+  },
+};
+
+function arbFieldChange({ value, optional }: FieldArb) {
+  return fromTo(optional ? fc.option(value, { nil: null }) : value);
+}
+
 const arbEntityEdit = fc
   .constantFrom(...(['project', 'sprint', 'repo', 'user'] as const))
   .chain((kind) => {
+    const fields = ENTITY_FIELD_ARBS[kind];
     const arbSet = fc
       .shuffledSubarray([...KEY_ORDER[kind]], { minLength: 1 })
-      .chain((fields) => fc.tuple(...fields.map((f) => fromTo(arbPropOrNull).map((v) => [f, v]))))
+      .chain((names) =>
+        fc.tuple(
+          ...names.map((name) => {
+            const field = fields[name];
+            if (field === undefined) throw new Error(`kein Generator für ${kind}.${name}`);
+            return arbFieldChange(field).map((change) => [name, change] as const);
+          }),
+        ),
+      )
       .map((entries) => Object.fromEntries(entries));
     return fc
       .tuple(ENTITY_KEY_ARBS[kind], someOf({ set: arbSet, body: arbBodyEdit }))

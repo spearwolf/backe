@@ -385,6 +385,75 @@ describe('field rules', () => {
       ).op,
     ).toBe('entity.edit');
   });
+
+  test('entity.edit values follow the core field schema of the kind', () => {
+    const edit = (kind: string, key: string, field: string, from: unknown, to: unknown) => ({
+      op: 'entity.edit',
+      kind,
+      key,
+      set: { [field]: { from, to } },
+    });
+    for (const op of [
+      edit('project', 'web', 'title', 'Web', 42),
+      edit('user', 'bob', 'keys', [], 'y'),
+      edit('sprint', 's1', 'closed', null, 'kaputt'),
+      edit('project', 'web', 'title', 'Web', null),
+      edit('project', 'web', 'title', null, 'Web'),
+      edit('repo', 'webapp', 'url', 'kein url', 'gh:acme/webapp'),
+      edit('user', 'bob', 'revoked_keys', null, [{ key: 'ssh-ed25519 AAAA' }]),
+    ]) {
+      expect(invalidOp(op)).toBe('validation');
+      expect(catchErr(() => encodeOp(op as Operation)).code).toBe('validation');
+    }
+    expect(
+      catchErr(() => decodeOp(JSON.stringify(edit('project', 'web', 'title', 'A', 42)))).message,
+    ).toMatch(/set\.title\.to/);
+    for (const op of [
+      edit('project', 'web', 'lead', 'spw', null),
+      edit('sprint', 's1', 'closed', null, true),
+      edit('repo', 'webapp', 'default_ref', null, 'main'),
+      edit('user', 'bob', 'revoked_keys', null, [
+        { key: 'ssh-ed25519 AAAA', revoked: '2026-11-18T10:04:00Z' },
+      ]),
+      edit('user', 'bob', 'keys', ['ssh-ed25519 AAAA'], []),
+    ]) {
+      expect(decodeOp(JSON.stringify(op))).toEqual(op);
+    }
+  });
+
+  test('sections whose members are all undefined count as empty', () => {
+    const undefinedSections = [
+      { set: { title: undefined } },
+      { add: { projects: undefined } },
+      { remove: { depends_on: undefined } },
+      { set: { title: { from: 'a', to: 'b' } }, add: { projects: undefined } },
+      { props: { k: undefined } },
+    ];
+    for (const sections of undefinedSections) {
+      const op = { op: 'issue.edit', id: ID, ...sections } as Operation;
+      expect(catchErr(() => encodeOp(op)).code).toBe('validation');
+      expect(OperationSchema.safeParse(op).success).toBe(false);
+    }
+    expect(
+      catchErr(() =>
+        encodeOp({
+          op: 'entity.edit',
+          kind: 'project',
+          key: 'web',
+          set: { title: undefined },
+        } as unknown as Operation),
+      ).code,
+    ).toBe('validation');
+    // Ein fehlender Abschnitt neben einem gefüllten bleibt erlaubt und fällt beim Kodieren weg.
+    expect(
+      encodeOp({
+        op: 'issue.edit',
+        id: ID,
+        set: { title: { from: 'a', to: 'b' } },
+        add: undefined,
+      }),
+    ).toBe('{"op":"issue.edit","id":"bk-7f3k2","set":{"title":{"from":"a","to":"b"}}}');
+  });
 });
 
 describe('trailer and batch body', () => {

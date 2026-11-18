@@ -70,7 +70,8 @@ const RefList = z
   .min(1)
   .refine((list) => new Set(list).size === list.length, 'enthält Duplikate');
 
-const hasKeys = (o: object) => Object.keys(o).length > 0;
+/** Mindestens ein Schlüssel mit Wert; `undefined` zählt nicht, weil JSON ihn verliert. */
+const hasKeys = (o: object) => Object.values(o).some((v) => v !== undefined);
 const NOT_EMPTY = 'darf nicht leer sein';
 
 /** Setzen mit Vorbedingung; `null` heißt »nicht gesetzt«. */
@@ -342,6 +343,25 @@ const ENTITY_KEY_CHECKS = {
   user: isHandle,
 } as const;
 
+const ENTITY_SCHEMAS = {
+  project: ProjectSchema,
+  sprint: SprintSchema,
+  repo: RepoSchema,
+  user: UserSchema,
+} as const;
+
+/**
+ * Prüft einen Wert von `entity.edit.set` gegen das Feld im Kernschema; `null` (»nicht gesetzt«)
+ * nur, wo das Feld optional ist. Liefert die Fehlermeldung oder `undefined`.
+ */
+function fieldValueProblem(field: z.ZodType, value: unknown): string | undefined {
+  const optional = field instanceof z.ZodOptional;
+  if (value === null) return optional ? undefined : 'Pflichtfeld, null nicht erlaubt';
+  // `value` ist nie `undefined` (PropChange verlangt einen Wert), die optionale Hülle stört nicht.
+  const result = field.safeParse(value);
+  return result.success ? undefined : result.error.issues.map((i) => i.message).join('; ');
+}
+
 const EntityEdit = z
   .strictObject({
     op: z.literal('entity.edit'),
@@ -358,9 +378,17 @@ const EntityEdit = z
         message: `kein gültiger Schlüssel für ${e.kind}`,
       });
     }
-    for (const field of Object.keys(e.set ?? {})) {
-      if (!KEY_ORDER[e.kind].includes(field)) {
+    const shape: Readonly<Record<string, z.ZodType>> = ENTITY_SCHEMAS[e.kind].shape;
+    for (const [field, change] of Object.entries(e.set ?? {})) {
+      const fieldSchema = shape[field];
+      if (!KEY_ORDER[e.kind].includes(field) || fieldSchema === undefined) {
         ctx.addIssue({ code: 'custom', path: ['set', field], message: `kein Feld von ${e.kind}` });
+        continue;
+      }
+      for (const side of ['from', 'to'] as const) {
+        const message = fieldValueProblem(fieldSchema, change[side]);
+        if (message !== undefined)
+          ctx.addIssue({ code: 'custom', path: ['set', field, side], message });
       }
     }
     if (e.set === undefined && e.body === undefined) {
@@ -449,15 +477,25 @@ function decode(text: string, where: string): Operation {
 /**
  * Kompaktes JSON in einer Zeile: `op` zuerst, dann die Felder in Schema-Reihenfolge, Maps in
  * ihrer gegebenen Reihenfolge. zod baut die Ausgabe in Shape-Reihenfolge auf; ein Test hält das
- * fest. `content` wird nie kodiert.
+ * fest. `content` wird nie kodiert. Die Ausgabe wird selbst wieder dekodiert, damit kein
+ * Trailer entsteht, den das Replay nicht lesen kann.
  */
 export function encodeOp(op: Operation): string {
   const parsed = validate(op, '');
+  let text: string;
   if (parsed.op === 'attach.add') {
     const { content: _, ...rest } = parsed;
-    return JSON.stringify(rest);
+    text = JSON.stringify(rest);
+  } else {
+    text = JSON.stringify(parsed);
   }
-  return JSON.stringify(parsed);
+  try {
+    decodeOp(text);
+  } catch (err) {
+    const reason = err instanceof BackeError ? err.message : String(err);
+    throw new BackeError('unexpected', `Kodierte Operation ist nicht dekodierbar: ${reason}`);
+  }
+  return text;
 }
 
 export function decodeOp(text: string): Operation {
