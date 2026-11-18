@@ -54,6 +54,16 @@ test('problems are sorted by path regardless of load order', async () => {
   expect(s.problems.map((p) => p.path)).toEqual([issueFile('bk-a91c0'), issueFile('bk-x2c8d')]);
 });
 
+test('issue.md that is a directory is skipped', async () => {
+  const root = await copyFixture('backlog-basic');
+  await rm(join(root, issueFile('bk-7f3k2')));
+  await mkdir(join(root, issueFile('bk-7f3k2')));
+  const s = await loadSnapshot(root);
+  expect(s.issues.has('bk-7f3k2')).toBe(false);
+  expect(s.issues.size).toBe(2);
+  expect(s.problems).toEqual([]);
+});
+
 test('problems name kind and key of every broken entity kind', async () => {
   const root = await copyFixture('backlog-basic');
   const broken = '---\ntitle: [\n---\n';

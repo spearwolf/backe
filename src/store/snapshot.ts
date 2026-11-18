@@ -257,7 +257,10 @@ async function loadIssues(
       try {
         text = await readFile(join(root, path), 'utf8');
       } catch (err) {
-        if (isMissing(err)) return undefined;
+        // Ein Verzeichnis namens issue.md (EISDIR) zählt wie eine fehlende Datei.
+        if (isMissing(err) || (err as NodeJS.ErrnoException | undefined)?.code === 'EISDIR') {
+          return undefined;
+        }
         throw err;
       }
       if (!isIssueId(id)) {
