@@ -1,5 +1,5 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { BackeError } from '../core/errors.ts';
 import { BACKLOG_NAME_RE, isHandle, isProjectPath, isSprintSlug } from '../core/names.ts';
 import type { UserConfig } from '../core/schemas.ts';
@@ -31,7 +31,12 @@ export type Resolved<T> = { value: T; source: Source };
 export type ResolvedContext = {
   homes: Homes;
   userConfig: UserConfig;
-  backlog: Resolved<string> & { root: string | undefined; workingCopy: string | undefined };
+  /** `boundTo`: Handle, dem eine direkt gebundene Arbeitskopie laut User-Config gehört. */
+  backlog: Resolved<string> & {
+    root: string | undefined;
+    workingCopy: string | undefined;
+    boundTo?: string;
+  };
   user: Resolved<string | undefined> & { key: string | undefined };
   project: Resolved<string | undefined>;
   sprint: Resolved<string | undefined>;
@@ -106,6 +111,19 @@ function levelBacklog(level: Level): Resolved<string> | undefined {
     return { value: shared.config.backlog, source: { kind: 'project', detail: shared.file } };
   }
   return undefined;
+}
+
+/**
+ * Die Ebene gilt nur für den Backlog, den sie nennt (als Name oder über die kanonische URL);
+ * ohne `backlog`-Key gilt sie für jeden Backlog.
+ */
+function levelFor(level: Level, cfg: UserConfig, backlog: string): Level {
+  const named = levelBacklog(level);
+  if (named === undefined) return level;
+  const ref = classifyBacklogRef(named.value, false);
+  if (ref.kind === 'name') return ref.value === backlog ? level : undefined;
+  const remote = cfg.backlogs?.[backlog]?.remote;
+  return remote !== undefined && canonicalOrUndefined(remote) === ref.value ? level : undefined;
 }
 
 type Found = { name: string; source: Source; bound?: string };
@@ -338,19 +356,44 @@ async function fallbackRoot(
   return undefined;
 }
 
+/**
+ * Handle, dem die gebundene Arbeitskopie laut User-Config gehört: ein gebundener Pfad oder ein
+ * verwalteter Klon, physisch verglichen. Passt sie auch zu `handle`, ist es `handle`.
+ */
+async function ownerOf(
+  cfg: UserConfig,
+  homes: Homes,
+  backlog: string,
+  bound: string,
+  handle: string | undefined,
+): Promise<string | undefined> {
+  const target = await physicalPath(bound);
+  const owners: string[] = [];
+  for (const h of Object.keys(cfg.backlogs?.[backlog]?.paths ?? {}).sort(byCodeUnit)) {
+    if ((await physicalPath(workingCopyPath(cfg, homes, backlog, h))) === target) owners.push(h);
+  }
+  if (dirname(target) === (await physicalPath(join(homes.backeHome, 'backlogs', backlog)))) {
+    owners.push(basename(target));
+  }
+  return handle !== undefined && owners.includes(handle) ? handle : owners[0];
+}
+
 export async function resolveContext(input: ContextInput): Promise<ResolvedContext> {
   const homes = resolveHomes(input.env, input.cwd);
   const userConfig = await readUserConfig(homes.backeHome);
   const level = await findProjectConfig(input.cwd);
   const found = await findBacklog(input, { cfg: userConfig, homes, cwd: input.cwd }, level);
-  const user = findUser(input, userConfig, found.name, level);
+  const scoped = levelFor(level, userConfig, found.name);
+  const user = findUser(input, userConfig, found.name, scoped);
   const handle = user.value;
 
   let workingCopy: string | undefined;
   let root: string | undefined;
+  let boundTo: string | undefined;
   if (found.bound !== undefined) {
     workingCopy = found.bound;
     root = found.bound;
+    boundTo = await ownerOf(userConfig, homes, found.name, found.bound, handle);
   } else {
     workingCopy =
       handle === undefined ? undefined : workingCopyPath(userConfig, homes, found.name, handle);
@@ -376,15 +419,24 @@ export async function resolveContext(input: ContextInput): Promise<ResolvedConte
   return {
     homes,
     userConfig,
-    backlog: { value: found.name, source: found.source, root, workingCopy },
+    backlog: {
+      value: found.name,
+      source: found.source,
+      root,
+      workingCopy,
+      ...(boundTo === undefined ? {} : { boundTo }),
+    },
     user: { ...user, key },
-    project: findScoped('project', input, userConfig, found.name, level),
-    sprint: findScoped('sprint', input, userConfig, found.name, level),
-    repo: await findRepo(input.cwd, root, level),
+    project: findScoped('project', input, userConfig, found.name, scoped),
+    sprint: findScoped('sprint', input, userConfig, found.name, scoped),
+    repo: await findRepo(input.cwd, root, scoped),
   };
 }
 
-/** Jeder Schreibzugriff geht hierüber: braucht Handle, Key und Arbeitskopie (backe.md §2.14). */
+/**
+ * Jeder Schreibzugriff geht hierüber: braucht Handle, Key und Arbeitskopie (backe.md §2.14).
+ * Eine Arbeitskopie, die laut Config einem anderen Handle gehört, wird abgelehnt (backe.md §2.16.1).
+ */
 export function requireWriter(ctx: ResolvedContext): {
   handle: string;
   key: string;
@@ -396,6 +448,14 @@ export function requireWriter(ctx: ResolvedContext): {
     throw new BackeError('usage', 'Kein User aufgelöst, Schreiben braucht eine Identität', {
       hint: `--as <handle>, BACKE_USER oder "user" in ${file}`,
     });
+  }
+  const owner = ctx.backlog.boundTo;
+  if (owner !== undefined && owner !== handle) {
+    const own = workingCopyPath(ctx.userConfig, ctx.homes, ctx.backlog.value, handle);
+    throw new BackeError(
+      'usage',
+      `Die Arbeitskopie ${ctx.backlog.workingCopy} gehört "${owner}"; die Arbeitskopie von "${handle}" ist ${own}`,
+    );
   }
   if (ctx.user.key === undefined) {
     throw new BackeError('usage', `Für "${handle}" ist kein Signing-Key eingetragen`, {

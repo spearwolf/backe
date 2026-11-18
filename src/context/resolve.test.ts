@@ -155,6 +155,7 @@ test.each<[string, ContextFlags, Env, Record<string, string>, string | undefined
     'project-local',
   ],
   ['backlog entry', {}, {}, {}, 'spw', 'user-backlog'],
+  ['backlog entry when BACKE_USER is empty', {}, { BACKE_USER: '' }, {}, 'spw', 'user-backlog'],
   ['global default', { backlog: 'beta' }, {}, {}, 'spw', 'user-default'],
 ])('user from %s', async (_n, flags, env, files, handle, kind) => {
   const ctx = await (await setup(files)).run(flags, env);
@@ -239,7 +240,7 @@ test('a working copy of another backlog is a validation error', async () => {
   expect((await catchErrAsync(() => s.run())).code).toBe('validation');
 });
 
-test('project, sprint and repo are unresolved for now', async () => {
+test('project, sprint and repo resolve to none without any source', async () => {
   const ctx = await (await setup()).run();
   const none = { value: undefined, source: { kind: 'none' } };
   expect([ctx.project, ctx.sprint, ctx.repo]).toEqual([none, none, none]);
@@ -384,4 +385,77 @@ test('without a backlog root there is no repo context', async () => {
   const s = await setup({ 'code/webapp/.keep': '' });
   await gitInit(s.at('code/webapp'), { origin: 'gh:acme/webapp' });
   expect((await s.run({}, {}, s.at('code/webapp'))).repo.value).toBeUndefined();
+});
+
+test('a project config level for another backlog does not apply', async () => {
+  const s = await setup({
+    'home/.backe/backlogs/beta/spw/.backe/backlog.jsonc': BACKLOG('beta'),
+    'code/.backlog.jsonc': '{ "backlog": "acme", "project": "web", "repo": "webapp" }',
+    'code/.backlog.local.jsonc': '{ "user": "loc", "sprint": "w47" }',
+  });
+  const ctx = await s.run({ backlog: 'beta' }, {}, s.at('code'));
+  const none = { value: undefined, source: { kind: 'none' } };
+  expect([ctx.backlog.value, ctx.project, ctx.sprint, ctx.repo]).toEqual([
+    'beta',
+    none,
+    none,
+    none,
+  ]);
+  expect(ctx.user).toMatchObject({ value: 'spw', source: { kind: 'user-default' } });
+});
+
+test('a project config level naming the backlog by its URL applies to it', async () => {
+  const s = await setup({
+    'code/.backlog.jsonc': '{ "backlog": "gh:acme/beta", "project": "web" }',
+    'code/.backlog.local.jsonc': '{ "user": "loc" }',
+  });
+  const ctx = await s.run({ backlog: 'beta' }, {}, s.at('code'));
+  expect([ctx.project.value, ctx.user.value]).toEqual(['web', 'loc']);
+  const other = await s.run({ backlog: 'acme' }, {}, s.at('code'));
+  expect([other.project.value, other.user.value]).toEqual([undefined, 'spw']);
+});
+
+describe('a bound working copy that belongs to another handle', () => {
+  const OWN = (home: string) => join(home, '.backe/backlogs/acme/spw');
+
+  test('a managed clone of another handle is refused with the own working copy', async () => {
+    const s = await setup({
+      'home/.backe/backlogs/acme/claude-1/.backe/backlog.jsonc': BACKLOG('acme'),
+    });
+    await gitInit(s.at('home/.backe/backlogs/acme/claude-1'));
+    const ctx = await s.run({}, {}, s.at('home/.backe/backlogs/acme/claude-1'));
+    const err = await catchErrAsync(async () => requireWriter(ctx));
+    expect([err.code, err.message]).toEqual(['usage', expect.stringContaining(OWN(s.at('home')))]);
+  });
+
+  test('a bound path of another handle is refused, also through a symlink', async () => {
+    const s = await setup({
+      'home/.backe/config.jsonc': CFG.replace(
+        '"user": "spw" }',
+        '"user": "spw", "paths": { "bob": "~/link" } }',
+      ),
+      'home/code/bob/.backe/backlog.jsonc': BACKLOG('acme'),
+    });
+    await gitInit(s.at('home/code/bob'));
+    await symlink(s.at('home/code/bob'), s.at('home/link'));
+    const ctx = await s.run({ backlog: s.at('home/code/bob') });
+    const err = await catchErrAsync(async () => requireWriter(ctx));
+    expect([err.code, err.message]).toEqual(['usage', expect.stringContaining(OWN(s.at('home')))]);
+  });
+
+  test('the own managed clone may be written', async () => {
+    const s = await setup({
+      'home/.backe/backlogs/acme/spw/.backe/backlog.jsonc': BACKLOG('acme'),
+    });
+    await gitInit(s.at('home/.backe/backlogs/acme/spw'));
+    const ctx = await s.run({}, {}, s.at('home/.backe/backlogs/acme/spw'));
+    expect(requireWriter(ctx).workingCopy).toBe(OWN(s.at('home')));
+  });
+
+  test('a working copy not assigned to any handle may be written', async () => {
+    const s = await setup({ 'repo/.backe/backlog.jsonc': BACKLOG('acme') });
+    await gitInit(s.at('repo'));
+    const ctx = await s.run({}, { BACKE_BACKLOG: s.at('repo') });
+    expect(requireWriter(ctx).workingCopy).toBe(s.at('repo'));
+  });
 });
