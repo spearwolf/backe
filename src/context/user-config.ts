@@ -1,6 +1,7 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { applyEdits, modify, type Node, parseTree } from 'jsonc-parser';
+import type { ZodError } from 'zod';
 import { BackeError } from '../core/errors.ts';
 import { type UserConfig, UserConfigSchema } from '../core/schemas.ts';
 import { writeFileAtomic } from '../store/files.ts';
@@ -22,14 +23,19 @@ async function readText(file: string): Promise<string | undefined> {
   }
 }
 
+/** Schemafehler als `validation`: je Issue eine Zeile `<datei>: <key.pfad>: <meldung>`. */
+export function schemaError(file: string, error: ZodError, hint?: string): BackeError {
+  const lines = error.issues.map(
+    (issue) => `${file}: ${issue.path.join('.') || '(Wurzel)'}: ${issue.message}`,
+  );
+  return new BackeError('validation', lines.join('\n'), hint === undefined ? undefined : { hint });
+}
+
 /** Parst Text als User-Config; Syntaxfehler mit `datei:zeile`, Schemafehler je Issue eine Zeile. */
 function parseUserConfig(text: string, file: string): UserConfig {
   const result = UserConfigSchema.safeParse(readJsonc(text, file));
   if (result.success) return result.data;
-  const lines = result.error.issues.map(
-    (issue) => `${file}: ${issue.path.join('.') || '(Wurzel)'}: ${issue.message}`,
-  );
-  throw new BackeError('validation', lines.join('\n'));
+  throw schemaError(file, result.error);
 }
 
 export async function readUserConfig(backeHome: string): Promise<UserConfig> {
