@@ -77,7 +77,20 @@ test('keeps the order of changes', async () => {
 
 test('rejects absolute and parent-escaping paths before writing anything', async () => {
   const root = await tempDir();
-  for (const bad of ['/etc/x', 'repos/../../x', '../x', 'a/../b']) {
+  for (const bad of [
+    '',
+    '.',
+    './x',
+    'issues/./7f/bk-7f3k2/issue.md',
+    'a//b',
+    '//x',
+    'x/',
+    '/abs',
+    '/etc/x',
+    'repos/../../x',
+    '../x',
+    'a/../b',
+  ]) {
     const err = await catchErrAsync(() =>
       applyFileChanges(root, [
         { path: 'repos/ok.md', content: 'x' },
@@ -87,6 +100,14 @@ test('rejects absolute and parent-escaping paths before writing anything', async
     expect(err.code).toBe('validation');
   }
   expect(existsSync(join(root, 'repos'))).toBe(false);
+});
+
+test('deleting the last file of a shard keeps issues/ in place', async () => {
+  const root = await tempDir();
+  await applyFileChanges(root, [{ path: issueFile('bk-7f3k2'), content: 'x' }]);
+  await applyFileChanges(root, [{ path: issueFile('bk-7f3k2'), content: null }]);
+  expect(existsSync(join(root, 'issues/7f'))).toBe(false);
+  expect(existsSync(join(root, 'issues'))).toBe(true);
 });
 
 test('a failing write rethrows, cleans its temp file and keeps earlier changes', async () => {

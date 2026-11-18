@@ -3,7 +3,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import { mkdir, rename, rm, rmdir, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, posix } from 'node:path';
 import { BackeError } from '../core/errors.ts';
 
 export type FileChange = { path: string; content: string | Uint8Array | null };
@@ -19,9 +19,16 @@ const PROTECTED_DIRS: ReadonlySet<string> = new Set([
 ]);
 
 function assertRelative(path: string): void {
-  if (path === '' || path.startsWith('/') || path.split('/').includes('..')) {
+  if (
+    path === '' ||
+    path === '.' ||
+    path.startsWith('/') ||
+    path.endsWith('/') ||
+    path.split('/').includes('..') ||
+    posix.normalize(path) !== path
+  ) {
     throw new BackeError('validation', `Ungültiger Pfad im Backlog: "${path}"`, {
-      hint: 'Erlaubt sind nur relative Pfade ohne "..".',
+      hint: 'Erlaubt sind nur normalisierte, relative Pfade ohne "..", ".", "//" und Schrägstrich am Ende.',
     });
   }
 }
