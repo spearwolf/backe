@@ -826,6 +826,101 @@ describe('translateEdits', () => {
     expect([err.code, err.message.includes(issueFile(I(1)))]).toEqual(['usage', true]);
   });
 
+  describe('order of dependent edits', () => {
+    const agentText = (operator: string) =>
+      `---\nname: Z1\nkind: agent\noperator: ${operator}\nkeys:\n  - ssh-ed25519 AAAAz1 zz-1\n---\n`;
+    const humanText = '---\nname: Zed\nkind: human\nkeys:\n  - ssh-ed25519 AAAAzed zed\n---\n';
+
+    test('a deleted agent goes before its deleted operator', () => {
+      const withAgent = applyBatch(
+        s,
+        [
+          {
+            op: 'user.add',
+            handle: 'zz-1',
+            name: 'Z1',
+            kind: 'agent',
+            operator: 'alice',
+            keys: ['ssh-ed25519 AAAAz1 zz-1'],
+          },
+        ],
+        ctx(),
+      ).snapshot;
+      const r = translateEdits(
+        withAgent,
+        [removed(userFile('alice'), withAgent), removed(userFile('zz-1'), withAgent)],
+        asSpw,
+      );
+      expect(r.ops).toEqual([
+        { op: 'user.rm', handle: 'zz-1' },
+        { op: 'user.rm', handle: 'alice' },
+      ]);
+      expect(applyBatch(withAgent, r.ops, ctx()).snapshot.users.has('alice')).toBe(false);
+    });
+
+    test('an existing agent may get a new human as operator', () => {
+      const r = translateEdits(
+        s,
+        [
+          edit(userFile('claude-1'), (f) => f.replace('operator: spw', 'operator: zed')),
+          added(userFile('zed'), humanText),
+          added(userFile('zz-1'), agentText('zed')),
+        ],
+        asSpw,
+      );
+      expect(r.ops.map((o) => o.op)).toEqual(['user.add', 'user.add', 'entity.edit']);
+      const users = applyBatch(s, r.ops, ctx()).snapshot.users;
+      expect([users.get('claude-1')?.data.operator, users.get('zz-1')?.data.operator]).toEqual([
+        'zed',
+        'zed',
+      ]);
+    });
+
+    test('sub-issues settle before their parent', () => {
+      const family = snap({
+        issues: [
+          { id: I(20), title: 'Parent' },
+          { id: I(21), title: 'Kind', parent: I(20) },
+          { id: I(22), title: 'Enkel', parent: I(21) },
+        ],
+      });
+      const done = (id: string) => {
+        const path = issueFile(id);
+        return edit(path, (f) => f.replace('state: todo', 'state: done'), family);
+      };
+      const r = translateEdits(family, [done(I(20)), done(I(21)), done(I(22))], asSpw);
+      expect(r.ops.map((o) => (o as { id: string }).id)).toEqual([I(22), I(21), I(20)]);
+      const out = applyBatch(family, r.ops, ctx()).snapshot.issues;
+      expect([...out.values()].map((e) => e.data.state)).toEqual(['done', 'done', 'done']);
+    });
+
+    test.each([
+      ['a new comment', null],
+      ['a changed comment', commentText('author: spw\ncreated: 2026-11-19T08:00:00Z\n', 'Alt\n')],
+    ])('%s under a deleted issue is a usage error', (_, before) => {
+      const path = commentPath(SPW_COMMENT, I(2));
+      const err = catchErr(() =>
+        translateEdits(
+          s,
+          [
+            removed(issueFile(I(2))),
+            {
+              path,
+              before,
+              after: commentText('author: spw\ncreated: 2026-11-19T08:00:00Z\n', 'Neu\n'),
+            },
+          ],
+          asSpw,
+        ),
+      );
+      expect([err.code, err.message.includes(path), err.message.includes(I(2))]).toEqual([
+        'usage',
+        true,
+        true,
+      ]);
+    });
+  });
+
   test('operations follow the global order', () => {
     const files: EditedFile[] = [
       removed(userFile('alice')),

@@ -37,7 +37,8 @@ type NamedKind = 'user' | 'project' | 'sprint' | 'repo';
 /** Eine Seite einer Entitätsdatei: geprüfte Daten, unbekannte Keys, kanonischer Body. */
 type Side<T> = { data: T; extra: [string, unknown][]; body: string };
 
-type Item = { path: string; ops: Operation[] };
+/** Ops einer Datei; `tier` ordnet innerhalb einer Gruppe vor dem Pfad (kleiner zuerst). */
+type Item = { path: string; ops: Operation[]; tier?: number };
 
 const MANUAL = 'manual';
 type Outcome = Operation[] | typeof MANUAL;
@@ -431,23 +432,41 @@ function orderCreates(creates: ReadonlyMap<string, OpOf<'issue.create'>>): Opera
   return order.map((id) => creates.get(id) as Operation);
 }
 
-/** Gelöschte Issues, Sub-Issues vor ihrem Parent; was in einem Parent-Zyklus hängt, zuletzt. */
-function orderDeletes(deleted: ReadonlyMap<string, Issue>): Operation[] {
+/**
+ * IDs aus `parents` (je Issue seine Parents vorher und nachher), Sub-Issues vor ihrem Parent; was
+ * in einem Parent-Zyklus hängt, zuletzt.
+ */
+function childrenFirst(parents: ReadonlyMap<string, readonly (string | undefined)[]>): string[] {
   const children = new Map<string, string[]>();
-  for (const [id, issue] of deleted) {
-    if (issue.parent !== undefined)
-      children.set(issue.parent, [...(children.get(issue.parent) ?? []), id]);
+  for (const [id, list] of parents) {
+    for (const parent of new Set(list)) {
+      if (parent !== undefined) children.set(parent, [...(children.get(parent) ?? []), id]);
+    }
   }
-  const { order, stuck } = topoOrder([...deleted.keys()], (id) => children.get(id) ?? []);
-  return [...order, ...stuck].map((id): Operation => ({ op: 'issue.delete', id, force: true }));
+  const { order, stuck } = topoOrder([...parents.keys()], (id) => children.get(id) ?? []);
+  return [...order, ...stuck];
+}
+
+/** Gelöschte Issues, Sub-Issues vor ihrem Parent (sonst scheitert der Parent an `has_children`). */
+function orderDeletes(deleted: ReadonlyMap<string, Issue>): Operation[] {
+  const parents = new Map([...deleted].map(([id, issue]) => [id, [issue.parent]]));
+  return childrenFirst(parents).map((id): Operation => ({ op: 'issue.delete', id, force: true }));
 }
 
 const byPath = (a: Item, b: Item) => compare(a.path, b.path);
 const depth = (path: string) => path.split('/').length;
 
-/** 1 für einen neuen Agent, sonst 0: Sein Operator kann ein im selben Edit neuer Mensch sein. */
-function newAgent({ ops: [first] }: Item): number {
-  return first?.op === 'user.add' && first.kind === 'agent' ? 1 : 0;
+const byTier = (a: Item, b: Item) => (a.tier ?? 0) - (b.tier ?? 0) || byPath(a, b);
+
+/**
+ * Rang einer User-Datei, damit jeder User vor den Ops steht, die ihn als `operator` nennen: neue
+ * Menschen, dann neue Agents, dann Änderungen. Beim Löschen Agents vor den übrigen, weil
+ * `user.rm` den Operator eines noch vorhandenen Agents ablehnt.
+ */
+function userTier(before: User | undefined, after: User | undefined): number {
+  if (after === undefined) return before?.kind === 'agent' ? 0 : 1;
+  if (before !== undefined) return 2;
+  return after.kind === 'agent' ? 1 : 0;
 }
 
 // --- Übersetzung ---------------------------------------------------------------------------
@@ -455,9 +474,10 @@ function newAgent({ ops: [first] }: Item): number {
 /**
  * Übersetzt Hand-Edits in Operationen gegen `s`, den Stand von `HEAD`. Jede Nachher-Datei wird
  * geparst und geprüft; Fehler tragen `datei:zeile`. Jeder Pfad darf nur einmal vorkommen.
- * Reihenfolge der Operationen: Users (neue Agents nach den übrigen) →
- * Projekte (flach vor tief) → Sprints → Repos → neue Issues (topologisch) → Issue-Änderungen →
- * Kommentare → gelöschte Issues → gelöschte Repos, Projekte (tief vor flach), Users.
+ * Reihenfolge der Operationen: Users (neue Menschen, neue Agents, Änderungen) → Projekte (flach
+ * vor tief) → Sprints → Repos → neue Issues (topologisch) → Issue-Änderungen (Sub-Issues vor dem
+ * Parent) → Kommentare → gelöschte Issues (Sub-Issues vor dem Parent) → gelöschte Repos,
+ * Projekte (tief vor flach), Users (Agents zuerst).
  */
 export function translateEdits(
   s: BacklogSnapshot,
@@ -471,7 +491,8 @@ export function translateEdits(
   const named: Record<NamedKind, Item[]> = { user: [], project: [], sprint: [], repo: [] };
   const removed: Record<NamedKind, Item[]> = { user: [], project: [], sprint: [], repo: [] };
   const creates = new Map<string, OpOf<'issue.create'>>();
-  const changes: Item[] = [];
+  /** Geänderte Issues: Ops und die Parents vorher und nachher, für die Reihenfolge. */
+  const changes = new Map<string, { ops: Operation[]; parents: (string | undefined)[] }>();
   const comments: Item[] = [];
   const deletes = new Map<string, Issue>();
 
@@ -496,7 +517,15 @@ export function translateEdits(
       if (f.before !== f.after && !absorbed) manual.push(path);
       continue;
     }
-    if (cls.kind === 'comment' && f.after === null && deletedIssues.has(cls.id)) continue;
+    if (cls.kind === 'comment' && deletedIssues.has(cls.id)) {
+      if (f.after === null) continue;
+      // Sonst schriebe die Kommentar-Op einen Text, den `issue.delete` gleich wieder entfernt.
+      throw new BackeError(
+        'usage',
+        `${path}: Kommentar unter ${cls.id}, das im selben Edit gelöscht wird, ginge verloren`,
+        { hint: `Den Kommentar verwerfen oder ${cls.id} nicht löschen.` },
+      );
+    }
 
     const kind = cls.kind;
     const before = read<object>(kind, f.before, path);
@@ -508,6 +537,7 @@ export function translateEdits(
 
     let outcome: Outcome;
     let bucket: Item[];
+    let tier: number | undefined;
     switch (kind) {
       case 'issue': {
         const b = before as Side<Issue> | undefined;
@@ -522,9 +552,10 @@ export function translateEdits(
           else creates.set(cls.id, op);
           continue;
         }
-        outcome = changeIssue(path, b, a, strict, extraChanged);
-        bucket = changes;
-        break;
+        const result = changeIssue(path, b, a, strict, extraChanged);
+        if (result === MANUAL) manual.push(path);
+        else changes.set(cls.id, { ops: result, parents: [b.data.parent, a.data.parent] });
+        continue;
       }
       case 'comment':
         outcome = commentOps(
@@ -540,6 +571,9 @@ export function translateEdits(
         break;
       default: {
         const key = (cls as { key: string }).key;
+        if (kind === 'user') {
+          tier = userTier(before?.data as User | undefined, after?.data as User | undefined);
+        }
         if (after === undefined) {
           outcome = removeEntity(kind, key);
           bucket = removed[kind];
@@ -554,25 +588,26 @@ export function translateEdits(
       }
     }
     if (outcome === MANUAL) manual.push(path);
-    else bucket.push({ path, ops: outcome });
+    else bucket.push({ path, ops: outcome, tier });
   }
 
   const flat = (items: Item[]) => items.flatMap((i) => i.ops);
   const flatFirst = (a: Item, b: Item) => depth(a.path) - depth(b.path) || byPath(a, b);
   const deepFirst = (a: Item, b: Item) => depth(b.path) - depth(a.path) || byPath(a, b);
-  const humansFirst = (a: Item, b: Item) => newAgent(a) - newAgent(b) || byPath(a, b);
+  const parentsOf = new Map([...changes].map(([id, c]) => [id, c.parents]));
   const ops: Operation[] = [
-    ...flat(named.user.sort(humansFirst)),
+    ...flat(named.user.sort(byTier)),
     ...flat(named.project.sort(flatFirst)),
     ...flat(named.sprint.sort(byPath)),
     ...flat(named.repo.sort(byPath)),
     ...orderCreates(creates),
-    ...flat(changes.sort(byPath)),
+    // Sub-Issues vor ihrem Parent: Ein Parent auf `done` scheitert sonst an offenen Sub-Issues.
+    ...childrenFirst(parentsOf).flatMap((id) => (changes.get(id) as { ops: Operation[] }).ops),
     ...flat(comments.sort(byPath)),
     ...orderDeletes(deletes),
     ...flat(removed.repo.sort(byPath)),
     ...flat(removed.project.sort(deepFirst)),
-    ...flat(removed.user.sort(byPath)),
+    ...flat(removed.user.sort(byTier)),
   ];
   return {
     ops,
