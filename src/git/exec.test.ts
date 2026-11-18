@@ -1,3 +1,5 @@
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { git } from './exec.ts';
@@ -30,6 +32,36 @@ describe('git', () => {
     );
     expect(err.message).toBe('git nicht gefunden');
     expect(err.hint).toBe('git installieren; backe doctor prüft die Voraussetzungen.');
+  });
+
+  test('a missing working directory is not reported as missing git', async () => {
+    const err = await catchErrAsync(() => git(['--version'], { cwd: '/nonexistent/backe-cwd' }));
+    expect(err.code).toBe('unexpected');
+    expect(err.message).toBe('Arbeitsverzeichnis nicht gefunden: /nonexistent/backe-cwd');
+    expect(err.hint).toBeUndefined();
+  });
+
+  test('other spawn errors are wrapped as unexpected errors', async () => {
+    const dir = await tempDir();
+    const file = join(dir, 'file');
+    await writeFile(file, 'x');
+    const err = await catchErrAsync(() => git(['--version'], { cwd: file }));
+    expect(err.code).toBe('unexpected');
+    expect(err.message).toMatch(/^git konnte nicht gestartet werden: /);
+    expect(err.details).toMatchObject({ args: ['--version'] });
+  });
+
+  test('death by signal is an error even if exit code 1 is allowed', async () => {
+    // Der Alias-Prozess tötet seinen Elternprozess, also git selbst.
+    const err = await catchErrAsync(async () =>
+      git(['-c', 'alias.killme=!kill -TERM $PPID', 'killme'], {
+        cwd: await tempDir(),
+        okExitCodes: [1, 143],
+      }),
+    );
+    expect(err.code).toBe('unexpected');
+    expect(err.message).toBe('git -c durch Signal beendet (SIGTERM)');
+    expect(err.details).toMatchObject({ signal: 'SIGTERM' });
   });
 
   test('stdin input reaches git', async () => {
