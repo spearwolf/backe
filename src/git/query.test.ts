@@ -12,6 +12,19 @@ describe('gitToplevel', () => {
     expect(await gitToplevel(join(dir, 'a/b'))).toBe(dir);
     expect(await gitToplevel(await tempDir())).toBeUndefined();
   });
+
+  test('a GIT_DIR in the process environment does not leak into the lookup', async () => {
+    const repo = await tempDir();
+    await git(['init', '-q'], { cwd: repo });
+    const saved = process.env.GIT_DIR;
+    process.env.GIT_DIR = join(repo, '.git');
+    try {
+      expect(await gitToplevel(await tempDir())).toBeUndefined();
+    } finally {
+      if (saved === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = saved;
+    }
+  });
 });
 
 describe('gitRemotes', () => {

@@ -18,9 +18,46 @@ function startFailure(args: readonly string[], error: unknown): BackeError {
   });
 }
 
+/**
+ * Variablen, mit denen ein aufrufendes git (z. B. in einem Hook) sein Repo an Kindprozesse
+ * weitergibt; Liste aus `git rev-parse --local-env-vars`. Geerbt würden sie jedes `cwd` überstimmen.
+ */
+const REPO_LOCAL_ENV = [
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_CONFIG',
+  'GIT_CONFIG_PARAMETERS',
+  'GIT_CONFIG_COUNT',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_IMPLICIT_WORK_TREE',
+  'GIT_GRAFT_FILE',
+  'GIT_INDEX_FILE',
+  'GIT_NO_REPLACE_OBJECTS',
+  'GIT_REPLACE_REF_BASE',
+  'GIT_PREFIX',
+  'GIT_SHALLOW_FILE',
+  'GIT_COMMON_DIR',
+] as const;
+
+/** Unterbefehl für Meldungen: erstes Argument, das weder Option noch Wert von `-c`/`-C` ist. */
+function subcommand(args: readonly string[]): string {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] as string;
+    if (arg === '-c' || arg === '-C') {
+      i++;
+      continue;
+    }
+    if (!arg.startsWith('-')) return `git ${arg}`;
+  }
+  return 'git';
+}
+
 /** Führt das System-git aus; Ausgabe wird vollständig gepuffert (UTF-8). */
 export function git(args: readonly string[], opts: GitOptions): Promise<GitResult> {
-  const merged: Record<string, string | undefined> = { ...process.env, ...opts.env };
+  const inherited: Record<string, string | undefined> = { ...process.env };
+  for (const name of REPO_LOCAL_ENV) delete inherited[name];
+  const merged: Record<string, string | undefined> = { ...inherited, ...opts.env };
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(merged)) {
     if (value !== undefined) env[key] = value;
@@ -79,7 +116,7 @@ export function git(args: readonly string[], opts: GitOptions): Promise<GitResul
         reject(
           new BackeError(
             'unexpected',
-            `git ${args[0]} durch Signal beendet (${signal ?? 'unbekannt'})`,
+            `${subcommand(args)} durch Signal beendet (${signal ?? 'unbekannt'})`,
             {
               details: { args, signal, stderr },
             },
@@ -93,7 +130,7 @@ export function git(args: readonly string[], opts: GitOptions): Promise<GitResul
         reject(
           new BackeError(
             'unexpected',
-            `git ${args[0]} fehlgeschlagen (Exit ${exitCode}): ${firstLine}`,
+            `${subcommand(args)} fehlgeschlagen (Exit ${exitCode}): ${firstLine}`,
             {
               details: { args, exitCode, stderr },
             },

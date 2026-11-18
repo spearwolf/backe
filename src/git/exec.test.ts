@@ -21,6 +21,40 @@ describe('git', () => {
     expect(err.details).toMatchObject({ args: ['rev-parse', '--verify', 'nope'], exitCode: 128 });
   });
 
+  test('the error names the subcommand, not leading options', async () => {
+    const cwd = await tempDir();
+    const err = await catchErrAsync(() =>
+      git(['-c', 'x.y=1', '-C', cwd, 'rev-parse', '--verify', 'nope'], { cwd }),
+    );
+    expect(err.message).toMatch(/^git rev-parse fehlgeschlagen \(Exit 128\): /);
+    const bare = await catchErrAsync(() => git([], { cwd }));
+    expect(bare.message).toMatch(/^git fehlgeschlagen \(Exit 1\)/);
+  });
+
+  test('repo-local git variables of the calling process are not inherited', async () => {
+    const repo = await tempDir();
+    await git(['init', '-q'], { cwd: repo });
+    const outside = await tempDir();
+    const saved = process.env.GIT_DIR;
+    process.env.GIT_DIR = join(repo, '.git');
+    try {
+      const err = await catchErrAsync(() =>
+        git(['rev-parse', '--show-toplevel'], { cwd: outside }),
+      );
+      expect(err.code).toBe('unexpected');
+      expect(err.details).toMatchObject({ exitCode: 128 });
+      // Explizit über `opts.env` gesetzt gilt die Variable weiter.
+      const r = await git(['rev-parse', '--git-dir'], {
+        cwd: outside,
+        env: { GIT_DIR: join(repo, '.git') },
+      });
+      expect(r.stdout).toBe(`${join(repo, '.git')}\n`);
+    } finally {
+      if (saved === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = saved;
+    }
+  });
+
   test('allowed exit codes are returned, not thrown', async () => {
     const r = await git(['config', '--get', 'x.y'], { cwd: await tempDir(), okExitCodes: [1] });
     expect(r.exitCode).toBe(1);
@@ -60,7 +94,7 @@ describe('git', () => {
       }),
     );
     expect(err.code).toBe('unexpected');
-    expect(err.message).toBe('git -c durch Signal beendet (SIGTERM)');
+    expect(err.message).toBe('git killme durch Signal beendet (SIGTERM)');
     expect(err.details).toMatchObject({ signal: 'SIGTERM' });
   });
 
