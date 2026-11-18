@@ -73,6 +73,11 @@ export function attachAdd(d: Draft, op: OpOf<'attach.add'>): OpOf<'attach.add'> 
     if (content === undefined) {
       throw new BackeError('unexpected', `attach.add für "${op.file}" ohne Dateiinhalt`);
     }
+    if (list.some((a) => a.file === op.file)) {
+      throw violation('exists', `${op.id}: Datei "${op.file}" gehört schon einem anderen Anhang`, {
+        ids: [op.id],
+      });
+    }
     const max = d.config.attachments.max_bytes;
     if (max !== null && content.byteLength > max) {
       throw violation(

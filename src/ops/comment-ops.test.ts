@@ -183,6 +183,35 @@ describe('attach.add', () => {
     expect([err.exitCode, reasonOf(err)]).toEqual([4, 'exists']);
   });
 
+  test('a second attachment with another name but the same file exists and writes nothing', () => {
+    const s = base({ attachments: [{ name: 'log', file: 'a.txt' }] });
+    const err = catchErr(() =>
+      applyOperation(
+        s,
+        { op: 'attach.add', id: I(1), name: 'other', file: 'a.txt', content: bytes },
+        ctx(),
+      ),
+    );
+    expect([err.exitCode, reasonOf(err)]).toEqual([4, 'exists']);
+  });
+
+  test('attachments with different names and files coexist', () => {
+    const s = base({ attachments: [{ name: 'log', file: 'a.txt' }] });
+    const r = applyOperation(
+      s,
+      { op: 'attach.add', id: I(1), name: 'other', file: 'b.txt', content: bytes },
+      ctx(),
+    );
+    expect(r.snapshot.issues.get(I(1))?.data.attachments).toEqual([
+      { name: 'log', file: 'a.txt' },
+      { name: 'other', file: 'b.txt' },
+    ]);
+    expect(r.changes.map((c) => c.path)).toEqual([
+      `${attachmentsDir(I(1))}/b.txt`,
+      issueFile(I(1)),
+    ]);
+  });
+
   test('attachment over max_bytes is too large and points at lfs', () => {
     const s = snap({
       config: { attachments: { max_bytes: 2, lfs: false } },
