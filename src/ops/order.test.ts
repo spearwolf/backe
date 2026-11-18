@@ -1,5 +1,5 @@
 import { I, type SnapSpec, snap } from '../../test/helpers/snapshot.ts';
-import { compareIssues } from './order.ts';
+import { compareIssues, compareRank } from './order.ts';
 
 const sorted = (issues: SnapSpec['issues']) =>
   [...snap({ issues }).issues.values()]
@@ -40,4 +40,24 @@ test('compareIssues is antisymmetric for ranked against unranked', () => {
   ) as [never, never];
   expect(compareIssues(a, b)).toBeLessThan(0);
   expect(compareIssues(b, a)).toBeGreaterThan(0);
+});
+
+test('compareRank: ascending, ranked before unranked, unranked equal', () => {
+  const byId = new Map(
+    [
+      ...snap({
+        issues: [{ id: I(1), rank: 1 }, { id: I(2), rank: 2 }, { id: I(3) }, { id: I(4) }],
+      }).issues,
+    ].map(([id, e]) => [id, e.data]),
+  );
+  const get = (n: number) => {
+    const issue = byId.get(I(n));
+    if (!issue) throw new Error('Issue fehlt');
+    return issue;
+  };
+  expect(compareRank(get(1), get(2))).toBeLessThan(0);
+  expect(compareRank(get(2), get(1))).toBeGreaterThan(0);
+  expect(compareRank(get(1), get(3))).toBeLessThan(0);
+  expect(compareRank(get(3), get(1))).toBeGreaterThan(0);
+  expect(compareRank(get(3), get(4))).toBe(0);
 });

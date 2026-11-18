@@ -8,7 +8,7 @@ import { isSettled } from '../core/state.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { ancestors, graphOf, isReady, isUnblockable, occupyingAncestor } from './graph.ts';
 import type { Notice } from './notice.ts';
-import { compareIssues } from './order.ts';
+import { compareIssues, compareRank } from './order.ts';
 
 export type ContextFilter = {
   project?: string;
@@ -126,12 +126,11 @@ export function selectNext(s: BacklogSnapshot, q: NextQuery): NextResult {
     .map((i) => ({ issue: i, dependents: openDependentCount(s, i.id) }));
   candidates.sort((a, b) => {
     if (a.issue.state !== b.issue.state) return a.issue.state === 'todo' ? -1 : 1;
-    if (a.issue.rank !== b.issue.rank) {
-      if (a.issue.rank === undefined) return 1;
-      if (b.issue.rank === undefined) return -1;
-      return a.issue.rank - b.issue.rank;
-    }
-    return b.dependents - a.dependents || compareIssues(a.issue, b.issue);
+    return (
+      compareRank(a.issue, b.issue) ||
+      b.dependents - a.dependents ||
+      compareIssues(a.issue, b.issue)
+    );
   });
   const chosen = candidates[0]?.issue;
   if (chosen) return { id: chosen.id, resumed: false, notices: notices(s, chosen, inContext) };
