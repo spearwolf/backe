@@ -1,7 +1,7 @@
 import { catchErr } from '../../test/helpers/catch.ts';
 import { I, seqBytes, snap, testKey } from '../../test/helpers/snapshot.ts';
-import type { Sprint, User } from '../core/schemas.ts';
-import { serializeEntityFile } from '../store/frontmatter.ts';
+import { type Sprint, type User, validateEntity } from '../core/schemas.ts';
+import { parseEntityFile, serializeEntityFile } from '../store/frontmatter.ts';
 import { issueFile, projectFile, repoFile, sprintFile, userFile } from '../store/layout.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { type ApplyContext, applyOperation } from './apply.ts';
@@ -541,6 +541,17 @@ describe('user.revoke_key', () => {
       revoked_keys: [{ key: alice, revoked: '2026-11-18T12:00:00Z' }],
     });
     expect(r.recorded).toMatchObject({ revoked: '2026-11-18T12:00:00Z' });
+  });
+
+  test('revoking the last key leaves a user file without keys that loads again', () => {
+    const r = run(snap(), { op: 'user.revoke_key', handle: 'alice', key: alice });
+    const change = r.changes.find((c) => c.path === userFile('alice'));
+    const content = String(change?.content ?? '');
+    const parsed = parseEntityFile(content, userFile('alice'));
+    expect(parsed.keys).not.toContain('keys');
+    const { data: user } = validateEntity('user', parsed.data, userFile('alice')) as { data: User };
+    expect(user.keys ?? []).toEqual([]);
+    expect(user.revoked_keys).toEqual([{ key: alice, revoked: NOW }]);
   });
 
   test('defaults the time to now and records it', () => {

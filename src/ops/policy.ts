@@ -64,11 +64,11 @@ function checkKeysUnique(
   before: User | undefined,
   after: User,
 ): void {
-  for (const key of after.keys) {
+  for (const key of after.keys ?? []) {
     if ((before?.keys ?? []).some((old) => sameKey(old, key))) continue;
     for (const [other, { data }] of s.users) {
       if (other === handle) continue;
-      const taken = [...data.keys, ...(data.revoked_keys ?? []).map((r) => r.key)];
+      const taken = [...(data.keys ?? []), ...(data.revoked_keys ?? []).map((r) => r.key)];
       if (taken.some((k) => sameKey(k, key))) {
         throw violation('policy', `Key ${sshFingerprint(key)} gehört schon ${other}`, {
           hint: 'Jeder Key gehört genau einem User.',
@@ -93,7 +93,7 @@ function checkRevocations(before: User | undefined, after: User): void {
   }
   for (const { key } of before?.revoked_keys ?? []) {
     const stays = (after.revoked_keys ?? []).some((r) => sameKey(r.key, key));
-    const active = after.keys.some((k) => sameKey(k, key));
+    const active = (after.keys ?? []).some((k) => sameKey(k, key));
     if (!stays || active) {
       throw violation('policy', `Der Widerruf von ${sshFingerprint(key)} ist endgültig`, {
         hint: 'Einen widerrufenen Key neu zu vergeben ist nicht möglich; einen neuen Key anlegen.',

@@ -113,7 +113,7 @@ async function allowedSigners(wc: string, state: State): Promise<string> {
     const lines: string[] = [];
     for (const [handle, user] of state.users) {
       const active = activeFingerprints(user);
-      for (const key of user.keys) {
+      for (const key of user.keys ?? []) {
         if (active.has(sshFingerprint(key))) lines.push(`${handle} namespaces="git" ${key}`);
       }
     }

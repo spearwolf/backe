@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { SCHEMA_FILES } from '../../scripts/gen-schemas.ts';
 import { catchErr } from '../../test/helpers/catch.ts';
+import { OperationSchema } from '../ops/operation.ts';
 import {
   BacklogConfigSchema,
   IssueSchema,
@@ -201,6 +202,15 @@ describe('user', () => {
     }
   });
 
+  test('a user without keys is valid: absent means no active key', () => {
+    expect(() => validateEntity('user', { name: 'S', kind: 'human' }, 'f')).not.toThrow();
+  });
+  test('user.add still needs at least one key', () => {
+    const add = { op: 'user.add', handle: 'bob', name: 'Bob', kind: 'human' };
+    expect(OperationSchema.safeParse({ ...add, keys: [key] }).success).toBe(true);
+    expect(OperationSchema.safeParse({ ...add, keys: [] }).success).toBe(false);
+    expect(OperationSchema.safeParse(add).success).toBe(false);
+  });
   test('valid users', () => {
     expect(() =>
       validateEntity('user', { name: 'S', kind: 'human', keys: [key, `${key} second`] }, 'f'),

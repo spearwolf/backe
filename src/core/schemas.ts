@@ -273,7 +273,7 @@ export const UserSchema = z
     name: nonEmpty,
     kind: z.enum(['human', 'agent']),
     operator: Handle.optional(),
-    keys: uniqueList(SshKey),
+    keys: uniqueList(SshKey).optional(),
     revoked_keys: z.array(z.strictObject({ key: SshKey, revoked: Timestamp })).optional(),
   })
   .superRefine((u, ctx) => {

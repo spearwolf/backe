@@ -76,7 +76,7 @@ export async function showUser(
     user: stored.data,
     body: stored.body,
     admin: s.config.admins.includes(handle),
-    fingerprints: stored.data.keys.map(sshFingerprint),
+    fingerprints: (stored.data.keys ?? []).map(sshFingerprint),
     revoked: (stored.data.revoked_keys ?? []).map((r) => ({
       fingerprint: sshFingerprint(r.key),
       revoked: r.revoked,
@@ -106,7 +106,7 @@ export function revokeKey(
     (s) => {
       const user = s.users.get(handle);
       if (user === undefined) throw new BackeError('not_found', `User »${handle}« nicht gefunden`);
-      const hits = user.data.keys.filter((k) =>
+      const hits = (user.data.keys ?? []).filter((k) =>
         sshFingerprint(k).slice(FINGERPRINT_SCHEME.length).startsWith(body),
       );
       if (hits.length === 0) {

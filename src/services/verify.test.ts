@@ -302,6 +302,39 @@ test('a key revoked in the parent is invalid regardless of commit date', async (
   ]);
 });
 
+test('revoking the only key is valid and the revoked key signs nothing afterwards', async () => {
+  await addUser('bob');
+  const revoked = '2026-11-19T12:00:00Z';
+  const op: Operation = { op: 'user.revoke_key', handle: 'bob', key: KEYS.bob.line, revoked };
+  const bobFile = serializeEntityFile(
+    'user',
+    { name: 'bob', kind: 'human', revoked_keys: [{ key: KEYS.bob.line, revoked }] },
+    '',
+  );
+  await rawCommit(b.root, {
+    files: { [userFile('bob')]: bobFile },
+    key: KEYS.bob,
+    actor: 'bob',
+    op: encodeOp(op),
+    date: revoked,
+  });
+  expect((await verifyRange(b.root)).invalid).toEqual([]);
+  const late = await rawCommit(b.root, {
+    files: { x: '1' },
+    key: KEYS.bob,
+    actor: 'bob',
+    op: 'manual',
+    date: '2026-12-01T00:00:00Z',
+  });
+  expect((await verifyRange(b.root)).invalid).toEqual([
+    {
+      sha: late,
+      subject: 'raw',
+      reasons: [`Key ${sshFingerprint(KEYS.bob.line)} von bob ist widerrufen`],
+    },
+  ]);
+});
+
 test('a non-admin changing another user is invalid', async () => {
   await addUser('bob');
   const spwFile = await readFile(join(b.root, userFile('spw')), 'utf8');

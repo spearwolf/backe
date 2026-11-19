@@ -88,6 +88,16 @@ describe('users', () => {
     });
   });
 
+  test('revoking the only key leaves a user without active keys', async () => {
+    const k = await testKey('anna');
+    await addUser(ctx, { handle: 'anna', keyFile: k.priv });
+    await revokeKey(ctx, 'anna', sshFingerprint(k.line));
+    const shown = await showUser(ctx, 'anna');
+    expect(shown.fingerprints).toEqual([]);
+    expect(shown.revoked.map((r) => r.fingerprint)).toEqual([sshFingerprint(k.line)]);
+    expect((await listUsers(ctx)).map((u) => u.handle)).toContain('anna');
+  });
+
   test('user show me lists fingerprints and revoked keys', async () => {
     const shown = await showUser(ctx, 'me');
     expect(shown.handle).toBe('spw');

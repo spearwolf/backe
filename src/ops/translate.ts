@@ -293,7 +293,7 @@ function createEntity(kind: NamedKind, key: string, after: Side<object>): Operat
           handle: key,
           name: u.name,
           kind: u.kind,
-          keys: u.keys,
+          keys: u.keys ?? [],
           operator: u.operator,
           ...body,
         }),
@@ -578,11 +578,14 @@ export function translateEdits(
           outcome = removeEntity(kind, key);
           bucket = removed[kind];
         } else {
-          outcome = extraChanged
-            ? MANUAL
-            : before === undefined
-              ? createEntity(kind, key, after)
-              : editEntity(kind, key, before, after);
+          // `user.add` verlangt mindestens einen Key; ein neuer User ohne aktiven Key ist Handarbeit.
+          const keyless = kind === 'user' && ((after.data as User).keys ?? []).length === 0;
+          outcome =
+            extraChanged || (before === undefined && keyless)
+              ? MANUAL
+              : before === undefined
+                ? createEntity(kind, key, after)
+                : editEntity(kind, key, before, after);
           bucket = named[kind];
         }
       }

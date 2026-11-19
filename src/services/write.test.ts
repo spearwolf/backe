@@ -297,6 +297,31 @@ describe('the signing key', () => {
     expect(await statusShort(b.root)).toEqual([]);
   });
 
+  test('a writer whose only key was revoked is a usage error', async () => {
+    const bob = await testKey('bob-solo');
+    await executeWrite(ctx, {
+      kind: 'op',
+      op: { op: 'user.add', handle: 'bob', name: 'Bob', kind: 'human', keys: [bob.line] },
+    });
+    await executeWrite(ctx, {
+      kind: 'op',
+      op: { op: 'user.revoke_key', handle: 'bob', key: bob.line },
+    });
+    await writeLocalState(b.root, 'identity', 'bob');
+    const before = await revParse(b.root, 'HEAD');
+    const asBob: ResolvedContext = {
+      ...ctx,
+      backlog: { ...ctx.backlog, boundTo: 'bob' },
+      user: { ...ctx.user, value: 'bob', key: bob.priv },
+    };
+    const err = await catchErrAsync(() => executeWrite(asBob, CREATE));
+    expect(err).toMatchObject({
+      code: 'usage',
+      message: `Der Key ${bob.priv} ist kein aktiver Key von bob`,
+    });
+    expect(await revParse(b.root, 'HEAD')).toBe(before);
+  });
+
   test('a key of another user is a usage error', async () => {
     const bob = await testKey('bob');
     await executeWrite(ctx, {

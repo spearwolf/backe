@@ -330,7 +330,7 @@ const UserAdd = z.strictObject({
   handle: Handle,
   name: UserSchema.shape.name,
   kind: UserSchema.shape.kind,
-  keys: UserSchema.shape.keys.min(1),
+  keys: UserSchema.shape.keys.unwrap().min(1),
   operator: Handle.optional(),
   body: z.string().optional(),
 });
@@ -338,7 +338,7 @@ const UserAdd = z.strictObject({
 const UserRevokeKey = z.strictObject({
   op: z.literal('user.revoke_key'),
   handle: Handle,
-  key: UserSchema.shape.keys.element,
+  key: UserSchema.shape.keys.unwrap().element,
   revoked: Timestamp.optional(),
 });
 

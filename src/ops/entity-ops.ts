@@ -229,13 +229,13 @@ export function userRevokeKey(d: Draft, op: OpOf<'user.revoke_key'>): OpOf<'user
   const before = d.entity('user', op.handle).data;
   const already = (before.revoked_keys ?? []).find((r) => r.key === op.key);
   if (already !== undefined) return { ...op, revoked: already.revoked };
-  if (!before.keys.includes(op.key)) {
+  if (!(before.keys ?? []).includes(op.key)) {
     throw violation('missing_ref', `User ${op.handle} hat diesen Key nicht`, { ids: [op.handle] });
   }
   const revoked = op.revoked ?? d.ctx.now;
   d.putEntity('user', op.handle, {
     ...before,
-    keys: before.keys.filter((k) => k !== op.key),
+    keys: (before.keys ?? []).filter((k) => k !== op.key),
     revoked_keys: [...(before.revoked_keys ?? []), { key: op.key, revoked }],
   });
   const after = d.entity('user', op.handle).data;
