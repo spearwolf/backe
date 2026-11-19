@@ -22,6 +22,7 @@ import {
   listCommits,
   listTree,
   objectInfo,
+  type RawChange,
   readBlobs,
   removedHandles,
   resolveCommit,
@@ -300,25 +301,50 @@ function anchorReasons(state: State, actor: string | undefined, ops: readonly st
   return reasons;
 }
 
-/** Tree-Änderungen mit Inhalt davor/danach für Users, Issues, Kommentare und die Config. */
+const policyRelevant = (path: string) =>
+  path === BACKLOG_CONFIG || ['user', 'issue', 'comment'].includes(classifyPath(path).kind);
+
+/** Liest Blobs je Pfad (fehlend → `null`); eine Seite einer Änderung, vor oder nach dem Commit. */
+export type BlobSide = (paths: readonly string[]) => Promise<Map<string, Buffer | null>>;
+
+/** Blob-Seite einer Revision. */
+export const blobsAt =
+  (wc: string, rev: string): BlobSide =>
+  async (paths) => {
+    const blobs = await readBlobs(
+      wc,
+      paths.map((p) => `${rev}:${p}`),
+    );
+    return new Map(paths.map((p) => [p, blobs.get(`${rev}:${p}`) ?? null]));
+  };
+
+/**
+ * Tree-Änderungen mit Inhalt davor/danach für Users, Issues, Kommentare und die Config. Gemeinsam
+ * für `verify` und die Vorabprüfung einer Quarantäne-Umkehr, damit beide dasselbe beurteilen.
+ */
+export async function treeChangesWithContent(
+  raw: readonly RawChange[],
+  before: BlobSide,
+  after: BlobSide,
+): Promise<TreeChange[]> {
+  const relevant = raw.filter((c) => policyRelevant(c.path));
+  const side = (mode: (c: RawChange) => string) =>
+    relevant.filter((c) => REGULAR_FILE.test(mode(c))).map((c) => c.path);
+  const [was, now] = await Promise.all([
+    before(side((c) => c.oldMode)),
+    after(side((c) => c.newMode)),
+  ]);
+  const text = (blobs: Map<string, Buffer | null>, path: string) =>
+    blobs.get(path)?.toString('utf8') ?? null;
+  return raw.map((c) => ({ ...c, before: text(was, c.path), after: text(now, c.path) }));
+}
+
 async function changesOf(wc: string, parent: string, sha: string): Promise<TreeChange[]> {
-  const raw = await treeChanges(wc, parent, sha);
-  const relevant = (path: string) =>
-    path === BACKLOG_CONFIG || ['user', 'issue', 'comment'].includes(classifyPath(path).kind);
-  const specs = raw.flatMap((c) => {
-    if (!relevant(c.path)) return [];
-    const out: string[] = [];
-    if (REGULAR_FILE.test(c.oldMode)) out.push(`${parent}:${c.path}`);
-    if (REGULAR_FILE.test(c.newMode)) out.push(`${sha}:${c.path}`);
-    return out;
-  });
-  const blobs = await readBlobs(wc, specs);
-  const text = (spec: string) => blobs.get(spec)?.toString('utf8') ?? null;
-  return raw.map((c) => ({
-    ...c,
-    before: text(`${parent}:${c.path}`),
-    after: text(`${sha}:${c.path}`),
-  }));
+  return treeChangesWithContent(
+    await treeChanges(wc, parent, sha),
+    blobsAt(wc, parent),
+    blobsAt(wc, sha),
+  );
 }
 
 /** Identitätsschutz und Quarantäne-Datei eines Nicht-Anker-Commits. */
@@ -418,8 +444,7 @@ async function governingQuarantine(
 
 // --- Einstieg -------------------------------------------------------------------------------
 
-/** Prüft die Commits nach `since` (ohne: ab dem Anker) bis `to` (Default `HEAD`). */
-export async function verifyRange(wc: string, opts: VerifyOptions = {}): Promise<VerifyReport> {
+async function checkRange(wc: string, opts: VerifyOptions) {
   const { anchor, to, since } = await resolveRange(wc, opts);
   const commits = await listCommits(wc, { from: since, to });
   const parents = commits.flatMap((c) => c.parents.slice(0, 1));
@@ -427,7 +452,25 @@ export async function verifyRange(wc: string, opts: VerifyOptions = {}): Promise
   const sigs = await checkSignatures(wc, commits, anchor, states);
   const checked: Checked[] = [];
   for (const commit of commits) checked.push(await checkCommit(wc, commit, anchor, states, sigs));
+  return { anchor, to, since, commits, checked };
+}
 
+/**
+ * Text der maßgeblichen Quarantäne-Datei bei `HEAD`, genau nach der Regel von `verifyRange`: die
+ * Datei im letzten Commit der Historie, der sie ändert und ohne Quarantäne gültig ist; ohne einen
+ * solchen `undefined`.
+ */
+export async function governingQuarantineText(wc: string): Promise<string | undefined> {
+  const { checked } = await checkRange(wc, {});
+  const last = checked.findLast((c) => c.quarantine !== undefined && c.reasons.length === 0);
+  if (last === undefined) return undefined;
+  const spec = `${last.sha}:${QUARANTINE}`;
+  return (await readBlobs(wc, [spec])).get(spec)?.toString('utf8');
+}
+
+/** Prüft die Commits nach `since` (ohne: ab dem Anker) bis `to` (Default `HEAD`). */
+export async function verifyRange(wc: string, opts: VerifyOptions = {}): Promise<VerifyReport> {
+  const { anchor, to, since, commits, checked } = await checkRange(wc, opts);
   const entries = await governingQuarantine(wc, checked, since);
   const report: VerifyReport = {
     anchor,
