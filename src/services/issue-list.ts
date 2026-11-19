@@ -49,7 +49,7 @@ export type IssueListResult = {
   problems: Problem[];
 };
 
-function compareCreated(a: Issue, b: Issue): number {
+export function compareCreated(a: Issue, b: Issue): number {
   if (a.created !== b.created) return a.created < b.created ? -1 : 1;
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
@@ -84,11 +84,28 @@ function treeOrder(
   return out;
 }
 
-function hasOpenDeps(s: BacklogSnapshot, issue: Issue): boolean {
+export function hasOpenDeps(s: BacklogSnapshot, issue: Issue): boolean {
   return (issue.depends_on ?? []).some((d) => {
     const dep = s.issues.get(d);
     return dep === undefined || !isSettled(dep.data.state);
   });
+}
+
+/** Kontextfilter (Projekt rekursiv, Sprint, Repo): je Dimension genügt ein Treffer, Dimensionen verknüpft UND. */
+export function matchesFilter(
+  issue: Issue,
+  filter: { project?: string[]; sprint?: string[]; repo?: string[] },
+  exact: boolean,
+): boolean {
+  return (
+    (filter.project === undefined ||
+      filter.project.some((project) =>
+        matchesContext(issue, { project, ...(exact ? { projectExact: true } : {}) }),
+      )) &&
+    (filter.sprint === undefined ||
+      filter.sprint.some((sprint) => matchesContext(issue, { sprint }))) &&
+    (filter.repo === undefined || filter.repo.some((repo) => matchesContext(issue, { repo })))
+  );
 }
 
 export async function listIssues(
@@ -124,14 +141,7 @@ export async function listIssues(
     q.all === true,
   );
 
-  const inContext = (issue: Issue): boolean =>
-    (filter.project === undefined ||
-      filter.project.some((project) =>
-        matchesContext(issue, { project, ...(q.exact === true ? { projectExact: true } : {}) }),
-      )) &&
-    (filter.sprint === undefined ||
-      filter.sprint.some((sprint) => matchesContext(issue, { sprint }))) &&
-    (filter.repo === undefined || filter.repo.some((repo) => matchesContext(issue, { repo })));
+  const inContext = (issue: Issue): boolean => matchesFilter(issue, filter, q.exact === true);
 
   const keep = (issue: Issue): boolean => {
     if (

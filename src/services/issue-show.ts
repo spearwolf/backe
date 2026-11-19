@@ -43,7 +43,7 @@ export type IssueDetail = {
   notices: Notice[];
 };
 
-function commentView(c: StoredEntity<Comment>): CommentView {
+export function commentView(c: StoredEntity<Comment>): CommentView {
   const { author, created, kind, from, to } = c.data;
   return {
     file: basename(c.path),
