@@ -5,6 +5,7 @@ import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { rawCommit, revParse, type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
 import { type Env, type Homes, resolveHomes } from '../context/paths.ts';
 import { managedClonePath, registerBacklog, unregisterBacklog } from '../context/registry.ts';
+import { resolveContext } from '../context/resolve.ts';
 import { readUserConfig, userConfigPath } from '../context/user-config.ts';
 import { git } from '../git/exec.ts';
 import { readLocalState } from '../git/local-state.ts';
@@ -38,6 +39,22 @@ async function tempEntries(homes: Homes): Promise<string[]> {
 async function push(): Promise<void> {
   await git(['push', '-q', 'origin', 'main'], { cwd: b.root });
 }
+
+/** Ein gültiger Admin-Commit von spw setzt `verify` in der Backlog-Config. */
+async function setVerify(mode: 'warn' | 'off'): Promise<void> {
+  const config = await readFile(join(b.root, BACKLOG_CONFIG), 'utf8');
+  await executeWrite(await b.context(), {
+    kind: 'manual',
+    subject: `verify: ${mode}`,
+    changes: [
+      { path: BACKLOG_CONFIG, content: config.replace(/\n}\n$/, `,\n  "verify": "${mode}"\n}\n`) },
+    ],
+  });
+}
+
+/** Ein unsignierter, sonst unauffälliger Commit von spw. */
+const unsigned = (files: Record<string, string>) =>
+  rawCommit(b.root, { files, actor: 'spw', op: 'manual' });
 
 beforeEach(async () => {
   b = await testBacklog({ remote: true });
@@ -90,16 +107,8 @@ test('a remote with an invalid commit is refused in strict mode and leaves no cl
 });
 
 test('in warn mode the clone stays and reports the reasons', async () => {
-  const ctx = await b.context();
-  const config = await readFile(join(b.root, BACKLOG_CONFIG), 'utf8');
-  await executeWrite(ctx, {
-    kind: 'manual',
-    subject: 'verify: warn',
-    changes: [
-      { path: BACKLOG_CONFIG, content: config.replace(/\n}\n$/, ',\n  "verify": "warn"\n}\n') },
-    ],
-  });
-  const bad = await rawCommit(b.root, { files: { 'notes.md': 'x\n' }, actor: 'spw', op: 'manual' });
+  await setVerify('warn');
+  const bad = await unsigned({ 'notes.md': 'x\n' });
   await push();
   const r = await cloneBacklog({
     homes: other.homes,
@@ -110,6 +119,80 @@ test('in warn mode the clone stays and reports the reasons', async () => {
   expect(r.notices).toEqual([`${bad.slice(0, 7)}: unsigniert`]);
   expect(await revParse(r.root, 'HEAD')).toBe(bad);
   expect(await readLocalState(r.root, 'verified')).toBeUndefined();
+});
+
+test('an unsigned tip that turns verify off is judged by the mode of its parent', async () => {
+  const config = await readFile(join(b.root, BACKLOG_CONFIG), 'utf8');
+  await unsigned({ [BACKLOG_CONFIG]: config.replace(/\n}\n$/, ',\n  "verify": "off"\n}\n') });
+  await push();
+  const err = await catchErrAsync(() =>
+    cloneBacklog({ homes: other.homes, env: other.env, url: b.remote as string, handle: 'spw' }),
+  );
+  expect(err.code).toBe('verify');
+  expect(await exists(join(other.homes.backeHome, 'backlogs'))).toBe(false);
+  expect(await readUserConfig(other.homes.backeHome)).toEqual({});
+  expect(await tempEntries(other.homes)).toEqual([]);
+});
+
+test('an unreachable remote is a sync error and leaves nothing', async () => {
+  const gone = join(await tempDir(), 'gone.git');
+  const err = await catchErrAsync(() =>
+    cloneBacklog({ homes: other.homes, env: other.env, url: gone, handle: 'spw' }),
+  );
+  expect(err.code).toBe('sync');
+  expect(err.message).toMatch(new RegExp(`^Clone von ${gone} fehlgeschlagen: .+`));
+  expect(await exists(join(other.homes.backeHome, 'backlogs'))).toBe(false);
+  expect(await tempEntries(other.homes)).toEqual([]);
+});
+
+test('a clone of another history under a known name is refused', async () => {
+  const local = await testBacklog({ userName: 'Lokal' }); // eigene Historie, eigener Anker
+  const anchor = (await readLocalState(local.root, 'anchor')) as string;
+  expect(anchor).not.toBe(await readLocalState(b.root, 'anchor'));
+  const err = await catchErrAsync(() =>
+    cloneBacklog({
+      homes: local.homes,
+      env: local.env,
+      url: b.remote as string,
+      handle: 'claude-1',
+    }),
+  );
+  expect(err.code).toBe('verify');
+  expect(err.message).toBe(
+    `${b.remote} ist kein Nachfahre des zuletzt verifizierten Stands ${anchor.slice(0, 7)}`,
+  );
+  expect((await readUserConfig(local.homes.backeHome)).backlogs?.acme?.remote).toBeUndefined();
+  expect(await exists(managedClonePath(local.homes, 'acme', 'claude-1'))).toBe(false);
+  expect(await tempEntries(local.homes)).toEqual([]);
+});
+
+test('a remote rewritten behind the verified state is refused', async () => {
+  const anchor = await revParse(b.root, 'HEAD');
+  await executeWrite(await b.context(), { kind: 'op', op: { op: 'issue.create', title: 'A' } });
+  await push();
+  const first = await cloneBacklog({
+    homes: other.homes,
+    env: other.env,
+    url: b.remote as string,
+    handle: 'spw',
+  });
+  const verified = (await readLocalState(first.root, 'verified')) as string;
+  await git(['reset', '-q', '--hard', anchor], { cwd: b.root });
+  await executeWrite(await b.context(), { kind: 'op', op: { op: 'issue.create', title: 'B' } });
+  await git(['push', '-q', '-f', 'origin', 'main'], { cwd: b.root });
+
+  const ctx = await resolveContext({
+    cwd: await tempDir(),
+    env: other.env,
+    flags: { as: 'claude-1', backlog: 'acme' },
+  });
+  const err = await catchErrAsync(() => ensureWorkingCopy(ctx, 'claude-1'));
+  expect(err.code).toBe('verify');
+  expect(err.message).toBe(
+    `${b.remote} ist kein Nachfahre des zuletzt verifizierten Stands ${verified.slice(0, 7)}`,
+  );
+  expect(await exists(managedClonePath(other.homes, 'acme', 'claude-1'))).toBe(false);
+  expect(await tempEntries(other.homes)).toEqual([]);
 });
 
 test('a remote whose HEAD is another branch is checked out on the sync branch', async () => {
@@ -168,7 +251,7 @@ test('an existing working copy is returned without cloning', async () => {
     ...ctx,
     userConfig: { ...ctx.userConfig, backlogs: { acme: { remote: '/does/not/exist.git' } } },
   };
-  expect(await ensureWorkingCopy(offline, 'spw')).toBe(b.root);
+  expect(await ensureWorkingCopy(offline, 'spw')).toEqual({ root: b.root, notices: [] });
 });
 
 test('a missing bound working copy is not_found with hint', async () => {
@@ -239,13 +322,9 @@ test('a history with two roots has no trust anchor', async () => {
   expect(await exists(join(other.homes.backeHome, 'backlogs'))).toBe(false);
 });
 
-test('in off mode the clone is not verified', async () => {
-  const config = await readFile(join(b.root, BACKLOG_CONFIG), 'utf8');
-  await rawCommit(b.root, {
-    files: { [BACKLOG_CONFIG]: config.replace(/\n}\n$/, ',\n  "verify": "off"\n}\n') },
-    actor: 'spw',
-    op: 'manual',
-  });
+test('in off mode an invalid commit is kept without notices', async () => {
+  await setVerify('off');
+  await unsigned({ 'notes.md': 'x\n' });
   await push();
   const r = await cloneBacklog({
     homes: other.homes,

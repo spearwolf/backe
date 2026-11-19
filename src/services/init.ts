@@ -61,7 +61,7 @@ async function removeCreated(root: string, existed: boolean): Promise<void> {
 }
 
 /** Erste nicht leere Zeile der git-Fehlerausgabe. */
-function firstStderrLine(error: unknown): string {
+export function firstStderrLine(error: unknown): string {
   const stderr = error instanceof BackeError ? (error.details as { stderr?: string })?.stderr : '';
   const line = (stderr ?? '').split('\n').find((l) => l.trim() !== '');
   return line ?? (error instanceof Error ? error.message : String(error));

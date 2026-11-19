@@ -105,6 +105,7 @@ test('a manual change carries Backe-Op: manual', async () => {
     refs: {},
     notices: [],
     paths: ['notes.md'],
+    verifyNotices: [],
   });
   expect((await logTrailers(b.root))[0]).toEqual({
     subject: 'Notiz von Hand',
@@ -121,7 +122,14 @@ test('a no-op writes no commit', async () => {
     kind: 'op',
     op: { op: 'issue.edit', id, set: { title: { from: 'A', to: 'A' } } },
   });
-  expect(r).toEqual({ commit: undefined, recorded: [], refs: {}, notices: [], paths: [] });
+  expect(r).toEqual({
+    commit: undefined,
+    recorded: [],
+    refs: {},
+    notices: [],
+    paths: [],
+    verifyNotices: [],
+  });
   expect(await revParse(b.root, 'HEAD')).toBe(before);
 });
 
@@ -464,6 +472,34 @@ describe('another identity', () => {
       'claude-1',
     ]);
     expect(await revParse(remote.root, 'HEAD')).toBe(before); // fremde Arbeitskopie unberührt
+    expect(r.verifyNotices).toEqual([]);
+  });
+
+  test('an automatic clone in warn mode reports the reasons in the write result', async () => {
+    const remote = await testBacklog({ remote: true });
+    const config = await readFile(join(remote.root, '.backe/backlog.jsonc'), 'utf8');
+    await executeWrite(await remote.context(), {
+      kind: 'manual',
+      subject: 'verify: warn',
+      changes: [
+        {
+          path: '.backe/backlog.jsonc',
+          content: config.replace(/\n}\n$/, ',\n  "verify": "warn"\n}\n'),
+        },
+      ],
+    });
+    const asClaude = await addClaude(remote);
+    const bad = await rawCommit(remote.root, {
+      files: { 'notes.md': 'x\n' },
+      actor: 'spw',
+      op: 'manual',
+    });
+    await git(['push', '-q', 'origin', 'main'], { cwd: remote.root });
+    const r = await executeWrite(asClaude, CREATE);
+    expect(r.verifyNotices).toEqual([`${bad.slice(0, 7)}: unsigniert`]);
+    expect(r.commit).toBe(
+      await revParse(managedClonePath(remote.homes, 'acme', 'claude-1'), 'HEAD'),
+    );
   });
 
   test('a backlog without remote clones the new identity from the existing working copy', async () => {

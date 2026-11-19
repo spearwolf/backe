@@ -53,6 +53,8 @@ export type WriteResult = {
   refs: Record<string, string>;
   notices: Notice[];
   paths: string[];
+  /** Gründe ungültiger Commits, wenn dieser Write die Arbeitskopie im Modus `warn` geklont hat. */
+  verifyNotices: string[];
 };
 
 export type WriteDeps = {
@@ -63,7 +65,9 @@ export type WriteDeps = {
   raise?: (signal: NodeJS.Signals) => void;
 };
 
-type Planned = Omit<WriteResult, 'commit' | 'paths'> & { changes: readonly FileChange[] };
+type Planned = Omit<WriteResult, 'commit' | 'paths' | 'verifyNotices'> & {
+  changes: readonly FileChange[];
+};
 
 /** Inhalt von `write.journal`: die Pfade, die ein abgebrochener Write zurücksetzen muss. */
 type Journal = { head: string; paths: string[] };
@@ -248,8 +252,8 @@ export async function executeWrite(
   deps: WriteDeps = {},
 ): Promise<WriteResult> {
   const { handle, key, workingCopy } = requireWriter(ctx);
-  const wc = (await exists(join(workingCopy, BACKLOG_CONFIG)))
-    ? workingCopy
+  const { root: wc, notices: verifyNotices } = (await exists(join(workingCopy, BACKLOG_CONFIG)))
+    ? { root: workingCopy, notices: [] }
     : await ensureWorkingCopy(ctx, handle);
   const dir = await stateDir(wc);
   const journal = join(dir, 'write.journal');
@@ -264,7 +268,7 @@ export async function executeWrite(
     const head = await assertOnBranch(wc, snapshot.config.sync.branch);
 
     const { changes, ...planned } = await plan(wc, snapshot, head, input, handle, deps);
-    if (changes.length === 0) return { commit: undefined, ...planned, paths: [] };
+    if (changes.length === 0) return { commit: undefined, ...planned, paths: [], verifyNotices };
 
     const paths = [...new Set(changes.map((c) => c.path))].sort();
     const dirty = await dirtyPaths(wc, paths);
@@ -293,7 +297,7 @@ export async function executeWrite(
       throw error;
     }
     await rm(journal, { force: true });
-    return { commit, ...planned, paths };
+    return { commit, ...planned, paths, verifyNotices };
   }
 
   try {

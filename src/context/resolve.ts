@@ -332,8 +332,11 @@ async function findRepo(
 
 const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-/** Erste vorhandene andere Arbeitskopie desselben Backlogs: gebundene Pfade, dann verwaltete Klone. */
-async function fallbackRoot(
+/**
+ * Erste vorhandene Arbeitskopie des Backlogs, die nicht `handle` gehört (ohne `handle`: jede):
+ * gebundene Pfade, dann verwaltete Klone.
+ */
+export async function fallbackRoot(
   cfg: UserConfig,
   homes: Homes,
   backlog: string,
