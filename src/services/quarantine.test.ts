@@ -1,0 +1,156 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { catchErrAsync } from '../../test/helpers/catch.ts';
+import {
+  logTrailers,
+  rawCommit,
+  revParse,
+  sigOf,
+  statusShort,
+  type TestBacklog,
+  testBacklog,
+  testKey,
+} from '../../test/helpers/git.ts';
+import { git } from '../git/exec.ts';
+import { BACKLOG_CONFIG, QUARANTINE } from '../store/layout.ts';
+import { quarantineCommit } from './quarantine.ts';
+import { verifyRange } from './verify.ts';
+import { executeWrite } from './write.ts';
+
+const USER_FILE = 'users/spw.md';
+let FOREIGN_EDIT = '';
+
+let b: TestBacklog;
+let bob: Awaited<ReturnType<typeof testKey>>;
+
+beforeEach(async () => {
+  b = await testBacklog();
+  bob = await testKey('bob');
+  FOREIGN_EDIT = `${await readFile(join(b.root, USER_FILE), 'utf8')}\nTampered by bob.\n`;
+  await executeWrite(await b.context(), {
+    kind: 'op',
+    op: { op: 'user.add', handle: 'bob', name: 'Bob', kind: 'human', keys: [bob.line] },
+  });
+});
+
+const badCommit = (files: Record<string, string | null> = { [USER_FILE]: FOREIGN_EDIT }) =>
+  rawCommit(b.root, { files, key: bob, actor: 'bob' });
+
+test('accept lets a stuck history verify again with the commit as quarantined', async () => {
+  const bad = await badCommit();
+  expect((await verifyRange(b.root)).invalid.map((f) => f.sha)).toEqual([bad]);
+  await quarantineCommit(await b.context(), { sha: bad, decision: 'accepted', reason: 'harmlos' });
+  const r = await verifyRange(b.root);
+  expect(r.invalid).toEqual([]);
+  expect(r.quarantined).toMatchObject([{ sha: bad, decision: 'accepted', note: 'harmlos' }]);
+  const [last] = await logTrailers(b.root);
+  expect(last).toMatchObject({ op: 'manual', actor: 'spw' });
+  expect(last?.subject).toBe(`verify accept ${bad.slice(0, 7)}`);
+  expect(await sigOf(b.root, 'HEAD', { spw: b.key })).toEqual(['G', 'spw']);
+});
+
+test('revert restores the files and records the entry in the same commit', async () => {
+  const before = await readFile(join(b.root, USER_FILE), 'utf8');
+  const bad = await badCommit({ [USER_FILE]: FOREIGN_EDIT, 'notes/new.txt': 'x\n' });
+  expect(await readFile(join(b.root, USER_FILE), 'utf8')).toBe(FOREIGN_EDIT);
+  const r = await quarantineCommit(await b.context(), {
+    sha: bad,
+    decision: 'reverted',
+    reason: 'fremde Änderung',
+  });
+  expect(await readFile(join(b.root, USER_FILE), 'utf8')).toBe(before);
+  await expect(readFile(join(b.root, 'notes/new.txt'))).rejects.toThrow();
+  expect(r.paths).toEqual(expect.arrayContaining([QUARANTINE, USER_FILE, 'notes/new.txt']));
+  expect(await statusShort(b.root)).toEqual([]);
+  expect(await revParse(b.root, 'HEAD^')).toBe(bad);
+  const report = await verifyRange(b.root);
+  expect(report.invalid).toEqual([]);
+  expect(report.quarantined).toMatchObject([{ sha: bad, decision: 'reverted' }]);
+  expect((await logTrailers(b.root))[0]?.subject).toBe(`verify revert ${bad.slice(0, 7)}`);
+});
+
+test('revert brings back a file the commit deleted', async () => {
+  await rawCommit(b.root, { files: { 'notes/keep.txt': 'keep\n' }, key: b.key, actor: 'spw' });
+  const bad = await badCommit({ 'notes/keep.txt': null });
+  await quarantineCommit(await b.context(), { sha: bad, decision: 'reverted', reason: 'weg' });
+  expect(await readFile(join(b.root, 'notes/keep.txt'), 'utf8')).toBe('keep\n');
+});
+
+test('revert of a path changed later is a conflict and writes nothing', async () => {
+  const bad = await badCommit();
+  await rawCommit(b.root, {
+    files: { [USER_FILE]: `${FOREIGN_EDIT}later\n` },
+    key: bob,
+    actor: 'bob',
+  });
+  const head = await revParse(b.root, 'HEAD');
+  const err = await catchErrAsync(async () =>
+    quarantineCommit(await b.context(), { sha: bad, decision: 'reverted', reason: 'x' }),
+  );
+  expect(err).toMatchObject({
+    code: 'conflict',
+    message: `${USER_FILE} wurde nach ${bad.slice(0, 7)} geändert; Umkehr von Hand`,
+  });
+  expect(await revParse(b.root, 'HEAD')).toBe(head);
+  expect(await statusShort(b.root)).toEqual([]);
+});
+
+test('the anchor commit cannot be reverted', async () => {
+  const root = (await git(['rev-list', '--max-parents=0', 'HEAD'], { cwd: b.root })).stdout.trim();
+  const err = await catchErrAsync(async () =>
+    quarantineCommit(await b.context(), { sha: root, decision: 'reverted', reason: 'x' }),
+  );
+  expect(err).toMatchObject({
+    code: 'conflict',
+    message: 'Der Vertrauensanker lässt sich nicht umkehren',
+  });
+});
+
+test('a non-admin may not quarantine', async () => {
+  const bad = await badCommit();
+  await rawCommit(b.root, {
+    files: {
+      [BACKLOG_CONFIG]: JSON.stringify({
+        version: 1,
+        name: 'acme',
+        id_prefix: 'bk',
+        admins: ['bob'],
+      }),
+    },
+    key: b.key,
+    actor: 'spw',
+  });
+  const head = await revParse(b.root, 'HEAD');
+  const err = await catchErrAsync(async () =>
+    quarantineCommit(await b.context(), { sha: bad, decision: 'accepted', reason: 'x' }),
+  );
+  expect(err).toMatchObject({ code: 'validation', message: 'Quarantäne ändern nur Admins' });
+  expect(await revParse(b.root, 'HEAD')).toBe(head);
+});
+
+test('an unknown or foreign sha is not_found, a second entry for it a conflict', async () => {
+  const ctx = await b.context();
+  const unknown = await catchErrAsync(() =>
+    quarantineCommit(ctx, { sha: 'f'.repeat(40), decision: 'accepted', reason: 'x' }),
+  );
+  expect(unknown).toMatchObject({ code: 'not_found' });
+  const bad = await badCommit();
+  await quarantineCommit(ctx, { sha: bad, decision: 'accepted', reason: 'x' });
+  const twice = await catchErrAsync(() =>
+    quarantineCommit(ctx, { sha: bad, decision: 'reverted', reason: 'y' }),
+  );
+  expect(twice).toMatchObject({ code: 'conflict' });
+});
+
+test('comments in an existing quarantine.jsonc survive', async () => {
+  await rawCommit(b.root, {
+    files: { [QUARANTINE]: '{\n  // Notiz bleibt\n  "entries": []\n}\n' },
+    key: b.key,
+    actor: 'spw',
+  });
+  const bad = await badCommit();
+  await quarantineCommit(await b.context(), { sha: bad, decision: 'accepted', reason: 'ok' });
+  const text = await readFile(join(b.root, QUARANTINE), 'utf8');
+  expect(text).toContain('// Notiz bleibt');
+  expect(text).toContain(bad);
+});
