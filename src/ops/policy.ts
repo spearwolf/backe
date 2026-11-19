@@ -25,8 +25,10 @@ import { violation } from './invariants.ts';
  *
  * Admin ist nur, wer in `config.admins` steht und als Mensch existiert (bei einer Änderung am
  * eigenen User zählt der Stand davor); ein Agent oder ein Handle ohne User-Datei im Admin-Eintrag
- * hat keine Admin-Rechte. Einen User, dessen Handle in `config.admins` steht oder der früher schon
- * einmal entfernt wurde (`opts.removedBefore`), legt nur ein Admin an. Admins dürfen sonst alles.
+ * hat keine Admin-Rechte. Bestimmt der Aufrufer den Admin-Status aus einem anderen Stand
+ * (`verify`: dem Stand, gegen den der Commit beurteilt wird), übergibt er ihn als `opts.admin`.
+ * Einen User, dessen Handle in `config.admins` steht oder der früher schon einmal entfernt wurde
+ * (`opts.removedBefore`), legt nur ein Admin an. Admins dürfen sonst alles.
  * Alle anderen dürfen einen User ändern, wenn sie es selbst sind oder wenn es ihr Agent ist
  * (`operator`, nur wenn der Akteur ein Mensch ist), dabei aber weder `kind` noch `operator`
  * ändern (den Operator wechseln nur Admins, auch der bisherige Operator nicht); einen neuen User
@@ -39,9 +41,13 @@ export function checkUserChange(
   handle: string,
   before: User | undefined,
   after: User | undefined,
-  opts: { removedBefore?: boolean } = {},
+  opts: { removedBefore?: boolean; admin?: boolean } = {},
 ): void {
-  checkRights(s, actor, handle, before, after, opts.removedBefore === true);
+  const admin = opts.admin ?? isAdmin(s, actor, handle, before);
+  checkRights(s, actor, handle, before, after, {
+    admin,
+    removedBefore: opts.removedBefore === true,
+  });
   checkOperator(s, before, after);
   if (after !== undefined) {
     checkKeysUnique(s, handle, before, after);
@@ -157,9 +163,9 @@ function checkRights(
   handle: string,
   before: User | undefined,
   after: User | undefined,
-  removedBefore: boolean,
+  { admin, removedBefore }: { admin: boolean; removedBefore: boolean },
 ): void {
-  if (isAdmin(s, actor, handle, before)) return;
+  if (admin) return;
   if (before !== undefined && after !== undefined) {
     const operates =
       before.kind === 'agent' &&

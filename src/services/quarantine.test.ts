@@ -107,7 +107,6 @@ test('the anchor commit cannot be reverted', async () => {
 });
 
 test('a non-admin may not quarantine', async () => {
-  const bad = await badCommit();
   await rawCommit(b.root, {
     files: {
       [BACKLOG_CONFIG]: JSON.stringify({
@@ -120,6 +119,7 @@ test('a non-admin may not quarantine', async () => {
     key: b.key,
     actor: 'spw',
   });
+  const bad = await rawCommit(b.root, { files: { 'notes/x.txt': 'x\n' }, actor: 'bob' });
   const head = await revParse(b.root, 'HEAD');
   const err = await catchErrAsync(async () =>
     quarantineCommit(await b.context(), { sha: bad, decision: 'accepted', reason: 'x' }),
@@ -313,4 +313,108 @@ test('a revert that would restore an unreadable user file is a conflict', async 
   );
   expect(err).toMatchObject({ code: 'conflict' });
   expect(err.message).toMatch(/^Umkehr von Hand nötig: /);
+});
+
+const quarantineOf = (sha: string) =>
+  `${JSON.stringify({ entries: [{ sha, decision: 'accepted', reason: 'passt' }] }, null, 2)}\n`;
+
+/** bob trägt sich selbst als Admin ein; der Commit ist ungültig. */
+async function escalate(): Promise<string> {
+  const config = JSON.parse(await readFile(join(b.root, BACKLOG_CONFIG), 'utf8'));
+  return rawCommit(b.root, {
+    files: { [BACKLOG_CONFIG]: `${JSON.stringify({ ...config, admins: ['spw', 'bob'] })}\n` },
+    key: bob,
+    actor: 'bob',
+    op: 'manual',
+  });
+}
+
+/** bob setzt seinen Key bei spw ein und nimmt sich selbst einen neuen; der Commit ist ungültig. */
+async function hijack(): Promise<string> {
+  const spare = await testKey('bob-spare');
+  const blob = (line: string) => line.split(' ').slice(0, 2).join(' ');
+  const spwFile = await readFile(join(b.root, USER_FILE), 'utf8');
+  const bobFile = await readFile(join(b.root, 'users/bob.md'), 'utf8');
+  return rawCommit(b.root, {
+    files: {
+      [USER_FILE]: spwFile.replace(blob(b.key.line), blob(bob.line)),
+      'users/bob.md': bobFile.replace(blob(bob.line), blob(spare.line)),
+    },
+    key: bob,
+    actor: 'bob',
+    op: 'manual',
+  });
+}
+
+test('a member made admin only by an invalid commit may not quarantine', async () => {
+  const bad = await escalate();
+  const ctx = await b.context();
+  const err = await catchErrAsync(() =>
+    quarantineCommit(
+      {
+        ...ctx,
+        backlog: { ...ctx.backlog, boundTo: 'bob' },
+        user: { ...ctx.user, value: 'bob', key: bob.priv },
+      },
+      { sha: bad, decision: 'accepted', reason: 'x' },
+    ),
+  );
+  expect(err).toMatchObject({ code: 'validation', message: 'Quarantäne ändern nur Admins' });
+});
+
+describe('a member who signs a quarantine for her own invalid commit', () => {
+  test.each([
+    ['makes herself admin', escalate, 'bob', `nur Admins ändern ${QUARANTINE}`],
+    ['takes over the admin key', hijack, 'spw', 'signiert von bob, Backe-Actor ist spw'],
+  ] as const)(
+    '%s: both commits stay invalid and the admin can still quarantine them',
+    async (_, attack, actor, reason) => {
+      const bad = await attack();
+      const self = await rawCommit(b.root, {
+        files: { [QUARANTINE]: quarantineOf(bad) },
+        key: bob,
+        actor,
+        op: 'manual',
+      });
+
+      const before = await verifyRange(b.root);
+      expect(before.invalid.map((f) => f.sha)).toEqual([bad, self]);
+      expect(before.invalid[1]?.reasons).toEqual([reason]);
+      expect(before.quarantined).toEqual([]);
+
+      const ctx = await b.context();
+      await quarantineCommit(ctx, { sha: bad, decision: 'reverted', reason: 'Übernahme' });
+      await quarantineCommit(ctx, { sha: self, decision: 'accepted', reason: 'wirkungslos' });
+
+      const after = await verifyRange(b.root);
+      expect(after.invalid).toEqual([]);
+      expect(after.quarantined.map((f) => f.sha)).toEqual([bad, self]);
+    },
+  );
+});
+
+test('quarantine needs the signing key to be active in the governing state', async () => {
+  const bad = await badCommit();
+  const fresh = await testKey('spw-new');
+  const spwFile = await readFile(join(b.root, USER_FILE), 'utf8');
+  // Gültig, aber nach dem ungültigen Commit: Der neue Key gilt erst nach der Quarantäne.
+  await rawCommit(b.root, {
+    files: { [USER_FILE]: spwFile.replace(b.key.line, `${b.key.line}\n  - ${fresh.line}`) },
+    key: b.key,
+    actor: 'spw',
+    op: 'manual',
+  });
+  const head = await revParse(b.root, 'HEAD');
+  const ctx = await b.context();
+  const err = await catchErrAsync(() =>
+    quarantineCommit(
+      { ...ctx, user: { ...ctx.user, key: fresh.priv } },
+      { sha: bad, decision: 'accepted', reason: 'x' },
+    ),
+  );
+  expect(err).toMatchObject({
+    code: 'conflict',
+    message: 'Umkehr von Hand nötig: der Signier-Key von spw gilt im maßgeblichen Stand nicht',
+  });
+  expect(await revParse(b.root, 'HEAD')).toBe(head);
 });

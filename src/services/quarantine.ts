@@ -14,6 +14,7 @@ import {
   type User,
   validateEntity,
 } from '../core/schemas.ts';
+import { sshFingerprint } from '../core/ssh.ts';
 import {
   isAncestor,
   type RawChange,
@@ -23,14 +24,16 @@ import {
   rootCommits,
   treeChanges,
 } from '../git/history.ts';
+import { readPublicKey } from '../git/ssh.ts';
 import { violation } from '../ops/invariants.ts';
-import { checkCommitPolicy, type TreeChange } from '../ops/verify-policy.ts';
+import { checkCommitPolicy, type PolicyState, type TreeChange } from '../ops/verify-policy.ts';
 import type { FileChange } from '../store/files.ts';
 import { parseEntityFile } from '../store/frontmatter.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG, classifyPath, QUARANTINE } from '../store/layout.ts';
 import { type BacklogSnapshot, loadSnapshot } from '../store/snapshot.ts';
-import { blobsAt, governingQuarantineText, treeChangesWithContent } from './verify.ts';
+import { blobsAt, nextCommitBasis, treeChangesWithContent } from './verify.ts';
+import { activeFingerprints } from './verify-state.ts';
 import { executeWrite, type WriteDeps, type WriteResult } from './write.ts';
 
 export type QuarantineInput = { sha: string; decision: 'accepted' | 'reverted'; reason: string };
@@ -68,13 +71,16 @@ function plannedState(snapshot: BacklogSnapshot, changes: readonly TreeChange[])
   return { config, users };
 }
 
-/** Änderungen, die den Commit `sha` umkehren: je Pfad der Inhalt im Parent oder `null`. */
+/**
+ * Änderungen, die den Commit `sha` umkehren: je Pfad der Inhalt im Parent oder `null`. Geprüft
+ * wird der geplante Commit wie von `verify`: gegen `basis`, den Stand für den nächsten Commit.
+ */
 async function revertChanges(
   wc: string,
-  ctx: { sha: string; parent: string; raw: RawChange[]; admin: string },
+  ctx: { sha: string; parent: string; raw: RawChange[]; admin: string; basis: PolicyState },
   snapshot: BacklogSnapshot,
 ): Promise<FileChange[]> {
-  const { sha, parent, raw, admin } = ctx;
+  const { sha, parent, raw, admin, basis } = ctx;
   for (const c of raw) {
     if (['120000', '160000'].some((m) => m === c.oldMode || m === c.newMode)) {
       throw manual(`Symlink oder Submodule ${c.path}`);
@@ -115,10 +121,7 @@ async function revertChanges(
   const addsUser = planned.some((c) => c.status === 'A' && classifyPath(c.path).kind === 'user');
   const reasons = checkCommitPolicy({
     actor: admin,
-    parent: {
-      config: snapshot.config,
-      users: new Map([...snapshot.users].map(([h, u]) => [h, u.data])),
-    },
+    parent: basis,
     after: plannedState(snapshot, planned),
     changes: planned,
     removedHandles: addsUser ? await removedHandles(wc, 'HEAD') : new Set(),
@@ -132,13 +135,22 @@ export async function quarantineCommit(
   input: QuarantineInput,
   deps: WriteDeps = {},
 ): Promise<WriteResult> {
-  const { handle, workingCopy: wc } = requireWriter(ctx);
+  const { handle, key, workingCopy: wc } = requireWriter(ctx);
   const snapshot = await loadSnapshot(wc);
+  // `verify` beurteilt den Quarantäne-Commit gegen diesen Stand, nicht gegen HEAD: Solange
+  // ungültige Commits ungedeckt sind, ist er der Stand vor dem ersten davon.
+  const { state, quarantineText } = await nextCommitBasis(wc);
+  const config = state.config;
   if (
-    !snapshot.config.admins.includes(handle) ||
-    snapshot.users.get(handle)?.data.kind !== 'human'
+    typeof config === 'string' ||
+    !config.admins.includes(handle) ||
+    state.users.get(handle)?.kind !== 'human'
   ) {
     throw violation('policy', 'Quarantäne ändern nur Admins');
+  }
+  const pub = sshFingerprint(await readPublicKey(key));
+  if (!activeFingerprints(state.users.get(handle)).has(pub)) {
+    throw manual(`der Signier-Key von ${handle} gilt im maßgeblichen Stand nicht`);
   }
   const sha = await resolveCommit(wc, input.sha);
   if (!(await isAncestor(wc, sha, 'HEAD'))) {
@@ -147,7 +159,7 @@ export async function quarantineCommit(
   const isRoot = (await rootCommits(wc, 'HEAD')).includes(sha);
   const parent = isRoot ? undefined : await resolveCommit(wc, `${sha}^`);
   const raw = parent === undefined ? [] : await treeChanges(wc, parent, sha);
-  const text = (await governingQuarantineText(wc)) ?? EMPTY;
+  const text = quarantineText ?? EMPTY;
   if (parseQuarantine(text).entries.some((e) => e.sha === sha)) {
     throw new BackeError('conflict', `Commit ${sha.slice(0, 7)} steht schon in der Quarantäne`);
   }
@@ -164,7 +176,10 @@ export async function quarantineCommit(
     if (parent === undefined) {
       throw new BackeError('conflict', 'Der Vertrauensanker lässt sich nicht umkehren');
     }
-    changes.push(...(await revertChanges(wc, { sha, parent, raw, admin: handle }, snapshot)));
+    const basis = { config, users: state.users };
+    changes.push(
+      ...(await revertChanges(wc, { sha, parent, raw, admin: handle, basis }, snapshot)),
+    );
   }
   const verb = input.decision === 'accepted' ? 'accept' : 'revert';
   return executeWrite(

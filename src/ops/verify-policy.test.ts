@@ -285,6 +285,17 @@ describe('checkCommitPolicy', () => {
     );
   });
 
+  test('admin rights for user changes come from the parent state, not from the commit', () => {
+    const spw = human('spw');
+    const renamed = { ...spw, name: 'S. P. W.' };
+    const changes = [userChange('spw', 'M', spw, renamed)];
+    const after = state(['spw', 'alice']);
+    expect(check({ actor: 'alice', after, changes })).toEqual([
+      'alice darf den User spw nicht ändern',
+    ]);
+    expect(check({ actor: 'alice', admins: ['spw', 'alice'], changes })).toEqual([]);
+  });
+
   test('a removed handle re-created by a non-admin is reported', () => {
     const agent: User = {
       name: 'a-1',

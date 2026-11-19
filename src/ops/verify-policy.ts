@@ -62,7 +62,7 @@ function checkChange(
     reasons.push(`Kommentar-Datei mit ungültigem Namen: ${path}`);
   }
   const cls = classifyPath(path);
-  if (cls.kind === 'user') reasons.push(...checkUserFile(input, change, cls.key));
+  if (cls.kind === 'user') reasons.push(...checkUserFile(input, change, cls.key, admin));
   else if (cls.kind === 'issue') reasons.push(...checkIssueFile(input.actor, change, cls.id));
   else if (cls.kind === 'comment') {
     const issueDeleted = deletedFiles.has(issueFile(cls.id));
@@ -87,7 +87,16 @@ function unverifiable(path: string, err: unknown): string {
   throw err;
 }
 
-function checkUserFile(input: CommitPolicyInput, change: TreeChange, handle: string): string[] {
+/**
+ * `admin` kommt aus dem Stand vor dem Commit (`parent`): Was der Commit selbst, oder ein
+ * ungültiger Commit davor, an `admins` oder am Akteur ändert, verleiht keine Rechte.
+ */
+function checkUserFile(
+  input: CommitPolicyInput,
+  change: TreeChange,
+  handle: string,
+  admin: boolean,
+): string[] {
   const { path } = change;
   let before: User | undefined;
   let after: User | undefined;
@@ -116,6 +125,7 @@ function checkUserFile(input: CommitPolicyInput, change: TreeChange, handle: str
   try {
     checkUserChange(s, input.actor, handle, before, after, {
       removedBefore: input.removedHandles.has(handle),
+      admin,
     });
   } catch (err) {
     if (err instanceof BackeError) return [err.message];

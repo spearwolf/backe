@@ -20,7 +20,8 @@ import { readLocalState, stateDir, writeLocalState } from '../git/local-state.ts
 import { encodeOp, type Operation } from '../ops/operation.ts';
 import { serializeEntityFile } from '../store/frontmatter.ts';
 import { BACKLOG_CONFIG, issueFile, QUARANTINE, userFile } from '../store/layout.ts';
-import { assertVerified, signatureReasons, verifyRange } from './verify.ts';
+import { assertVerified, verifyRange } from './verify.ts';
+import { signatureReasons } from './verify-state.ts';
 import { executeWrite } from './write.ts';
 
 const ID = I(1);
@@ -468,6 +469,43 @@ test('the quarantine at since governs when the range does not change it', async 
   expect((await verifyRange(b.root, { since: anchor, to: bad })).invalid.map((f) => f.sha)).toEqual(
     [bad],
   );
+});
+
+describe('after an invalid commit', () => {
+  /** spw macht bob zum Admin; danach ändert bob als Admin den User spw. */
+  async function widenThenUse(): Promise<string> {
+    const config = JSON.parse(await readFile(join(b.root, BACKLOG_CONFIG), 'utf8'));
+    await signed('spw', {
+      [BACKLOG_CONFIG]: JSON.stringify({ ...config, admins: ['spw', 'bob'] }),
+    });
+    const spwFile = await readFile(join(b.root, userFile('spw')), 'utf8');
+    return signed('bob', { [userFile('spw')]: spwFile.replace('name: spw', 'name: S. P. W.') });
+  }
+
+  test('later commits are judged by the last trusted state until a quarantine covers it', async () => {
+    await addUser('bob');
+    const bad = await rawCommit(b.root, { files: { x: '1' }, actor: 'spw', op: 'manual' });
+    const byBob = await widenThenUse();
+
+    const r = await verifyRange(b.root);
+
+    expect(r.invalid.map((f) => [f.sha, f.reasons])).toEqual([
+      [bad, ['unsigniert']],
+      [byBob, ['bob darf den User spw nicht ändern']],
+    ]);
+  });
+
+  test('a covering quarantine lets later commits be judged by their own parent again', async () => {
+    await addUser('bob');
+    const bad = await rawCommit(b.root, { files: { x: '1' }, actor: 'spw', op: 'manual' });
+    await signed('spw', { [QUARANTINE]: quarantine(bad, 'harmlos') });
+    await widenThenUse();
+
+    const r = await verifyRange(b.root);
+
+    expect(r.invalid).toEqual([]);
+    expect(r.quarantined.map((f) => f.sha)).toEqual([bad]);
+  });
 });
 
 test('an invalid quarantine file is a reason at its commit and does not count', async () => {

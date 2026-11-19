@@ -1,44 +1,39 @@
 /**
- * `verify` (backe.md §2.13): prüft jeden Commit seit dem Vertrauensanker gegen den Users-Stand
- * seines Parents — Signatur, `Backe-Actor`, Identitätsschutz — und lässt Commits passieren, die
+ * `verify` (backe.md §2.13): prüft jeden Commit seit dem Vertrauensanker — Signatur, `Backe-Actor`,
+ * Identitätsschutz — gegen den letzten vertrauenswürdigen Stand und lässt Commits passieren, die
  * ein Admin in `.backe/quarantine.jsonc` eingetragen hat.
+ *
+ * Ein ungültiger Commit verleiht keine Rechte: Ab dem ersten ungültigen Commit gilt für alle
+ * folgenden der Stand vor ihm (eingefroren), bis eine gültige Quarantäne alle bis dahin ungültigen
+ * Commits deckt; danach zählt wieder der Stand des jeweiligen Parents.
  */
-import { access, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
-import type { z } from 'zod';
 import { BackeError } from '../core/errors.ts';
-import {
-  type BacklogConfig,
-  BacklogConfigSchema,
-  type Quarantine,
-  QuarantineSchema,
-  type User,
-  validateEntity,
-} from '../core/schemas.ts';
-import { sshFingerprint } from '../core/ssh.ts';
+import { type Quarantine, QuarantineSchema } from '../core/schemas.ts';
 import {
   type CommitInfo,
   isAncestor,
   listCommits,
-  listTree,
-  objectInfo,
   type RawChange,
   readBlobs,
   removedHandles,
   resolveCommit,
   rootCommits,
   type Signature,
-  signatures,
   treeChanges,
 } from '../git/history.ts';
-import { readLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
+import { readLocalState, writeLocalState } from '../git/local-state.ts';
 import { parseCommitMessage, TRAILER_ACTOR, TRAILER_OP } from '../git/message.ts';
 import { parseOpTrailer } from '../ops/operation.ts';
 import { checkCommitPolicy, type TreeChange } from '../ops/verify-policy.ts';
-import { writeFileAtomic } from '../store/files.ts';
-import { parseEntityFile } from '../store/frontmatter.ts';
-import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG, classifyPath, QUARANTINE } from '../store/layout.ts';
+import {
+  loadStates,
+  parseJsoncAs,
+  REGULAR_FILE,
+  type State,
+  signatureCache,
+  signatureReasons,
+} from './verify-state.ts';
 
 export type VerifyFinding = { sha: string; subject: string; reasons: string[] };
 export type QuarantinedFinding = VerifyFinding & {
@@ -55,29 +50,9 @@ export type VerifyReport = {
 };
 export type VerifyOptions = { since?: string; to?: string; record?: boolean };
 
-/** Users- und Config-Stand eines Commits; eine kaputte Config ist ihre Fehlermeldung. */
-type State = { usersTree: string; users: Map<string, User>; config: BacklogConfig | string };
 type Checked = VerifyFinding & { notices: string[]; quarantine?: Quarantine };
 
 const short = (sha: string) => sha.slice(0, 7);
-const REGULAR_FILE = /^100[0-7]{3}$/;
-
-function schemaError(error: z.ZodError): string {
-  return error.issues
-    .map((i) => `${i.path.length > 0 ? i.path.join('.') : '<root>'}: ${i.message}`)
-    .join('; ');
-}
-
-/** JSONC lesen und gegen das Schema prüfen; ein Fehler kommt als Meldung zurück. */
-function parseJsoncAs<T>(schema: z.ZodType<T>, text: string, file: string): T | string {
-  try {
-    const result = schema.safeParse(readJsonc(text, file));
-    return result.success ? result.data : schemaError(result.error);
-  } catch (err) {
-    if (err instanceof BackeError) return err.message;
-    throw err;
-  }
-}
 
 // --- Bereich und Anker ----------------------------------------------------------------------
 
@@ -109,160 +84,6 @@ async function resolveRange(wc: string, opts: VerifyOptions) {
     }
   }
   return { anchor, to, since };
-}
-
-// --- Users- und Config-Stände ---------------------------------------------------------------
-
-async function readUsers(wc: string, tree: string): Promise<Map<string, User>> {
-  const files = (await listTree(wc, tree)).filter(
-    (e) => REGULAR_FILE.test(e.mode) && classifyPath(`users/${e.name}`).kind === 'user',
-  );
-  const blobs = await readBlobs(
-    wc,
-    files.map((e) => e.oid),
-  );
-  const users = new Map<string, User>();
-  for (const { name, oid } of files) {
-    const path = `users/${name}`;
-    try {
-      const { data } = parseEntityFile((blobs.get(oid) as Buffer).toString('utf8'), path);
-      users.set(name.slice(0, -'.md'.length), validateEntity('user', data, path).data as User);
-    } catch (err) {
-      // Eine ungültige User-Datei verleiht keine Rechte; ihr Commit ist schon `nicht prüfbar`.
-      if (!(err instanceof BackeError)) throw err;
-    }
-  }
-  return users;
-}
-
-/** Stände je Commit; Users-Bäume und Config-Blobs werden je Objekt-ID nur einmal gelesen. */
-async function loadStates(wc: string, shas: readonly string[]): Promise<Map<string, State>> {
-  const info = await objectInfo(
-    wc,
-    shas.flatMap((s) => [`${s}:users`, `${s}:${BACKLOG_CONFIG}`]),
-  );
-  const usersByTree = new Map<string, Map<string, User>>([['none', new Map()]]);
-  const configs = new Map<string, BacklogConfig | string>([['none', 'fehlt']]);
-  const states = new Map<string, State>();
-  for (const sha of shas) {
-    const users = info.get(`${sha}:users`);
-    const usersTree = users?.type === 'tree' ? users.oid : 'none';
-    if (!usersByTree.has(usersTree)) usersByTree.set(usersTree, await readUsers(wc, usersTree));
-    const config = info.get(`${sha}:${BACKLOG_CONFIG}`);
-    const configBlob = config?.type === 'blob' ? config.oid : 'none';
-    if (!configs.has(configBlob)) {
-      const text = (await readBlobs(wc, [configBlob])).get(configBlob) as Buffer;
-      configs.set(
-        configBlob,
-        parseJsoncAs(BacklogConfigSchema, text.toString('utf8'), BACKLOG_CONFIG),
-      );
-    }
-    states.set(sha, {
-      usersTree,
-      users: usersByTree.get(usersTree) as Map<string, User>,
-      config: configs.get(configBlob) as BacklogConfig | string,
-    });
-  }
-  return states;
-}
-
-// --- Signaturen -----------------------------------------------------------------------------
-
-/** `<stateDir>/allowed_signers/<users-tree>` aus den nicht widerrufenen Keys; einmal je Baum. */
-async function allowedSigners(wc: string, state: State): Promise<string> {
-  const dir = join(await stateDir(wc), 'allowed_signers');
-  const file = join(dir, state.usersTree);
-  const exists = await access(file).then(
-    () => true,
-    () => false,
-  );
-  if (!exists) {
-    const lines: string[] = [];
-    for (const [handle, user] of state.users) {
-      const active = activeFingerprints(user);
-      for (const key of user.keys) {
-        if (active.has(sshFingerprint(key))) lines.push(`${handle} namespaces="git" ${key}`);
-      }
-    }
-    await mkdir(dir, { recursive: true });
-    await writeFileAtomic(
-      file,
-      lines
-        .sort()
-        .map((l) => `${l}\n`)
-        .join(''),
-    );
-  }
-  return file;
-}
-
-/** Der Users-Stand, gegen den ein Commit signiert sein muss: der Anker gegen sich selbst. */
-function signerState(commit: CommitInfo, anchor: string, states: Map<string, State>): State {
-  return states.get(commit.sha === anchor ? commit.sha : (commit.parents[0] as string)) as State;
-}
-
-/** Signaturen aller Nicht-Merge-Commits; Commits mit gleichem Users-Baum in einem Aufruf. */
-async function checkSignatures(
-  wc: string,
-  commits: readonly CommitInfo[],
-  anchor: string,
-  states: Map<string, State>,
-): Promise<Map<string, Signature>> {
-  const groups = new Map<string, { state: State; shas: string[] }>();
-  for (const commit of commits) {
-    // Nur SSH-Signaturen gehen an git: andere Formate prüfte git gegen fremde Keyrings, und ein
-    // unbekanntes Format bricht `git log` ab.
-    if (commit.parents.length > 1 || !isSshSignature(commit.gpgsig)) continue;
-    const state = signerState(commit, anchor, states);
-    const group = groups.get(state.usersTree) ?? { state, shas: [] };
-    group.shas.push(commit.sha);
-    groups.set(state.usersTree, group);
-  }
-  const result = new Map<string, Signature>();
-  for (const { state, shas } of groups.values()) {
-    for (const [sha, sig] of await signatures(wc, shas, await allowedSigners(wc, state))) {
-      result.set(sha, sig);
-    }
-  }
-  return result;
-}
-
-const SSH_SIGNATURE = '-----BEGIN SSH SIGNATURE-----';
-
-function isSshSignature(gpgsig: string | undefined): boolean {
-  return gpgsig?.startsWith(SSH_SIGNATURE) === true;
-}
-
-/** Fingerprints der nicht widerrufenen Keys eines Users. */
-function activeFingerprints(user: User | undefined): Set<string> {
-  const revoked = new Set((user?.revoked_keys ?? []).map((r) => sshFingerprint(r.key)));
-  return new Set((user?.keys ?? []).map(sshFingerprint).filter((fp) => !revoked.has(fp)));
-}
-
-/**
- * Gründe aus Signatur-Header und git-Ergebnis, gegen die Users des Signer-Stands. Ein `G` zählt
- * nur, wenn der Key ein aktiver Key des gemeldeten Prinzipals ist.
- */
-export function signatureReasons(
-  sig: Signature | undefined,
-  gpgsig: string | undefined,
-  users: ReadonlyMap<string, User>,
-): string[] {
-  if (gpgsig === undefined) return ['unsigniert'];
-  if (!isSshSignature(gpgsig)) return ['Signatur ist keine SSH-Signatur'];
-  if (sig === undefined || sig.status === 'N') return ['unsigniert'];
-  if (sig.status === 'B') return ['Signatur ungültig'];
-  if (sig.status === 'G') {
-    return activeFingerprints(users.get(sig.principal)).has(sig.fingerprint)
-      ? []
-      : [`Key ${sig.fingerprint} gehört nicht zu ${sig.principal}`];
-  }
-  for (const [handle, user] of users) {
-    if ((user.revoked_keys ?? []).some((r) => sshFingerprint(r.key) === sig.fingerprint)) {
-      return [`Key ${sig.fingerprint} von ${handle} ist widerrufen`];
-    }
-  }
-  return [`Key ${sig.fingerprint} gehört zu keinem User`];
 }
 
 // --- Einzelner Commit -----------------------------------------------------------------------
@@ -347,17 +168,18 @@ async function changesOf(wc: string, parent: string, sha: string): Promise<TreeC
   );
 }
 
-/** Identitätsschutz und Quarantäne-Datei eines Nicht-Anker-Commits. */
+/**
+ * Identitätsschutz und Quarantäne-Datei eines Nicht-Anker-Commits. `before` ist der Stand, gegen
+ * den er beurteilt wird; die Änderungen sind seine eigenen gegenüber seinem Parent.
+ */
 async function contentReasons(
   wc: string,
   commit: CommitInfo,
   actor: string,
-  states: Map<string, State>,
+  { before, after }: { before: State; after: State },
 ): Promise<{ reasons: string[]; quarantine?: Quarantine }> {
   const parent = commit.parents[0] as string;
   const changes = await changesOf(wc, parent, commit.sha);
-  const before = states.get(parent) as State;
-  const after = states.get(commit.sha) as State;
   const reasons: string[] = [];
   if (typeof before.config === 'string' || typeof after.config === 'string') {
     const message = typeof after.config === 'string' ? after.config : before.config;
@@ -384,26 +206,26 @@ async function contentReasons(
   return { reasons, quarantine };
 }
 
+/** Prüft `commit` gegen den Stand `before`; `after` ist der Stand seines eigenen Baums. */
 async function checkCommit(
   wc: string,
   commit: CommitInfo,
   anchor: string,
-  states: Map<string, State>,
-  sigs: Map<string, Signature>,
+  states: { before: State; after: State },
+  sig: Signature | undefined,
 ): Promise<Checked> {
   const { subject, trailers } = parseCommitMessage(commit.message);
   const base = { sha: commit.sha, subject, notices: [] as string[] };
   if (commit.parents.length > 1) return { ...base, reasons: ['Merge-Commit'] };
-  const sig = sigs.get(commit.sha);
   const actors = trailers.get(TRAILER_ACTOR) ?? [];
   const ops = trailers.get(TRAILER_OP) ?? [];
   const actor = actors.length === 1 ? actors[0] : undefined;
   const reasons = [
-    ...signatureReasons(sig, commit.gpgsig, signerState(commit, anchor, states).users),
+    ...signatureReasons(sig, commit.gpgsig, states.before.users),
     ...actorReasons(actors, sig),
   ];
   if (commit.sha === anchor) {
-    reasons.push(...anchorReasons(states.get(commit.sha) as State, actor, ops));
+    reasons.push(...anchorReasons(states.before, actor, ops));
     return { ...base, reasons };
   }
   const notices = opNotice(commit.sha, ops);
@@ -426,56 +248,91 @@ async function quarantineAt(wc: string, rev: string): Promise<Quarantine | strin
   return parseJsoncAs(QuarantineSchema, blob.toString('utf8'), QUARANTINE);
 }
 
+/** Ein gültiger Commit, der die Quarantäne-Datei ändert, setzt die maßgebliche Quarantäne. */
+const governs = (c: Checked): c is Checked & { quarantine: Quarantine } =>
+  c.quarantine !== undefined && c.reasons.length === 0;
+
+// --- Der Gang durch die Historie ------------------------------------------------------------
+
+type Walk = {
+  anchor: string;
+  to: string;
+  checked: Checked[];
+  /** Die maßgebliche Quarantäne: der Commit, der sie zuletzt gültig geändert hat, und ihre Einträge. */
+  governing: { sha: string | undefined; entries: Quarantine['entries'] };
+  /** Der Stand, gegen den `verify` einen Commit auf `to` beurteilen würde. */
+  next: State;
+};
+
 /**
- * Maßgeblich ist die Quarantäne-Datei des letzten gültigen Commits im Bereich, der sie ändert;
- * ohne einen solchen der Stand bei `since`, sonst keine.
+ * Ein Gang über den Bereich, älteste zuerst. Jeder Commit wird gegen den eingefrorenen Stand
+ * beurteilt, sonst gegen den seines Parents (der Anker gegen sich selbst). Der erste ungültige
+ * Commit friert den Stand ein, gegen den er beurteilt wurde; eine gültige Quarantäne, die alle bis
+ * dahin ungültigen Commits deckt, taut ihn wieder auf. Maßgeblich ist die Quarantäne des letzten
+ * gültigen Commits, der sie ändert; ohne einen solchen die bei `since`, sonst keine.
  */
-async function governingQuarantine(
-  wc: string,
-  checked: readonly Checked[],
-  since: string | undefined,
-): Promise<Quarantine['entries']> {
-  const last = checked.findLast((c) => c.quarantine !== undefined && c.reasons.length === 0);
-  if (last !== undefined) return (last.quarantine as Quarantine).entries;
-  if (since === undefined) return [];
-  const atSince = await quarantineAt(wc, since);
-  return typeof atSince === 'object' ? atSince.entries : [];
+async function walk(wc: string, opts: VerifyOptions): Promise<Walk> {
+  const { anchor, to, since } = await resolveRange(wc, opts);
+  const commits = await listCommits(wc, { from: since, to });
+  const parents = commits.flatMap((c) => c.parents.slice(0, 1));
+  const states = await loadStates(wc, [...new Set([...commits.map((c) => c.sha), ...parents, to])]);
+  const stateOf = (sha: string) => states.get(sha) as State;
+  const own = (c: CommitInfo) => stateOf(c.sha === anchor ? c.sha : (c.parents[0] as string));
+  const sigs = signatureCache(wc);
+  await sigs.prefetch(commits.map((commit) => ({ commit, state: own(commit) })));
+
+  const atSince = since === undefined ? undefined : await quarantineAt(wc, since);
+  let governing: Walk['governing'] = {
+    sha: undefined,
+    entries: typeof atSince === 'object' ? atSince.entries : [],
+  };
+  let frozen: State | undefined;
+  let open: string[] = [];
+  const checked: Checked[] = [];
+  for (const commit of commits) {
+    const before = frozen ?? own(commit);
+    const sig = await sigs.of(commit, before);
+    const c = await checkCommit(wc, commit, anchor, { before, after: stateOf(commit.sha) }, sig);
+    checked.push(c);
+    if (c.reasons.length > 0) {
+      open.push(c.sha);
+      frozen ??= before;
+    }
+    if (governs(c)) {
+      const entries = c.quarantine.entries;
+      governing = { sha: c.sha, entries };
+      if (open.every((sha) => entries.some((e) => e.sha === sha))) {
+        open = [];
+        frozen = undefined;
+      }
+    }
+  }
+  return { anchor, to, checked, governing, next: frozen ?? stateOf(to) };
 }
 
 // --- Einstieg -------------------------------------------------------------------------------
 
-async function checkRange(wc: string, opts: VerifyOptions) {
-  const { anchor, to, since } = await resolveRange(wc, opts);
-  const commits = await listCommits(wc, { from: since, to });
-  const parents = commits.flatMap((c) => c.parents.slice(0, 1));
-  const states = await loadStates(wc, [...new Set([...commits.map((c) => c.sha), ...parents])]);
-  const sigs = await checkSignatures(wc, commits, anchor, states);
-  const checked: Checked[] = [];
-  for (const commit of commits) checked.push(await checkCommit(wc, commit, anchor, states, sigs));
-  return { anchor, to, since, commits, checked };
-}
-
 /**
- * Text der maßgeblichen Quarantäne-Datei bei `HEAD`, genau nach der Regel von `verifyRange`: die
- * Datei im letzten Commit der Historie, der sie ändert und ohne Quarantäne gültig ist; ohne einen
- * solchen `undefined`.
+ * Grundlage des nächsten Commits auf `HEAD`, genau so, wie `verifyRange` ihn beurteilen wird: der
+ * Stand, gegen den er geprüft wird (eingefroren, solange ungültige Commits ungedeckt sind, sonst
+ * `HEAD`), und der Text der maßgeblichen Quarantäne-Datei (ohne eine solche `undefined`).
  */
-export async function governingQuarantineText(wc: string): Promise<string | undefined> {
-  const { checked } = await checkRange(wc, {});
-  const last = checked.findLast((c) => c.quarantine !== undefined && c.reasons.length === 0);
-  if (last === undefined) return undefined;
-  const spec = `${last.sha}:${QUARANTINE}`;
-  return (await readBlobs(wc, [spec])).get(spec)?.toString('utf8');
+export async function nextCommitBasis(
+  wc: string,
+): Promise<{ state: State; quarantineText: string | undefined }> {
+  const { governing, next } = await walk(wc, {});
+  if (governing.sha === undefined) return { state: next, quarantineText: undefined };
+  const spec = `${governing.sha}:${QUARANTINE}`;
+  return { state: next, quarantineText: (await readBlobs(wc, [spec])).get(spec)?.toString('utf8') };
 }
 
 /** Prüft die Commits nach `since` (ohne: ab dem Anker) bis `to` (Default `HEAD`). */
 export async function verifyRange(wc: string, opts: VerifyOptions = {}): Promise<VerifyReport> {
-  const { anchor, to, since, commits, checked } = await checkRange(wc, opts);
-  const entries = await governingQuarantine(wc, checked, since);
+  const { anchor, to, checked, governing } = await walk(wc, opts);
   const report: VerifyReport = {
     anchor,
     to,
-    checked: commits.length,
+    checked: checked.length,
     invalid: [],
     quarantined: [],
     notices: [],
@@ -483,7 +340,7 @@ export async function verifyRange(wc: string, opts: VerifyOptions = {}): Promise
   for (const { notices, quarantine: _, ...finding } of checked) {
     report.notices.push(...notices);
     if (finding.reasons.length === 0) continue;
-    const entry = entries.find((e) => e.sha === finding.sha);
+    const entry = governing.entries.find((e) => e.sha === finding.sha);
     if (entry === undefined) report.invalid.push(finding);
     else report.quarantined.push({ ...finding, decision: entry.decision, note: entry.reason });
   }
