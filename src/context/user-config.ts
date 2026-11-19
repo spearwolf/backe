@@ -28,7 +28,7 @@ async function readText(file: string): Promise<string | undefined> {
 }
 
 /** Parst Text als User-Config; Syntaxfehler mit `datei:zeile`, Schemafehler je Issue eine Zeile. */
-function parseUserConfig(text: string, file: string): UserConfig {
+export function parseUserConfigText(text: string, file: string): UserConfig {
   const result = UserConfigSchema.safeParse(readJsonc(text, file));
   if (result.success) return result.data;
   throw schemaError(file, result.error);
@@ -37,7 +37,7 @@ function parseUserConfig(text: string, file: string): UserConfig {
 export async function readUserConfig(backeHome: string): Promise<UserConfig> {
   const file = userConfigPath(backeHome);
   const text = await readText(file);
-  return text === undefined ? {} : parseUserConfig(text, file);
+  return text === undefined ? {} : parseUserConfigText(text, file);
 }
 
 type Style = { unit: string; eol: string };
@@ -205,7 +205,7 @@ export async function updateUserConfig(
   return withFileLock(configLockPath(backeHome), async () => {
     const file = userConfigPath(backeHome);
     const text = (await readText(file)) ?? '{}\n';
-    const current = parseUserConfig(text, file);
+    const current = parseUserConfigText(text, file);
     const edits = edit(current);
     if (edits.length === 0) return current;
     let next = text;
@@ -219,7 +219,7 @@ export async function updateUserConfig(
         `Edit an ${file} konnte nicht angewendet werden; Datei unverändert`,
       );
     }
-    const updated = parseUserConfig(next, file);
+    const updated = parseUserConfigText(next, file);
     await writeFileAtomic(file, next);
     return updated;
   });
