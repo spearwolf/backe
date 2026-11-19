@@ -159,6 +159,9 @@ test('doctor exits 2 after the report when a check fails', async () => {
   expect(r.code).toBe(2);
   expect(r.stdout).toContain('fail  user-config');
   expect(r.stderr).toContain('doctor: 1 Prüfung(en) fehlgeschlagen');
+  // Jeder Hint steht direkt unter seiner Zeile.
+  const out = `$ backe doctor\n[exit ${r.code}]\n[stdout]\n${doctorLines(t, r.stdout)}[stderr]\n${norm(t, r.stderr)}`;
+  await expect(out).toMatchFileSnapshot('golden/doctor-fail.txt');
 });
 
 test('config set, get and unset', async () => {
@@ -195,6 +198,7 @@ test('config edit with an invalid result keeps the original', async () => {
   expect(r.code).toBe(2);
   const e = errorOf(r);
   expect(e.code).toBe('validation');
+  expect(e.message).toMatch(/^<?[^ ]*config\.jsonc\.draft:1/);
   expect(e.hint).toContain('config.jsonc.draft');
   expect(await readFile(file, 'utf8')).toBe('{\n  "user": "spw"\n}\n');
   expect(await readFile(`${file}.draft`, 'utf8')).toBe('{ kaputt');
@@ -207,9 +211,32 @@ test('config edit with an invalid result keeps the original', async () => {
   expect(ok(await run(t, ['config', 'edit'], { env: { BACKE_EDITOR: 'true' } }))).toBe(
     'unverändert\n',
   );
-  const none = await run(t, ['config', 'edit']);
+  const none = await run(t, ['config', 'edit', '--json']);
   expect(none.code).toBe(2);
-  expect(none.stderr).toContain('Nichts zu ändern');
+  expect(errorOf(none)).toEqual({
+    code: 'usage',
+    message: 'Kein Editor verfügbar',
+    hint: 'BACKE_EDITOR setzen',
+  });
+});
+
+test('config edit repairs an invalid config', async () => {
+  const t = await setupTools();
+  const file = join(t.env.BACKE_HOME as string, 'config.jsonc');
+  const valid = await readFile(file, 'utf8');
+  await writeFile(file, '{ kaputt');
+  const broken = await run(t, ['config', 'get']);
+  expect(broken.code).toBe(2);
+  expect(broken.stderr).toContain('config.jsonc:1');
+
+  // Der Editor schreibt eine gültige Config; config edit startet trotz kaputter Datei.
+  const template = join(await tempDir(), 'valid.jsonc');
+  await writeFile(template, valid);
+  const repair = join(await tempDir(), 'repair.sh');
+  await writeFile(repair, `#!/bin/sh\ncat ${template} > "$1"\n`);
+  expect(ok(await run(t, ['config', 'edit'], { env: { BACKE_EDITOR: `sh ${repair}` } }))).toBe('');
+  expect(await readFile(file, 'utf8')).toBe(valid);
+  expect(ok(await run(t, ['config', 'get']))).toBe(valid);
 });
 
 test('config set with a value and --unset is a usage error', async () => {

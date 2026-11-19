@@ -154,13 +154,14 @@ describe('editConfigText', () => {
     await writeFile(cfgPath, original);
     const syntax = await catchErrAsync(() => editConfigText(homes, async () => '{\n  "user": \n'));
     expect(syntax.code).toBe('validation');
-    expect(syntax.message).toMatch(/config\.jsonc:\d+:/);
+    expect(syntax.message).toMatch(/config\.jsonc\.draft:\d+:/);
     expect(syntax.hint).toContain(`${cfgPath}.draft`);
     expect(await readFile(`${cfgPath}.draft`, 'utf8')).toBe('{\n  "user": \n');
     const schema = await catchErrAsync(() =>
       editConfigText(homes, async () => '{"output":{"color":"bunt"}}\n'),
     );
     expect(schema.code).toBe('validation');
+    expect(schema.message.startsWith(`${cfgPath}.draft`)).toBe(true);
     expect(schema.hint).toContain('config.jsonc.draft');
     expect(await readFile(`${cfgPath}.draft`, 'utf8')).toBe('{"output":{"color":"bunt"}}\n');
     expect(await readFile(cfgPath, 'utf8')).toBe(original);

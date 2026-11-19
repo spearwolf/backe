@@ -1,0 +1,17 @@
+$ backe doctor
+[exit 2]
+[stdout]
+<status>  node  <detail>
+<status>  git  <detail>
+<status>  ssh-keygen  <detail>
+<status>  git-lfs  <detail>
+<status>  gh  <detail>
+fail  user-config  <backe>/config.jsonc:1: InvalidSymbol
+  → backe config edit
+warn  backlog  <backe>/config.jsonc:1: InvalidSymbol
+  → backe backlog list
+warn  bindings  übersprungen, die User-Config ist ungültig
+ok  alternates  alle Referenzen existieren
+ok  temp  keine Temp-Reste
+[stderr]
+Fehler: doctor: 1 Prüfung(en) fehlgeschlagen

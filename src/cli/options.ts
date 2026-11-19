@@ -147,7 +147,10 @@ export type CommandSpec = {
   formats?: readonly Format[];
   /** Erlaubte Felder für `--fields`; ohne Angabe kennt der Befehl `--fields` nicht. */
   fields?: readonly string[];
-  /** Eine ungültige User-Config bricht den Befehl nicht ab (Defaults gelten); nur für `doctor`. */
+  /**
+   * Eine ungültige User-Config bricht den Befehl nicht ab (Defaults gelten); für `doctor`,
+   * `config get` und `config edit`, die sie melden bzw. reparieren.
+   */
   lenientConfig?: boolean;
 };
 

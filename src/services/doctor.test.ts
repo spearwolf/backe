@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
 import { BackeError } from '../core/errors.ts';
@@ -149,7 +149,10 @@ describe('runDoctor', () => {
     await mkdir(b.homes.backeHome, { recursive: true });
     await writeFile(join(b.homes.backeHome, 'config.jsonc'), '{"current": 3}');
     const checks = await runDoctor({ env: b.env, cwd: b.root }, deps());
-    expect(one(checks, 'user-config').status).toBe('fail');
+    expect(one(checks, 'user-config')).toMatchObject({
+      status: 'fail',
+      hint: 'backe config edit',
+    });
     expect(one(checks, 'bindings').status).toBe('warn');
   });
 
@@ -284,6 +287,23 @@ describe('runDoctor', () => {
     expect(alt.hint).toBe(
       `git -C ${clone} repack -a -d && rm ${join(clone, '.git/objects/info/alternates')}`,
     );
+  });
+
+  test('relative alternates resolve against the objects directory, as git does', async () => {
+    const dir = await tempDir();
+    const src = join(dir, 'src');
+    await git(['init', '-q', '-b', 'main', src], { cwd: dir });
+    await git(
+      ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'i'],
+      { cwd: src },
+    );
+    const clone = join(b.homes.backeHome, 'backlogs', 'acme', 'bob');
+    await git(['clone', '-q', '--reference', src, src, clone], { cwd: dir });
+    const objects = join(clone, '.git', 'objects');
+    const rel = relative(objects, join(src, '.git', 'objects'));
+    await writeFile(join(objects, 'info', 'alternates'), `${rel}\n`);
+    expect(await git(['cat-file', '-e', 'HEAD'], { cwd: clone })).toMatchObject({ exitCode: 0 });
+    expect(one(await runDoctor(await input(), deps()), 'alternates').status).toBe('ok');
   });
 
   test('leftover temp files are reported and removed with fix', async () => {

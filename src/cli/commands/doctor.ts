@@ -4,12 +4,12 @@ import { type DoctorCheck, doctorFailure, runDoctor } from '../../services/docto
 import { action, emit, type Runtime, subcommand } from '../options.ts';
 import { lines, safeText } from '../output.ts';
 
+/** Je Prüfung `<status>  <id>  <detail>`, bei `warn`/`fail` der Hint direkt darunter. */
 function checkLines(checks: readonly DoctorCheck[]): string[] {
-  const out = checks.map((c) => safeText(`${c.status}  ${c.id}  ${c.detail}`));
-  const hints = checks
-    .filter((c) => c.status !== 'ok' && c.hint !== undefined)
-    .map((c) => safeText(`  → ${c.hint}`));
-  return [...out, ...hints];
+  return checks.flatMap((c) => [
+    safeText(`${c.status}  ${c.id}  ${c.detail}`),
+    ...(c.status !== 'ok' && c.hint !== undefined ? [safeText(`  → ${c.hint}`)] : []),
+  ]);
 }
 
 export function doctorCommand(program: Command, rt: Runtime): void {

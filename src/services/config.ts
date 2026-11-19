@@ -139,9 +139,10 @@ export async function setConfig(
 }
 
 /**
- * `edit` bekommt den Dateitext (fehlt die Datei: `{}`) und liefert den neuen. Ungültiges Ergebnis
- * oder eine zwischenzeitlich geänderte Datei lassen das Original unberührt; der Entwurf bleibt
- * in `config.jsonc.draft`.
+ * `edit` bekommt den Dateitext (fehlt die Datei: `{}`; ist er ungültig: so wie er ist) und liefert
+ * den neuen. Ungültiges Ergebnis oder eine zwischenzeitlich geänderte Datei lassen das Original
+ * unberührt; der Entwurf bleibt in `config.jsonc.draft`, und `datei:zeile` eines ungültigen
+ * Ergebnisses nennt ihn.
  */
 export async function editConfigText(
   homes: Homes,
@@ -161,7 +162,7 @@ export async function editConfigText(
   };
 
   try {
-    parseUserConfigText(edited, file);
+    parseUserConfigText(edited, draft);
   } catch (error) {
     if (!(error instanceof BackeError)) throw error;
     throw new BackeError(error.code, error.message, { hint: await keepDraft() });

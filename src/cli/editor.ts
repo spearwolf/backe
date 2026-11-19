@@ -21,7 +21,10 @@ export function editorCommand(io: CliIo): string | undefined {
   return envValue(io.env, 'VISUAL') ?? envValue(io.env, 'EDITOR');
 }
 
-/** Kein Editor verfügbar: der Aufruf passt nicht, ohne Flags gibt es nichts zu ändern. */
+/**
+ * Kein Editor verfügbar bei einem Befehl, der auch Flags kennt (`issue edit`): der Aufruf passt
+ * nicht, ohne Flags gibt es nichts zu ändern. `config edit` meldet `Kein Editor verfügbar`.
+ */
 export function noEditorError(): BackeError {
   return new BackeError('usage', 'Nichts zu ändern', {
     hint: 'Flags angeben oder BACKE_EDITOR setzen',

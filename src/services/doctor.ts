@@ -2,7 +2,7 @@
 import { execFile } from 'node:child_process';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { hostname } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { type Env, exists, expandPath, type Homes, resolveHomes } from '../context/paths.ts';
 import { listBacklogs } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
@@ -318,7 +318,8 @@ async function checkBindings(cfg: UserConfig | undefined, homes: Homes): Promise
 async function checkAlternates(homes: Homes): Promise<DoctorCheck[]> {
   const out: DoctorCheck[] = [];
   for (const clone of await managedClones(homes)) {
-    const file = join(clone, '.git', 'objects', 'info', 'alternates');
+    const objects = join(clone, '.git', 'objects');
+    const file = join(objects, 'info', 'alternates');
     let text: string;
     try {
       text = await readFile(file, 'utf8');
@@ -327,7 +328,8 @@ async function checkAlternates(homes: Homes): Promise<DoctorCheck[]> {
     }
     for (const line of text.split('\n').map((l) => l.trim())) {
       if (line === '' || line.startsWith('#')) continue;
-      const target = isAbsolute(line) ? line : resolve(dirname(file), line);
+      // Relative Einträge gelten wie bei git relativ zu `objects/`, nicht zu `objects/info/`.
+      const target = isAbsolute(line) ? line : resolve(objects, line);
       if (await exists(target)) continue;
       out.push(
         check(
@@ -448,7 +450,7 @@ export async function runDoctor(input: DoctorInput, deps: DoctorDeps = {}): Prom
     cfg = await readUserConfig(homes.backeHome);
     checks.push(check('user-config', 'ok', 'gültig'));
   } catch (error) {
-    checks.push(check('user-config', 'fail', message(error)));
+    checks.push(check('user-config', 'fail', message(error), 'backe config edit'));
   }
 
   if (ctx === undefined) {
