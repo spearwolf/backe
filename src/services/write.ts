@@ -40,6 +40,7 @@ import {
   type StoredEntity,
 } from '../store/snapshot.ts';
 import { authorOf, isoNow } from './env.ts';
+import { ensureWorkingCopy } from './working-copy.ts';
 
 export type WriteInput =
   | { kind: 'op'; op: Operation }
@@ -235,7 +236,8 @@ function commitMessage(input: WriteInput, recorded: readonly Operation[], handle
 }
 
 /**
- * Führt einen Write aus (backe.md §2.16.1): Lock, Journal-Recovery, Identität, Formatversion,
+ * Führt einen Write aus (backe.md §2.16.1): fehlt die Arbeitskopie der Identität, wird sie zuerst
+ * geklont; dann Lock, Journal-Recovery, Identität, Formatversion,
  * Branch, Änderungen berechnen, Schutz ungesicherter Änderungen, Dateien schreiben und signiert
  * committen. Scheitert etwas nach dem Schreiben, werden die betroffenen Pfade zurückgesetzt.
  * SIGINT/SIGTERM im kritischen Abschnitt werden erst nach Freigabe des Locks ausgelöst.
@@ -245,10 +247,10 @@ export async function executeWrite(
   input: WriteInput,
   deps: WriteDeps = {},
 ): Promise<WriteResult> {
-  const { handle, key, workingCopy: wc } = requireWriter(ctx);
-  if (!(await exists(join(wc, BACKLOG_CONFIG)))) {
-    throw new BackeError('not_found', `Arbeitskopie ${wc} fehlt`);
-  }
+  const { handle, key, workingCopy } = requireWriter(ctx);
+  const wc = (await exists(join(workingCopy, BACKLOG_CONFIG)))
+    ? workingCopy
+    : await ensureWorkingCopy(ctx, handle);
   const dir = await stateDir(wc);
   const journal = join(dir, 'write.journal');
   const signals = signalDeferral();

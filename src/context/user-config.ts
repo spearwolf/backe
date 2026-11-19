@@ -14,6 +14,11 @@ export function userConfigPath(backeHome: string): string {
   return join(backeHome, 'config.jsonc');
 }
 
+/** Lock-Datei, unter der die User-Config geändert und ein Clone abgeschlossen wird. */
+export function configLockPath(backeHome: string): string {
+  return join(backeHome, 'config.lock');
+}
+
 async function readText(file: string): Promise<string | undefined> {
   try {
     return await readFile(file, 'utf8');
@@ -206,7 +211,7 @@ export async function updateUserConfig(
   edit: (current: UserConfig) => readonly ConfigEdit[],
 ): Promise<UserConfig> {
   await mkdir(backeHome, { recursive: true, mode: 0o700 });
-  return withFileLock(join(backeHome, 'config.lock'), async () => {
+  return withFileLock(configLockPath(backeHome), async () => {
     const file = userConfigPath(backeHome);
     const text = (await readText(file)) ?? '{}\n';
     const current = parseUserConfig(text, file);

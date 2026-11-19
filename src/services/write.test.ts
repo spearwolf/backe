@@ -9,12 +9,13 @@ import {
   sigOf,
   statusShort,
   type TestBacklog,
+  type TestKey,
   testBacklog,
   testKey,
 } from '../../test/helpers/git.ts';
 import { seqBytes } from '../../test/helpers/snapshot.ts';
 import { withFileLock } from '../context/lock.ts';
-import { workingCopyPath } from '../context/registry.ts';
+import { managedClonePath, setIdentity, workingCopyPath } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
 import { git } from '../git/exec.ts';
@@ -366,9 +367,15 @@ test('a writer without key or working copy fails before the lock', async () => {
       executeWrite(await b.context({ as: 'bob' }), CREATE, { lock: { timeoutMs: 0 } }),
     ),
     await catchErrAsync(() =>
-      executeWrite({ ...ctx, backlog: { ...ctx.backlog, workingCopy: missing } }, CREATE, {
-        lock: { timeoutMs: 0 },
-      }),
+      executeWrite(
+        {
+          ...ctx,
+          userConfig: { ...ctx.userConfig, backlogs: { acme: { paths: { spw: missing } } } },
+          backlog: { ...ctx.backlog, workingCopy: missing },
+        },
+        CREATE,
+        { lock: { timeoutMs: 0 } },
+      ),
     ),
   ]);
   expect(errs.map((e) => e.code)).toEqual(['usage', 'usage', 'not_found']);
@@ -414,4 +421,60 @@ test('re-adding a removed user takes the history into account', async () => {
   const err = await catchErrAsync(() => executeWrite(asBob, { kind: 'op', op: addBot }));
   expect(err.code).toBe('validation');
   expect(err.message).toBe('bob darf den User bot nicht neu anlegen');
+});
+
+describe('another identity', () => {
+  let claude: TestKey;
+
+  /** spw legt den Agent claude-1 an; ohne Remote bleibt der Stand lokal. */
+  async function addClaude(backlog: TestBacklog): Promise<ResolvedContext> {
+    claude = await testKey('claude-1');
+    await executeWrite(await backlog.context(), {
+      kind: 'op',
+      op: {
+        op: 'user.add',
+        handle: 'claude-1',
+        name: 'Claude',
+        kind: 'agent',
+        operator: 'spw',
+        keys: [claude.line],
+      },
+    });
+    if (backlog.remote !== undefined) {
+      await git(['push', '-q', 'origin', 'main'], { cwd: backlog.root });
+    }
+    await setIdentity(backlog.homes, 'acme', 'claude-1', claude.priv);
+    return backlog.context({ as: 'claude-1', backlog: 'acme' });
+  }
+
+  test('the first write of another identity clones its own working copy with --reference', async () => {
+    const remote = await testBacklog({ remote: true });
+    const asClaude = await addClaude(remote);
+    const before = await revParse(remote.root, 'HEAD');
+    const r = await executeWrite(asClaude, CREATE);
+    const wc = managedClonePath(remote.homes, 'acme', 'claude-1');
+    expect(await readFile(join(wc, '.git/objects/info/alternates'), 'utf8')).toContain(
+      join(remote.root, '.git/objects'),
+    );
+    expect(await readLocalState(wc, 'identity')).toBe('claude-1');
+    expect(await readLocalState(wc, 'anchor')).toBe(await readLocalState(remote.root, 'anchor'));
+    expect(await revParse(wc, 'HEAD')).toBe(r.commit);
+    expect(await sigOf(wc, r.commit as string, { spw: remote.key, 'claude-1': claude })).toEqual([
+      'G',
+      'claude-1',
+    ]);
+    expect(await revParse(remote.root, 'HEAD')).toBe(before); // fremde Arbeitskopie unberührt
+  });
+
+  test('a backlog without remote clones the new identity from the existing working copy', async () => {
+    const asClaude = await addClaude(b);
+    const before = await revParse(b.root, 'HEAD');
+    const r = await executeWrite(asClaude, CREATE);
+    const wc = managedClonePath(b.homes, 'acme', 'claude-1');
+    expect(await readLocalState(wc, 'identity')).toBe('claude-1');
+    expect(await readLocalState(wc, 'verified')).toBe(before);
+    expect((await git(['rev-parse', 'HEAD~1'], { cwd: wc })).stdout.trim()).toBe(before);
+    expect(r.commit).toBe(await revParse(wc, 'HEAD'));
+    expect(await revParse(b.root, 'HEAD')).toBe(before);
+  });
 });
