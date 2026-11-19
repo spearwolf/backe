@@ -3,14 +3,25 @@ import { dirname, join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { rawCommit, revParse, type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
-import { type Env, type Homes, resolveHomes } from '../context/paths.ts';
-import { managedClonePath, registerBacklog, unregisterBacklog } from '../context/registry.ts';
+import { type Env, type Homes, physicalPath, resolveHomes } from '../context/paths.ts';
+import {
+  managedClonePath,
+  registerBacklog,
+  setIdentity,
+  unregisterBacklog,
+} from '../context/registry.ts';
 import { resolveContext } from '../context/resolve.ts';
 import { readUserConfig, userConfigPath } from '../context/user-config.ts';
 import { git } from '../git/exec.ts';
-import { readLocalState } from '../git/local-state.ts';
+import { readLocalState, writeLocalState } from '../git/local-state.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
-import { cloneBacklog, ensureWorkingCopy } from './working-copy.ts';
+import {
+  addBacklog,
+  cloneBacklog,
+  ensureWorkingCopy,
+  removeBacklog,
+  showBacklog,
+} from './working-copy.ts';
 import { executeWrite } from './write.ts';
 
 type Home = { homes: Homes; env: Env };
@@ -349,4 +360,228 @@ test('a registered remote of another backlog is refused', async () => {
   expect(err.message).toBe(`${beta.remote}: gehört zum Backlog "beta", erwartet wurde "acme"`);
   expect(await exists(managedClonePath(b.homes, 'acme', 'claude-1'))).toBe(false);
   expect(await tempEntries(b.homes)).toEqual([]);
+});
+
+/** Ein eigener Clone der Remote in einem frischen Verzeichnis, wie ihn ein Nutzer selbst anlegt. */
+async function ownClone(): Promise<string> {
+  const dir = join(await tempDir(), 'mine');
+  await git(['clone', '-q', b.remote as string, dir], { cwd: dirname(dir) });
+  return dir;
+}
+
+test('add binds an existing clone, sets identity and anchor', async () => {
+  const dir = await ownClone();
+  const r = await addBacklog({
+    homes: other.homes,
+    env: other.env,
+    name: 'acme',
+    path: dir,
+    handle: 'claude-1',
+  });
+  expect(r).toEqual({ root: await physicalPath(dir), notices: [] });
+  expect(await readLocalState(dir, 'identity')).toBe('claude-1');
+  expect(await readLocalState(dir, 'anchor')).toBe(await readLocalState(b.root, 'anchor'));
+  expect(await readLocalState(dir, 'verified')).toBe(await revParse(dir, 'HEAD'));
+  const entry = (await readUserConfig(other.homes.backeHome)).backlogs?.acme;
+  expect(entry?.remote).toBe(b.remote);
+  expect(entry?.paths).toEqual({ 'claude-1': await physicalPath(dir) });
+});
+
+test('add of a directory holding another backlog is a validation error', async () => {
+  const beta = await testBacklog({ name: 'beta' });
+  const err = await catchErrAsync(() =>
+    addBacklog({
+      homes: other.homes,
+      env: other.env,
+      name: 'acme',
+      path: beta.root,
+      handle: 'claude-1',
+    }),
+  );
+  expect(err.code).toBe('validation');
+  expect(err.message).toContain('beta');
+  expect(err.message).toContain('acme');
+});
+
+test('add of a subdirectory of a clone is a validation error', async () => {
+  const sub = join(await ownClone(), '.backe');
+  const err = await catchErrAsync(() =>
+    addBacklog({ homes: other.homes, env: other.env, name: 'acme', path: sub, handle: 'claude-1' }),
+  );
+  expect(err.code).toBe('validation');
+});
+
+test('add refuses a clone that belongs to another identity', async () => {
+  const dir = await ownClone();
+  await writeLocalState(dir, 'identity', 'spw');
+  const err = await catchErrAsync(() =>
+    addBacklog({
+      homes: other.homes,
+      env: other.env,
+      name: 'acme',
+      path: dir,
+      handle: 'claude-1',
+    }),
+  );
+  expect(err.code).toBe('usage');
+  expect(err.message).toContain('gehört "spw"');
+  expect(await readUserConfig(other.homes.backeHome)).toEqual({});
+});
+
+test('add reports the reasons of an invalid commit in warn mode', async () => {
+  await setVerify('warn');
+  await unsigned({ 'x.md': 'x\n' });
+  await push();
+  const dir = await ownClone();
+  const r = await addBacklog({
+    homes: other.homes,
+    env: other.env,
+    name: 'acme',
+    path: dir,
+    handle: 'claude-1',
+  });
+  expect(r.notices.length).toBeGreaterThan(0);
+  expect(await exists(dir)).toBe(true);
+});
+
+test('binding a second path for the same handle is a conflict', async () => {
+  const dir = await ownClone();
+  await addBacklog({
+    homes: other.homes,
+    env: other.env,
+    name: 'acme',
+    path: dir,
+    handle: 'claude-1',
+  });
+  const second = await catchErrAsync(() =>
+    registerBacklog(other.homes, { name: 'acme', handle: 'claude-1', path: '/other' }),
+  );
+  expect(second.code).toBe('conflict');
+  expect(second.hint).toContain(`paths.claude-1 in ${userConfigPath(other.homes.backeHome)}`);
+  // derselbe Pfad ist kein Konflikt
+  await registerBacklog(other.homes, {
+    name: 'acme',
+    handle: 'claude-1',
+    path: await physicalPath(dir),
+  });
+});
+
+test('remove --purge deletes the managed clones but never a bound path', async () => {
+  const dir = await ownClone();
+  await addBacklog({
+    homes: b.homes,
+    env: b.env,
+    name: 'acme',
+    path: dir,
+    handle: 'claude-1',
+  });
+  const r = await removeBacklog({ homes: b.homes, name: 'acme', purge: true });
+  expect(r.purged).toBe(join(b.homes.backeHome, 'backlogs', 'acme'));
+  expect(await exists(b.root)).toBe(false);
+  expect(await exists(join(dir, BACKLOG_CONFIG))).toBe(true);
+  expect((await readUserConfig(b.homes.backeHome)).backlogs?.acme).toBeUndefined();
+});
+
+test('remove without --purge deletes nothing', async () => {
+  const r = await removeBacklog({ homes: b.homes, name: 'acme' });
+  expect(r.purged).toBeUndefined();
+  expect(await exists(join(b.root, BACKLOG_CONFIG))).toBe(true);
+  expect((await catchErrAsync(() => removeBacklog({ homes: b.homes, name: 'acme' }))).code).toBe(
+    'not_found',
+  );
+});
+
+test('purge of a backlog registered again meanwhile is a conflict', async () => {
+  const err = await catchErrAsync(() =>
+    removeBacklog(
+      { homes: b.homes, name: 'acme', purge: true },
+      { beforePurge: async () => void (await registerBacklog(b.homes, { name: 'acme' })) },
+    ),
+  );
+  expect(err.code).toBe('conflict');
+  expect(await exists(join(b.root, BACKLOG_CONFIG))).toBe(true);
+});
+
+test('show lists managed and bound working copies with identity and anchor', async () => {
+  const dir = await ownClone();
+  await addBacklog({
+    homes: b.homes,
+    env: b.env,
+    name: 'acme',
+    path: dir,
+    handle: 'claude-1',
+  });
+  const cfg = await readUserConfig(b.homes.backeHome);
+  const r = await showBacklog(b.homes, cfg, 'acme');
+  expect(r.entry.name).toBe('acme');
+  const anchor = await readLocalState(b.root, 'anchor');
+  expect(r.workingCopies).toEqual([
+    {
+      handle: 'claude-1',
+      path: await physicalPath(dir),
+      managed: false,
+      exists: true,
+      identity: 'claude-1',
+      anchor,
+    },
+    { handle: 'spw', path: b.root, managed: true, exists: true, identity: 'spw', anchor },
+  ]);
+  expect((await catchErrAsync(() => showBacklog(b.homes, cfg, 'nope'))).code).toBe('not_found');
+});
+
+test('show marks a bound path without clone as missing', async () => {
+  const gone = join(await tempDir(), 'gone');
+  await registerBacklog(b.homes, { name: 'acme', handle: 'claude-1', path: gone });
+  const r = await showBacklog(b.homes, await readUserConfig(b.homes.backeHome), 'acme');
+  expect(r.workingCopies[0]).toEqual({
+    handle: 'claude-1',
+    path: gone,
+    managed: false,
+    exists: false,
+  });
+});
+
+test('add of a plain directory is a validation error', async () => {
+  const err = await catchErrAsync(async () =>
+    addBacklog({
+      homes: other.homes,
+      env: other.env,
+      name: 'acme',
+      path: await tempDir(),
+      handle: 'claude-1',
+    }),
+  );
+  expect(err.code).toBe('validation');
+  expect(err.message).toContain('keines');
+});
+
+test('add of a clone without the sync remote registers no remote', async () => {
+  const dir = await ownClone();
+  await git(['remote', 'remove', 'origin'], { cwd: dir });
+  await addBacklog({
+    homes: other.homes,
+    env: other.env,
+    name: 'acme',
+    path: dir,
+    handle: 'claude-1',
+  });
+  expect((await readUserConfig(other.homes.backeHome)).backlogs?.acme?.remote).toBeUndefined();
+});
+
+test('purge and show of a backlog without managed clones', async () => {
+  await registerBacklog(other.homes, { name: 'zed' });
+  await setIdentity(other.homes, 'zed', 'spw', '/key');
+  const cfg = await readUserConfig(other.homes.backeHome);
+  const shown = await showBacklog(other.homes, cfg, 'zed');
+  expect(shown.workingCopies).toEqual([
+    {
+      handle: 'spw',
+      path: managedClonePath(other.homes, 'zed', 'spw'),
+      managed: true,
+      exists: false,
+    },
+  ]);
+  expect(await removeBacklog({ homes: other.homes, name: 'zed', purge: true })).toEqual({
+    purged: undefined,
+  });
 });

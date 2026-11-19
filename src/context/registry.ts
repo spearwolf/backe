@@ -3,7 +3,7 @@ import { BackeError } from '../core/errors.ts';
 import type { UserConfig } from '../core/schemas.ts';
 import { normalizeRepoUrl } from '../core/url.ts';
 import { expandPath, type Homes } from './paths.ts';
-import { type ConfigEdit, updateUserConfig } from './user-config.ts';
+import { type ConfigEdit, updateUserConfig, userConfigPath } from './user-config.ts';
 
 export type BacklogEntry = {
   name: string;
@@ -88,7 +88,21 @@ export async function registerBacklog(
         edits.push({ path: ['backlogs', name, 'remote'], value: remote });
     }
     if (path !== undefined && handle !== undefined) {
-      edits.push({ path: ['backlogs', name, 'paths', handle], value: path });
+      const bound = existing?.paths?.[handle];
+      if (bound !== undefined) {
+        const expand = (p: string) => expandPath(p, { home: homes.home, base: homes.backeHome });
+        if (expand(bound) !== expand(path)) {
+          throw new BackeError(
+            'conflict',
+            `"${handle}" ist in ${name} schon an ${bound} gebunden`,
+            {
+              hint: `paths.${handle} in ${userConfigPath(homes.backeHome)} ändern oder entfernen`,
+            },
+          );
+        }
+      } else {
+        edits.push({ path: ['backlogs', name, 'paths', handle], value: path });
+      }
     }
     if (existing === undefined && edits.length === 0) {
       edits.push({ path: ['backlogs', name], value: {} });

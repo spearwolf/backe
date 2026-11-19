@@ -5,12 +5,19 @@
  * Config-Lock und verschiebt den fertigen Clone per `rename` an sein Ziel.
  */
 import { randomBytes } from 'node:crypto';
-import { access, mkdir, readFile, rename, rm } from 'node:fs/promises';
+import { access, mkdir, readdir, readFile, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { withFileLock } from '../context/lock.ts';
-import type { Env, Homes } from '../context/paths.ts';
-import { managedClonePath, registerBacklog, workingCopyPath } from '../context/registry.ts';
+import { type Env, expandPath, type Homes, physicalPath, samePath } from '../context/paths.ts';
+import {
+  type BacklogEntry,
+  listBacklogs,
+  managedClonePath,
+  registerBacklog,
+  unregisterBacklog,
+  workingCopyPath,
+} from '../context/registry.ts';
 import { fallbackRoot, type ResolvedContext, readBacklogName } from '../context/resolve.ts';
 import {
   configLockPath,
@@ -20,10 +27,11 @@ import {
 } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
 import { isHandle } from '../core/names.ts';
-import { BacklogConfigSchema } from '../core/schemas.ts';
+import { BacklogConfigSchema, type UserConfig } from '../core/schemas.ts';
 import { git, transportEnv } from '../git/exec.ts';
 import { isAncestor, readBlobs, resolveCommit, rootCommits } from '../git/history.ts';
 import { readLocalState, writeLocalState } from '../git/local-state.ts';
+import { gitRemotes, gitToplevel } from '../git/query.ts';
 import { headState } from '../git/repo.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
@@ -320,4 +328,149 @@ export async function ensureWorkingCopy(
     });
     return { root: await finish(ctx.homes, name, temp, wc), notices };
   });
+}
+
+/** Die Arbeitskopie `wc` gehört `identity`; die von `handle` liegt unter `own`. */
+export function identityMismatch(
+  wc: string,
+  identity: string,
+  handle: string,
+  own: string,
+): BackeError {
+  return new BackeError(
+    'usage',
+    `Die Arbeitskopie ${wc} gehört "${identity}"; die Arbeitskopie von "${handle}" ist ${own}`,
+  );
+}
+
+/**
+ * `backe backlog add` (backe.md §2.14): bindet einen vorhandenen Clone an eine Identität. Der
+ * Clone gehört dem Nutzer und wird nie angefasst außer um Identität, Anker und verifizierten
+ * Stand in seinem lokalen Zustand.
+ */
+export async function addBacklog(input: {
+  homes: Homes;
+  env: Env;
+  name: string;
+  path: string;
+  handle: string;
+}): Promise<{ root: string; notices: string[] }> {
+  const { homes, name, handle } = input;
+  const wanted = await physicalPath(
+    expandPath(input.path, { home: homes.home, base: process.cwd() }),
+  );
+  const top = await gitToplevel(wanted).catch(() => undefined);
+  const actual = top === wanted ? await readBacklogName(wanted) : undefined;
+  if (top !== wanted || actual !== name) {
+    throw new BackeError(
+      'validation',
+      `${input.path} ist keine Arbeitskopie des Backlogs "${name}" (Git-Toplevel: ${top ?? 'keines'}, Backlog: ${actual ?? 'keiner'}, erwartet: ${wanted})`,
+    );
+  }
+  const cfg = await readUserConfig(homes.backeHome);
+  const identity = await readLocalState(wanted, 'identity');
+  if (identity === undefined) {
+    await writeLocalState(wanted, 'identity', handle);
+  } else if (identity !== handle) {
+    throw identityMismatch(wanted, identity, handle, workingCopyPath(cfg, homes, name, handle));
+  }
+  const { sync } = await readCloneConfig(wanted, wanted);
+  if ((await readLocalState(wanted, 'anchor')) === undefined) {
+    const sibling = await fallbackRoot(cfg, homes, name, handle);
+    const known =
+      sibling !== undefined &&
+      !(await samePath(sibling, wanted)) &&
+      (await isWorkingCopyOf(sibling, name))
+        ? await readLocalState(sibling, 'anchor')
+        : undefined;
+    await writeLocalState(wanted, 'anchor', known ?? (await singleRoot(wanted, wanted)));
+  }
+  const notices = await verifyClone(wanted);
+  const remote = (await gitRemotes(wanted)).find((r) => r.name === sync.remote)?.url;
+  await registerBacklog(homes, {
+    name,
+    ...(remote === undefined ? {} : { remote }),
+    handle,
+    path: wanted,
+  });
+  return { root: wanted, notices };
+}
+
+/** Nur für Tests: läuft zwischen Deregistrieren und Löschen. */
+export type RemoveHooks = { beforePurge?: () => Promise<void> };
+
+/**
+ * `backe backlog remove` (backe.md §2.14): deregistriert; `purge` löscht danach die verwalteten
+ * Clones unter `<BACKE_HOME>/backlogs/<name>`, nie einen gebundenen Pfad. Wurde der Backlog
+ * inzwischen neu registriert, bleibt alles stehen.
+ */
+export async function removeBacklog(
+  input: { homes: Homes; name: string; purge?: boolean },
+  hooks: RemoveHooks = {},
+): Promise<{ purged: string | undefined }> {
+  const { homes, name } = input;
+  const { managedDir } = await unregisterBacklog(homes, name);
+  if (input.purge !== true) return { purged: undefined };
+  await hooks.beforePurge?.();
+  return withFileLock(configLockPath(homes.backeHome), async () => {
+    const cfg = await readUserConfig(homes.backeHome);
+    if (cfg.backlogs?.[name] !== undefined) {
+      throw new BackeError('conflict', `Backlog ${name} wurde inzwischen neu registriert`, {
+        hint: 'backe backlog remove --purge erneut ausführen',
+      });
+    }
+    if (!(await exists(managedDir))) return { purged: undefined };
+    await rm(managedDir, { recursive: true, force: true });
+    return { purged: managedDir };
+  });
+}
+
+export type WorkingCopyInfo = {
+  handle: string;
+  path: string;
+  managed: boolean;
+  exists: boolean;
+  identity?: string;
+  anchor?: string;
+};
+
+/** `backe backlog show` (backe.md §2.14): Eintrag samt allen bekannten Arbeitskopien. */
+export async function showBacklog(
+  homes: Homes,
+  cfg: UserConfig,
+  name: string,
+): Promise<{ entry: BacklogEntry; workingCopies: WorkingCopyInfo[] }> {
+  const entry = listBacklogs(cfg).find((e) => e.name === name);
+  if (entry === undefined) {
+    throw new BackeError('not_found', `Backlog "${name}" ist nicht registriert`, {
+      hint: 'backe backlog list',
+    });
+  }
+  const managedRoot = join(homes.backeHome, 'backlogs', name);
+  const dirs = await readdir(managedRoot).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+  const handles = new Set([
+    ...Object.keys(entry.paths),
+    ...Object.keys(cfg.identities?.[name] ?? {}),
+    ...dirs,
+  ]);
+  const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  const workingCopies: WorkingCopyInfo[] = [];
+  for (const handle of [...handles].sort(byCodeUnit)) {
+    const path = workingCopyPath(cfg, homes, name, handle);
+    const present = await exists(join(path, BACKLOG_CONFIG));
+    const identity = present ? await readLocalState(path, 'identity') : undefined;
+    const anchor = present ? await readLocalState(path, 'anchor') : undefined;
+    workingCopies.push({
+      handle,
+      path,
+      managed: path === managedClonePath(homes, name, handle),
+      exists: present,
+      ...(identity === undefined ? {} : { identity }),
+      ...(anchor === undefined ? {} : { anchor }),
+    });
+  }
+  return { entry, workingCopies };
 }

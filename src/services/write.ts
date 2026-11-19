@@ -40,7 +40,7 @@ import {
   type StoredEntity,
 } from '../store/snapshot.ts';
 import { authorOf, isoNow } from './env.ts';
-import { ensureWorkingCopy } from './working-copy.ts';
+import { ensureWorkingCopy, identityMismatch } from './working-copy.ts';
 
 export type WriteInput =
   | { kind: 'op'; op: Operation }
@@ -155,10 +155,7 @@ async function checkIdentity(ctx: ResolvedContext, wc: string, handle: string): 
   }
   if (identity !== handle) {
     const own = workingCopyPath(ctx.userConfig, ctx.homes, ctx.backlog.value, handle);
-    throw new BackeError(
-      'usage',
-      `Die Arbeitskopie ${wc} gehört "${identity}"; die Arbeitskopie von "${handle}" ist ${own}`,
-    );
+    throw identityMismatch(wc, identity, handle, own);
   }
 }
 
