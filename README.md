@@ -105,8 +105,8 @@ It is also a working experiment in how far that combination carries.
 | M3        | configs and context resolution                                         | done    |
 | M4        | Git layer, signed write path, verify, quarantine                       | done    |
 | M5a       | services and CLI core — issues, comments, projects, output formats     | done    |
-| M5b       | attachments, repo checks, hand-edit commits, batch, doctor, config     | next    |
-| M6        | sync, replay, claim                                                    | planned |
+| M5b       | attachments, repo checks, hand-edit commits, batch, doctor, config     | done    |
+| M6        | sync, replay, claim                                                    | next    |
 | M7        | MCP server                                                             | planned |
 | M8        | release                                                                | planned |
 

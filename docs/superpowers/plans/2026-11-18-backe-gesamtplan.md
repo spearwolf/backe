@@ -56,7 +56,7 @@ Eingaben, die der Spec impliziert, aber keine seiner Testlisten (§5) abdeckt. J
 | M4 | Git-Schicht und Schreibpfad (`git`, `services`) | §2.12, §2.13, §2.16.1 | [`2026-11-19-backe-m4-git.md`](./2026-11-19-backe-m4-git.md) |
 | M5a | CLI-Kern (`services`, `cli`): Gerüst, Ausgabe, alle Befehle außer den M5b-Gruppen | §2.4–2.7, §2.9–2.12, §2.14, §2.17, §2.18, §2.22–2.24 | [`2026-11-19-backe-m5a-cli-kern.md`](./2026-11-19-backe-m5a-cli-kern.md) |
 | M5b | `attach *` samt Größenlimit und LFS, `repo check\|where\|scan`, `commit` und `issue edit` per `$EDITOR`, `batch`, `doctor`, `config get\|set\|edit` | §2.8, §2.11, §2.13 (Hand-Edits), §2.15.1, §2.16.6 | [`2026-11-19-backe-m5b-werkzeuge.md`](./2026-11-19-backe-m5b-werkzeuge.md) |
-| M6 | Sync, Replay, Claim | §2.16.2–2.16.5 | entsteht nach M5b |
+| M6 | Sync, Replay, Claim | §2.16.2–2.16.5 | nächster Detailplan (M5b abgenommen) |
 | M7 | MCP-Modus (`mcp`) | §2.19 | entsteht nach M6 |
 | M8 | Release | §2.21, README | entsteht nach M7 |
 
@@ -106,6 +106,8 @@ Eingaben, die der Spec impliziert, aber keine seiner Testlisten (§5) abdeckt. J
 **Liefert:** Anhänge inkl. Größenlimit und LFS-Pflege (§2.8); `repo check [--remote]|where|scan` (§2.11); `backe commit` und `issue edit` per `$EDITOR` (§2.13, Hand-Edits); `batch` (§2.16.6); `doctor`; `config get|set|edit`; die mit `M5b:` markierten übernommenen Punkte.
 
 **Abnahme:** E2E gegen `dist/cli.js` mit Golden-Files für Text und JSON der neuen Befehlsgruppen; Coverage-Gate für `src/services/**`.
+
+**Abgenommen** am 2026-11-19: Abschluss-Review über den ganzen Meilenstein, seine Befunde (ein kritischer, vier wichtige) in einer Fix-Welle behoben und nachgeprüft; 2223 Tests grün, Coverage 98,96 % Lines / 93,64 % Branches; CI grün auf `ubuntu-latest` und `macos-latest`. Offene Kleinbefunde stehen unter »Übernommen aus M5b«.
 
 ### M6 — Sync, Replay, Claim
 
@@ -251,6 +253,30 @@ Offene Punkte aus den Reviews von M5a, die ein späterer Detailplan einlösen mu
   - Testhygiene: `as never` statt typisierter `Operation[]` in mehreren Tests; feste Zeitstempel neben Echtzeit im `sort created`-Test; `userWithTwoKeys` baut den zweiten Key per String-Ersetzung; der Kommentar-Konflikttest hängt an der Aufrufreihenfolge von `deps.now` in `plan()`.
   - Kleinigkeiten: redundantes `from ?? null` und toter `not_found`-Zweig in `issues.ts`; `FilterSource` ohne Konsument; `landedCommit` vergleicht `Backe-Op` nicht; `fromCommander`-Hint fällt auf `backe` zurück, wenn eine Gruppe ohne `subcommand()` entsteht; `parentFlags` in `defineEdit` wird je Programminstanz nicht zurückgesetzt; `sprint show` ist eine lange Aktion.
 
+## Übernommen aus M5b
+
+Offene Punkte aus den Reviews von M5b, die ein späterer Detailplan einlösen muss. Abgehakt wird hier, sobald der jeweilige Detailplan sie aufgenommen hat.
+
+- **M6 — Schreibpfad und LFS:**
+  - Renormalisierte Anhänge (Umstieg auf LFS) stehen nicht im Write-Journal; stirbt der Prozess zwischen `update-ref` und Index-Abgleich, bleiben sie staged.
+  - `landedChain` erkennt einen gelandeten Commit mit LFS-Anhang nie (geplante Bytes gegen Pointer-Blob).
+  - `attach get` liefert in einer Arbeitskopie ohne `git lfs pull` den Pointer-Text; nach Clone/Sync Objekte holen oder den Pointer erkennen.
+  - Fallback `git lfs install --local --skip-repo` (fremder Hook) installiert keinen pre-push-Hook; der Sync muss LFS-Objekte selbst pushen.
+  - Hand-Edits werden gegen `HEAD` auf Policy geprüft, `verify` gegen seinen ggf. eingefrorenen Stand; beide können dann abweichen.
+  - `checkFormatVersion` liest bei `edits` die Config der Arbeitskopie statt der aus `HEAD`.
+- **M8 — Aufräumen und Testlücken:**
+  - `%(refname:short)` beim Purge kann bei gleichnamigem Tag `heads/<b>` liefern (`%(refname:lstrip=2)`); `unpushedCount` ohne Produktions-Aufrufer; toter Zweig für `revoked` ohne Zeitstempel in `user show`.
+  - `readPublicKey` mit leerem stderr endet auf »nicht lesbar: «; `verify` prüft unbekannte Keys nicht in Kommentaren; JSON von `verify` lässt `unknown_keys` leer weg, `prop_notices` nicht.
+  - Pfadmuster `issues/<x>/<id>/issue.md` an drei Stellen zerlegt; Graph-Patch baut betroffene Listen je Operation neu; `ensureLfsRule` liest `d.snapshot`.
+  - Journal-Recovery einer gelandeten `edits`-Kette setzt `no_effect`-Pfade nicht zurück; Journal trägt Vorher-Bytes base64 (groß bei Anhängen); LFS-Idempotenz nur über `filter.lfs.process`; `unsettled.paths` nennt alle Pfade.
+  - `dirtyPaths`/`rollbackPaths` übergeben Pfade als argv (ARG_MAX bei sehr vielen Anhängen); `attach add` liest die ganze Quelle vor der Größenprüfung und kopiert sie.
+  - `addAttachment` nicht `async`; `entry.url as string`; Batch meldet einen Schemafehler einer späten Zeile vor einer verbotenen Operation einer früheren.
+  - `git()`-Timeout beendet nur das direkte Kind; gescheiterte GitHub-Abfragen werden nicht gecacht; `repo scan` ohne `--force` wendet »first-by-path« nicht an; ungültiger Issue-Ref auf ein nicht registriertes Repo fällt still weg.
+  - `doctor`: `stateDir()` kann `.git/backe` anlegen; execFile-Timeout zählt als »fehlt«; lokales `git` überschattet den Import.
+  - `config`: Schema-Drift (Nicht-String-Blatt) wirft einen rohen Fehler; alter Entwurf bleibt nach unverändertem Edit liegen; `readText` doppelt; `getConfig` liest zweimal.
+  - URL ohne Schema mit `.git` (`github.com/a/b.git`) behält `.git`; relativer Pfad `a/b` gilt als Repo-URL; Backlogs, die vor dem LFS-Fix schon roh committete Anhänge unter der Regel hatten, heilt nichts.
+  - Testlücken: Identity-`fail` bei kaputter `.git/config`, `doctor --fix` per E2E, Golden für `repo scan` `differs`/`überschrieben`, Temp-Datei des Editors nach Erfolg und Modus `0o600`, Text-Ausgabe von `attach add --json`, `attach get -o` auf vorhandene Datei/Verzeichnis, vakuöse Zeilen in `tools.test.ts`.
+
 ## Planentscheidungen
 
 Stellen, die der Spec offenlässt und die dieser Plan festlegt. Nach Abnahme des jeweiligen Meilensteins wandern sie als Präzisierung in `backe.md`.
@@ -348,7 +374,7 @@ Stellen, die der Spec offenlässt und die dieser Plan festlegt. Nach Abnahme des
 | §2.13 `backe commit` Umfang | alle Pfade, die `git status --porcelain=v1 -z --untracked-files=all --no-renames` als geändert, neu (nicht ignoriert) oder gelöscht meldet — Index und Arbeitsbaum zusammen, verglichen mit `HEAD`. Nichts geändert → `Nichts zu committen`, Exit 0. Ein Symlink oder sonst keine reguläre Datei darunter → `validation` `<pfad> ist keine reguläre Datei`, bevor etwas gelesen wird. | M5b |
 | §2.13 Editor- und Systemdateien | `backe init` committet eine `.gitignore` mit `.*.swp`, `.*.swo`, `*~`, `\#*#` (`#` maskiert, sonst Kommentar), `.DS_Store`. `backe commit` lehnt neue, ungetrackte Dateien ab, deren Dateiname darauf passt — auch ohne `.gitignore`: `validation` `Editor- oder Systemdateien: <pfade>`, Hint `löschen oder in .gitignore aufnehmen`, nichts committet. Andere Dateien außerhalb des Layouts bleiben `manual`. | M5b |
 | §2.13 Identitätsschutz bei Hand-Edits | Jeder Commit der Kette (`manual`-Anteil und Operationen) wird vor dem Schreiben mit `checkCommitPolicy` geprüft, gegen den Stand von `HEAD` bzw. nach dem vorigen Schritt. Gründe → `validation` `verify würde den Commit ablehnen: <gründe>` (`details.reasons`), nichts committet, Hand-Edits bleiben. `kind: 'manual'` (Quarantäne) prüft weiter selbst gegen den maßgeblichen `verify`-Stand, nicht doppelt gegen `HEAD`. | M5b |
-| §2.13 Commit-Strategie bei gemischtem Ergebnis | erst ein `manual`-Commit mit allen Dateien ohne Operations-Entsprechung (Subject aus `-m`, sonst `manual: <n> Dateien`), dann die Operationen (eine → Trailer mit der Operation, mehrere → `Backe-Op: batch`). Die Operationen werden vorab gegen den Stand nach dem `manual`-Anteil geprüft; `HEAD` springt einmal vom alten Stand auf den letzten Commit. Scheitert etwas, landet keiner. `-m` ohne `manual`-Anteil → Hinweis `-m gilt nur für manuelle Änderungen`. | M5b |
+| §2.13 Commit-Strategie bei gemischtem Ergebnis | erst ein `manual`-Commit mit allen Dateien ohne Operations-Entsprechung (Subject aus `-m`, sonst `manual: <n> Dateien`), dann die Operationen (eine → Trailer mit der Operation, mehrere → `Backe-Op: batch`). Die Operationen werden vorab gegen den Stand nach dem `manual`-Anteil geprüft; `HEAD` springt einmal vom alten Stand auf den letzten Commit. Scheitert etwas, landet keiner. `-m` ohne `manual`-Anteil → Warnung `-m gilt nur für manuelle Änderungen`. | M5b |
 | §2.13 Arbeitskopie nach `backe commit` | Jeder bearbeitete Pfad trägt danach den committeten Inhalt, der Index dieser Pfade ist `HEAD`. Weicht der committete Inhalt vom kanonisch serialisierten Hand-Edit ab (etwa Listen-Reihenfolge nach einer Mengen-Operation) → Hinweis `<pfad>: kanonisch umgeschrieben`. Ein Pfad ohne wirksame Änderung (nur umsortiert, nur Formatierung) wird auf `HEAD` zurückgesetzt → Hinweis `<pfad>: keine wirksame Änderung`. | M5b |
 | §2.13 `backe commit` Ausgabe | Text: je Commit sein Subject auf stdout; stderr `Warnung: <pfad>: unbekannte Keys …`, `Hinweis: …` je Op-Notice und umgeschriebenem Pfad, `Warnung: …` je Warnung. JSON: `{"commits":[{commit,kind,summary,ops,paths}],"notices"?:[{code,message,ids}],"rewritten"?:[{path,reason}],"warnings"?:[…],"unknown_keys"?:[{path,keys}]}` — `notices` nur Op-Notices, `warnings` = `-m gilt nur für manuelle Änderungen`, nicht angeglichene Arbeitskopie, Verify-Gründe eines frischen Klons; `unknown_keys` wie bei `verify`. | M5b |
 | §2.13 Umhängen im Hand-Edit | `issue.edit`-Operationen mit geändertem `parent` stehen in der Reihenfolge des Nachher-Baums, Wurzeln zuerst; getauschte Parents zweier Issues gelingen so unabhängig von den IDs. Konflikte mit `done`-Parents bleiben Fehler; Hint `Änderung auf zwei backe commit aufteilen`. | M5b |
