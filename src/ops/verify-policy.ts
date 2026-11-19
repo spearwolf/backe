@@ -54,6 +54,9 @@ function checkChange(
   if (change.newMode === '120000') reasons.push(`Symlink: ${path}`);
   if (change.newMode === '160000') reasons.push(`Submodule: ${path}`);
   if (path.startsWith('.backe/') && !admin) reasons.push(`nur Admins ändern ${path}`);
+  if (caseVariant(path)) {
+    reasons.push(`Pfad weicht nur in Groß-/Kleinschreibung vom Layout ab: ${path}`);
+  }
 
   if (change.status !== 'D' && misnamedComment(path)) {
     reasons.push(`Kommentar-Datei mit ungültigem Namen: ${path}`);
@@ -183,6 +186,20 @@ function checkCommentFile(
     reasons.push(unverifiable(path, err));
   }
   return reasons;
+}
+
+const PROTECTED_DIRS = ['users/', '.backe/', 'issues/'];
+
+/**
+ * Pfad unter `users/`, `.backe/` oder `issues/`, dessen Verzeichnisse nur in Groß-/Kleinschreibung
+ * vom (kleingeschriebenen) Layout abweichen: Auf Dateisystemen ohne Unterscheidung (macOS) landet
+ * er im geschützten Verzeichnis, an den Regeln oben vorbei. Der Umweg über Großbuchstaben faltet
+ * auch Zeichen wie `ſ` oder das Kelvin-Zeichen auf ihr ASCII-Gegenstück.
+ */
+function caseVariant(path: string): boolean {
+  const dirs = path.slice(0, path.lastIndexOf('/') + 1);
+  const folded = dirs.toUpperCase().toLowerCase();
+  return dirs !== folded && PROTECTED_DIRS.some((d) => folded.startsWith(d));
 }
 
 /** Datei in `comments/` eines Issues, deren Name nicht dem Kommentar-Namensschema folgt. */

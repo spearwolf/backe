@@ -143,6 +143,46 @@ describe('checkCommitPolicy', () => {
       }),
     ).toEqual(['nur Admins ändern .backe/quarantine.jsonc']));
 
+  test.each([
+    ['Users/eve.md', 'A'],
+    ['.BACKE/backlog.jsonc', 'M'],
+    [`issues/t0/${ID}/Comments/x.md`, 'A'],
+    [`Issues/t0/${ID}/issue.md`, 'D'],
+    [`issues/T0/${ID}/issue.md`, 'M'],
+    ['uſers/eve.md', 'A'],
+  ] as const)('a case variant of a layout directory is reported: %s', (path, status) =>
+    expect(
+      check({
+        changes: [
+          {
+            path,
+            status,
+            oldMode: status === 'A' ? '000000' : '100644',
+            newMode: status === 'D' ? '000000' : '100644',
+            before: null,
+            after: null,
+          },
+        ],
+      }),
+    ).toEqual([`Pfad weicht nur in Groß-/Kleinschreibung vom Layout ab: ${path}`]),
+  );
+
+  test('upper case outside layout directories or in file names is no case variant', () =>
+    expect(
+      check({
+        changes: ['projects/Web.md', 'docs/Users/x.md', `issues/t0/${ID}/attachments/Bild.PNG`].map(
+          (path): TreeChange => ({
+            path,
+            status: 'A',
+            oldMode: '000000',
+            newMode: '100644',
+            before: null,
+            after: null,
+          }),
+        ),
+      }),
+    ).toEqual([]));
+
   test('a new issue with an id different from its path is reported', () =>
     expect(check({ changes: [{ ...addIssue(ID), after: issueText({ id: I(2) }) }] })).toEqual([
       `id von ${issueFile(ID)} ist ${I(2)}`,
