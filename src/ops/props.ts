@@ -143,7 +143,7 @@ export function checkPropFilter(f: PropFilter, config: BacklogConfig): void {
   const symbol = f.op === 'ge' ? '>=' : '<=';
   const decl = declarationOf(config, f.key);
   const fail = (why: string): never => {
-    throw new BackeError('usage', `Filter ${f.key}${symbol}${f.value}: ${why}`);
+    throw new BackeError('validation', `Filter ${f.key}${symbol}${f.value}: ${why}`);
   };
   if (decl === undefined) {
     if (typeof f.value !== 'number') fail('der Vergleichswert muss eine Zahl sein');

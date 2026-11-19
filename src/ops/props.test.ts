@@ -293,25 +293,29 @@ describe('propMatches', () => {
 
 describe('checkPropFilter', () => {
   test('rejects >= on an unordered enum', () =>
-    expect(catchErr(() => checkPropFilter(parsePropFilter('area>=a'), config)).code).toBe('usage'));
+    expect(catchErr(() => checkPropFilter(parsePropFilter('area>=a'), config)).code).toBe(
+      'validation',
+    ));
 
   test('rejects ranges on string, boolean and json declarations', () => {
     for (const key of ['note', 'done_flag', 'blob'])
       expect(catchErr(() => checkPropFilter(parsePropFilter(`${key}>=1`), config)).code).toBe(
-        'usage',
+        'validation',
       );
   });
 
   test('rejects an ordered enum range with an unknown value', () =>
     expect(catchErr(() => checkPropFilter(parsePropFilter('severity>=urgent'), config)).code).toBe(
-      'usage',
+      'validation',
     ));
 
   test('rejects a non-numeric value on numeric and undeclared keys', () => {
     expect(catchErr(() => checkPropFilter(parsePropFilter('points>=x'), config)).code).toBe(
-      'usage',
+      'validation',
     );
-    expect(catchErr(() => checkPropFilter(parsePropFilter('free>=x'), config)).code).toBe('usage');
+    expect(catchErr(() => checkPropFilter(parsePropFilter('free>=x'), config)).code).toBe(
+      'validation',
+    );
   });
 
   test('accepts valid range, eq and has filters', () => {

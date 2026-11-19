@@ -20,6 +20,8 @@ beforeEach(async () => {
       { op: 'project.create', path: 'webapp', title: 'Webapp' },
       { op: 'project.create', path: 'ops', title: 'Ops' },
       { op: 'sprint.create', slug: '2026-w47', title: 'W47' },
+      { op: 'repo.add', url: 'git@example.com:acme/webapp.git', name: 'webapp' },
+      { op: 'repo.add', url: 'git@example.com:acme/tools.git', name: 'tools' },
       {
         op: 'issue.create',
         ref: '$P',
@@ -28,6 +30,8 @@ beforeEach(async () => {
         rank: 1,
         projects: ['web'],
         sprints: ['2026-w47'],
+        repos: ['webapp'],
+        created: '2026-11-19T10:00:03Z',
         body: 'Das Paket mit NEEDLE im Body\n',
       },
       {
@@ -39,6 +43,8 @@ beforeEach(async () => {
         parent: '$P',
         projects: ['web/auth'],
         assignee: 'spw',
+        repos: ['tools'],
+        created: '2026-11-19T10:00:01Z',
         props: { sev: 3 },
       },
       {
@@ -49,6 +55,7 @@ beforeEach(async () => {
         rank: 3,
         parent: '$P',
         projects: ['webapp'],
+        created: '2026-11-19T10:00:02Z',
         props: { sev: 1 },
       },
       {
@@ -116,6 +123,9 @@ test('values within a flag are or, flags are and', async () => {
   );
   expect(await ids({ projects: ['web'], sprints: ['2026-w47'] })).toEqual(names('P', 'C1'));
   expect(await ids({ repos: ['nirgends'] })).toEqual([]);
+  expect(await ids({ repos: ['webapp'] })).toEqual(names('P', 'C2'));
+  expect(await ids({ repos: ['tools'] })).toEqual(names('C1'));
+  expect(await ids({ repos: ['webapp', 'tools'] })).toEqual(names('P', 'C1', 'C2'));
 });
 
 test('--project is recursive, --exact is not', async () => {
@@ -172,6 +182,7 @@ test('--prop and --has-prop filter, an invalid range filter is an error', async 
   expect(await ids({ hasProps: ['sev'] })).toEqual(names('C1', 'C2'));
   expect(await ids({ hasProps: ['sev', 'color'] })).toEqual([]);
   const err = await catchErrAsync(() => listIssues(ctx, { props: ['color>=red'] }));
+  expect(err.code).toBe('validation');
   expect(err.message).toContain('color');
 });
 
@@ -189,13 +200,10 @@ test('parent lists direct children, top-level the roots, both together are a usa
 });
 
 test('sort created orders by created, then id', async () => {
+  // C1, C2, P tragen aufsteigende Zeitstempel; X und Y haben die spätere Erzeugungszeit des Batches.
   const r = await listIssues(ctx, { sort: 'created', states: ['all'] });
-  const items = r.items.map((i) => i.issue);
-  const expected = [...items].sort((a, c) =>
-    a.created < c.created ? -1 : a.created > c.created ? 1 : a.id < c.id ? -1 : 1,
-  );
-  expect(items.map((i) => i.id)).toEqual(expected.map((i) => i.id));
-  expect(items).toHaveLength(7);
+  expect(r.items.slice(0, 3).map((i) => i.issue.id)).toEqual(names('C1', 'C2', 'P'));
+  expect(r.items).toHaveLength(7);
 });
 
 test('tree orders children under parents with depth', async () => {
