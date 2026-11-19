@@ -191,3 +191,11 @@ test('an existing empty target keeps its directory but loses the created content
   await catchErrAsync(() => initBacklog({ ...input, key: bad, dir }));
   expect(await readdir(dir)).toEqual([]);
 });
+
+test('a target that is a file is refused with its fs error and nothing is registered', async () => {
+  const { tmp, input } = await inputFor();
+  const dir = join(tmp, 'file');
+  await writeFile(dir, 'x');
+  await expect(initBacklog({ ...input, dir })).rejects.toMatchObject({ code: 'ENOTDIR' });
+  expect((await readUserConfig(input.homes.backeHome)).backlogs).toBeUndefined();
+});
