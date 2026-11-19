@@ -223,6 +223,32 @@ Offene Punkte aus den Reviews von M4, die ein späterer Detailplan einlösen mus
   - Format von `.backe/quarantine.jsonc` festhalten. Git-Mindestversion 2.38 eintragen.
   - Aus M5a: §2.12 (`keys` darf fehlen — kein aktiver Key, der User kann nicht signieren), §2.7 (Kommentare derselben Sekunde ordnet der Dateiname), §2.18 (Fehlercodes `usage`/`validation`, Hinweise und Warnungen im JSON-Modus nur im Objekt); dazu die M5a-Zeilen der Planentscheidungen als Präzisierung.
 
+## Übernommen aus M5a
+
+Offene Punkte aus den Reviews von M5a, die ein späterer Detailplan einlösen muss. Abgehakt wird hier, sobald der jeweilige Detailplan sie aufgenommen hat.
+
+- **M5b — Verhalten:**
+  - `issue edit` mit lauter unveränderten Werten ist `usage` »Nichts zu ändern«, `issue move` in den aktuellen State dagegen `unverändert`/Exit 0. Zusammen mit `issue edit` per `$EDITOR` entscheiden; vermutlich richtig: ohne Flags `usage`, mit wirkungslosen Flags idempotent `unverändert`.
+  - `issue link`: Ein registriertes Repo namens `git` macht `git@host:pfad` zu Repo plus Ref. Ein Ref mit `:` ist laut `git check-ref-format` ungültig; der Repo-Zweig soll `:` im Ref ausschließen.
+  - `issue show`: Kind-Zeilen ohne Assignee-Spalte (`IssueRefView` trägt keinen Assignee).
+  - `user show` druckt `widerrufen ?`, wenn ein Eintrag in `revoked_keys` keinen Zeitstempel hat (Hand-Edit) — Klammer weglassen.
+  - `project list` zählt offene Issues direkt, `project show` rekursiv; die Spalte benennen oder in der Doku erklären.
+  - `safeText` lässt Format- und Bidi-Zeichen (`\p{Cf}`, etwa U+202E) durch.
+  - `backlog remove --purge` prüft nur den Sync-Branch; ungepushte Arbeit auf anderen lokalen Branches ist nicht geschützt.
+  - Die rekursive snake_case-Umwandlung von Fehler-`details` würde künftige Maps mit Nutzer-Keys (etwa Property-Keys) umbenennen.
+  - `readPublicKey` meldet jedes Scheitern von `ssh-keygen -y` an einem OpenSSH-Key als »verschlüsselt«, auch einen kaputten Key oder ein fehlendes Binary.
+  - `revertBinding` setzt ein von `registerBacklog` gesetztes `current` nicht zurück; `wasRegistered` in `cloneBacklog` wird außerhalb des Config-Locks gelesen.
+  - `checkPropFilter` nennt in Meldungen `f.value` statt `f.raw` (`level>=1` statt `level>=01`).
+  - Fehlermeldungen der CLI setzen Flag-Namen uneinheitlich in `»…«`.
+- **M8 — Aufräumen und Testlücken:**
+  - Doppelte Helfer: `isMissing` in `store/snapshot.ts` und `context/project-config.ts`; eigenes `exists` in `git/repo.ts` und `git/ssh.ts` (Schichtgrenze); Code-Unit-Comparatoren in mehreren Services statt `byCodeUnit`; Notice-Helfer liegen in `ops/next.ts` statt `ops/notice.ts`; `listSort` und `STATE_ORDER` an neutralere Orte.
+  - `working-copy.ts` prüft an zwei Stellen nur `ENOENT`, `ENOTDIR` kommt roh durch.
+  - Doc-Kommentar in `core/errors.ts` ohne »stdin doppelt verlangt«; `test/conventions.test.ts` prüft nur einzeilige `"${…}"` (Scope-Kommentar fehlt).
+  - Der Zweig `allowSettledParent` ist über echte Operationen nicht erreichbar, sein Test beweist den Bypass nicht.
+  - Testlücken: Reparent mit Enkel; `derive` mit No-op und Hinweisen; vorhandener Anker überlebt gescheitertes `verify`; `assign` mit fremdem Handle und ohne Änderung; `reopen --to done`; der `ambiguous`-Zweig in `revokeKey`; Rethrow-Zweig in `readPublicKey` (PEM); `--comments <n>`-Kürzung im Golden.
+  - Testhygiene: `as never` statt typisierter `Operation[]` in mehreren Tests; feste Zeitstempel neben Echtzeit im `sort created`-Test; `userWithTwoKeys` baut den zweiten Key per String-Ersetzung; der Kommentar-Konflikttest hängt an der Aufrufreihenfolge von `deps.now` in `plan()`.
+  - Kleinigkeiten: redundantes `from ?? null` und toter `not_found`-Zweig in `issues.ts`; `FilterSource` ohne Konsument; `landedCommit` vergleicht `Backe-Op` nicht; `fromCommander`-Hint fällt auf `backe` zurück, wenn eine Gruppe ohne `subcommand()` entsteht; `parentFlags` in `defineEdit` wird je Programminstanz nicht zurückgesetzt; `sprint show` ist eine lange Aktion.
+
 ## Planentscheidungen
 
 Stellen, die der Spec offenlässt und die dieser Plan festlegt. Nach Abnahme des jeweiligen Meilensteins wandern sie als Präzisierung in `backe.md`.
