@@ -13,6 +13,17 @@ describe('git', () => {
     expect(r).toEqual({ stdout: 'true\n', stderr: '', exitCode: 0 });
   });
 
+  test('timeoutMs kills a command that runs too long', async () => {
+    const cwd = await tempDir();
+    const err = await catchErrAsync(() =>
+      git(['-c', 'alias.hang=!sleep 2', 'hang'], { cwd, timeoutMs: 200 }),
+    );
+    expect(err.code).toBe('unexpected');
+    expect(err.message).toBe('git hang: Zeitüberschreitung nach 200 ms');
+    const ok = await git(['--version'], { cwd, timeoutMs: 20_000 });
+    expect(ok.exitCode).toBe(0);
+  });
+
   test('a failing command is an unexpected error with details', async () => {
     const err = await catchErrAsync(async () =>
       git(['rev-parse', '--verify', 'nope'], { cwd: await tempDir() }),

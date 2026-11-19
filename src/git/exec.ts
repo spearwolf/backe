@@ -9,6 +9,8 @@ export type GitOptions = {
   env?: GitEnv;
   input?: string;
   okExitCodes?: readonly number[];
+  /** Bricht den Aufruf nach so vielen Millisekunden ab (SIGKILL) und meldet `unexpected`. */
+  timeoutMs?: number;
 };
 
 export type GitResult = { stdout: string; stderr: string; exitCode: number };
@@ -111,6 +113,20 @@ function run(bin: Bin, args: readonly string[], opts: GitOptions): Promise<GitBy
       reject(startFailure(bin, args, error));
       return;
     }
+    // Sofort ablehnen statt auf `close` zu warten: Enkelprozesse (ssh, Remote-Helper) halten die Pipes offen.
+    const timer =
+      opts.timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            child.kill('SIGKILL');
+            reject(
+              new BackeError(
+                'unexpected',
+                `${label(bin, args)}: Zeitüberschreitung nach ${opts.timeoutMs} ms`,
+                { details: { args, timeoutMs: opts.timeoutMs } },
+              ),
+            );
+          }, opts.timeoutMs);
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout.on('data', (chunk: Buffer) => out.push(chunk));
@@ -121,6 +137,7 @@ function run(bin: Bin, args: readonly string[], opts: GitOptions): Promise<GitBy
     let spawnFailed = false;
     const onSpawnError = (error: NodeJS.ErrnoException): void => {
       spawnFailed = true;
+      clearTimeout(timer);
       if (error.code !== 'ENOENT') {
         reject(startFailure(bin, args, error));
         return;
@@ -145,6 +162,7 @@ function run(bin: Bin, args: readonly string[], opts: GitOptions): Promise<GitBy
     child.on('error', onSpawnError);
 
     child.on('close', (code, signal) => {
+      clearTimeout(timer);
       // Nach einem Startfehler folgt close mit negativem Code; der Fehler gehört dem error-Handler.
       if (spawnFailed) return;
       const stdout = Buffer.concat(out);
