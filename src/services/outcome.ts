@@ -44,6 +44,11 @@ export async function writeOp(
   ctx: ResolvedContext,
   derive: (s: BacklogSnapshot, actor: string) => Operation | readonly Operation[],
   deps?: WriteDeps,
+): Promise<WriteOutcome | WriteOpsOutcome>;
+export async function writeOp(
+  ctx: ResolvedContext,
+  derive: (s: BacklogSnapshot, actor: string) => Operation | readonly Operation[],
+  deps?: WriteDeps,
 ): Promise<WriteOutcome | WriteOpsOutcome> {
   let derived: Operation | readonly Operation[] | undefined;
   const r = await executeWrite(

@@ -233,7 +233,7 @@ export async function editIssueText(
     }
     return r.ops.length === 0 ? noEffect : r.ops;
   };
-  return writeOp(ctx, derive as (s: BacklogSnapshot, actor: string) => Operation, deps);
+  return writeOp(ctx, derive, deps);
 }
 
 function currentIssue(s: BacklogSnapshot, ref: string) {

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { logTrailers, revParse, type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
-import { type Operation, summarizeOp } from '../ops/operation.ts';
+import { bodyHash, type Operation, summarizeOp } from '../ops/operation.ts';
 import { issueFile } from '../store/layout.ts';
 import { listComments, loadSnapshot } from '../store/snapshot.ts';
 import {
@@ -174,6 +174,47 @@ describe('editIssue', () => {
     expect(out.op).not.toHaveProperty('remove');
   });
 
+  test('edit sets the body with the hash of the old body', async () => {
+    await setup();
+    const id = (await createIssue(ctx, { title: 'T', body: 'alt\n' })).id as string;
+    const out = await editIssue(ctx, id, { body: 'neu\n' });
+    expect(out.op).toMatchObject({ body: { from_hash: bodyHash('alt\n'), to: 'neu\n' } });
+    expect((await issueOf(id)).body).toBe('neu\n');
+  });
+
+  test('editing a broken issue is a validation error naming the file', async () => {
+    await setup();
+    const id = (await createIssue(ctx, { title: 'T' })).id as string;
+    const { path } = await issueOf(id);
+    const { writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    await writeFile(join(b.root, path), '---\nkaputt: [\n---\n');
+    const err = await catchErrAsync(() => editIssue(ctx, id, { title: 'X' }));
+    expect(err.code).toBe('validation');
+    expect(err.message).toContain(path);
+  });
+
+  test('the same key in props and unsetProps is a usage error', async () => {
+    await setup();
+    const id = (await createIssue(ctx, { title: 'T' })).id as string;
+    const err = await catchErrAsync(() =>
+      editIssue(ctx, id, { props: ['a=1'], unsetProps: ['a'] }),
+    );
+    expect(err.code).toBe('usage');
+    expect(err.message).toContain('»a«');
+  });
+
+  test('editIssue rejects its promise instead of throwing synchronously', async () => {
+    await setup();
+    const id = (await createIssue(ctx, { title: 'T' })).id as string;
+    const pending = editIssue(ctx, id, { props: ['a=1'], unsetProps: ['a'] });
+    const err = await pending.then(
+      () => undefined,
+      (e: unknown) => e as { code: string },
+    );
+    expect(err?.code).toBe('usage');
+  });
+
   test.each([
     ['projects', { addProjects: ['web'], rmProjects: ['web'] }, 'web'],
     ['sprints', { addSprints: ['s1'], rmSprints: ['s1'] }, 's1'],
@@ -249,7 +290,7 @@ describe('moveIssue', () => {
 
   test('force is passed on and closes a parent with open children', async () => {
     await setup();
-    const parent = await newIssue('P', { state: 'in-progress' });
+    const parent = await newIssue('P', { state: 'review' });
     await newIssue('K', { parent });
     const err = await catchErrAsync(() => moveIssue(ctx, parent, { to: 'done' }));
     expect(err.code).not.toBe('usage');

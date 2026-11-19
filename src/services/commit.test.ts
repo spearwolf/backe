@@ -131,4 +131,30 @@ describe('commitEdits', () => {
     const out = await commitEdits(ctx, {});
     expect(out.notices).toEqual([`${issueFile(z.id)}: kanonisch umgeschrieben`]);
   });
+
+  test('a working copy that could not be aligned is noted', async () => {
+    const [x, y, a] = (await issues('X', 'Y', 'A')) as [string, string, string];
+    const z = (
+      await executeWrite(ctx, {
+        kind: 'op',
+        op: { op: 'issue.create', title: 'Z', depends_on: [x, y] },
+      })
+    ).recorded[0] as { id: string };
+    await write(
+      issueFile(z.id),
+      (await read(issueFile(z.id))).replace(`[${x}, ${y}]`, `[${y}, ${x}]`),
+    );
+    await write(issueFile(a), (await read(issueFile(a))).replace('title: A', 'title: A2'));
+    const lock = join(b.root, '.git', 'index.lock');
+    try {
+      const out = await commitEdits(ctx, {}, { hooks: { afterCommit: () => writeFile(lock, '') } });
+      expect(out.commits).toHaveLength(1);
+      const unsettled = out.notices.find((n) => n.startsWith('Arbeitskopie nicht angeglichen'));
+      expect(unsettled).toContain(issueFile(a));
+      expect(unsettled).toContain(issueFile(z.id));
+      expect(unsettled).toContain('index.lock');
+    } finally {
+      await rm(lock, { force: true });
+    }
+  });
 });
