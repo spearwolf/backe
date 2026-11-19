@@ -22,6 +22,7 @@ import {
   listBacklogs,
   managedClonePath,
   registerBacklog,
+  revertBinding,
   unregisterBacklog,
   workingCopyPath,
 } from '../context/registry.ts';
@@ -411,15 +412,18 @@ export async function addBacklog(input: {
     await writeLocalState(wanted, 'anchor', known ?? (await singleRoot(wanted, wanted)));
     wroteAnchor = true;
   }
+  const undoAnchor = async () => {
+    if (wroteAnchor) await clearLocalState(wanted, 'anchor').catch(() => undefined);
+  };
   let notices: string[];
   try {
     notices = await verifyClone(wanted);
   } catch (error) {
-    if (wroteAnchor) await clearLocalState(wanted, 'anchor');
+    await undoAnchor();
     throw error;
   }
   const remote = (await gitRemotes(wanted)).find((r) => r.name === sync.remote)?.url;
-  const wasRegistered = cfg.backlogs?.[name] !== undefined;
+  const before = cfg.backlogs?.[name];
   await registerBacklog(homes, {
     name,
     ...(remote === undefined ? {} : { remote }),
@@ -429,7 +433,16 @@ export async function addBacklog(input: {
   try {
     if (identity === undefined) await writeLocalState(wanted, 'identity', handle);
   } catch (error) {
-    if (!wasRegistered) await unregisterBacklog(homes, name).catch(() => undefined);
+    // Zurücknehmen, was dieser Aufruf ergänzt hat: den ganzen Eintrag, falls er ihn angelegt hat.
+    if (before === undefined) {
+      await unregisterBacklog(homes, name).catch(() => undefined);
+    } else {
+      await revertBinding(homes, name, {
+        ...(before.paths?.[handle] === undefined ? { handle } : {}),
+        remote: before.remote === undefined,
+      }).catch(() => undefined);
+    }
+    await undoAnchor();
     throw error;
   }
   return { root: wanted, notices };

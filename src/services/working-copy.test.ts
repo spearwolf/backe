@@ -1,5 +1,6 @@
 import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { vi } from 'vitest';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import {
@@ -18,6 +19,7 @@ import {
 } from '../context/registry.ts';
 import { resolveContext } from '../context/resolve.ts';
 import { readUserConfig, userConfigPath } from '../context/user-config.ts';
+import { BackeError } from '../core/errors.ts';
 import { git } from '../git/exec.ts';
 import { readLocalState, writeLocalState } from '../git/local-state.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
@@ -29,6 +31,21 @@ import {
   showBacklog,
 } from './working-copy.ts';
 import { executeWrite } from './write.ts';
+
+const faults = vi.hoisted(() => ({ identity: false }));
+
+vi.mock('../git/local-state.ts', async (original) => {
+  const real = await original<typeof import('../git/local-state.ts')>();
+  return {
+    ...real,
+    writeLocalState: (wc: string, name: Parameters<typeof real.writeLocalState>[1], v: string) => {
+      if (faults.identity && name === 'identity') {
+        return Promise.reject(new BackeError('unexpected', 'identity kaputt'));
+      }
+      return real.writeLocalState(wc, name, v);
+    },
+  };
+});
 
 type Home = { homes: Homes; env: Env };
 
@@ -736,4 +753,36 @@ test('addBacklog writes nothing when verify fails', async () => {
   expect(await readUserConfig(other.homes.backeHome)).toEqual({});
   expect(await readLocalState(dir, 'identity')).toBeUndefined();
   expect(await readLocalState(dir, 'anchor')).toBeUndefined();
+});
+
+describe('a failing identity write takes back what add registered', () => {
+  const addSpw = (dir: string) =>
+    addBacklog({ homes: other.homes, env: other.env, name: 'acme', path: dir, handle: 'spw' });
+
+  beforeEach(() => {
+    faults.identity = true;
+  });
+  afterEach(() => {
+    faults.identity = false;
+  });
+
+  test('a fresh backlog is unregistered and the anchor removed', async () => {
+    await push();
+    const dir = await ownClone();
+    const err = await catchErrAsync(() => addSpw(dir));
+    expect(err.message).toBe('identity kaputt');
+    expect((await readUserConfig(other.homes.backeHome)).backlogs?.acme).toBeUndefined();
+    expect(await readLocalState(dir, 'anchor')).toBeUndefined();
+  });
+
+  test('an already registered backlog loses only the new binding and remote', async () => {
+    await push();
+    await registerBacklog(other.homes, { name: 'acme' });
+    const dir = await ownClone();
+    await catchErrAsync(() => addSpw(dir));
+    const entry = (await readUserConfig(other.homes.backeHome)).backlogs?.acme;
+    expect(entry).toBeDefined();
+    expect(entry?.remote).toBeUndefined();
+    expect(entry?.paths ?? {}).toEqual({});
+  });
 });

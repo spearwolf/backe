@@ -133,6 +133,30 @@ export async function unregisterBacklog(
   return { config, managedDir: join(homes.backeHome, 'backlogs', name) };
 }
 
+/**
+ * Nimmt zurück, was ein `registerBacklog` an einem schon bestehenden Eintrag ergänzt hat: die
+ * Bindung `paths.<handle>` und, falls verlangt, die Remote. Der Eintrag selbst bleibt; ein
+ * fehlender Eintrag ist kein Fehler.
+ */
+export async function revertBinding(
+  homes: Homes,
+  name: string,
+  undo: { handle?: string; remote?: boolean },
+): Promise<UserConfig> {
+  return updateUserConfig(homes.backeHome, (cfg) => {
+    const entry = cfg.backlogs?.[name];
+    const edits: ConfigEdit[] = [];
+    if (entry === undefined) return edits;
+    if (undo.handle !== undefined && entry.paths?.[undo.handle] !== undefined) {
+      edits.push({ path: ['backlogs', name, 'paths', undo.handle], value: undefined });
+    }
+    if (undo.remote === true && entry.remote !== undefined) {
+      edits.push({ path: ['backlogs', name, 'remote'], value: undefined });
+    }
+    return edits;
+  });
+}
+
 export async function setIdentity(
   homes: Homes,
   backlog: string,

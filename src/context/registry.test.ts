@@ -5,6 +5,7 @@ import {
   findBacklogByRemote,
   listBacklogs,
   registerBacklog,
+  revertBinding,
   setIdentity,
   unregisterBacklog,
   useBacklog,
@@ -132,4 +133,27 @@ test('use and unregister of an unknown backlog', async () => {
   expect(err.code).toBe('not_found');
   expect(err.hint).toBe('backe backlog list');
   expect((await catchErrAsync(() => unregisterBacklog(h, 'nope'))).code).toBe('not_found');
+});
+
+test('revertBinding drops the binding and the remote but keeps the entry', async () => {
+  const h = await homes();
+  await registerBacklog(h, { name: 'acme' });
+  await registerBacklog(h, {
+    name: 'acme',
+    remote: 'gh:acme/backlog',
+    handle: 'spw',
+    path: '/p/a',
+  });
+  await registerBacklog(h, { name: 'acme', handle: 'bot', path: '/p/b' });
+  const cfg = await revertBinding(h, 'acme', { handle: 'spw', remote: true });
+  expect(cfg.backlogs?.acme?.remote).toBeUndefined();
+  expect(cfg.backlogs?.acme?.paths).toEqual({ bot: '/p/b' });
+});
+
+test('revertBinding keeps the remote unless asked and ignores unknown entries', async () => {
+  const h = await homes();
+  await registerBacklog(h, { name: 'acme', remote: 'gh:acme/backlog' });
+  const cfg = await revertBinding(h, 'acme', { handle: 'spw' });
+  expect(cfg.backlogs?.acme?.remote).toBe('gh:acme/backlog');
+  await revertBinding(h, 'nope', { handle: 'spw', remote: true });
 });
