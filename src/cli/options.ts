@@ -31,20 +31,66 @@ export type GlobalOpts = {
   fields?: string;
 };
 
-const GLOBAL_KEYS = ['backlog', 'as', 'format', 'json', 'fields'] as const;
+export const GLOBAL_KEYS = ['backlog', 'as', 'format', 'json', 'fields'] as const;
+export type GlobalKey = (typeof GLOBAL_KEYS)[number];
 
-export function addGlobalOptions(cmd: Command): Command {
-  return cmd
-    .option('-B, --backlog <name|pfad>', 'Backlog (Name, Pfad oder Remote-URL)')
-    .option('--as <handle>', 'Identität für diesen Aufruf')
-    .option('--format <format>', 'Ausgabeformat: text, json oder md')
-    .option('--json', 'Kurzform für --format json')
-    .option('--fields <liste>', 'nur diese Felder ausgeben (mit --format json)');
+const GLOBAL_OPTIONS: Record<GlobalKey, [flags: string, description: string]> = {
+  backlog: ['-B, --backlog <name|pfad>', 'Backlog (Name, Pfad oder Remote-URL)'],
+  as: ['--as <handle>', 'Identität für diesen Aufruf'],
+  format: ['--format <format>', 'Ausgabeformat: text, json oder md'],
+  json: ['--json', 'Kurzform für --format json'],
+  fields: ['--fields <liste>', 'nur diese Felder ausgeben (mit --format json)'],
+};
+
+/** Globale Optionen, die ein Befehl nicht trägt, weil er den Namen selbst belegt. */
+const optedOut = new WeakMap<Command, ReadonlySet<GlobalKey>>();
+
+/** Die globalen Optionen, die `cmd` trägt. */
+export function globalKeysOf(cmd: Command): GlobalKey[] {
+  const without = optedOut.get(cmd);
+  return GLOBAL_KEYS.filter((key) => !without?.has(key));
 }
 
-/** Legt einen Unterbefehl samt globalen Optionen an; Einstellungen erbt er von `parent`. */
-export function subcommand(parent: Command, nameAndArgs: string, description: string): Command {
-  return addGlobalOptions(parent.command(nameAndArgs).description(description));
+export function addGlobalOptions(cmd: Command, without: readonly GlobalKey[] = []): Command {
+  if (without.length > 0) optedOut.set(cmd, new Set(without));
+  for (const key of globalKeysOf(cmd)) cmd.option(...GLOBAL_OPTIONS[key]);
+  return cmd;
+}
+
+/** Zuletzt betretener Unterbefehl je Programm; nennt den Befehl, dem ein Unterbefehl fehlt. */
+const dispatched = new WeakMap<Command, Command>();
+
+function rootOf(cmd: Command): Command {
+  let c = cmd;
+  while (c.parent !== null) c = c.parent;
+  return c;
+}
+
+/** Merkt sich am Programm jeden Unterbefehl, den `cmd` betritt. */
+export function trackDispatch(cmd: Command): Command {
+  return cmd.hook('preSubcommand', (_self, sub) => {
+    dispatched.set(rootOf(cmd), sub);
+  });
+}
+
+/** Der zuletzt betretene Befehl unter `program`, sonst `program` selbst. */
+export function lastDispatched(program: Command): Command {
+  return dispatched.get(program) ?? program;
+}
+
+/**
+ * Legt einen Unterbefehl samt globalen Optionen an; Einstellungen erbt er von `parent`.
+ * `without` nennt globale Optionen, deren Namen der Befehl selbst belegt (etwa ein eigenes
+ * `--json <json|->`); dort gilt die Option der Ebene darüber.
+ */
+export function subcommand(
+  parent: Command,
+  nameAndArgs: string,
+  description: string,
+  opts: { without?: readonly GlobalKey[] } = {},
+): Command {
+  const cmd = trackDispatch(parent.command(nameAndArgs).description(description));
+  return addGlobalOptions(cmd, opts.without);
 }
 
 /**
@@ -57,7 +103,7 @@ export function globalOpts(cmd: Command): GlobalOpts {
   const out: GlobalOpts = {};
   for (const c of chain) {
     const o = c.opts() as GlobalOpts;
-    for (const key of GLOBAL_KEYS) {
+    for (const key of globalKeysOf(c)) {
       if (o[key] !== undefined) (out as Record<string, unknown>)[key] = o[key];
     }
   }
@@ -87,7 +133,7 @@ export type CommandEnv = {
   homes: Homes;
   userConfig: UserConfig;
   stdin: StdinGuard;
-  /** Kontext des Aufrufs (`cwd`, `env`, `-B`, `--as` plus `flags`); einmal aufgelöst, danach gemerkt. */
+  /** Kontext des Aufrufs (`cwd`, `env`, `-B`, `--as` plus `flags`); je Flag-Satz einmal aufgelöst. */
   context(flags?: Partial<ContextFlags>): Promise<ResolvedContext>;
   /** Handle für Befehle ohne Kontext (`init`, `backlog clone|add`): `--as` → `BACKE_USER` → `user`. */
   handle(): string;
@@ -101,6 +147,13 @@ export type CommandSpec = {
   /** Erlaubte Felder für `--fields`; ohne Angabe kennt der Befehl `--fields` nicht. */
   fields?: readonly string[];
 };
+
+const CONTEXT_KEYS = [
+  'backlog',
+  'as',
+  'project',
+  'sprint',
+] as const satisfies readonly (keyof ContextFlags)[];
 
 function splitFields(raw: string | undefined): string[] | undefined {
   if (raw === undefined) return undefined;
@@ -135,7 +188,7 @@ async function commandEnv(rt: Runtime, cmd: Command, spec: CommandSpec): Promise
     if (spec.fields === undefined) throw new BackeError('usage', `${name} kennt --fields nicht`);
     checkFields(fields, spec.fields);
   }
-  let resolved: Promise<ResolvedContext> | undefined;
+  const resolved = new Map<string, Promise<ResolvedContext>>();
   return {
     io,
     format,
@@ -145,12 +198,14 @@ async function commandEnv(rt: Runtime, cmd: Command, spec: CommandSpec): Promise
     userConfig,
     stdin: rt.stdin,
     context: (flags = {}) => {
-      resolved ??= resolveContext({
-        cwd: io.cwd,
-        env: io.env,
-        flags: { backlog: g.backlog, as: g.as, ...flags },
-      });
-      return resolved;
+      const all: ContextFlags = { backlog: g.backlog, as: g.as, ...flags };
+      const key = JSON.stringify(CONTEXT_KEYS.map((k) => all[k] ?? null));
+      let ctx = resolved.get(key);
+      if (ctx === undefined) {
+        ctx = resolveContext({ cwd: io.cwd, env: io.env, flags: all });
+        resolved.set(key, ctx);
+      }
+      return ctx;
     },
     handle: () => {
       const handle = g.as ?? envValue(io.env, 'BACKE_USER') ?? userConfig.user;
@@ -210,17 +265,18 @@ export async function fileText(path: string, io: CliIo): Promise<string> {
     return await readFile(file, 'utf8');
   } catch (error) {
     if (isMissing(error)) throw new BackeError('not_found', `Datei »${path}« nicht gefunden`);
-    throw new BackeError('unexpected', `${file}: ${(error as NodeJS.ErrnoException).code}`);
+    throw new BackeError('unexpected', `»${file}«: ${(error as NodeJS.ErrnoException).code}`);
   }
 }
 
 /**
- * Gibt ein Write-Ergebnis aus: das Ergebnis nach stdout; Warnungen nach stderr, Hinweise der
- * Operation im Text-Modus ebenfalls (im JSON-Modus stehen sie im Objekt).
+ * Gibt ein Write-Ergebnis aus. Text: Ergebnis nach stdout, Hinweise und Warnungen nach stderr.
+ * JSON: alles in einem Objekt auf stdout (`notices`, `warnings`), stderr bleibt leer.
  */
 export function emitOutcome(env: CommandEnv, o: WriteOutcome, kind: 'create' | 'other'): void {
   env.out(renderOutcome(o, env.format, kind));
-  const notices = renderNotices(env.format === 'json' ? [] : o.notices, o.warnings);
+  if (env.format === 'json') return;
+  const notices = renderNotices(o.notices, o.warnings);
   if (notices !== '') env.io.stderr(notices);
 }
 

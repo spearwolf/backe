@@ -150,7 +150,7 @@ export function renderError(err: unknown, format: Format): string {
 /**
  * Ergebnis eines Writes für stdout. Text: `issue create` nur die neue ID, sonst die Zusammenfassung
  * der Operation; ohne Commit `unverändert: <zusammenfassung>`. JSON:
- * `{"commit":<sha|null>,"op":<aufgezeichnet>,"id"?:…,"notices"?:[…]}`.
+ * `{"commit":<sha|null>,"op":<aufgezeichnet>,"id"?:…,"notices"?:[…],"warnings"?:[…]}`.
  */
 export function renderOutcome(o: WriteOutcome, format: Format, kind: 'create' | 'other'): string {
   if (format === 'json') {
@@ -159,6 +159,7 @@ export function renderOutcome(o: WriteOutcome, format: Format, kind: 'create' | 
       op: o.op,
       id: o.id,
       notices: o.notices.length === 0 ? undefined : o.notices,
+      warnings: o.warnings.length === 0 ? undefined : o.warnings,
     });
   }
   if (o.commit === undefined) return `unverändert: ${summarizeOp(o.op)}\n`;

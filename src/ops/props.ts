@@ -48,7 +48,12 @@ function violationMessage(
   }
   return fitsDeclaration(decl, value)
     ? undefined
-    : `Property »${key}« erwartet ${describeDeclaration(decl)}, bekam ${JSON.stringify(value)}`;
+    : `Property »${key}« erwartet ${describeDeclaration(decl)}, bekam ${describeValue(value)}`;
+}
+
+/** Ein String in »…«, jeder andere Wert in seiner JSON-Form. */
+function describeValue(value: PropValue): string {
+  return typeof value === 'string' ? `»${value}«` : JSON.stringify(value);
 }
 
 /** Prüft nur die übergebenen Keys; `null` heißt »entfernt« und ist immer erlaubt. */

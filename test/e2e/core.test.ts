@@ -321,27 +321,45 @@ test('verify fails with exit 5 until the commit is quarantined', async () => {
   ).toMatchFileSnapshot('golden/verify-invalid.txt');
 });
 
-test('verify --accept without reason is a usage error', async () => {
+test('verify --accept without reason is a usage error, with an empty reason a validation error', async () => {
   const s = await setup();
   const opts = { env: s.env, cwd: s.cwd };
   const head = await revParse(s.b.root, 'HEAD');
-  const cases: [string[], RegExp][] = [
-    [['verify', '--accept', head], /^Fehler: --accept braucht --reason/],
-    [['verify', '--revert', head, '--reason', '  '], /^Fehler: --revert braucht --reason/],
+  const cases: [string[], string, RegExp][] = [
+    [['verify', '--accept', head], 'usage', /^--accept braucht --reason/],
     [
       ['verify', '--accept', head, '--revert', head, '--reason', 'x'],
-      /^Fehler: --accept und --revert schließen sich aus/,
+      'usage',
+      /^--accept und --revert schließen sich aus/,
     ],
+    [['verify', '--revert', head, '--reason', '  '], 'validation', /^Grund darf nicht leer sein$/],
   ];
-  for (const [args, message] of cases) {
-    const r = await cli(args, opts);
-    expect({ args, code: r.code }).toEqual({ args, code: 2 });
-    expect(r.stderr).toMatch(message);
+  for (const [args, code, message] of cases) {
+    const r = await cli(['--json', ...args], opts);
+    expect({ args, exit: r.code }).toEqual({ args, exit: 2 });
+    expect(r.stdout).toBe('');
+    const { error } = JSON.parse(r.stderr) as { error: { code: string; message: string } };
+    expect({ args, code: error.code }).toEqual({ args, code });
+    expect(error.message).toMatch(message);
   }
-  // Die Begründung darf von stdin kommen; leer bleibt sie ein Usage-Fehler.
+  // Die Begründung darf von stdin kommen; leeres stdin ist ein angegebener, leerer Wert.
   const empty = await cli(['verify', '--accept', head, '--reason', '-'], { ...opts, input: '\n' });
-  expect(empty.code).toBe(2);
-  expect(empty.stderr).toMatch(/^Fehler: --accept braucht --reason/);
+  expect(empty).toEqual({
+    stdout: '',
+    stderr: 'Fehler: Grund darf nicht leer sein\n',
+    code: 2,
+  });
+});
+
+test('a reason that looks like a global option stays the reason', async () => {
+  const s = await setup();
+  const bad = await rawCommit(s.b.root, { files: { 'x.txt': '1' }, actor: 'spw', op: 'manual' });
+  const opts = { env: s.env, cwd: s.cwd };
+  const r = await cli(['verify', '--accept', bad, '--reason', '--json'], opts);
+  expect(r).toEqual({ stdout: `${bad.slice(0, 7)} accepted: --json\n`, stderr: '', code: 0 });
+  const after = await cli(['verify'], opts);
+  expect(after.stdout).toContain(`${bad.slice(0, 7)} accepted: --json\n`);
+  expect(after.code).toBe(0);
 });
 
 test('--help and --version exit 0', async () => {

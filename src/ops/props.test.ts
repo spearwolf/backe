@@ -48,6 +48,14 @@ describe('checkProps', () => {
     expect(err.message).toContain('points');
   });
 
+  test.each([
+    [{ points: 'x' }, 'Property »points« erwartet integer, bekam »x«'],
+    [{ note: 3 }, 'Property »note« erwartet string, bekam 3'],
+    [{ area: ['a'] }, 'Property »area« erwartet enum (a, b), bekam ["a"]'],
+  ])('the message quotes strings with »…« and shows other values as JSON: %o', (props, message) =>
+    expect(catchErr(() => checkProps(config, props)).message).toBe(message),
+  );
+
   test('valid values pass', () =>
     expect(() =>
       checkProps(config, {

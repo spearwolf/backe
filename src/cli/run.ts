@@ -14,15 +14,20 @@ import { contextCommand } from './commands/context.ts';
 import { initCommand } from './commands/init.ts';
 import { verifyCommand } from './commands/verify.ts';
 import type { CliIo } from './io.ts';
-import { addGlobalOptions, type Runtime } from './options.ts';
+import {
+  addGlobalOptions,
+  commandPath,
+  lastDispatched,
+  type Runtime,
+  trackDispatch,
+} from './options.ts';
 import { exitCodeOf, type Format, renderError, resolveFormat } from './output.ts';
 
 /**
  * Das Programm samt aller Befehle. Einstellungen (Fehlerbehandlung, Ausgabe, positionale Optionen)
  * müssen vor dem ersten Befehl stehen, weil Unterbefehle sie beim Anlegen erben.
- * `writeErr` nimmt die Hilfe auf, die commander bei fehlendem Unterbefehl auf stderr schreibt.
  */
-export function buildProgram(rt: Runtime, writeErr: (s: string) => void): Command {
+export function buildProgram(rt: Runtime): Command {
   const program = new Command('backe')
     .description('Git-basiertes Backlog für Menschen und Agents')
     .version(pkg.version, '-V, --version', 'Version ausgeben')
@@ -31,14 +36,16 @@ export function buildProgram(rt: Runtime, writeErr: (s: string) => void): Comman
     .exitOverride()
     .configureOutput({
       writeOut: (s) => rt.io.stdout(s),
-      writeErr,
+      // stderr bekäme nur die Hilfe bei fehlendem Unterbefehl; `run` meldet dann einen
+      // `usage`-Fehler im Format des Aufrufs.
+      writeErr: () => {},
       // Fehlermeldungen schreibt `run` selbst, im Format des Aufrufs.
       outputError: () => {},
     })
     // Optionen gehören zu der Ebene, hinter der sie stehen; jede Ebene kennt die globalen. So
     // frisst das Programm keine Optionswerte eines Unterbefehls (`-t --json` bleibt ein Titel).
     .enablePositionalOptions();
-  addGlobalOptions(program);
+  addGlobalOptions(trackDispatch(program));
   contextCommand(program, rt);
   initCommand(program, rt);
   backlogCommands(program, rt);
@@ -46,15 +53,13 @@ export function buildProgram(rt: Runtime, writeErr: (s: string) => void): Comman
   return program;
 }
 
-/** Der Befehl aus der Hilfe, die commander bei fehlendem Unterbefehl ausgibt (`Usage: backe backlog …`). */
-function helpCommandPath(help: string): string {
-  const match = /^Usage: (\S+(?: [a-z][a-z-]*)*)/.exec(help);
-  return match?.[1] ?? 'backe';
-}
-
-function fromCommander(err: CommanderError, help: string): BackeError {
+/**
+ * commander-Fehler als `usage`. `commander.help` mit Exit 1 heißt: einer Gruppe fehlt der
+ * Unterbefehl; welcher, sagt der zuletzt betretene Befehl (`trackDispatch`).
+ */
+function fromCommander(err: CommanderError, program: Command): BackeError {
   if (err.code === 'commander.help') {
-    const path = helpCommandPath(help);
+    const path = commandPath(lastDispatched(program));
     return new BackeError('usage', path === 'backe' ? 'Befehl fehlt' : 'Unterbefehl fehlt', {
       hint: `${path} --help`,
     });
@@ -65,6 +70,9 @@ function fromCommander(err: CommanderError, help: string): BackeError {
 /**
  * Format für einen Fehler, der vor der Aktion eines Befehls entstand: dieselbe Rangfolge wie
  * `resolveFormat`, die Flags aus den Rohargumenten gelesen; ist auch das ungültig, Text.
+ * Grenze: Der Scan kennt keine Optionsstellen. Ist `--json` der Wert einer anderen Option
+ * (`--reason --json`) und scheitert das Parsen, kommt der Fehler als JSON. Das betrifft nur die
+ * Form der Fehlermeldung; der Exit-Code bleibt derselbe.
  */
 async function fallbackFormat(io: CliIo): Promise<Format> {
   const opts: { json?: boolean; format?: string } = {};
@@ -90,18 +98,16 @@ async function fallbackFormat(io: CliIo): Promise<Format> {
 /** Führt einen Aufruf aus und liefert den Exit-Code; wirft nie. */
 export async function run(io: CliIo): Promise<number> {
   const rt: Runtime = { io, stdin: { taken: false }, state: {} };
-  let help = '';
-  const program = buildProgram(rt, (s) => {
-    help += s;
-  });
+  let program: Command | undefined;
   try {
+    program = buildProgram(rt);
     await program.parseAsync(io.argv, { from: 'user' });
     return 0;
   } catch (caught) {
     let err = caught;
-    if (caught instanceof CommanderError) {
+    if (caught instanceof CommanderError && program !== undefined) {
       if (caught.exitCode === 0) return 0;
-      err = fromCommander(caught, help);
+      err = fromCommander(caught, program);
     }
     const format = rt.state.format ?? (await fallbackFormat(io));
     io.stderr(renderError(err, format === 'json' ? 'json' : 'text'));

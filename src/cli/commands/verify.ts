@@ -4,7 +4,7 @@ import { BackeError } from '../../core/errors.ts';
 import { quarantineCommit } from '../../services/quarantine.ts';
 import { assertVerified, type BacklogVerifyReport, verifyBacklog } from '../../services/verify.ts';
 import { action, type CommandEnv, emit, type Runtime, subcommand, text } from '../options.ts';
-import { json, lines, paint, renderHints } from '../output.ts';
+import { json, lines, paint, renderHints, renderNotices } from '../output.ts';
 
 type Opts = { since?: string; accept?: string; revert?: string; reason?: string };
 
@@ -38,17 +38,24 @@ async function quarantine(env: CommandEnv, opts: Opts): Promise<void> {
     opts.accept !== undefined
       ? (['--accept', opts.accept, 'accepted'] as const)
       : (['--revert', opts.revert as string, 'reverted'] as const);
-  const reason =
-    opts.reason === undefined ? '' : (await text(opts.reason, env.io, env.stdin)).trim();
-  if (reason === '') {
+  // Fehlt die Begründung, passt der Aufruf nicht (`usage`); ist sie leer, prüft der Service
+  // (`validation`).
+  if (opts.reason === undefined) {
     throw new BackeError('usage', `${flag} braucht --reason mit einer Begründung`, {
       hint: `backe verify ${flag} <sha> --reason <text>`,
     });
   }
+  const reason = (await text(opts.reason, env.io, env.stdin)).trim();
   const r = await quarantineCommit(await env.context(), { sha, decision, reason });
-  emit(env, { commit: r.commit ?? null, sha, decision, reason }, () =>
+  const notices = r.notices.length === 0 ? undefined : r.notices;
+  const warnings = r.verifyNotices.length === 0 ? undefined : r.verifyNotices;
+  emit(env, { commit: r.commit ?? null, sha, decision, reason, notices, warnings }, () =>
     lines([`${short(sha)} ${decision}: ${reason}`]),
   );
+  if (env.format !== 'json') {
+    const extra = renderNotices(r.notices, r.verifyNotices);
+    if (extra !== '') env.io.stderr(extra);
+  }
 }
 
 export function verifyCommand(program: Command, rt: Runtime): void {

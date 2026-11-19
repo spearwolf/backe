@@ -14,7 +14,7 @@ async function signingKey(env: CommandEnv, given: string | undefined): Promise<s
   const fallback = join(env.homes.home, '.ssh', 'id_ed25519.pub');
   if (await exists(fallback)) return fallback;
   throw new BackeError('usage', 'Kein Signing-Key angegeben', {
-    hint: `--key <pfad> oder einen Key unter ${fallback}`,
+    hint: `--key <pfad> oder einen Key unter »${fallback}«`,
   });
 }
 
