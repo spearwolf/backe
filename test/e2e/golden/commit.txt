@@ -1,0 +1,5 @@
+[exit 0]
+[stdout]
+Notizen dazu
+issue edit <id>
+[stderr]

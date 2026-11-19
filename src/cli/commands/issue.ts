@@ -2,6 +2,8 @@
  * `backe issue create | list | show | edit | move | resume | reopen | assign | rank | link |
  * unlink | delete` und die Aliase `new`, `ls`, `show`, `mv` (backe.md §2.17, §2.18, §2.22, §2.23).
  */
+
+import { rm } from 'node:fs/promises';
 import type { Command } from 'commander';
 import { BackeError } from '../../core/errors.ts';
 import { type IssueListQuery, listIssues } from '../../services/issue-list.ts';
@@ -11,14 +13,17 @@ import {
   createIssue,
   deleteIssue,
   editIssue,
+  editIssueText,
   linkIssue,
   moveIssue,
   type RankPositionInput,
   rankIssue,
+  readIssueFile,
   reopenIssue,
   resumeIssue,
   unlinkIssue,
 } from '../../services/issues.ts';
+import { editorCommand, editText, noEditorError } from '../editor.ts';
 import {
   action,
   bodyArg,
@@ -276,6 +281,35 @@ function defineShow(parent: Command, name: string, rt: Runtime, description: str
 
 // --- edit --------------------------------------------------------------------------------------
 
+/** Ein Fehler der Übersetzung, mit dem Pfad des Entwurfs statt dem der Issue-Datei und dem Entwurf im Hinweis. */
+function draftError(error: BackeError, issuePath: string, draft: string): BackeError {
+  const hint = [`Entwurf: ${draft}`, error.hint?.replaceAll(issuePath, draft)]
+    .filter((part) => part !== undefined)
+    .join('; ');
+  return new BackeError(error.code, error.message.replaceAll(issuePath, draft), {
+    hint,
+    ...(error.details === undefined ? {} : { details: error.details }),
+  });
+}
+
+/**
+ * `issue edit <id>` ohne Flags (backe.md §2.17): die Issue-Datei im Editor, das Ergebnis als
+ * Operationen. Scheitert die Übersetzung, bleibt der Entwurf liegen und der Fehler nennt ihn.
+ */
+async function editInEditor(env: CommandEnv, ref: string): Promise<void> {
+  if (editorCommand(env.io) === undefined) throw noEditorError();
+  const ctx = await env.context();
+  const file = await readIssueFile(ctx, ref);
+  const edited = await editText(env.io, file.id, file.text);
+  try {
+    const r = await editIssueText(ctx, file.id, file.text, edited.text);
+    await rm(edited.file, { force: true });
+    emitOutcome(env, r, 'other');
+  } catch (error) {
+    throw error instanceof BackeError ? draftError(error, file.path, edited.file) : error;
+  }
+}
+
 type EditOpts = {
   title?: string;
   addProject?: string[];
@@ -322,7 +356,8 @@ function defineEdit(parent: Command, rt: Runtime): void {
           ([key, v]) => v !== undefined && !(GLOBAL_KEYS as readonly string[]).includes(key),
         );
         if (given.length === 0) {
-          throw new BackeError('usage', 'Nichts zu ändern');
+          await editInEditor(env, ref);
+          return;
         }
         const body =
           opts.bodyFile === undefined

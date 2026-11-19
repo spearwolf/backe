@@ -1,0 +1,3 @@
+bericht  bericht.pdf               9
+trace    trace.json                40
+spec     https://example.com/spec  -

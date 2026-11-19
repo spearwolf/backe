@@ -11,7 +11,7 @@ import { readUserConfig, userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
 import type { UserConfig } from '../core/schemas.ts';
 import type { Notice } from '../ops/notice.ts';
-import type { WriteOutcome } from '../services/outcome.ts';
+import type { WriteOpsOutcome, WriteOutcome } from '../services/outcome.ts';
 import type { CliIo } from './io.ts';
 import {
   checkFields,
@@ -299,7 +299,11 @@ export function emitNotices(
  * Gibt ein Write-Ergebnis aus. Text: Ergebnis nach stdout, Hinweise und Warnungen nach stderr.
  * JSON: alles in einem Objekt auf stdout (`notices`, `warnings`), stderr bleibt leer.
  */
-export function emitOutcome(env: CommandEnv, o: WriteOutcome, kind: 'create' | 'other'): void {
+export function emitOutcome(
+  env: CommandEnv,
+  o: WriteOutcome | WriteOpsOutcome,
+  kind: 'create' | 'other',
+): void {
   env.out(renderOutcome(o, env.format, kind));
   emitNotices(env, o.notices, o.warnings);
 }

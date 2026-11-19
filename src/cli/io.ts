@@ -1,4 +1,5 @@
 /** Alles, was die CLI von außen braucht; in Tests ersetzbar, in `main.ts` an den Prozess gebunden. */
+import { spawn } from 'node:child_process';
 import type { Env } from '../context/paths.ts';
 
 export type CliIo = {
@@ -7,10 +8,16 @@ export type CliIo = {
   env: Env;
   cwd: string;
   stdout(s: string): void;
+  /** Rohe Bytes nach stdout (Anhänge). */
+  stdoutBytes(b: Uint8Array): void;
   stderr(s: string): void;
   readStdin(): Promise<string>;
   /** Ist stdout ein Terminal? Entscheidet über Farben. */
   isTTY: boolean;
+  /** Ist stdin ein Terminal? Nur dann darf `VISUAL`/`EDITOR` einen Editor starten. */
+  stdinIsTTY: boolean;
+  /** Startet `command` über die Shell mit `file` als `$1`, erbt die Ein- und Ausgabe; liefert den Exit-Code. */
+  runEditor(command: string, file: string): Promise<number>;
 };
 
 async function readAll(stream: NodeJS.ReadableStream): Promise<string> {
@@ -29,10 +36,23 @@ export function nodeIo(): CliIo {
     stdout: (s) => {
       process.stdout.write(s);
     },
+    stdoutBytes: (b) => {
+      process.stdout.write(b);
+    },
     stderr: (s) => {
       process.stderr.write(s);
     },
     readStdin: () => readAll(process.stdin),
     isTTY: process.stdout.isTTY === true,
+    stdinIsTTY: process.stdin.isTTY === true,
+    runEditor: (command, file) =>
+      new Promise((resolve, reject) => {
+        const child = spawn('sh', ['-c', `${command} "$1"`, 'backe-editor', file], {
+          stdio: 'inherit',
+        });
+        child.on('error', reject);
+        // Ein Signal-Ende hat keinen Exit-Code; es zählt als Fehlschlag.
+        child.on('close', (code) => resolve(code ?? 1));
+      }),
   };
 }

@@ -6,8 +6,8 @@ import { type Env, envValue } from '../context/paths.ts';
 import { BackeError } from '../core/errors.ts';
 import type { UserConfig } from '../core/schemas.ts';
 import type { Notice } from '../ops/notice.ts';
-import { summarizeOp } from '../ops/operation.ts';
-import type { WriteOutcome } from '../services/outcome.ts';
+import { summarizeBatch, summarizeOp } from '../ops/operation.ts';
+import type { WriteOpsOutcome, WriteOutcome } from '../services/outcome.ts';
 import type { CliIo } from './io.ts';
 
 export const FORMATS = ['text', 'json', 'md'] as const;
@@ -212,21 +212,31 @@ export function renderError(err: unknown, format: Format): string {
 /**
  * Ergebnis eines Writes für stdout. Text: `issue create` nur die neue ID, sonst die Zusammenfassung
  * der Operation; ohne Commit `unverändert: <zusammenfassung>`. JSON:
- * `{"commit":<sha|null>,"op":<aufgezeichnet>,"id"?:…,"notices"?:[…],"warnings"?:[…]}`.
+ * `{"commit":<sha|null>,"op":<aufgezeichnet>,"id"?:…,"notices"?:[…],"warnings"?:[…]}`; liefert der
+ * Write mehrere Operationen (`issue edit` per Editor), steht `ops` (Liste) statt `op`, und der Text
+ * ist bei mehreren die Batch-Zusammenfassung (`batch: 1 edit, 1 move`).
  */
-export function renderOutcome(o: WriteOutcome, format: Format, kind: 'create' | 'other'): string {
+export function renderOutcome(
+  o: WriteOutcome | WriteOpsOutcome,
+  format: Format,
+  kind: 'create' | 'other',
+): string {
   if (format === 'json') {
     return json({
       commit: o.commit ?? null,
-      op: o.op,
+      ...('op' in o ? { op: o.op } : { ops: o.ops }),
       id: o.id,
       notices: o.notices.length === 0 ? undefined : o.notices,
       warnings: o.warnings.length === 0 ? undefined : o.warnings,
     });
   }
-  if (o.commit === undefined) return `unverändert: ${safeText(summarizeOp(o.op))}\n`;
+  const ops = 'op' in o ? [o.op] : o.ops;
+  // Eine Operation ist ein gewöhnlicher Commit, mehrere sind ein Batch-Commit.
+  const [only] = ops;
+  const summary = ops.length === 1 && only !== undefined ? summarizeOp(only) : summarizeBatch(ops);
+  if (o.commit === undefined) return `unverändert: ${safeText(summary)}\n`;
   if (kind === 'create' && o.id !== undefined) return `${o.id}\n`;
-  return `${safeText(summarizeOp(o.op))}\n`;
+  return `${safeText(summary)}\n`;
 }
 
 /** Hinweise und Warnungen für stderr: `Hinweis: …` je Notice, dann `Warnung: …`. */

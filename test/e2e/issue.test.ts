@@ -552,7 +552,11 @@ test('edit changes fields and needs at least one flag', async () => {
   const s = await setup();
   const { D, C2, E } = s.id;
   const none = await run(s, ['issue', 'edit', D]);
-  expect(none).toEqual({ stdout: '', stderr: 'Fehler: Nichts zu ändern\n', code: 2 });
+  expect(none).toEqual({
+    stdout: '',
+    stderr: 'Fehler: Nichts zu ändern\nHinweis: Flags angeben oder BACKE_EDITOR setzen\n',
+    code: 2,
+  });
 
   expect(
     ok(

@@ -15,11 +15,22 @@ const INHERITED = ['PATH', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'XDG_CONF
 
 export type CliResult = { stdout: string; stderr: string; code: number };
 
+export type CliBytesResult = { stdout: Buffer; stderr: string; code: number };
+
 /** Führt `node dist/cli.js` mit genau `opts.env` (plus Git-Isolation) in `opts.cwd` aus. */
-export function cli(
+export async function cli(
   args: string[],
   opts: { env: Env; cwd: string; input?: string },
 ): Promise<CliResult> {
+  const r = await cliBytes(args, opts);
+  return { stdout: r.stdout.toString('utf8'), stderr: r.stderr, code: r.code };
+}
+
+/** Wie `cli`, aber stdout als unveränderte Bytes (für Binärinhalt). */
+export function cliBytes(
+  args: string[],
+  opts: { env: Env; cwd: string; input?: string },
+): Promise<CliBytesResult> {
   const env: Record<string, string> = {};
   for (const name of INHERITED) {
     const value = process.env[name];
@@ -30,16 +41,16 @@ export function cli(
   }
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI, ...args], { cwd: opts.cwd, env });
-    let stdout = '';
+    const out: Buffer[] = [];
     let stderr = '';
-    child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
-      stdout += chunk;
+    child.stdout.on('data', (chunk: Buffer) => {
+      out.push(chunk);
     });
     child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
       stderr += chunk;
     });
     child.on('error', reject);
-    child.on('close', (code) => resolve({ stdout, stderr, code: code ?? -1 }));
+    child.on('close', (code) => resolve({ stdout: Buffer.concat(out), stderr, code: code ?? -1 }));
     child.stdin.end(opts.input ?? '');
   });
 }

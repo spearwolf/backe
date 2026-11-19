@@ -26,17 +26,25 @@ function fakeIo(env: Env, cwd: string, argv: string[] = []): CliIo {
     env,
     cwd,
     stdout: () => {},
+    stdoutBytes: () => {},
     stderr: () => {},
     readStdin: async () => '',
     isTTY: false,
+    stdinIsTTY: false,
+    runEditor: async () => 0,
   };
 }
 
 const runtime = (io: CliIo): Runtime => ({ io, stdin: { taken: false }, state: {} });
 
-/** Lange Namen der globalen Optionen, die `cmd` selbst trägt. */
+/**
+ * Lange Namen der globalen Optionen, die `cmd` selbst trägt. Eine gleichnamige Option mit Wert
+ * (`attach add --json <json|->`) ist eine eigene, nicht die globale Kurzform.
+ */
 function carried(cmd: Command): GlobalKey[] {
-  const longs = new Set(cmd.options.map((o) => o.long));
+  const longs = new Set(
+    cmd.options.filter((o) => o.long !== '--json' || o.isBoolean()).map((o) => o.long),
+  );
   return GLOBAL_KEYS.filter((key) => longs.has(`--${key}`));
 }
 
