@@ -7,6 +7,12 @@ import { type CommitInput, commitPaths } from './commit.ts';
 import { git } from './exec.ts';
 import { stateDir } from './local-state.ts';
 
+const hasLfs = await git(['lfs', 'version'], { cwd: process.cwd() }).then(
+  () => true,
+  () => false,
+);
+if (!hasLfs) console.warn('git-lfs fehlt: LFS-Tests übersprungen');
+
 const AUTHOR = { name: 'Alice Author', email: 'alice@example.test' };
 const IDENT = ['-c', 'user.name=t', '-c', 'user.email=t@example.test'];
 
@@ -159,6 +165,62 @@ describe('commitPaths', () => {
     await put(wc, 'issues/x.md', 'X');
     const sha = await commitPaths(wc, { ...input, paths: ['issues/x.md'] });
     expect(await show(wc, `${sha}:issues/x.md`)).toBe('X');
+  });
+
+  test('updateRef false creates the commit without moving HEAD', async () => {
+    const { wc, head, input } = await setup();
+    const sha = await commitPaths(wc, { ...input, updateRef: false });
+    expect(await revParse(wc, 'HEAD')).toBe(head);
+    expect(await revParse(wc, `${sha}^`)).toBe(head);
+    expect(await show(wc, `${sha}:a`)).toBe('A2');
+    // Kein Index-Reset: der Index des Aufrufers bleibt, wie er war.
+    expect(await statusShort(wc)).toEqual([' M a', ' M b', 'A  c']);
+  });
+
+  test('a chain moves HEAD once from the old head', async () => {
+    const { wc, head, input } = await setup();
+    const first = await commitPaths(wc, { ...input, message: 'eins\n', updateRef: false });
+    const second = await commitPaths(wc, {
+      ...input,
+      paths: ['b'],
+      message: 'zwei\n',
+      parent: first,
+      updateRef: { from: head },
+    });
+    expect(await revParse(wc, 'HEAD')).toBe(second);
+    expect(await revParse(wc, 'HEAD^')).toBe(first);
+    expect(await revParse(wc, 'HEAD^^')).toBe(head);
+    expect(await show(wc, `${second}:a`)).toBe('A2');
+    expect(await show(wc, `${second}:b`)).toBe('B2');
+    expect(await lsTree(wc, first)).not.toContain('c');
+    const { stdout } = await git(['reflog', '-2', '--format=%gs', 'HEAD'], { cwd: wc });
+    expect(stdout.split('\n').filter((l) => l !== '')).toEqual(['zwei', 'commit: two']);
+  });
+
+  test('a chain whose old head moved is a conflict and leaves HEAD alone', async () => {
+    const { wc, head, older, input } = await setup();
+    const first = await commitPaths(wc, { ...input, parent: older, updateRef: false });
+    const err = await catchErrAsync(() =>
+      commitPaths(wc, { ...input, paths: ['b'], parent: first, updateRef: { from: older } }),
+    );
+    expect(err.code).toBe('conflict');
+    expect(await revParse(wc, 'HEAD')).toBe(head);
+  });
+
+  test.runIf(hasLfs)('lfs runs git add with the lfs filter from -c values only', async () => {
+    const { wc, input } = await setup();
+    await put(wc, '.gitattributes', 'a filter=lfs diff=lfs merge=lfs -text\n');
+    const sha = await commitPaths(wc, { ...input, paths: ['a', '.gitattributes'], lfs: true });
+    expect(await show(wc, `${sha}:a`)).toMatch(
+      /^version https:\/\/git-lfs\.github\.com\/spec\/v1\n/,
+    );
+  });
+
+  test('without lfs the attributes do not turn a file into a pointer', async () => {
+    const { wc, input } = await setup();
+    await put(wc, '.gitattributes', 'a filter=lfs diff=lfs merge=lfs -text\n');
+    const sha = await commitPaths(wc, { ...input, paths: ['a', '.gitattributes'] });
+    expect(await show(wc, `${sha}:a`)).toBe('A2');
   });
 
   test('no temp index is left behind', async () => {

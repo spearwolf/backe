@@ -1,4 +1,14 @@
-import { appendFile, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import {
+  access,
+  appendFile,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
@@ -100,13 +110,17 @@ test('a manual change carries Backe-Op: manual', async () => {
     subject: 'Notiz von Hand',
     changes: [{ path: 'notes.md', content: 'x\n' }],
   });
+  const commit = await revParse(b.root, 'HEAD');
   expect(r).toEqual({
-    commit: await revParse(b.root, 'HEAD'),
+    commit,
     recorded: [],
     refs: {},
     notices: [],
     paths: ['notes.md'],
     verifyNotices: [],
+    chain: [{ commit, kind: 'manual', recorded: [], paths: ['notes.md'] }],
+    warnings: [],
+    rewritten: [],
   });
   expect((await logTrailers(b.root))[0]).toEqual({
     subject: 'Notiz von Hand',
@@ -130,6 +144,9 @@ test('a no-op writes no commit', async () => {
     notices: [],
     paths: [],
     verifyNotices: [],
+    chain: [],
+    warnings: [],
+    rewritten: [],
   });
   expect(await revParse(b.root, 'HEAD')).toBe(before);
 });
@@ -703,3 +720,521 @@ describe('another identity', () => {
     expect(await revParse(b.root, 'HEAD')).toBe(before);
   });
 });
+
+describe('derive with several operations', () => {
+  test('derive with two operations writes one batch commit', async () => {
+    const r = await executeWrite(
+      ctx,
+      {
+        kind: 'derive',
+        derive: () => [
+          { op: 'issue.create', title: 'A' },
+          { op: 'issue.create', title: 'B' },
+        ],
+      },
+      { now: () => NOW, randomBytes: seqBytes() },
+    );
+    expect(r.recorded).toHaveLength(2);
+    const [last] = await logTrailers(b.root);
+    expect(last).toEqual({ subject: summarizeBatch(r.recorded), actor: 'spw', op: 'batch' });
+    expect(r.chain).toEqual([
+      { commit: r.commit, kind: 'batch', recorded: r.recorded, paths: r.paths },
+    ]);
+    expect(await logTrailers(b.root)).toHaveLength(2);
+  });
+
+  test('derive with one operation in an array writes an op commit', async () => {
+    const r = await executeWrite(ctx, {
+      kind: 'derive',
+      derive: () => [{ op: 'issue.create', title: 'A' }],
+    });
+    expect((await logTrailers(b.root))[0]?.op).toBe(encodeOp(r.recorded[0] as Operation));
+    expect(r.chain.map((c) => c.kind)).toEqual(['op']);
+  });
+
+  test('derive with no operation writes nothing', async () => {
+    const r = await executeWrite(ctx, { kind: 'derive', derive: () => [] });
+    expect(r.commit).toBeUndefined();
+    expect(r.chain).toEqual([]);
+    expect(await revParse(b.root, 'HEAD')).toBe(head);
+  });
+});
+
+describe('expectHead', () => {
+  test('a manual write with a stale expectHead is a conflict', async () => {
+    await executeWrite(ctx, CREATE);
+    const err = await catchErrAsync(() =>
+      executeWrite(ctx, {
+        kind: 'manual',
+        subject: 'spät',
+        changes: [{ path: 'notes.md', content: 'x\n' }],
+        expectHead: head,
+      }),
+    );
+    expect(err.code).toBe('conflict');
+    expect(err.message).toBe('Stand hat sich seit der Prüfung geändert');
+    expect(await statusShort(b.root)).toEqual([]);
+  });
+
+  test('a manual write with the current expectHead commits', async () => {
+    const r = await executeWrite(ctx, {
+      kind: 'manual',
+      subject: 'pünktlich',
+      changes: [{ path: 'notes.md', content: 'x\n' }],
+      expectHead: head,
+    });
+    expect(await revParse(b.root, 'HEAD^')).toBe(head);
+    expect(r.chain).toEqual([
+      { commit: r.commit, kind: 'manual', recorded: [], paths: ['notes.md'] },
+    ]);
+  });
+});
+
+describe('edits', () => {
+  const read = (path: string) => readFile(join(b.root, path), 'utf8');
+  const write = async (path: string, content: string) => {
+    await mkdir(join(b.root, path, '..'), { recursive: true });
+    await writeFile(join(b.root, path), content);
+  };
+  const edit = async (path: string, fn: (s: string) => string) => {
+    const before = await read(path);
+    const after = fn(before);
+    expect(after).not.toBe(before);
+    await write(path, after);
+  };
+  const show = async (spec: string) => (await git(['show', spec], { cwd: b.root })).stdout;
+  const EDITS: WriteInput = { kind: 'edits' };
+
+  async function issues(...titles: string[]): Promise<string[]> {
+    const r = await executeWrite(ctx, {
+      kind: 'batch',
+      ops: titles.map((title) => ({ op: 'issue.create', title }) as Operation),
+    });
+    return r.recorded.map((op) => (op as { id: string }).id);
+  }
+
+  test('edits: field changes become operations, unknown keys become manual first', async () => {
+    const [a, bb] = (await issues('A', 'B')) as [string, string];
+    const base = await revParse(b.root, 'HEAD');
+    await edit(issueFile(a), (s) => s.replace('title: A', 'title: A2\nassignee: xena'));
+    await edit(issueFile(bb), (s) => s.replace('title: B', 'title: B\nfoo: bar'));
+    await write('users/xena.md', '---\nname: Xena\nkind: human\n---\n');
+
+    const r = await executeWrite(ctx, EDITS, { now: () => NOW });
+    expect(r.chain).toMatchObject([
+      { kind: 'manual', recorded: [], paths: [issueFile(bb), 'users/xena.md'].sort() },
+      {
+        kind: 'op',
+        recorded: [
+          {
+            op: 'issue.edit',
+            id: a,
+            set: { title: { from: 'A', to: 'A2' }, assignee: { to: 'xena' } },
+          },
+        ],
+        paths: [issueFile(a)],
+      },
+    ]);
+    const [manual, op] = r.chain as [(typeof r.chain)[0], (typeof r.chain)[0]];
+    expect(r.commit).toBe(op.commit);
+    expect(await revParse(b.root, 'HEAD')).toBe(op.commit);
+    expect(await revParse(b.root, 'HEAD^')).toBe(manual.commit);
+    expect(await revParse(b.root, 'HEAD^^')).toBe(base);
+    expect(r.recorded).toEqual(op.recorded);
+    expect(r.paths).toEqual([issueFile(a), issueFile(bb), 'users/xena.md'].sort());
+    expect(r.warnings).toEqual([{ path: issueFile(bb), unknownKeys: ['foo'] }]);
+    expect(r.rewritten).toEqual([]);
+    expect((await logTrailers(b.root)).slice(0, 2)).toEqual([
+      {
+        subject: summarizeOp(op.recorded[0] as Operation),
+        actor: 'spw',
+        op: encodeOp(op.recorded[0] as Operation),
+      },
+      { subject: 'manual: 2 Dateien', actor: 'spw', op: 'manual' },
+    ]);
+    expect(await sigOf(b.root, 'HEAD', { spw: b.key })).toEqual(['G', 'spw']);
+    expect(await sigOf(b.root, 'HEAD^', { spw: b.key })).toEqual(['G', 'spw']);
+    expect(await show(`HEAD^:${issueFile(a)}`)).toBe(await show(`${base}:${issueFile(a)}`));
+    expect(await show(`HEAD:${issueFile(bb)}`)).toContain('foo: bar');
+    expect(await statusShort(b.root)).toEqual([]);
+  });
+
+  test('edits: a subject names the manual commit', async () => {
+    await write('notes.md', 'Notiz\n');
+    const r = await executeWrite(ctx, { kind: 'edits', subject: 'Notizen' });
+    expect((await logTrailers(b.root))[0]).toEqual({
+      subject: 'Notizen',
+      actor: 'spw',
+      op: 'manual',
+    });
+    expect(r.chain.map((c) => c.kind)).toEqual(['manual']);
+  });
+
+  test('edits: several operations become one batch commit', async () => {
+    const [a, bb] = (await issues('A', 'B')) as [string, string];
+    await edit(issueFile(a), (s) => s.replace('title: A', 'title: A2'));
+    await edit(issueFile(bb), (s) => s.replace('title: B', 'title: B2'));
+    const r = await executeWrite(ctx, EDITS);
+    expect(r.chain.map((c) => c.kind)).toEqual(['batch']);
+    expect((await logTrailers(b.root))[0]).toEqual({
+      subject: summarizeBatch(r.recorded),
+      actor: 'spw',
+      op: 'batch',
+    });
+    expect(await statusShort(b.root)).toEqual([]);
+  });
+
+  test('edits: an invalid operation lands neither commit', async () => {
+    const [a, bb] = (await issues('A', 'B')) as [string, string];
+    const before = await revParse(b.root, 'HEAD');
+    await edit(issueFile(a), (s) => s.replace('title: A', `title: A\ndepends_on: [${bb}]`));
+    await edit(issueFile(bb), (s) => s.replace('title: B', `title: B\ndepends_on: [${a}]`));
+    await write('notes.md', 'Notiz\n');
+    const edited = await Promise.all([issueFile(a), issueFile(bb), 'notes.md'].map(read));
+
+    const err = await catchErrAsync(() => executeWrite(ctx, EDITS));
+    expect(err.code).toBe('validation');
+    expect(err.details).toMatchObject({ reason: 'cycle' });
+    expect(err.hint).toBe('Änderung auf zwei backe commit aufteilen');
+    expect(await revParse(b.root, 'HEAD')).toBe(before);
+    expect(await Promise.all([issueFile(a), issueFile(bb), 'notes.md'].map(read))).toEqual(edited);
+    expect(await readdir(await stateDir(b.root))).not.toContain('write.journal');
+  });
+
+  test('edits: a violation with its own hint keeps that hint', async () => {
+    await executeWrite(ctx, {
+      kind: 'batch',
+      ops: [
+        { op: 'project.create', path: 'web', title: 'Web' },
+        { op: 'project.create', path: 'web/sub', title: 'Sub' },
+      ],
+    });
+    const before = await revParse(b.root, 'HEAD');
+    await rm(join(b.root, 'projects/web.md'));
+    const err = await catchErrAsync(() => executeWrite(ctx, EDITS));
+    expect(err.code).toBe('conflict');
+    expect(err.details).toMatchObject({ reason: 'has_subprojects' });
+    expect(err.hint).toBe('Erst die Unterprojekte entfernen oder verschieben.');
+    expect(await revParse(b.root, 'HEAD')).toBe(before);
+    expect(await statusShort(b.root)).toEqual([' D projects/web.md']);
+  });
+
+  test('edits: a failure after writing restores the hand edits, not HEAD', async () => {
+    const [a] = (await issues('A')) as [string];
+    const before = await revParse(b.root, 'HEAD');
+    await edit(issueFile(a), (s) => s.replace('title: A', 'title:   A2'));
+    await write('notes.md', 'Notiz\n');
+    const edited = await Promise.all([issueFile(a), 'notes.md'].map(read));
+    const err = await catchErrAsync(() =>
+      executeWrite(ctx, EDITS, {
+        hooks: {
+          afterFiles: async () => {
+            // Die Dateien tragen schon den kanonischen Inhalt.
+            expect(await read(issueFile(a))).toContain('title: A2\n');
+            throw new BackeError('unexpected', 'boom');
+          },
+        },
+      }),
+    );
+    expect(err.message).toBe('boom');
+    expect(await revParse(b.root, 'HEAD')).toBe(before);
+    expect(await Promise.all([issueFile(a), 'notes.md'].map(read))).toEqual(edited);
+    expect(await readdir(await stateDir(b.root))).not.toContain('write.journal');
+    expect(await statusShort(b.root)).toEqual([` M ${issueFile(a)}`, '?? notes.md']);
+  });
+
+  test('edits: a deleted issue directory is restored after a failure', async () => {
+    const [a] = (await issues('A')) as [string];
+    await executeWrite(ctx, { kind: 'op', op: { op: 'comment.add', id: a, body: 'bleibt' } });
+    await rm(join(b.root, issueFile(a)));
+    const err = await catchErrAsync(() =>
+      executeWrite(ctx, EDITS, {
+        hooks: {
+          afterFiles: async () => {
+            throw new BackeError('unexpected', 'boom');
+          },
+        },
+      }),
+    );
+    expect(err.message).toBe('boom');
+    expect(await statusShort(b.root)).toEqual([` D ${issueFile(a)}`]);
+    expect(await readdir(join(b.root, commentsDir(a)))).toHaveLength(1);
+  });
+
+  test('edits: a failure after the chain landed reports the write as done', async () => {
+    const [a] = (await issues('A')) as [string];
+    const before = await revParse(b.root, 'HEAD');
+    await edit(issueFile(a), (s) => s.replace('title: A', 'title: A2'));
+    await write('notes.md', 'Notiz\n');
+    const r = await executeWrite(ctx, EDITS, {
+      hooks: {
+        afterCommit: async () => {
+          throw new BackeError('unexpected', 'boom');
+        },
+      },
+    });
+    expect(r.chain).toHaveLength(2);
+    expect(r.commit).toBe(await revParse(b.root, 'HEAD'));
+    expect(await revParse(b.root, 'HEAD~2')).toBe(before);
+    expect(await statusShort(b.root)).toEqual([]);
+    expect(await readdir(await stateDir(b.root))).not.toContain('write.journal');
+  });
+
+  test('edits: a journal of an interrupted chain brings the hand edits back', async () => {
+    const [a] = (await issues('A')) as [string];
+    await edit(issueFile(a), (s) => s.replace('title: A', 'title: A2'));
+    const edited = await read(issueFile(a));
+    const current = await revParse(b.root, 'HEAD');
+    // Zustand wie nach einem SIGKILL zwischen Dateien und Commit.
+    await write(issueFile(a), 'halb geschrieben\n');
+    await write('notes.md', 'halb\n');
+    await writeFile(
+      join(await stateDir(b.root), 'write.journal'),
+      JSON.stringify({
+        head: current,
+        paths: [issueFile(a), 'notes.md'],
+        commits: 2,
+        saved: [
+          { path: issueFile(a), content: Buffer.from(edited).toString('base64') },
+          { path: 'notes.md', content: null },
+        ],
+      }),
+    );
+    await executeWrite(ctx, CREATE_B);
+    expect(await read(issueFile(a))).toBe(edited);
+    expect(await statusShort(b.root)).toEqual([` M ${issueFile(a)}`]);
+  });
+
+  test('edits: a journal of a landed chain is recovered', async () => {
+    const [a] = (await issues('A')) as [string];
+    const before = await revParse(b.root, 'HEAD');
+    await edit(issueFile(a), (s) => s.replace('title: A', 'title: A2'));
+    await write('notes.md', 'Notiz\n');
+    await executeWrite(ctx, EDITS);
+    // Absturz nach dem Ref-Update, bevor der Index angeglichen wurde.
+    await git(['rm', '-q', '--cached', '--', 'notes.md'], { cwd: b.root });
+    await writeFile(
+      join(await stateDir(b.root), 'write.journal'),
+      JSON.stringify({
+        head: before,
+        paths: [issueFile(a), 'notes.md'],
+        commits: 2,
+        saved: [{ path: 'notes.md', content: null }],
+      }),
+    );
+    await executeWrite(ctx, CREATE_B);
+    expect(await statusShort(b.root)).toEqual([]);
+    expect(await read('notes.md')).toBe('Notiz\n');
+  });
+
+  test('edits: a list reordered by hand is reset with a notice', async () => {
+    const [x, y] = (await issues('X', 'Y')) as [string, string];
+    const z = await createdId({
+      kind: 'op',
+      op: { op: 'issue.create', title: 'Z', depends_on: [x, y] },
+    });
+    const before = await revParse(b.root, 'HEAD');
+    const committed = await read(issueFile(z));
+    await edit(issueFile(z), (s) => s.replace(`[${x}, ${y}]`, `[${y}, ${x}]`));
+    const r = await executeWrite(ctx, EDITS);
+    expect(r.commit).toBeUndefined();
+    expect(r.chain).toEqual([]);
+    expect(r.rewritten).toEqual([{ path: issueFile(z), reason: 'no_effect' }]);
+    expect(await read(issueFile(z))).toBe(committed);
+    expect(await revParse(b.root, 'HEAD')).toBe(before);
+    expect(await statusShort(b.root)).toEqual([]);
+  });
+
+  test('edits: a set operation rewrites list order canonically with a notice', async () => {
+    const [x, y] = (await issues('X', 'Y')) as [string, string];
+    const z = await createdId({
+      kind: 'op',
+      op: { op: 'issue.create', title: 'Z', depends_on: [x] },
+    });
+    await edit(issueFile(z), (s) => s.replace(`[${x}]`, `[${y}, ${x}]`));
+    const r = await executeWrite(ctx, EDITS);
+    expect(r.rewritten).toEqual([{ path: issueFile(z), reason: 'canonical' }]);
+    expect(await read(issueFile(z))).toContain(`depends_on: [${x}, ${y}]`);
+    expect(await show(`HEAD:${issueFile(z)}`)).toBe(await read(issueFile(z)));
+    expect(await statusShort(b.root)).toEqual([]);
+  });
+
+  test('edits: a broken file names file and line', async () => {
+    const [a] = (await issues('A')) as [string];
+    const before = await revParse(b.root, 'HEAD');
+    await edit(issueFile(a), (s) => s.replace('title: A', 'title: [A'));
+    const edited = await read(issueFile(a));
+    const err = await catchErrAsync(() => executeWrite(ctx, EDITS));
+    expect(err.code).toBe('validation');
+    expect(err.message).toMatch(new RegExp(`^${issueFile(a)}:\\d+: `));
+    expect(await revParse(b.root, 'HEAD')).toBe(before);
+    expect(await read(issueFile(a))).toBe(edited);
+  });
+
+  test('edits: a hand-deleted parent project still sees its subprojects', async () => {
+    await executeWrite(ctx, {
+      kind: 'batch',
+      ops: [
+        { op: 'project.create', path: 'web', title: 'Web' },
+        { op: 'project.create', path: 'web/sub', title: 'Sub' },
+      ],
+    });
+    const before = await revParse(b.root, 'HEAD');
+    await rm(join(b.root, 'projects/web.md'));
+    const err = await catchErrAsync(() => executeWrite(ctx, EDITS));
+    expect(err.details).toMatchObject({ reason: 'has_subprojects' });
+    expect(await revParse(b.root, 'HEAD')).toBe(before);
+  });
+
+  test('edits: staged-only changes are committed and the index matches HEAD afterwards', async () => {
+    const [a] = (await issues('A')) as [string];
+    await edit(issueFile(a), (s) => s.replace('title: A', 'title: A2'));
+    await git(['add', '--', issueFile(a)], { cwd: b.root });
+    await executeWrite(ctx, EDITS);
+    expect(await statusShort(b.root)).toEqual([]);
+  });
+
+  test('edits: a hand-edited config is a manual commit checked against the HEAD config', async () => {
+    const config = await read('.backe/backlog.jsonc');
+    await write(
+      '.backe/backlog.jsonc',
+      config.replace(/\n}\n$/, ',\n  "workflow": { "strict": true }\n}\n'),
+    );
+    const r = await executeWrite(ctx, EDITS);
+    expect(r.chain).toMatchObject([{ kind: 'manual', paths: ['.backe/backlog.jsonc'] }]);
+    expect(await show('HEAD:.backe/backlog.jsonc')).toContain('"strict": true');
+    expect(await statusShort(b.root)).toEqual([]);
+  });
+
+  test('edits: a comment edit sees the comments as they stand after the manual part', async () => {
+    const [a] = (await issues('A')) as [string];
+    const first = await executeWrite(ctx, {
+      kind: 'op',
+      op: { op: 'comment.add', id: a, body: 'eins' },
+    });
+    const second = await executeWrite(ctx, {
+      kind: 'op',
+      op: { op: 'comment.add', id: a, body: 'zwei' },
+    });
+    const file = (r: typeof first) =>
+      `${commentsDir(a)}/${(r.recorded[0] as { file: string }).file}`;
+    await edit(file(first), (s) => s.replace('eins', 'eins, korrigiert'));
+    await edit(file(second), (s) => s.replace('---\n', '---\nfoo: bar\n'));
+    const r = await executeWrite(ctx, EDITS);
+    expect(r.chain).toMatchObject([
+      { kind: 'manual', paths: [file(second)] },
+      { kind: 'op', recorded: [{ op: 'comment.edit', id: a, body: 'eins, korrigiert\n' }] },
+    ]);
+    expect(await statusShort(b.root)).toEqual([]);
+  });
+
+  test('edits: a change only in the index is reset without a notice', async () => {
+    const [a] = (await issues('A')) as [string];
+    const committed = await read(issueFile(a));
+    await edit(issueFile(a), (s) => s.replace('title: A', 'title: A2'));
+    await git(['add', '--', issueFile(a)], { cwd: b.root });
+    await write(issueFile(a), committed);
+    const r = await executeWrite(ctx, EDITS);
+    expect(r).toMatchObject({ commit: undefined, rewritten: [] });
+    expect(await statusShort(b.root)).toEqual([]);
+  });
+
+  test('edits: a file deleted by hand is a manual deletion', async () => {
+    await executeWrite(ctx, {
+      kind: 'manual',
+      subject: 'Notiz',
+      changes: [{ path: 'notes.md', content: 'x\n' }],
+    });
+    await rm(join(b.root, 'notes.md'));
+    const r = await executeWrite(ctx, EDITS);
+    expect(r.chain).toMatchObject([{ kind: 'manual', paths: ['notes.md'] }]);
+    expect(
+      (await git(['ls-tree', '--name-only', 'HEAD', '--', 'notes.md'], { cwd: b.root })).stdout,
+    ).toBe('');
+  });
+
+  test('edits: nothing changed writes nothing', async () => {
+    const r = await executeWrite(ctx, EDITS);
+    expect(r).toMatchObject({ commit: undefined, chain: [], rewritten: [], warnings: [] });
+    expect(await revParse(b.root, 'HEAD')).toBe(head);
+  });
+});
+
+const hasLfs = await git(['lfs', 'version'], { cwd: process.cwd() }).then(
+  () => true,
+  () => false,
+);
+if (!hasLfs) console.warn('git-lfs fehlt: LFS-Tests übersprungen');
+
+describe('lfs', () => {
+  async function enableLfs(): Promise<void> {
+    const config = await readFile(join(b.root, '.backe/backlog.jsonc'), 'utf8');
+    await executeWrite(ctx, {
+      kind: 'manual',
+      subject: 'lfs an',
+      changes: [
+        {
+          path: '.backe/backlog.jsonc',
+          content: config.replace(/\n}\n$/, ',\n  "attachments": { "lfs": true }\n}\n'),
+        },
+      ],
+    });
+  }
+
+  test.runIf(hasLfs)('lfs: attachments are stored as lfs pointers', async () => {
+    await enableLfs();
+    const id = await createdId();
+    await executeWrite(ctx, {
+      kind: 'op',
+      op: {
+        op: 'attach.add',
+        id,
+        name: 'log',
+        file: 'log.txt',
+        content: new TextEncoder().encode('viele Bytes\n'),
+      },
+    });
+    const pointer = await git(
+      ['cat-file', '-p', `HEAD:issues/${id.slice(3, 5)}/${id}/attachments/log.txt`],
+      {
+        cwd: b.root,
+      },
+    );
+    expect(pointer.stdout).toMatch(/^version https:\/\/git-lfs\.github\.com\/spec\/v1\n/);
+    expect((await git(['show', 'HEAD:.gitattributes'], { cwd: b.root })).stdout).toContain(
+      'filter=lfs',
+    );
+  });
+
+  test('lfs without git-lfs on PATH is a validation error', async () => {
+    await enableLfs();
+    const before = await revParse(b.root, 'HEAD');
+    const bin = await tempDir();
+    for (const tool of ['git', 'ssh-keygen', 'sh']) {
+      await symlink(await which(tool), join(bin, tool));
+    }
+    vi.stubEnv('PATH', bin);
+    try {
+      const err = await catchErrAsync(() => executeWrite(ctx, CREATE));
+      expect(err.code).toBe('validation');
+      expect(err.message).toBe('attachments.lfs verlangt git-lfs');
+      expect(err.hint).toBe('backe doctor');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(await revParse(b.root, 'HEAD')).toBe(before);
+    expect(await statusShort(b.root)).toEqual([]);
+  });
+});
+
+/** Absoluter Pfad eines Programms aus dem PATH des Testprozesses. */
+async function which(tool: string): Promise<string> {
+  for (const dir of (process.env.PATH ?? '').split(':')) {
+    const candidate = join(dir, tool);
+    try {
+      await access(candidate, constants.X_OK);
+      return candidate;
+    } catch {}
+  }
+  throw new Error(`${tool} nicht im PATH`);
+}

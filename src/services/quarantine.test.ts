@@ -446,3 +446,29 @@ test('quarantine needs the signing key to be active in the governing state', asy
   });
   expect(await revParse(b.root, 'HEAD')).toBe(head);
 });
+
+test('verify accept refuses when HEAD moved after the check', async () => {
+  const bad = await badCommit();
+  let moved = '';
+  const err = await catchErrAsync(async () =>
+    quarantineCommit(
+      await b.context(),
+      { sha: bad, decision: 'accepted', reason: 'harmlos' },
+      {
+        hooks: {
+          beforeLock: async () => {
+            moved = await rawCommit(b.root, {
+              files: { 'notes/later.txt': 'x\n' },
+              key: b.key,
+              actor: 'spw',
+            });
+          },
+        },
+      },
+    ),
+  );
+  expect(err.code).toBe('conflict');
+  expect(err.message).toBe('Stand hat sich seit der Prüfung geändert');
+  expect(await revParse(b.root, 'HEAD')).toBe(moved);
+  expect(await statusShort(b.root)).toEqual([]);
+});

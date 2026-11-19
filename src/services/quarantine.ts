@@ -82,20 +82,31 @@ function plannedState(snapshot: BacklogSnapshot, changes: readonly TreeChange[])
  */
 async function revertChanges(
   wc: string,
-  ctx: { sha: string; parent: string; raw: RawChange[]; admin: string; basis: PolicyState },
+  ctx: {
+    sha: string;
+    parent: string;
+    raw: RawChange[];
+    admin: string;
+    basis: PolicyState;
+    checked: string;
+  },
   snapshot: BacklogSnapshot,
 ): Promise<FileChange[]> {
-  const { sha, parent, raw, admin, basis } = ctx;
+  const { sha, parent, raw, admin, basis, checked } = ctx;
   for (const c of raw) {
     if (['120000', '160000'].some((m) => m === c.oldMode || m === c.newMode)) {
       throw manual(`Symlink oder Submodule ${c.path}`);
     }
   }
   const paths = raw.map((c) => c.path).filter((path) => path !== QUARANTINE);
-  const specs = paths.flatMap((path) => [`HEAD:${path}`, `${sha}:${path}`, `${parent}:${path}`]);
+  const specs = paths.flatMap((path) => [
+    `${checked}:${path}`,
+    `${sha}:${path}`,
+    `${parent}:${path}`,
+  ]);
   const blobs = await readBlobs(wc, specs);
   const changes: FileChange[] = paths.map((path) => {
-    if (!sameBytes(blobs.get(`HEAD:${path}`), blobs.get(`${sha}:${path}`))) {
+    if (!sameBytes(blobs.get(`${checked}:${path}`), blobs.get(`${sha}:${path}`))) {
       throw new BackeError(
         'conflict',
         `${path} wurde nach ${shortSha(sha)} geändert; Umkehr von Hand`,
@@ -105,7 +116,7 @@ async function revertChanges(
   });
   const planned = await treeChangesWithContent(
     changes.map((c) => {
-      const before = blobs.get(`HEAD:${c.path}`) ?? null;
+      const before = blobs.get(`${checked}:${c.path}`) ?? null;
       const gone = c.content === null;
       return {
         path: c.path,
@@ -114,7 +125,7 @@ async function revertChanges(
         newMode: gone ? '000000' : '100644',
       } satisfies RawChange;
     }),
-    blobsAt(wc, 'HEAD'),
+    blobsAt(wc, checked),
     async (paths) =>
       new Map(
         paths.map((path) => {
@@ -129,7 +140,7 @@ async function revertChanges(
     parent: basis,
     after: plannedState(snapshot, planned),
     changes: planned,
-    removedHandles: addsUser ? await removedHandles(wc, 'HEAD') : new Set(),
+    removedHandles: addsUser ? await removedHandles(wc, checked) : new Set(),
   });
   if (reasons.length > 0) throw manual(reasons.join('; '));
   return changes;
@@ -142,6 +153,8 @@ export async function quarantineCommit(
 ): Promise<WriteResult> {
   if (input.reason.trim() === '') throw new BackeError('validation', 'Grund darf nicht leer sein');
   const { handle, key, workingCopy: wc } = requireWriter(ctx);
+  // Der Stand, gegen den geprüft wird; bewegt sich HEAD bis zum Write, scheitert er (`expectHead`).
+  const checked = await resolveCommit(wc, 'HEAD');
   const snapshot = await loadSnapshot(wc);
   // `verify` beurteilt den Quarantäne-Commit gegen diesen Stand, nicht gegen HEAD: Solange
   // ungültige Commits ungedeckt sind, ist er der Stand vor dem ersten davon.
@@ -159,10 +172,10 @@ export async function quarantineCommit(
     throw manual(`der Signier-Key von ${handle} gilt im maßgeblichen Stand nicht`);
   }
   const sha = await resolveCommit(wc, input.sha);
-  if (!(await isAncestor(wc, sha, 'HEAD'))) {
+  if (!(await isAncestor(wc, sha, checked))) {
     throw new BackeError('not_found', `Commit ${input.sha} liegt nicht in der Historie von HEAD`);
   }
-  const isRoot = (await rootCommits(wc, 'HEAD')).includes(sha);
+  const isRoot = (await rootCommits(wc, checked)).includes(sha);
   const parent = isRoot ? undefined : await resolveCommit(wc, `${sha}^`);
   const raw = parent === undefined ? [] : await treeChanges(wc, parent, sha);
   const text = quarantineText ?? EMPTY;
@@ -184,7 +197,7 @@ export async function quarantineCommit(
     }
     const basis = { config, users: state.users };
     changes.push(
-      ...(await revertChanges(wc, { sha, parent, raw, admin: handle, basis }, snapshot)),
+      ...(await revertChanges(wc, { sha, parent, raw, admin: handle, basis, checked }, snapshot)),
     );
   }
   const verb = input.decision === 'accepted' ? 'accept' : 'revert';
@@ -195,6 +208,7 @@ export async function quarantineCommit(
       subject: `verify ${verb} ${shortSha(sha)}`,
       changes,
       signers: state.users,
+      expectHead: checked,
     },
     deps,
   );

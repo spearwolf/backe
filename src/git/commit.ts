@@ -12,7 +12,27 @@ export type CommitInput = {
   author: { name: string; email: string };
   env: GitEnv;
   parent: string | undefined;
+  /**
+   * Wohin HEAD springt: `{ from }` setzt HEAD per `update-ref` von `from` (Default `{ from: parent }`)
+   * auf den neuen Commit und gleicht danach den Index der Pfade an; `false` erzeugt nur das
+   * Commit-Objekt (Glied einer Kette), ohne `update-ref` und ohne Index-Reset.
+   */
+  updateRef?: { from: string | undefined } | false;
+  /** Mit `attachments.lfs` (backe.md §2.8): `git add` läuft mit dem LFS-Filter aus `-c`-Werten. */
+  lfs?: boolean;
 };
+
+/** Der LFS-Filter nur für `git add`; die globale Git-Config bleibt unberührt. */
+const LFS_FILTER = [
+  '-c',
+  'filter.lfs.clean=git-lfs clean -- %f',
+  '-c',
+  'filter.lfs.smudge=git-lfs smudge -- %f',
+  '-c',
+  'filter.lfs.process=git-lfs filter-process',
+  '-c',
+  'filter.lfs.required=true',
+];
 
 type FailureDetails = { exitCode?: number; stderr?: string };
 
@@ -31,7 +51,9 @@ function gitFailure(error: unknown): FailureDetails | undefined {
 
 /**
  * Committet genau `input.paths` (Löschungen inklusive) signiert über einen temporären Index;
- * Index und Arbeitsbaum des Aufrufers bleiben für alle anderen Pfade unberührt.
+ * Index und Arbeitsbaum des Aufrufers bleiben für alle anderen Pfade unberührt. Eine Kette
+ * entsteht mit `updateRef: false` für die ersten Glieder und `updateRef: { from: <alter HEAD> }`
+ * für das letzte: HEAD springt einmal vom alten Stand auf das Ende der Kette.
  */
 export async function commitPaths(wc: string, input: CommitInput): Promise<string> {
   const rnd = randomBytes(6).toString('hex');
@@ -45,7 +67,11 @@ export async function commitPaths(wc: string, input: CommitInput): Promise<strin
       env,
     });
     // `-f`: Die Pfade gehören backe; eine `.gitignore` im Backlog darf sie nicht aussperren.
-    await git(['add', '-A', '-f', ...pathspec], { cwd: wc, env, input: pathList(input.paths) });
+    await git([...(input.lfs ? LFS_FILTER : []), 'add', '-A', '-f', ...pathspec], {
+      cwd: wc,
+      env,
+      input: pathList(input.paths),
+    });
     const tree = (await git(['write-tree'], { cwd: wc, env })).stdout.trim();
     const parentTree =
       parent === undefined
@@ -88,9 +114,11 @@ export async function commitPaths(wc: string, input: CommitInput): Promise<strin
       throw error;
     });
     const sha = created.stdout.trim();
+    const target = input.updateRef ?? { from: parent };
+    if (target === false) return sha;
 
     const subject = input.message.split('\n')[0] ?? '';
-    await git(['update-ref', '-m', subject, 'HEAD', sha, parent ?? ''], { cwd: wc }).catch(
+    await git(['update-ref', '-m', subject, 'HEAD', sha, target.from ?? ''], { cwd: wc }).catch(
       (error: unknown) => {
         const failure = gitFailure(error);
         const stderr = failure?.stderr ?? '';

@@ -155,7 +155,8 @@ export async function logTrailers(
     .split('\0')
     .filter((raw) => raw.trim() !== '')
     .map((raw) => {
-      const { subject, trailers } = parseCommitMessage(raw);
+      // `--format` trennt Einträge mit einem Newline; er gehört nicht zur Message.
+      const { subject, trailers } = parseCommitMessage(raw.replace(/^\n/, ''));
       const actor = trailers.get(TRAILER_ACTOR)?.[0];
       const op = trailers.get(TRAILER_OP)?.[0];
       return {
