@@ -117,3 +117,31 @@ test('next needs an identity', async () => {
   const anon: ResolvedContext = { ...ctx, user: { ...ctx.user, value: undefined } };
   expect((await catchErrAsync(() => nextIssue(anon, {}))).code).toBe('usage');
 });
+
+test('next filters by sprint and repo, from flag and from context', async () => {
+  await executeWrite(ctx, {
+    kind: 'batch',
+    ops: [
+      { op: 'sprint.create', slug: '2026-w47', title: 'W47' },
+      { op: 'repo.add', url: 'git@example.com:acme/webapp.git', name: 'webapp' },
+    ],
+  });
+  const r = await create(
+    { ref: '$S', title: 'S', state: 'todo', sprints: ['2026-w47'], rank: 2 },
+    { ref: '$R', title: 'R', state: 'todo', repos: ['webapp'], rank: 3 },
+    { ref: '$N', title: 'N', state: 'todo', rank: 1 },
+  );
+  expect((await nextIssue(ctx, { sprint: '2026-w47' })).issue.id).toBe(r.$S);
+  expect((await nextIssue(ctx, { repo: 'webapp' })).issue.id).toBe(r.$R);
+  const viaContext: ResolvedContext = {
+    ...ctx,
+    sprint: { value: '2026-w47', source: { kind: 'env' } },
+  };
+  const out = await nextIssue(viaContext, {});
+  expect(out.issue.id).toBe(r.$S);
+  expect(out.header).toEqual({ backlog: ctx.backlog.value, sprint: '2026-w47' });
+  const repoCtx: ResolvedContext = { ...ctx, repo: { value: 'webapp', source: { kind: 'env' } } };
+  expect((await nextIssue(repoCtx, {})).issue.id).toBe(r.$R);
+  const noRepo: ResolvedContext = { ...ctx, repo: { value: null, source: { kind: 'env' } } };
+  expect((await nextIssue(noRepo, {})).issue.id).toBe(r.$N);
+});

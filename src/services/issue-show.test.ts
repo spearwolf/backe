@@ -141,13 +141,35 @@ test('show carries the latest transition reason of the current state', async () 
   expect((await showIssue(ctx, id.X)).lastReason).toBeUndefined();
 });
 
-test('lastReason is absent when the latest transition led elsewhere', async () => {
+test('lastReason is the latest transition into the current state, even if a later one led elsewhere', async () => {
   await write({ op: 'issue.move', id: id.A, from: 'todo', to: 'in_progress', reason: 'Los' });
-  await write({ op: 'comment.add', id: id.A, body: 'x' });
-  const d = await showIssue(ctx, id.A);
-  expect(d.lastReason?.to).toBe('in_progress');
+  await write({ op: 'issue.move', id: id.A, from: 'in_progress', to: 'review', reason: 'Fertig' });
+  await write({ op: 'issue.move', id: id.A, from: 'review', to: 'in_progress', reason: 'Nochmal' });
   await write({ op: 'issue.move', id: id.A, from: 'in_progress', to: 'todo', reason: 'Zurück' });
-  expect((await showIssue(ctx, id.A)).lastReason?.to).toBe('todo');
+  expect((await showIssue(ctx, id.A)).lastReason?.body).toBe('Zurück\n');
+  await write({ op: 'issue.move', id: id.A, from: 'todo', to: 'backlog' });
+  // Kein Übergangskommentar führt nach backlog.
+  expect((await showIssue(ctx, id.A)).lastReason).toBeUndefined();
+});
+
+test('unblockable notice says explicitly when a blocker was cancelled', async () => {
+  const r = await executeWrite(ctx, {
+    kind: 'batch',
+    ops: [
+      {
+        op: 'issue.create',
+        ref: '$U',
+        title: 'Blockiert',
+        state: 'blocked',
+        paused_from: 'todo',
+        blocked_by: [id.B],
+      },
+    ],
+  });
+  const d = await showIssue(ctx, r.refs.$U as string);
+  expect(d.notices[0]?.message).toBe(
+    `Alle Blocker erledigt, entblockbar: ${r.refs.$U} (nicht erledigt: ${id.B} (cancelled))`,
+  );
 });
 
 test('comments: 0 by default, n the latest, all everything', async () => {

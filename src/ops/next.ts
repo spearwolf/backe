@@ -62,37 +62,50 @@ function openDependentCount(s: BacklogSnapshot, id: string): number {
   return count;
 }
 
+/** Hinweis auf abgebrochene oder abgelehnte `depends_on` eines Issues (backe.md §2.22). */
+export function settledDependencyNotice(s: BacklogSnapshot, issue: Issue): Notice | undefined {
+  const settled = (issue.depends_on ?? []).filter((d) => {
+    const state = s.issues.get(d)?.data.state;
+    return state === 'cancelled' || state === 'rejected';
+  });
+  if (settled.length === 0) return undefined;
+  return {
+    code: 'settled_dependency',
+    message: `${issue.id} hängt von abgebrochenen oder abgelehnten Issues ab: ${settled.join(', ')}`,
+    ids: settled,
+  };
+}
+
+/**
+ * Hinweis auf entblockbare Issues (backe.md §2.6): alle Blocker erledigt; war ein Blocker
+ * `cancelled` oder `rejected` statt `done`, steht das ausdrücklich dabei. Nicht entblockbare
+ * Issues der Eingabe werden ignoriert.
+ */
+export function unblockableNotice(
+  s: BacklogSnapshot,
+  issues: readonly Issue[],
+): Notice | undefined {
+  const unblockable = issues.filter((i) => isUnblockable(s, i.id));
+  if (unblockable.length === 0) return undefined;
+  const parts = unblockable.map((i) => {
+    const odd = (i.blocked_by ?? []).flatMap((b) => {
+      const state = s.issues.get(b)?.data.state;
+      return state === 'cancelled' || state === 'rejected' ? [`${b} (${state})`] : [];
+    });
+    return odd.length > 0 ? `${i.id} (nicht erledigt: ${odd.join(', ')})` : i.id;
+  });
+  return {
+    code: 'unblockable',
+    message: `Alle Blocker erledigt, entblockbar: ${parts.join('; ')}`,
+    ids: unblockable.map((i) => i.id),
+  };
+}
+
 function notices(s: BacklogSnapshot, chosen: Issue | undefined, inContext: Issue[]): Notice[] {
-  const out: Notice[] = [];
-  if (chosen) {
-    const settled = (chosen.depends_on ?? []).filter((d) => {
-      const state = s.issues.get(d)?.data.state;
-      return state === 'cancelled' || state === 'rejected';
-    });
-    if (settled.length > 0) {
-      out.push({
-        code: 'settled_dependency',
-        message: `${chosen.id} hängt von abgebrochenen oder abgelehnten Issues ab: ${settled.join(', ')}`,
-        ids: settled,
-      });
-    }
-  }
-  const unblockable = inContext.filter((i) => isUnblockable(s, i.id));
-  if (unblockable.length > 0) {
-    const parts = unblockable.map((i) => {
-      const odd = (i.blocked_by ?? []).flatMap((b) => {
-        const state = s.issues.get(b)?.data.state;
-        return state === 'cancelled' || state === 'rejected' ? [`${b} (${state})`] : [];
-      });
-      return odd.length > 0 ? `${i.id} (nicht erledigt: ${odd.join(', ')})` : i.id;
-    });
-    out.push({
-      code: 'unblockable',
-      message: `Alle Blocker erledigt, entblockbar: ${parts.join('; ')}`,
-      ids: unblockable.map((i) => i.id),
-    });
-  }
-  return out;
+  return [
+    chosen ? settledDependencyNotice(s, chosen) : undefined,
+    unblockableNotice(s, inContext),
+  ].filter((n): n is Notice => n !== undefined);
 }
 
 export function selectNext(s: BacklogSnapshot, q: NextQuery): NextResult {

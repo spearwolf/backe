@@ -8,7 +8,8 @@ import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
 import type { Comment, Issue } from '../core/schemas.ts';
 import { isSettled, type State } from '../core/state.ts';
-import { ancestors, graphOf, isUnblockable } from '../ops/graph.ts';
+import { ancestors, graphOf } from '../ops/graph.ts';
+import { settledDependencyNotice, unblockableNotice } from '../ops/next.ts';
 import type { Notice } from '../ops/notice.ts';
 import { compareIssues } from '../ops/order.ts';
 import { listComments, type StoredEntity } from '../store/snapshot.ts';
@@ -68,15 +69,15 @@ export async function showIssue(
   const id = resolveIssueRef(s, ref);
   const stored = s.issues.get(id) as StoredEntity<Issue>;
   const issue = stored.data;
-  const view = (other: string): IssueRefView => {
-    const o = s.issues.get(other)?.data as Issue;
-    return { id: o.id, state: o.state, title: o.title };
+  const view = (other: string): IssueRefView[] => {
+    const o = s.issues.get(other)?.data;
+    return o === undefined ? [] : [{ id: o.id, state: o.state, title: o.title }];
   };
   const sorted = (ids: readonly string[] | undefined): IssueRefView[] =>
     (ids ?? [])
       .flatMap((x) => s.issues.get(x)?.data ?? [])
       .sort(compareIssues)
-      .map((i) => view(i.id));
+      .flatMap((i) => view(i.id));
 
   const graph = graphOf(s);
   const childIds = graph.children.get(id) ?? [];
@@ -86,37 +87,22 @@ export async function showIssue(
   }).length;
 
   const all = await listComments(root, id);
-  const lastTransition = all.findLast((c) => c.data.kind === 'transition');
-  const lastReason =
-    lastTransition?.data.to === issue.state ? commentView(lastTransition) : undefined;
+  const lastTransition = all.findLast(
+    (c) => c.data.kind === 'transition' && c.data.to === issue.state,
+  );
+  const lastReason = lastTransition === undefined ? undefined : commentView(lastTransition);
   const picked = want === 'all' ? all : want === 0 ? [] : all.slice(-want);
 
-  const notices: Notice[] = [];
-  const odd = (issue.depends_on ?? []).filter((d) => {
-    const st = s.issues.get(d)?.data.state;
-    return st === 'cancelled' || st === 'rejected';
-  });
-  if (odd.length > 0) {
-    notices.push({
-      code: 'settled_dependency',
-      message: `${id} hängt von abgebrochenen oder abgelehnten Issues ab: ${odd.join(', ')}`,
-      ids: odd,
-    });
-  }
-  if (isUnblockable(s, id)) {
-    notices.push({
-      code: 'unblockable',
-      message: `Alle Blocker erledigt, entblockbar: ${id}`,
-      ids: [id],
-    });
-  }
+  const notices = [settledDependencyNotice(s, issue), unblockableNotice(s, [issue])].filter(
+    (n): n is Notice => n !== undefined,
+  );
 
   return {
     issue,
     body: stored.body,
     raw: await readFile(join(root, stored.path), 'utf8'),
-    parents: ancestors(s, id).map(view),
-    dependsOn: (issue.depends_on ?? []).map(view),
+    parents: ancestors(s, id).flatMap(view),
+    dependsOn: (issue.depends_on ?? []).flatMap(view),
     dependents: sorted(graph.dependents.get(id)),
     children: sorted(childIds),
     ...(childIds.length > 0 ? { progress: { settled, total: childIds.length } } : {}),
