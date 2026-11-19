@@ -1,5 +1,5 @@
-import { mkdir, readdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { access, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
 import { type Env, type Homes, physicalPath } from '../context/paths.ts';
 import { managedClonePath, registerBacklog, setIdentity } from '../context/registry.ts';
 import { readUserConfig } from '../context/user-config.ts';
@@ -33,6 +33,30 @@ async function isEmptyOrMissing(dir: string): Promise<boolean> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
     throw error;
+  }
+}
+
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Räumt Angelegtes weg: das Zielverzeichnis selbst oder, war es schon da, nur seinen Inhalt. */
+async function removeCreated(root: string, existed: boolean): Promise<void> {
+  try {
+    if (existed) {
+      for (const entry of await readdir(root)) {
+        await rm(join(root, entry), { recursive: true, force: true });
+      }
+    } else {
+      await rm(root, { recursive: true, force: true });
+    }
+  } catch {
+    // Das Aufräumen darf den ursprünglichen Fehler nicht überdecken.
   }
 }
 
@@ -71,8 +95,12 @@ export async function initBacklog(input: InitInput): Promise<{ root: string; anc
     });
   }
 
+  if (input.dir !== undefined && !isAbsolute(input.dir)) {
+    throw new BackeError('usage', `Zielverzeichnis muss absolut sein: ${input.dir}`);
+  }
   const root =
     input.dir === undefined ? managedClonePath(homes, name, handle) : await physicalPath(input.dir);
+  const existed = await pathExists(root);
   if (!(await isEmptyOrMissing(root))) {
     throw new BackeError('conflict', `Zielverzeichnis ist nicht leer: ${root}`);
   }
@@ -80,33 +108,48 @@ export async function initBacklog(input: InitInput): Promise<{ root: string; anc
   const pub = await readPublicKey(key);
   const userName = input.userName ?? handle;
 
-  await mkdir(root, { recursive: true });
-  await git(['init', '-q', '-b', 'main'], { cwd: root });
-  const config = `${JSON.stringify({ version: 1, name, id_prefix: prefix, admins: [handle] }, null, 2)}\n`;
-  const userFile = serializeEntityFile('user', { name: userName, kind: 'human', keys: [pub] }, '');
-  const userPath = `users/${handle}.md`;
-  await mkdir(join(root, '.backe'), { recursive: true });
-  await mkdir(join(root, 'users'), { recursive: true });
-  await writeFile(join(root, '.backe/backlog.jsonc'), config);
-  await writeFile(join(root, userPath), userFile);
+  let anchor: string;
+  try {
+    anchor = await createAnchor();
+  } catch (error) {
+    await removeCreated(root, existed);
+    throw error;
+  }
 
-  const anchor = await commitPaths(root, {
-    paths: ['.backe/backlog.jsonc', userPath],
-    message: formatCommitMessage({
-      subject: `init ${name}`,
-      trailers: [
-        [TRAILER_ACTOR, handle],
-        [TRAILER_OP, 'init'],
-      ],
-    }),
-    key,
-    author: authorOf(handle, userName),
-    env,
-    parent: undefined,
-  });
-  await writeLocalState(root, 'anchor', anchor);
-  await writeLocalState(root, 'verified', anchor);
-  await writeLocalState(root, 'identity', handle);
+  async function createAnchor(): Promise<string> {
+    await mkdir(root, { recursive: true });
+    await git(['init', '-q', '-b', 'main'], { cwd: root });
+    const config = `${JSON.stringify({ version: 1, name, id_prefix: prefix, admins: [handle] }, null, 2)}\n`;
+    const userFile = serializeEntityFile(
+      'user',
+      { name: userName, kind: 'human', keys: [pub] },
+      '',
+    );
+    const userPath = `users/${handle}.md`;
+    await mkdir(join(root, '.backe'), { recursive: true });
+    await mkdir(join(root, 'users'), { recursive: true });
+    await writeFile(join(root, '.backe/backlog.jsonc'), config);
+    await writeFile(join(root, userPath), userFile);
+
+    const commit = await commitPaths(root, {
+      paths: ['.backe/backlog.jsonc', userPath],
+      message: formatCommitMessage({
+        subject: `init ${name}`,
+        trailers: [
+          [TRAILER_ACTOR, handle],
+          [TRAILER_OP, 'init'],
+        ],
+      }),
+      key,
+      author: authorOf(handle, userName),
+      env,
+      parent: undefined,
+    });
+    await writeLocalState(root, 'anchor', commit);
+    await writeLocalState(root, 'verified', commit);
+    await writeLocalState(root, 'identity', handle);
+    return commit;
+  }
 
   let pushFailure: BackeError | undefined;
   if (remote !== undefined) {
@@ -126,7 +169,7 @@ export async function initBacklog(input: InitInput): Promise<{ root: string; anc
     name,
     handle,
     ...(remote === undefined ? {} : { remote }),
-    ...(input.dir === undefined ? {} : { path: input.dir }),
+    ...(input.dir === undefined ? {} : { path: root }),
   });
   await setIdentity(homes, name, handle, key);
 

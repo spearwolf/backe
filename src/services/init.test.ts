@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
@@ -11,6 +11,7 @@ import {
   testKey,
 } from '../../test/helpers/git.ts';
 import { resolveHomes } from '../context/paths.ts';
+import { workingCopyPath } from '../context/registry.ts';
 import { readUserConfig } from '../context/user-config.ts';
 import { git, sshKeygen } from '../git/exec.ts';
 import { readLocalState } from '../git/local-state.ts';
@@ -139,4 +140,54 @@ test('bareRemote creates an empty bare repository', async () => {
   const remote = await bareRemote();
   const out = await git(['rev-parse', '--is-bare-repository'], { cwd: remote });
   expect(out.stdout.trim()).toBe('true');
+});
+
+test('a relative dir is a usage error and nothing is written or registered', async () => {
+  const { input } = await inputFor();
+  const err = await catchErrAsync(() => initBacklog({ ...input, dir: 'rel/acme' }));
+  expect(err.code).toBe('usage');
+  expect(err.message).toBe('Zielverzeichnis muss absolut sein: rel/acme');
+  expect((await readUserConfig(input.homes.backeHome)).backlogs).toBeUndefined();
+});
+
+test('a symlinked dir registers the physical path, which workingCopyPath resolves to root', async () => {
+  const { tmp, input } = await inputFor();
+  const real = join(tmp, 'real');
+  await mkdir(real);
+  const link = join(tmp, 'link');
+  await symlink(real, link);
+  const { root } = await initBacklog({ ...input, dir: join(link, 'acme') });
+  expect(root).toBe(join(await realpath(real), 'acme'));
+  const cfg = await readUserConfig(input.homes.backeHome);
+  expect(cfg.backlogs?.acme?.paths?.spw).toBe(root);
+  expect(workingCopyPath(cfg, input.homes, 'acme', 'spw')).toBe(root);
+});
+
+/** Öffentlicher Key lesbar (über die .pub), privater Key zum Signieren unbrauchbar. */
+async function unsignableKey(tmp: string): Promise<string> {
+  const good = await testKey('spw');
+  const bad = join(tmp, 'bad');
+  await writeFile(bad, 'not a private key\n');
+  await copyFile(good.pub, `${bad}.pub`);
+  return bad;
+}
+
+test('a failure while creating the anchor cleans up and a retry succeeds', async () => {
+  const { tmp, input } = await inputFor();
+  const dir = join(tmp, 'target');
+  const bad = await unsignableKey(tmp);
+  const err = await catchErrAsync(() => initBacklog({ ...input, key: bad, dir }));
+  expect(err.code).toBe('usage');
+  await expect(readdir(dir)).rejects.toThrow();
+  expect((await readUserConfig(input.homes.backeHome)).backlogs).toBeUndefined();
+  await initBacklog({ ...input, dir });
+});
+
+test('an existing empty target keeps its directory but loses the created contents', async () => {
+  const { tmp, input } = await inputFor();
+  const dir = join(tmp, 'empty');
+  await mkdir(dir);
+  const bad = await unsignableKey(tmp);
+  await catchErrAsync(() => initBacklog({ ...input, key: bad, dir }));
+  expect(await readdir(dir)).toEqual([]);
 });
