@@ -114,6 +114,13 @@ function dispatch(d: Draft, op: Operation): Operation {
   }
 }
 
+/** Wer schreibt, muss ein User des Backlogs sein (backe.md §2.13); sonst `policy`. */
+export function assertActorIsUser(s: BacklogSnapshot, actor: string): void {
+  if (!s.users.has(actor)) {
+    throw violation('policy', `Akteur "${actor}" ist kein User dieses Backlogs`);
+  }
+}
+
 /**
  * Ein Operationsschritt auf einem bestehenden Draft, gemeinsam für `applyOperation` und den
  * Batch: Vorab ist der Akteur ein User (`policy`), `now` ein gültiger Zeitstempel und die
@@ -122,9 +129,7 @@ function dispatch(d: Draft, op: Operation): Operation {
  */
 export function applyStep(d: Draft, op: Operation): Operation {
   const { ctx } = d;
-  if (!d.snapshot.users.has(ctx.actor)) {
-    throw violation('policy', `Akteur "${ctx.actor}" ist kein User dieses Backlogs`);
-  }
+  assertActorIsUser(d.snapshot, ctx.actor);
   if (!Timestamp.safeParse(ctx.now).success) {
     throw new BackeError('unexpected', `Ungültiger Zeitstempel im ApplyContext: "${ctx.now}"`);
   }

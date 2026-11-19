@@ -40,8 +40,8 @@ let ctx: ResolvedContext;
 let head: string;
 
 beforeEach(async () => {
-  b = await testBacklog();
-  ctx = await b.context({ as: b.handle });
+  b = await testBacklog({ userName: 'S. P. W.' });
+  ctx = await b.context();
   head = await revParse(b.root, 'HEAD');
 });
 
@@ -53,7 +53,7 @@ async function createdId(input: WriteInput = CREATE): Promise<string> {
 
 test('an op becomes one signed commit with actor and op trailer', async () => {
   const r = await executeWrite(
-    await b.context({ as: b.handle }),
+    await b.context(),
     { kind: 'op', op: { op: 'issue.create', title: 'A' } },
     { now: () => NOW, randomBytes: seqBytes() },
   );
@@ -68,7 +68,7 @@ test('an op becomes one signed commit with actor and op trailer', async () => {
   expect(r.commit).toBe(await revParse(b.root, 'HEAD'));
   expect(r.paths).toEqual([issueFile((r.recorded[0] as { id: string }).id)]);
   const author = await git(['log', '-1', '--format=%an <%ae>'], { cwd: b.root });
-  expect(author.stdout.trim()).toBe('spw <spw@backe.invalid>');
+  expect(author.stdout.trim()).toBe('S. P. W. <spw@backe.invalid>');
 });
 
 test('a batch carries its ops as body and Backe-Op: batch', async () => {
@@ -221,6 +221,63 @@ test('an unreadable journal stops the write before anything is written', async (
   await expect(executeWrite(ctx, CREATE)).rejects.toMatchObject({ code: 'EISDIR' });
   expect(await revParse(b.root, 'HEAD')).toBe(head);
   expect(await statusShort(b.root)).toEqual([]);
+});
+
+test('a journal is not recovered while an operation runs', async () => {
+  await writeFile(join(b.root, 'users/spw.md'), 'kaputt\n');
+  const journal = join(await stateDir(b.root), 'write.journal');
+  await writeFile(journal, JSON.stringify({ head, paths: ['users/spw.md'] }));
+  await mkdir(join(b.root, '.git', 'rebase-merge'));
+  const err = await catchErrAsync(() => executeWrite(ctx, CREATE));
+  expect(err.code).toBe('conflict');
+  expect(err.message).toBe(`Unterbrochener Write in ${b.root} kann nicht zurückgesetzt werden`);
+  expect(err.hint).toBe(`git -C ${b.root} status prüfen, dann ${journal} löschen`);
+  expect(await readFile(join(b.root, 'users/spw.md'), 'utf8')).toBe('kaputt\n');
+  expect(await readdir(await stateDir(b.root))).toContain('write.journal');
+  expect(await revParse(b.root, 'HEAD')).toBe(head);
+});
+
+test('a journal whose commit already landed is recovered', async () => {
+  const id = await createdId();
+  const file = issueFile(id);
+  // Absturz nach dem Commit, bevor der Index für die Pfade angeglichen wurde.
+  await git(['rm', '-q', '--cached', '--', file], { cwd: b.root });
+  const journal = join(await stateDir(b.root), 'write.journal');
+  await writeFile(journal, JSON.stringify({ head, paths: [file] }));
+  await executeWrite(ctx, CREATE_B);
+  expect(await statusShort(b.root)).toEqual([]);
+  expect(await logTrailers(b.root)).toHaveLength(3);
+  expect(await readdir(await stateDir(b.root))).not.toContain('write.journal');
+});
+
+test('a journal from an unrelated head is a conflict and stays', async () => {
+  const journal = join(await stateDir(b.root), 'write.journal');
+  await writeFile(journal, JSON.stringify({ head: 'a'.repeat(40), paths: ['users/spw.md'] }));
+  const err = await catchErrAsync(() => executeWrite(ctx, CREATE));
+  expect(err.code).toBe('conflict');
+  expect(await readdir(await stateDir(b.root))).toContain('write.journal');
+  expect(await revParse(b.root, 'HEAD')).toBe(head);
+});
+
+test('a manual write by a handle that is no user is refused', async () => {
+  const bob = await testKey('bob');
+  await writeLocalState(b.root, 'identity', 'bob');
+  const asBob: ResolvedContext = {
+    ...ctx,
+    backlog: { ...ctx.backlog, boundTo: 'bob' },
+    user: { ...ctx.user, value: 'bob', key: bob.priv },
+  };
+  const err = await catchErrAsync(() =>
+    executeWrite(asBob, {
+      kind: 'manual',
+      subject: 'fremd',
+      changes: [{ path: 'notes.md', content: 'x\n' }],
+    }),
+  );
+  expect(err.code).toBe('validation');
+  expect(err.message).toBe('Akteur "bob" ist kein User dieses Backlogs');
+  expect(await statusShort(b.root)).toEqual([]);
+  expect(await revParse(b.root, 'HEAD')).toBe(head);
 });
 
 test('a hand edit on an affected path is a conflict and stays untouched', async () => {

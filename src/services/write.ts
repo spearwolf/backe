@@ -8,13 +8,19 @@ import { type LockOptions, withFileLock } from '../context/lock.ts';
 import { workingCopyPath } from '../context/registry.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
-import { BACKLOG_FORMAT_VERSION, type Comment } from '../core/schemas.ts';
+import { BACKLOG_FORMAT_VERSION, type Comment, type User } from '../core/schemas.ts';
 import { commitPaths } from '../git/commit.ts';
+import { git } from '../git/exec.ts';
 import { removedHandles } from '../git/history.ts';
 import { readLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
 import { formatCommitMessage, TRAILER_ACTOR, TRAILER_OP } from '../git/message.ts';
-import { assertOnBranch, dirtyPaths, rollbackPaths } from '../git/repo.ts';
-import { type ApplyContext, applyOperation, commentsNeeded } from '../ops/apply.ts';
+import { assertOnBranch, dirtyPaths, headState, rollbackPaths } from '../git/repo.ts';
+import {
+  type ApplyContext,
+  applyOperation,
+  assertActorIsUser,
+  commentsNeeded,
+} from '../ops/apply.ts';
 import { applyBatch } from '../ops/batch.ts';
 import type { Notice } from '../ops/notice.ts';
 import {
@@ -95,7 +101,19 @@ async function exists(path: string): Promise<boolean> {
   );
 }
 
-/** Setzt die Pfade eines liegengebliebenen Journals zurück (Absturz mitten im Write). */
+/** Erster Parent von HEAD; `undefined` beim Wurzel-Commit. */
+async function firstParent(wc: string): Promise<string | undefined> {
+  const { stdout } = await git(['log', '-1', '--format=%P', 'HEAD'], { cwd: wc });
+  const [parent] = stdout.trim().split(' ');
+  return parent === '' ? undefined : parent;
+}
+
+/**
+ * Setzt die Pfade eines liegengebliebenen Journals zurück (Absturz mitten im Write). Nur wenn ein
+ * Branch ausgecheckt ist, keine Operation läuft und HEAD noch der Stand des Journals ist oder der
+ * Commit des Writes direkt darauf (dann gleicht der Rollback Arbeitsbaum und Index an HEAD an).
+ * Sonst bleibt das Journal liegen und der Write bricht ab, bevor etwas angefasst wird.
+ */
 async function recoverJournal(wc: string, journal: string): Promise<void> {
   let text: string;
   try {
@@ -104,7 +122,21 @@ async function recoverJournal(wc: string, journal: string): Promise<void> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw error;
   }
-  const { paths } = JSON.parse(text) as Journal;
+  const { head, paths } = JSON.parse(text) as Journal;
+  const state = await headState(wc);
+  const recoverable =
+    state.branch !== undefined &&
+    state.operation === undefined &&
+    (state.head === head || (await firstParent(wc)) === head);
+  if (!recoverable) {
+    throw new BackeError(
+      'conflict',
+      `Unterbrochener Write in ${wc} kann nicht zurückgesetzt werden`,
+      {
+        hint: `git -C ${wc} status prüfen, dann ${journal} löschen`,
+      },
+    );
+  }
   await rollbackPaths(wc, paths);
   await rm(journal, { force: true });
 }
@@ -226,6 +258,7 @@ export async function executeWrite(
     await checkIdentity(ctx, wc, handle);
     await checkFormatVersion(wc);
     const snapshot = await loadSnapshot(wc);
+    assertActorIsUser(snapshot, handle);
     const head = await assertOnBranch(wc, snapshot.config.sync.branch);
 
     const { changes, ...planned } = await plan(wc, snapshot, head, input, handle, deps);
@@ -239,7 +272,7 @@ export async function executeWrite(
       });
     }
     const message = commitMessage(input, planned.recorded, handle);
-    const author = authorOf(handle, snapshot.users.get(handle)?.data.name ?? handle);
+    const author = authorOf(handle, (snapshot.users.get(handle) as StoredEntity<User>).data.name);
 
     signals.install();
     await writeFileAtomic(journal, `${JSON.stringify({ head, paths } satisfies Journal)}\n`);

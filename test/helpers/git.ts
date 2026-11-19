@@ -110,9 +110,12 @@ export type TestBacklog = {
   context(flags?: ContextFlags, cwd?: string): Promise<ResolvedContext>;
 };
 
-/** Frisch initialisierter Backlog (verwalteter Klon) in einem Temp-Home, optional mit `bareRemote`. */
+/**
+ * Frisch initialisierter Backlog (verwalteter Klon) in einem Temp-Home, optional mit `bareRemote`.
+ * `context()` löst als `handle` auf, solange `flags.as` nichts anderes sagt.
+ */
 export async function testBacklog(
-  opts: { handle?: string; name?: string; remote?: boolean } = {},
+  opts: { handle?: string; name?: string; userName?: string; remote?: boolean } = {},
 ): Promise<TestBacklog> {
   const handle = opts.handle ?? 'spw';
   const name = opts.name ?? 'acme';
@@ -128,6 +131,7 @@ export async function testBacklog(
     prefix: 'bk',
     handle,
     key: key.priv,
+    ...(opts.userName === undefined ? {} : { userName: opts.userName }),
     ...(remote === undefined ? {} : { remote }),
   });
   return {
@@ -137,7 +141,8 @@ export async function testBacklog(
     handle,
     key,
     ...(remote === undefined ? {} : { remote }),
-    context: (flags = {}, cwd) => resolveContext({ cwd: cwd ?? root, env, flags }),
+    context: (flags = {}, cwd) =>
+      resolveContext({ cwd: cwd ?? root, env, flags: { as: handle, ...flags } }),
   };
 }
 
