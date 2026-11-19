@@ -2,9 +2,16 @@ import { catchErr } from '../../test/helpers/catch.ts';
 import { I, seqBytes, snap } from '../../test/helpers/snapshot.ts';
 import type { Comment, Issue } from '../core/schemas.ts';
 import { serializeEntityFile } from '../store/frontmatter.ts';
-import { attachmentsDir, commentFileName, commentsDir, issueFile } from '../store/layout.ts';
+import {
+  attachmentsDir,
+  commentFileName,
+  commentsDir,
+  issueFile,
+  LFS_RULE,
+} from '../store/layout.ts';
 import type { StoredEntity } from '../store/snapshot.ts';
 import { type ApplyContext, applyOperation } from './apply.ts';
+import { applyBatch } from './batch.ts';
 import { bodyHash, type Operation } from './operation.ts';
 
 const FILE = commentFileName('2026-11-18T10:04:00Z', 'spw', 'q8x');
@@ -210,6 +217,55 @@ describe('attach.add', () => {
       `${attachmentsDir(I(1))}/b.txt`,
       issueFile(I(1)),
     ]);
+  });
+
+  describe('with attachments.lfs', () => {
+    const lfs = (attributes?: string) => ({
+      ...snap({ config: { attachments: { max_bytes: null, lfs: true } }, issues: [{ id: I(1) }] }),
+      attributes,
+    });
+    const file = (name: string): Operation => ({
+      op: 'attach.add',
+      id: I(1),
+      name,
+      file: `${name}.bin`,
+      content: bytes,
+    });
+    const attributesOf = (changes: { path: string; content: unknown }[]) =>
+      changes.filter((c) => c.path === '.gitattributes').map((c) => c.content);
+
+    test('attach.add with lfs adds the rule to .gitattributes once', () => {
+      const r = applyBatch(lfs(), [file('a'), file('b')], ctx());
+      expect(attributesOf(r.changes)).toEqual([`${LFS_RULE}\n`]);
+      expect(r.snapshot.attributes).toBe(`${LFS_RULE}\n`);
+    });
+
+    test('the rule goes below existing lines, a missing final newline is added first', () => {
+      const r = applyOperation(lfs('* text=auto'), file('a'), ctx());
+      expect(attributesOf(r.changes)).toEqual([`* text=auto\n${LFS_RULE}\n`]);
+      expect(r.snapshot.attributes).toBe(`* text=auto\n${LFS_RULE}\n`);
+    });
+
+    test('an existing rule line is kept as it is', () => {
+      const before = `* text=auto\n${LFS_RULE}\n`;
+      const r = applyOperation(lfs(before), file('a'), ctx());
+      expect([attributesOf(r.changes), r.snapshot.attributes]).toEqual([[], before]);
+    });
+
+    test('a url attachment leaves .gitattributes alone', () => {
+      const r = applyOperation(
+        lfs(),
+        { op: 'attach.add', id: I(1), name: 'link', url: 'https://x.test/a' },
+        ctx(),
+      );
+      expect([attributesOf(r.changes), r.snapshot.attributes]).toEqual([[], undefined]);
+    });
+  });
+
+  test('attach.add without lfs leaves .gitattributes alone', () => {
+    const r = run({ op: 'attach.add', id: I(1), name: 'log', file: 'a.txt', content: bytes });
+    expect(r.changes.some((c) => c.path === '.gitattributes')).toBe(false);
+    expect(r.snapshot.attributes).toBeUndefined();
   });
 
   test('attachment over max_bytes is too large and points at lfs', () => {

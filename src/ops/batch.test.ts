@@ -156,6 +156,38 @@ describe('applyBatch', () => {
     expect([err.code, err.hint]).toEqual(['validation', expect.stringMatching(/mehrere Batches/)]);
   });
 
+  test('a large batch yields the same result as before', async () => {
+    // Bestand: ein Binärbaum aus 200 Issues; 50 Creates hängen per Platzhalter aneinander.
+    const issues = Array.from({ length: 200 }, (_, i) => ({
+      id: I(i + 1),
+      state: (['backlog', 'todo', 'in_progress'] as const)[i % 3],
+      ...(i > 0 ? { parent: I(Math.floor((i + 1) / 2)) } : {}),
+    }));
+    const ops: Operation[] = Array.from({ length: 50 }, (_, i) => ({
+      op: 'issue.create',
+      ref: `$c${i}`,
+      title: `Neu ${i}`,
+      ...(i % 5 === 0 ? { parent: I(10 + i) } : i > 0 ? { parent: `$c${Math.floor(i / 2)}` } : {}),
+      ...(i % 3 === 0 && i > 0 ? { depends_on: [`$c${i - 1}`, I(100 + i)] } : {}),
+    }));
+    // Jeder Aufruf liefert die Ziffern eines Zählers zur Basis 32: 50 verschiedene IDs.
+    let calls = 0;
+    const randomBytes = (n: number) => {
+      const k = calls++;
+      return Uint8Array.from({ length: n }, (_, i) => Math.floor(k / 32 ** (n - 1 - i)) % 32);
+    };
+    const r = applyBatch(snap({ issues }), ops, ctx({ randomBytes }));
+    const result = {
+      recorded: r.recorded,
+      refs: r.refs,
+      changes: r.changes,
+      order: [...r.snapshot.issues.keys()],
+    };
+    await expect(`${JSON.stringify(result, null, 2)}\n`).toMatchFileSnapshot(
+      '../../test/fixtures/batch-golden.json',
+    );
+  });
+
   test('errors that are not BackeErrors propagate unchanged', () => {
     const boom = new Error('boom');
     const randomBytes = () => {

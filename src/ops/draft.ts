@@ -20,6 +20,7 @@ import { canonicalBody, serializeEntityFile } from '../store/frontmatter.ts';
 import {
   commentFileName,
   commentsDir,
+  GITATTRIBUTES,
   issueDir,
   issueFile,
   parseCommentFileName,
@@ -31,6 +32,7 @@ import {
 import type { BacklogSnapshot, Problem, StoredEntity } from '../store/snapshot.ts';
 import type { ApplyContext } from './apply.ts';
 import { checkIssueInvariants, sameValue, violation } from './invariants.ts';
+import { LayeredMap } from './layered-map.ts';
 import type { Notice } from './notice.ts';
 
 /** Entitäten neben Issues, die eine Operation schreiben kann. */
@@ -39,6 +41,8 @@ type NamedData = { user: User; project: Project; sprint: Sprint; repo: Repo };
 
 type MapName = 'issues' | 'users' | 'projects' | 'sprints' | 'repos';
 type AnyMap = Map<string, StoredEntity<unknown>>;
+/** Geänderte Einträge gegenüber dem Basis-Snapshot; `undefined` heißt entfernt. */
+type Changes = Map<string, StoredEntity<unknown> | undefined>;
 
 const MAP_OF = {
   user: 'users',
@@ -74,10 +78,6 @@ const MAP_NAMES: readonly MapName[] = ['issues', 'users', 'projects', 'sprints',
 const MAX_NAME_ATTEMPTS = 100;
 export type CommentHead = { kind?: 'transition'; from?: State; to?: State };
 
-function byKey<T>([a]: [string, T], [b]: [string, T]): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
 /** Top-Level-Keys mit `undefined` entfallen, damit gleiche Daten auch gleich aussehen. */
 function compact<T extends object>(o: T): T {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
@@ -86,14 +86,16 @@ function compact<T extends object>(o: T): T {
 export class Draft {
   readonly ctx: ApplyContext;
   readonly #base: BacklogSnapshot;
-  /** Aktuelle Maps; eine Map in `#shared` gehört auch einem ausgegebenen Snapshot. */
-  readonly #maps: Record<MapName, AnyMap>;
-  readonly #shared = new Set<MapName>(MAP_NAMES);
-  readonly #unsorted = new Set<MapName>();
+  /**
+   * Alle Änderungen je Map seit Beginn. Ausgegebene Snapshots sehen sie als `LayeredMap` über der
+   * Basis-Map: Eine Operation kostet so die Zahl der Änderungen, nicht die Größe des Backlogs.
+   */
+  readonly #changes: Record<MapName, Changes>;
+  /** Maps mit Änderungen, die noch in keinem ausgegebenen Snapshot stehen. */
   readonly #dirty = new Set<MapName>();
-  readonly #touched: Record<MapName, Set<string>>;
   readonly #files = new Map<string, string | Uint8Array | null>();
   readonly #notices: Notice[] = [];
+  #attributes: string | undefined;
   #snapshot: BacklogSnapshot;
   #revision = 0;
 
@@ -101,39 +103,35 @@ export class Draft {
     this.ctx = ctx;
     this.#base = base;
     this.#snapshot = base;
-    this.#maps = {
-      issues: base.issues as AnyMap,
-      users: base.users as AnyMap,
-      projects: base.projects as AnyMap,
-      sprints: base.sprints as AnyMap,
-      repos: base.repos as AnyMap,
-    };
-    this.#touched = {
-      issues: new Set(),
-      users: new Set(),
-      projects: new Set(),
-      sprints: new Set(),
-      repos: new Set(),
+    this.#attributes = base.attributes;
+    this.#changes = {
+      issues: new Map(),
+      users: new Map(),
+      projects: new Map(),
+      sprints: new Map(),
+      repos: new Map(),
     };
   }
 
   /**
    * Stand inklusive eigener Änderungen. Nach jeder Änderung ist die betroffene Map eine neue
-   * Instanz, damit an ihr hängende Caches (`graphOf`) nie einen alten Stand liefern.
+   * Instanz, damit an ihr hängende Caches (`graphOf`) nie einen alten Stand liefern; ein
+   * ausgegebener Snapshot ändert sich danach nicht mehr.
    */
   get snapshot(): BacklogSnapshot {
-    if (this.#dirty.size === 0) return this.#snapshot;
+    if (this.#dirty.size === 0 && this.#snapshot.attributes === this.#attributes) {
+      return this.#snapshot;
+    }
     const fresh: Partial<Record<MapName, AnyMap>> = {};
     for (const name of this.#dirty) {
-      if (this.#unsorted.has(name)) {
-        this.#maps[name] = new Map([...this.#maps[name]].sort(byKey));
-        this.#unsorted.delete(name);
-      }
-      fresh[name] = this.#maps[name];
-      this.#shared.add(name);
+      fresh[name] = new LayeredMap(this.#base[name] as AnyMap, new Map(this.#changes[name]));
     }
     this.#dirty.clear();
-    this.#snapshot = { ...this.#snapshot, ...fresh } as BacklogSnapshot;
+    this.#snapshot = {
+      ...this.#snapshot,
+      ...fresh,
+      attributes: this.#attributes,
+    } as BacklogSnapshot;
     return this.#snapshot;
   }
 
@@ -280,6 +278,12 @@ export class Draft {
     this.#revision++;
   }
 
+  /** Schreibt `.gitattributes`; der Snapshot trägt den neuen Inhalt als `attributes`. */
+  putAttributes(content: string): void {
+    this.#attributes = content;
+    this.putFile(GITATTRIBUTES, content);
+  }
+
   notice(n: Notice): void {
     this.#notices.push(n);
   }
@@ -290,16 +294,17 @@ export class Draft {
    * ihres Verzeichnisses, alle Dateien darunter entfallen. Sortiert nach Pfad.
    */
   finish(): { snapshot: BacklogSnapshot; changes: FileChange[]; notices: Notice[] } {
-    const snapshot = this.snapshot;
     const changes: FileChange[] = [];
     const removedDirs: string[] = [];
+    // Der Endstand verlässt den Draft mit gewöhnlichen Maps.
+    const plain: Partial<Record<MapName, AnyMap>> = {};
     for (const name of MAP_NAMES) {
       const kind = KIND_OF[name];
       const was = this.#base[name] as AnyMap;
-      const now = snapshot[name] as AnyMap;
-      for (const key of this.#touched[name]) {
+      const touched = this.#changes[name];
+      if (touched.size > 0) plain[name] = new Map(new LayeredMap(was, touched));
+      for (const [key, after] of touched) {
         const before = was.get(key);
-        const after = now.get(key);
         if (after !== undefined) {
           if (before === undefined || !this.#sameStored(before, after)) {
             const data = after.data as Record<string, unknown>;
@@ -321,6 +326,7 @@ export class Draft {
       if (!removedDirs.some((dir) => path.startsWith(dir))) changes.push({ path, content });
     }
     changes.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    const snapshot = { ...this.#base, ...plain, attributes: this.#attributes } as BacklogSnapshot;
     return { snapshot, changes, notices: [...this.#notices] };
   }
 
@@ -328,7 +334,8 @@ export class Draft {
 
   /** Eintrag der Map; fehlt er, weil die Datei nicht ladbar war, ein `schema`-Fehler. */
   #lookup(name: MapName, key: string): StoredEntity<unknown> | undefined {
-    const found = this.#maps[name].get(key);
+    const changes = this.#changes[name];
+    const found = changes.has(key) ? changes.get(key) : (this.#base[name] as AnyMap).get(key);
     if (found !== undefined) return found;
     const kind = KIND_OF[name];
     const problem = this.brokenFile(kind, key);
@@ -391,19 +398,8 @@ export class Draft {
   }
 
   #store(name: MapName, key: string, entity: StoredEntity<unknown> | undefined): void {
-    if (this.#shared.has(name)) {
-      this.#maps[name] = new Map(this.#maps[name]);
-      this.#shared.delete(name);
-    }
-    const map = this.#maps[name];
-    if (entity === undefined) {
-      map.delete(key);
-    } else {
-      if (!map.has(key)) this.#unsorted.add(name);
-      map.set(key, entity);
-    }
+    this.#changes[name].set(key, entity);
     this.#dirty.add(name);
-    this.#touched[name].add(key);
     this.#revision++;
   }
 

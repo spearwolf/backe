@@ -121,6 +121,7 @@ function checkUserFile(
     repos: new Map(),
     issues: new Map(),
     problems: [],
+    attributes: undefined,
   };
   try {
     checkUserChange(s, input.actor, handle, before, after, {

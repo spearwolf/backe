@@ -22,7 +22,7 @@ import {
 } from '../core/schemas.ts';
 import { entriesInFileOrder, parseEntityFile } from './frontmatter.ts';
 import { readJsonc } from './jsonc.ts';
-import { BACKLOG_CONFIG, commentsDir } from './layout.ts';
+import { BACKLOG_CONFIG, commentsDir, GITATTRIBUTES } from './layout.ts';
 
 /**
  * Eine geladene Entität. `extra` sind die unbekannten Top-Level-Keys samt Werten in
@@ -44,7 +44,32 @@ export type BacklogSnapshot = {
   repos: Map<string, StoredEntity<Repo>>;
   issues: Map<string, StoredEntity<Issue>>;
   problems: Problem[];
+  /** Inhalt von `.gitattributes`; `undefined`, wenn die Datei fehlt. */
+  attributes: string | undefined;
 };
+
+type NamedKind = 'user' | 'project' | 'sprint' | 'repo';
+
+/** Wo die Dateien einer benannten Entitätsart liegen und wie ihr Name aus dem Pfad geprüft wird. */
+const NAMED: Record<
+  NamedKind,
+  { dir: string; deep: boolean; valid: (name: string) => boolean; label: string }
+> = {
+  user: { dir: 'users', deep: false, valid: isHandle, label: 'Handle' },
+  project: { dir: 'projects', deep: true, valid: isProjectPath, label: 'Projekt-Pfad' },
+  sprint: { dir: 'sprints', deep: false, valid: isSprintSlug, label: 'Sprint-Slug' },
+  repo: { dir: 'repos', deep: false, valid: isRepoName, label: 'Repo-Name' },
+};
+const NAMED_KINDS: readonly NamedKind[] = ['user', 'project', 'sprint', 'repo'];
+const MAP_OF = {
+  user: 'users',
+  project: 'projects',
+  sprint: 'sprints',
+  repo: 'repos',
+  issue: 'issues',
+} as const satisfies Record<NamedKind | 'issue', keyof BacklogSnapshot>;
+/** Reihenfolge der Entitätsarten in `problems`, wie `loadSnapshot` sie lädt. */
+const PROBLEM_ORDER: readonly EntityKind[] = ['user', 'project', 'sprint', 'repo', 'issue'];
 
 // --- Dateisystem-Helfer ------------------------------------------------------------------
 
@@ -118,7 +143,7 @@ async function readEntity<T>(
   return parseStored<T>(await readFile(join(root, path), 'utf8'), path, kind);
 }
 
-function parseStored<T>(text: string, path: string, kind: EntityKind): StoredEntity<T> {
+export function parseStored<T>(text: string, path: string, kind: EntityKind): StoredEntity<T> {
   const parsed = parseEntityFile(text, path);
   const { data, unknownKeys } = validateEntity(kind, parsed.data, path);
   const extra = entriesInFileOrder(parsed, unknownKeys);
@@ -178,24 +203,38 @@ function sortedMap<T>(entries: Iterable<[string, T]>): Map<string, T> {
   return new Map([...entries].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
-/** Lädt alle Dateien unter `dir`, deren aus dem Pfad abgeleiteter Name `valid` besteht. */
+/**
+ * Name der Entität aus ihrem Pfad unter `NAMED[kind].dir`; ist er ungültig, ein Problem ohne
+ * `key` und `undefined`.
+ */
+function nameOf(kind: NamedKind, path: string, problems: Problem[]): string | undefined {
+  const { dir, valid, label } = NAMED[kind];
+  const name = path.slice(dir.length + 1, -'.md'.length);
+  if (valid(name)) return name;
+  problems.push({ path, message: `${path}: ungültiger ${label} »${name}«`, kind });
+  return undefined;
+}
+
+/** Die benannte Entitätsart, deren Verzeichnis `loadSnapshot` die Datei `path` entnähme. */
+function namedKindOf(path: string): NamedKind | undefined {
+  return NAMED_KINDS.find((kind) => {
+    const { dir, deep } = NAMED[kind];
+    if (!path.startsWith(`${dir}/`) || !path.endsWith('.md')) return false;
+    return deep || !path.slice(dir.length + 1).includes('/');
+  });
+}
+
+/** Lädt alle Dateien einer benannten Entitätsart, deren aus dem Pfad abgeleiteter Name gültig ist. */
 async function loadNamed<T>(
   root: string,
-  dir: string,
-  kind: EntityKind,
-  deep: boolean,
-  valid: (name: string) => boolean,
-  label: string,
+  kind: NamedKind,
   problems: Problem[],
 ): Promise<Map<string, StoredEntity<T>>> {
+  const { dir, deep } = NAMED[kind];
   const candidates: { path: string; name: string }[] = [];
   for (const path of await listMarkdown(root, dir, deep)) {
-    const name = path.slice(dir.length + 1, -'.md'.length);
-    if (valid(name)) {
-      candidates.push({ path, name });
-    } else {
-      problems.push({ path, message: `${path}: ungültiger ${label} »${name}«`, kind });
-    }
+    const name = nameOf(kind, path, problems);
+    if (name !== undefined) candidates.push({ path, name });
   }
   const loaded = await mapPool(candidates, MAX_CONCURRENT_READS, async ({ path, name }) => {
     const entity = await tryEntity<T>(root, path, kind, name, problems);
@@ -204,20 +243,14 @@ async function loadNamed<T>(
   return sortedMap(loaded.filter((e) => e !== undefined));
 }
 
-async function loadProjects(
-  root: string,
+/**
+ * Behält nur Projekte, deren Elternprojekt (selbst angenommen) existiert (§2.9); die übrigen
+ * werden Probleme. Eltern zuerst, damit ein verworfenes Projekt auch seine Unterprojekte verwirft.
+ */
+function acceptProjects(
+  loaded: ReadonlyMap<string, StoredEntity<Project>>,
   problems: Problem[],
-): Promise<Map<string, StoredEntity<Project>>> {
-  const loaded = await loadNamed<Project>(
-    root,
-    'projects',
-    'project',
-    true,
-    isProjectPath,
-    'Projekt-Pfad',
-    problems,
-  );
-  // Eltern zuerst: ein Unterprojekt braucht ein (selbst gültiges) Elternprojekt (§2.9).
+): Map<string, StoredEntity<Project>> {
   const byDepth = [...loaded].sort(([a], [b]) => a.split('/').length - b.split('/').length);
   const accepted = new Map<string, StoredEntity<Project>>();
   for (const [name, entity] of byDepth) {
@@ -235,6 +268,63 @@ async function loadProjects(
     accepted.set(name, entity);
   }
   return sortedMap(accepted);
+}
+
+async function loadProjects(
+  root: string,
+  problems: Problem[],
+): Promise<Map<string, StoredEntity<Project>>> {
+  return acceptProjects(await loadNamed<Project>(root, 'project', problems), problems);
+}
+
+/** Shard und Verzeichnisname, wenn `path` die Form `issues/<shard>/<dir>/issue.md` hat. */
+function issueCandidate(path: string): { shard: string; id: string } | undefined {
+  const [top, shard, id, file, ...rest] = path.split('/');
+  if (top !== 'issues' || file !== 'issue.md' || rest.length > 0) return undefined;
+  if (shard === undefined || shard === '' || id === undefined || id === '') return undefined;
+  return { shard, id };
+}
+
+/**
+ * Prüft Verzeichnis, Shard und Inhalt einer `issue.md`; jeder Fehler wird ein Problem. Ohne
+ * gültige Issue-ID im Verzeichnisnamen hat das Problem keinen `key`.
+ */
+function parseIssue(
+  path: string,
+  shard: string,
+  id: string,
+  text: string,
+  problems: Problem[],
+): [string, StoredEntity<Issue>] | undefined {
+  if (!isIssueId(id)) {
+    problems.push({
+      path,
+      message: `${path}: Verzeichnisname »${id}« ist keine Issue-ID`,
+      kind: 'issue',
+    });
+    return undefined;
+  }
+  if (shardOf(id) !== shard) {
+    problems.push({
+      path,
+      message: `${path}: Issue »${id}« gehört in den Shard »${shardOf(id)}«, nicht »${shard}«`,
+      kind: 'issue',
+      key: id,
+    });
+    return undefined;
+  }
+  const entity = tryParse<Issue>(text, path, 'issue', id, problems);
+  if (!entity) return undefined;
+  if (entity.data.id !== id) {
+    problems.push({
+      path,
+      message: `${path}: id »${entity.data.id}« passt nicht zum Verzeichnis »${id}«`,
+      kind: 'issue',
+      key: id,
+    });
+    return undefined;
+  }
+  return [id, entity];
 }
 
 async function loadIssues(
@@ -272,35 +362,7 @@ async function loadIssues(
         }
         throw err;
       }
-      if (!isIssueId(id)) {
-        problems.push({
-          path,
-          message: `${path}: Verzeichnisname »${id}« ist keine Issue-ID`,
-          kind: 'issue',
-        });
-        return undefined;
-      }
-      if (shardOf(id) !== shard) {
-        problems.push({
-          path,
-          message: `${path}: Issue »${id}« gehört in den Shard »${shardOf(id)}«, nicht »${shard}«`,
-          kind: 'issue',
-          key: id,
-        });
-        return undefined;
-      }
-      const entity = tryParse<Issue>(text, path, 'issue', id, problems);
-      if (!entity) return undefined;
-      if (entity.data.id !== id) {
-        problems.push({
-          path,
-          message: `${path}: id »${entity.data.id}« passt nicht zum Verzeichnis »${id}«`,
-          kind: 'issue',
-          key: id,
-        });
-        return undefined;
-      }
-      return [id, entity];
+      return parseIssue(path, shard, id, text, problems);
     },
   );
   return sortedMap(loaded.filter((e) => e !== undefined));
@@ -332,27 +394,115 @@ async function loadConfig(root: string): Promise<BacklogConfig> {
   return result.data;
 }
 
-/** Lädt Config und alle Entitäten außer Kommentaren und Anhängen. */
+async function loadAttributes(root: string): Promise<string | undefined> {
+  try {
+    return await readFile(join(root, GITATTRIBUTES), 'utf8');
+  } catch (err) {
+    if (isMissing(err) || (err as NodeJS.ErrnoException | undefined)?.code === 'EISDIR') {
+      return undefined;
+    }
+    throw err;
+  }
+}
+
+/** Lädt Config, `.gitattributes` und alle Entitäten außer Kommentaren und Anhängen. */
 export async function loadSnapshot(root: string): Promise<BacklogSnapshot> {
   const config = await loadConfig(root);
   const problems: Problem[] = [];
-  const users = await withSortedProblems(problems, (p) =>
-    loadNamed<User>(root, 'users', 'user', false, isHandle, 'Handle', p),
-  );
+  const users = await withSortedProblems(problems, (p) => loadNamed<User>(root, 'user', p));
   const projects = await withSortedProblems(problems, (p) => loadProjects(root, p));
-  const sprints = await withSortedProblems(problems, (p) =>
-    loadNamed<Sprint>(root, 'sprints', 'sprint', false, isSprintSlug, 'Sprint-Slug', p),
-  );
-  const repos = await withSortedProblems(problems, (p) =>
-    loadNamed<Repo>(root, 'repos', 'repo', false, isRepoName, 'Repo-Name', p),
-  );
+  const sprints = await withSortedProblems(problems, (p) => loadNamed<Sprint>(root, 'sprint', p));
+  const repos = await withSortedProblems(problems, (p) => loadNamed<Repo>(root, 'repo', p));
   const issues = await withSortedProblems(problems, (p) => loadIssues(root, p));
-  return { config, users, projects, sprints, repos, issues, problems };
+  const attributes = await loadAttributes(root);
+  return { config, users, projects, sprints, repos, issues, problems, attributes };
+}
+
+/**
+ * Der Snapshot `s` mit anderem Inhalt an den Pfaden `files` (`null` = Datei fehlt), rein und ohne
+ * `s` zu verändern. Jeder Pfad wird geparst und geprüft wie von `loadSnapshot`; seine bisherige
+ * Entität und seine bisherigen Probleme entfallen. `.gitattributes` wird `attributes`; Pfade, die
+ * `loadSnapshot` nicht liest (Kommentare, Anhänge, Config, fremde Dateien), ändern nichts.
+ * Unterprojekte ohne Elternprojekt werden wie beim Laden zu Problemen. Ein Unterprojekt, das
+ * schon in `s` mangels Elternprojekt verworfen war, bleibt verworfen, solange seine eigene Datei
+ * nicht in `files` steht: Sein Inhalt liegt dem Snapshot nicht vor.
+ */
+export function snapshotAt(
+  s: BacklogSnapshot,
+  files: readonly { path: string; content: string | null }[],
+): BacklogSnapshot {
+  type AnyMap = Map<string, StoredEntity<unknown>>;
+  const maps: Partial<Record<NamedKind | 'issue', AnyMap>> = {};
+  const mapOf = (kind: NamedKind | 'issue'): AnyMap => {
+    maps[kind] ??= new Map(s[MAP_OF[kind]] as AnyMap);
+    return maps[kind];
+  };
+  const reparsed = new Set<string>();
+  const fresh: Problem[] = [];
+  let attributes = s.attributes;
+
+  for (const { path, content } of files) {
+    if (path === GITATTRIBUTES) {
+      attributes = content ?? undefined;
+      continue;
+    }
+    const named = namedKindOf(path);
+    const issue = named === undefined ? issueCandidate(path) : undefined;
+    let key: string;
+    let parse: (text: string) => [string, StoredEntity<unknown>] | undefined;
+    if (named !== undefined) {
+      key = path.slice(NAMED[named].dir.length + 1, -'.md'.length);
+      parse = (text) => parseNamedText(named, path, text, fresh);
+    } else if (issue !== undefined) {
+      key = issue.id;
+      parse = (text) => parseIssue(path, issue.shard, issue.id, text, fresh);
+    } else {
+      continue;
+    }
+    reparsed.add(path);
+    const map = mapOf(named ?? 'issue');
+    // Nur die Entität genau dieses Pfads; ein falsch abgelegtes Issue lässt das echte stehen.
+    if (map.get(key)?.path === path) map.delete(key);
+    const entry = content === null ? undefined : parse(content);
+    if (entry !== undefined) map.set(entry[0], entry[1]);
+  }
+
+  const next: BacklogSnapshot = { ...s, attributes };
+  for (const kind of [...NAMED_KINDS, 'issue'] as const) {
+    const map = maps[kind];
+    if (map === undefined) continue;
+    const sorted =
+      kind === 'project'
+        ? acceptProjects(map as Map<string, StoredEntity<Project>>, fresh)
+        : sortedMap(map);
+    (next as Record<string, unknown>)[MAP_OF[kind]] = sorted;
+  }
+  const rank = (p: Problem) => {
+    const i = p.kind === undefined ? -1 : PROBLEM_ORDER.indexOf(p.kind);
+    return i < 0 ? PROBLEM_ORDER.length : i;
+  };
+  next.problems = [...s.problems.filter((p) => !reparsed.has(p.path)), ...fresh].sort(
+    (a, b) => rank(a) - rank(b) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0),
+  );
+  return next;
+}
+
+/** Wie `loadNamed` für eine einzelne Datei mit bekanntem Inhalt. */
+function parseNamedText(
+  kind: NamedKind,
+  path: string,
+  text: string,
+  problems: Problem[],
+): [string, StoredEntity<unknown>] | undefined {
+  const name = nameOf(kind, path, problems);
+  if (name === undefined) return undefined;
+  const entity = tryParse<unknown>(text, path, kind, name, problems);
+  return entity === undefined ? undefined : [name, entity];
 }
 
 /** Lädt nur `repos/`, ohne die Backlog-Config zu verlangen; kaputte Dateien fehlen in der Map. */
 export async function loadRepoRegistry(root: string): Promise<Map<string, StoredEntity<Repo>>> {
-  return loadNamed<Repo>(root, 'repos', 'repo', false, isRepoName, 'Repo-Name', []);
+  return loadNamed<Repo>(root, 'repo', []);
 }
 
 /** Kommentare eines Issues, chronologisch nach Dateiname; ein kaputter Kommentar wirft. */

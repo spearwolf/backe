@@ -116,6 +116,7 @@ export function snap(spec: SnapSpec = {}): BacklogSnapshot {
     ),
     issues: sortedByKey(issues),
     problems: [],
+    attributes: undefined,
   };
 }
 

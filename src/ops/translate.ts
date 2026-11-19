@@ -16,7 +16,7 @@ import {
 } from '../core/schemas.ts';
 import { planTransition } from '../core/state.ts';
 import { canonicalBody, entriesInFileOrder, parseEntityFile } from '../store/frontmatter.ts';
-import { classifyPath, parseCommentFileName } from '../store/layout.ts';
+import { classifyPath, misplacedIssueFile, parseCommentFileName } from '../store/layout.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { sameValue, violation } from './invariants.ts';
 import { bodyHash, type Operation, type OpOf } from './operation.ts';
@@ -379,10 +379,48 @@ function removeEntity(kind: NamedKind, key: string): Outcome {
 
 // --- Reihenfolge ---------------------------------------------------------------------------
 
+/** Binärer Min-Heap über Strings: `pop` liefert jeweils den kleinsten. */
+class MinHeap {
+  readonly #items: string[] = [];
+
+  push(item: string): void {
+    const items = this.#items;
+    items.push(item);
+    let i = items.length - 1;
+    while (i > 0) {
+      const up = (i - 1) >> 1;
+      if ((items[up] as string) <= item) break;
+      items[i] = items[up] as string;
+      i = up;
+    }
+    items[i] = item;
+  }
+
+  pop(): string | undefined {
+    const items = this.#items;
+    const top = items[0];
+    const last = items.pop();
+    if (items.length === 0 || last === undefined) return top;
+    let i = 0;
+    for (;;) {
+      const left = 2 * i + 1;
+      if (left >= items.length) break;
+      const right = left + 1;
+      const child =
+        right < items.length && (items[right] as string) < (items[left] as string) ? right : left;
+      if ((items[child] as string) >= last) break;
+      items[i] = items[child] as string;
+      i = child;
+    }
+    items[i] = last;
+    return top;
+  }
+}
+
 /**
  * Topologische Reihenfolge (Kahn, iterativ): `prerequisites(id)` nennt, was vor `id` stehen muss;
- * nur IDs aus `ids` zählen. Bei Gleichstand die kleinste ID zuerst. `stuck` sind die IDs, die in
- * einem Zyklus hängen, sortiert.
+ * nur IDs aus `ids` zählen. Unter den jeweils freien IDs kommt die kleinste zuerst (Min-Heap),
+ * also O(e + n log n). `stuck` sind die IDs, die in einem Zyklus hängen, sortiert.
  */
 function topoOrder(
   ids: readonly string[],
@@ -391,26 +429,31 @@ function topoOrder(
   const members = new Set(ids);
   const pending = new Map<string, number>();
   const dependents = new Map<string, string[]>();
-  for (const id of ids) {
-    const pre = [...new Set(prerequisites(id))].filter((p) => members.has(p) && p !== id);
-    pending.set(id, pre.length);
-    for (const p of pre) dependents.set(p, [...(dependents.get(p) ?? []), id]);
+  for (const id of members) {
+    const pre = new Set(prerequisites(id));
+    let count = 0;
+    for (const p of pre) {
+      if (!members.has(p) || p === id) continue;
+      count++;
+      const list = dependents.get(p);
+      if (list === undefined) dependents.set(p, [id]);
+      else list.push(id);
+    }
+    pending.set(id, count);
   }
-  const ready = ids.filter((id) => pending.get(id) === 0).sort(compare);
+  const ready = new MinHeap();
+  for (const id of members) if (pending.get(id) === 0) ready.push(id);
   const order: string[] = [];
-  for (let id = ready.shift(); id !== undefined; id = ready.shift()) {
+  for (let id = ready.pop(); id !== undefined; id = ready.pop()) {
     order.push(id);
     for (const dep of dependents.get(id) ?? []) {
       const left = (pending.get(dep) as number) - 1;
       pending.set(dep, left);
-      if (left === 0) {
-        ready.push(dep);
-        ready.sort(compare);
-      }
+      if (left === 0) ready.push(dep);
     }
   }
   const done = new Set(order);
-  return { order, stuck: ids.filter((id) => !done.has(id)).sort(compare) };
+  return { order, stuck: [...members].filter((id) => !done.has(id)).sort(compare) };
 }
 
 /** Neue Issues so, dass `parent`, `depends_on` und `blocked_by` unter ihnen vorher entstehen. */
@@ -432,25 +475,59 @@ function orderCreates(creates: ReadonlyMap<string, OpOf<'issue.create'>>): Opera
   return order.map((id) => creates.get(id) as Operation);
 }
 
-/**
- * IDs aus `parents` (je Issue seine Parents vorher und nachher), Sub-Issues vor ihrem Parent; was
- * in einem Parent-Zyklus hängt, zuletzt.
- */
-function childrenFirst(parents: ReadonlyMap<string, readonly (string | undefined)[]>): string[] {
-  const children = new Map<string, string[]>();
-  for (const [id, list] of parents) {
-    for (const parent of new Set(list)) {
-      if (parent !== undefined) children.set(parent, [...(children.get(parent) ?? []), id]);
-    }
-  }
-  const { order, stuck } = topoOrder([...parents.keys()], (id) => children.get(id) ?? []);
-  return [...order, ...stuck];
-}
-
 /** Gelöschte Issues, Sub-Issues vor ihrem Parent (sonst scheitert der Parent an `has_children`). */
 function orderDeletes(deleted: ReadonlyMap<string, Issue>): Operation[] {
-  const parents = new Map([...deleted].map(([id, issue]) => [id, [issue.parent]]));
-  return childrenFirst(parents).map((id): Operation => ({ op: 'issue.delete', id, force: true }));
+  const children = new Map<string, string[]>();
+  for (const [id, { parent }] of deleted) {
+    if (parent === undefined) continue;
+    const list = children.get(parent);
+    if (list === undefined) children.set(parent, [id]);
+    else list.push(id);
+  }
+  const { order, stuck } = topoOrder([...deleted.keys()], (id) => children.get(id) ?? []);
+  return [...order, ...stuck].map((id): Operation => ({ op: 'issue.delete', id, force: true }));
+}
+
+/**
+ * Reihenfolge geänderter Issues (`parents`: je Issue sein Parent vorher und nachher), was in
+ * einem Zyklus hängt, zuletzt:
+ * - Ein Issue mit unverändertem Parent steht vor diesem, ein umgehängtes vor seinem alten
+ *   Parent: Ein Parent auf `done` scheitert sonst an offenen Sub-Issues.
+ * - Ein umgehängtes Issue steht hinter den geänderten Issues seiner neuen Vorfahrenkette (Baum
+ *   nach dem Edit, Wurzeln zuerst), damit Zyklus- und done-Prüfung den Endstand dieser Kette
+ *   sehen; getauschte Parents gelingen so unabhängig von den IDs (backe.md §2.13). Ist der alte
+ *   Parent selbst ein solcher Vorfahr, gilt nur diese Regel.
+ */
+function orderChanges(
+  s: BacklogSnapshot,
+  parents: ReadonlyMap<string, readonly [string | undefined, string | undefined]>,
+): string[] {
+  const parentAfter = (id: string): string | undefined =>
+    parents.has(id) ? parents.get(id)?.[1] : s.issues.get(id)?.data.parent;
+  const moved = (id: string): boolean => {
+    const pair = parents.get(id);
+    return pair !== undefined && pair[0] !== pair[1];
+  };
+  const before = new Map<string, string[]>();
+  const first = (id: string, pre: string): void => {
+    const list = before.get(id);
+    if (list === undefined) before.set(id, [pre]);
+    else list.push(pre);
+  };
+  for (const [id, [was, now]] of parents) {
+    if (!moved(id)) {
+      if (now !== undefined) first(now, id);
+      continue;
+    }
+    const chain = new Set<string>();
+    for (let a = now; a !== undefined && a !== id && !chain.has(a); a = parentAfter(a)) {
+      chain.add(a);
+      if (parents.has(a)) first(id, a);
+    }
+    if (was !== undefined && !chain.has(was)) first(was, id);
+  }
+  const { order, stuck } = topoOrder([...parents.keys()], (id) => before.get(id) ?? []);
+  return [...order, ...stuck];
 }
 
 const byPath = (a: Item, b: Item) => compare(a.path, b.path);
@@ -476,7 +553,8 @@ function userTier(before: User | undefined, after: User | undefined): number {
  * geparst und geprüft; Fehler tragen `datei:zeile`. Jeder Pfad darf nur einmal vorkommen.
  * Reihenfolge der Operationen: Users (neue Menschen, neue Agents, Änderungen) → Projekte (flach
  * vor tief) → Sprints → Repos → neue Issues (topologisch) → Issue-Änderungen (Sub-Issues vor dem
- * Parent) → Kommentare → gelöschte Issues (Sub-Issues vor dem Parent) → gelöschte Repos,
+ * Parent, Umgehängte nach dem Baum hinter dem Edit, siehe `orderChanges`) → Kommentare →
+ * gelöschte Issues (Sub-Issues vor dem Parent) → gelöschte Repos,
  * Projekte (tief vor flach), Users (Agents zuerst).
  */
 export function translateEdits(
@@ -492,7 +570,10 @@ export function translateEdits(
   const removed: Record<NamedKind, Item[]> = { user: [], project: [], sprint: [], repo: [] };
   const creates = new Map<string, OpOf<'issue.create'>>();
   /** Geänderte Issues: Ops und die Parents vorher und nachher, für die Reihenfolge. */
-  const changes = new Map<string, { ops: Operation[]; parents: (string | undefined)[] }>();
+  const changes = new Map<
+    string,
+    { ops: Operation[]; parents: [string | undefined, string | undefined] }
+  >();
   const comments: Item[] = [];
   const deletes = new Map<string, Issue>();
 
@@ -512,6 +593,15 @@ export function translateEdits(
     const { path } = f;
     if (f.before === null && f.after === null) continue;
     const cls = classifyPath(path);
+    const misplaced = f.after === null ? undefined : misplacedIssueFile(path);
+    if (misplaced !== undefined) {
+      throw new BackeError(
+        'validation',
+        misplaced.expected === undefined
+          ? `${path}: kein gültiges Issue-Verzeichnis`
+          : `${path}: Issue gehört nach ${misplaced.expected}`,
+      );
+    }
     if ((cls.kind === 'comment' || cls.kind === 'attachment') && deletedIssues.has(cls.id)) {
       if (f.after === null || f.before === f.after) continue;
       // Sonst landete der neue Inhalt im Commit und `issue.delete` entfernte ihn gleich wieder.
@@ -604,8 +694,7 @@ export function translateEdits(
     ...flat(named.sprint.sort(byPath)),
     ...flat(named.repo.sort(byPath)),
     ...orderCreates(creates),
-    // Sub-Issues vor ihrem Parent: Ein Parent auf `done` scheitert sonst an offenen Sub-Issues.
-    ...childrenFirst(parentsOf).flatMap((id) => (changes.get(id) as { ops: Operation[] }).ops),
+    ...orderChanges(s, parentsOf).flatMap((id) => (changes.get(id) as { ops: Operation[] }).ops),
     ...flat(comments.sort(byPath)),
     ...orderDeletes(deletes),
     ...flat(removed.repo.sort(byPath)),

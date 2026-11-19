@@ -6,7 +6,8 @@
 import { BackeError } from '../core/errors.ts';
 import type { Issue } from '../core/schemas.ts';
 import { isSettled } from '../core/state.ts';
-import type { BacklogSnapshot } from '../store/snapshot.ts';
+import type { BacklogSnapshot, StoredEntity } from '../store/snapshot.ts';
+import { LayeredMap } from './layered-map.ts';
 import { compareIssues } from './order.ts';
 
 export type IssueGraph = {
@@ -16,12 +17,27 @@ export type IssueGraph = {
   dependents: ReadonlyMap<string, readonly string[]>;
 };
 
-const graphCache = new WeakMap<BacklogSnapshot['issues'], IssueGraph>();
+type Issues = BacklogSnapshot['issues'];
+const graphCache = new WeakMap<Issues, IssueGraph>();
 
-/** Berechnet die Gegenrichtungen einmal je Snapshot; Snapshots gelten als unveränderlich. */
+/**
+ * Berechnet die Gegenrichtungen einmal je Snapshot; Snapshots gelten als unveränderlich. Für die
+ * Sicht eines Drafts (`LayeredMap`) entsteht der Graph aus dem der Basis plus den Änderungen,
+ * ohne den ganzen Bestand erneut zu durchlaufen.
+ */
 export function graphOf(s: BacklogSnapshot): IssueGraph {
-  const cached = graphCache.get(s.issues);
+  return graphOfIssues(s.issues);
+}
+
+function graphOfIssues(issues: Issues): IssueGraph {
+  const cached = graphCache.get(issues);
   if (cached) return cached;
+  const graph = issues instanceof LayeredMap ? patchedGraph(issues) : builtGraph(issues);
+  graphCache.set(issues, graph);
+  return graph;
+}
+
+function builtGraph(issues: Issues): IssueGraph {
   const children = new Map<string, Issue[]>();
   const dependents = new Map<string, Issue[]>();
   const push = (map: Map<string, Issue[]>, key: string, issue: Issue): void => {
@@ -29,15 +45,132 @@ export function graphOf(s: BacklogSnapshot): IssueGraph {
     if (list) list.push(issue);
     else map.set(key, [issue]);
   };
-  for (const { data } of s.issues.values()) {
+  for (const { data } of issues.values()) {
     if (data.parent !== undefined) push(children, data.parent, data);
     for (const dep of data.depends_on ?? []) push(dependents, dep, data);
   }
   const ids = (map: Map<string, Issue[]>): Map<string, string[]> =>
     new Map([...map].map(([k, v]) => [k, v.sort(compareIssues).map((i) => i.id)]));
-  const graph: IssueGraph = { children: ids(children), dependents: ids(dependents) };
-  graphCache.set(s.issues, graph);
-  return graph;
+  return { children: ids(children), dependents: ids(dependents) };
+}
+
+const sameList = (a: readonly string[], b: readonly string[]): boolean =>
+  a.length === b.length && a.every((x, i) => x === b[i]);
+const parentOf = (issue: Issue | undefined): readonly string[] =>
+  issue?.parent === undefined ? [] : [issue.parent];
+const dependsOf = (issue: Issue | undefined): readonly string[] => issue?.depends_on ?? [];
+
+/**
+ * Graph einer `LayeredMap` aus dem Graph ihrer Basis: Neu berechnet werden nur die Listen der
+ * Schlüssel, die ein geändertes Issue vorher oder nachher nennt.
+ */
+function patchedGraph(issues: LayeredMap<StoredEntity<Issue>>): IssueGraph {
+  const base = graphOfIssues(issues.base as Issues);
+  const patch = (
+    lists: ReadonlyMap<string, readonly string[]>,
+    targets: (issue: Issue | undefined) => readonly string[],
+  ): ReadonlyMap<string, readonly string[]> => {
+    // Betroffen sind die Listen, in die ein Issue ein- oder austritt oder in denen es wegen
+    // eines neuen `rank` (oder `created`) anders einsortiert wird.
+    const affected = new Set<string>();
+    for (const [id, now] of issues.changes) {
+      const was = issues.base.get(id)?.data;
+      const before = targets(was);
+      const after = targets(now?.data);
+      const resorted = was?.rank !== now?.data.rank || was?.created !== now?.data.created;
+      if (!resorted && sameList(before, after)) continue;
+      for (const t of before) affected.add(t);
+      for (const t of after) affected.add(t);
+    }
+    if (affected.size === 0) return lists;
+    const fresh = new Map<string, Issue[]>([...affected].map((t) => [t, []]));
+    for (const t of affected) {
+      for (const id of lists.get(t) ?? []) {
+        const issue = issues.base.get(id)?.data;
+        if (!issues.changes.has(id) && issue !== undefined) fresh.get(t)?.push(issue);
+      }
+    }
+    for (const now of issues.changes.values()) {
+      if (now === undefined) continue;
+      for (const t of targets(now.data)) fresh.get(t)?.push(now.data);
+    }
+    const overrides = new Map(
+      [...fresh].map(([t, list]) => [t, list.sort(compareIssues).map((i) => i.id)]),
+    );
+    return new OverriddenMap(lists, overrides);
+  };
+  return {
+    children: patch(base.children, parentOf),
+    dependents: patch(base.dependents, dependsOf),
+  };
+}
+
+/** `base` mit ersetzten Listen; eine leere Liste heißt »kein Eintrag«, wie im gebauten Graph. */
+class OverriddenMap implements ReadonlyMap<string, readonly string[]> {
+  readonly #base: ReadonlyMap<string, readonly string[]>;
+  readonly #overrides: ReadonlyMap<string, readonly string[]>;
+  #merged: Map<string, readonly string[]> | undefined;
+
+  constructor(
+    base: ReadonlyMap<string, readonly string[]>,
+    overrides: ReadonlyMap<string, readonly string[]>,
+  ) {
+    this.#base = base;
+    this.#overrides = overrides;
+  }
+
+  get(key: string): readonly string[] | undefined {
+    const own = this.#overrides.get(key);
+    if (own === undefined) return this.#base.get(key);
+    return own.length > 0 ? own : undefined;
+  }
+
+  has(key: string): boolean {
+    return this.get(key) !== undefined;
+  }
+
+  get size(): number {
+    return this.#map().size;
+  }
+
+  forEach(
+    fn: (
+      value: readonly string[],
+      key: string,
+      map: ReadonlyMap<string, readonly string[]>,
+    ) => void,
+    thisArg?: unknown,
+  ): void {
+    for (const [key, value] of this.#map()) fn.call(thisArg, value, key, this);
+  }
+
+  entries(): MapIterator<[string, readonly string[]]> {
+    return this.#map().entries();
+  }
+
+  keys(): MapIterator<string> {
+    return this.#map().keys();
+  }
+
+  values(): MapIterator<readonly string[]> {
+    return this.#map().values();
+  }
+
+  [Symbol.iterator](): MapIterator<[string, readonly string[]]> {
+    return this.entries();
+  }
+
+  #map(): Map<string, readonly string[]> {
+    if (this.#merged === undefined) {
+      const merged = new Map(this.#base);
+      for (const [key, list] of this.#overrides) {
+        if (list.length > 0) merged.set(key, list);
+        else merged.delete(key);
+      }
+      this.#merged = merged;
+    }
+    return this.#merged;
+  }
 }
 
 function lookup(s: BacklogSnapshot, id: string): Issue {

@@ -7,6 +7,9 @@ import { IssueSchema } from '../core/schemas.ts';
 
 export const BACKLOG_CONFIG = '.backe/backlog.jsonc';
 export const QUARANTINE = '.backe/quarantine.jsonc';
+export const GITATTRIBUTES = '.gitattributes';
+/** Zeile in `.gitattributes`, die Datei-Anhänge an Git LFS gibt (backe.md §2.8). */
+export const LFS_RULE = 'issues/*/*/attachments/** filter=lfs diff=lfs merge=lfs -text';
 /** Lokaler, nie eingecheckter Zustand (allowed_signers, Caches, Locks). */
 export const localStateDir = '.git/backe';
 
@@ -92,6 +95,19 @@ function classifyIssuePath(parts: readonly string[]): PathClass {
     return { kind: 'attachment', id, file };
   }
   return { kind: 'other' };
+}
+
+/**
+ * Für ein `issues/<x>/<id>/issue.md`, das nicht dem Layout entspricht: `expected` ist der Pfad,
+ * an den das Issue gehört, oder `undefined`, wenn `<id>` keine Issue-ID ist. Für jeden anderen
+ * Pfad, auch ein richtig liegendes Issue, `undefined`.
+ */
+export function misplacedIssueFile(path: string): { expected: string | undefined } | undefined {
+  const parts = path.split('/');
+  if (parts.length !== 4 || parts[0] !== 'issues' || parts[3] !== 'issue.md') return undefined;
+  const [, shard, id = ''] = parts;
+  if (!isIssueId(id)) return { expected: undefined };
+  return shardOf(id) === shard ? undefined : { expected: issueFile(id) };
 }
 
 /**

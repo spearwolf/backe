@@ -1,5 +1,7 @@
 import { catchErr } from '../../test/helpers/catch.ts';
 import { I, type SnapSpec, snap } from '../../test/helpers/snapshot.ts';
+import type { Issue } from '../core/schemas.ts';
+import type { StoredEntity } from '../store/snapshot.ts';
 import {
   ancestors,
   findCycle,
@@ -13,6 +15,7 @@ import {
   type Readiness,
   readiness,
 } from './graph.ts';
+import { LayeredMap } from './layered-map.ts';
 
 type SnapIssue = NonNullable<SnapSpec['issues']>[number];
 type CycleField = 'parent' | 'depends_on' | 'blocked_by';
@@ -522,5 +525,59 @@ describe('graphOf', () => {
     expect(g.children.get(I(1))).toEqual([I(3), I(2)]);
     expect(g.children.get(I(4))).toBeUndefined();
     expect(graphOf(s)).toBe(g);
+  });
+});
+
+describe('graphOf on a draft view', () => {
+  test('patches the base graph to what a fresh build yields', () => {
+    const s = snap({
+      issues: [
+        { id: I(1) },
+        { id: I(2), parent: I(1), rank: 2000 },
+        { id: I(3), parent: I(1), rank: 1000, depends_on: [I(4)] },
+        { id: I(4), parent: I(2) },
+        { id: I(5), depends_on: [I(4)] },
+        { id: I(6), parent: I(5) },
+      ],
+    });
+    const at = (id: string, patch: Partial<Issue>): StoredEntity<Issue> => {
+      const e = s.issues.get(id) ?? (s.issues.get(I(1)) as StoredEntity<Issue>);
+      return { ...e, data: { ...e.data, id, ...patch } };
+    };
+    graphOf(s);
+    const view = new LayeredMap<StoredEntity<Issue>>(
+      s.issues,
+      new Map<string, StoredEntity<Issue> | undefined>([
+        [I(2), at(I(2), { rank: 500 })],
+        [I(4), at(I(4), { parent: I(5) })],
+        [I(5), at(I(5), { depends_on: undefined })],
+        [I(6), undefined],
+        [I(7), at(I(7), { parent: I(1), depends_on: [I(4), I(3)] })],
+      ]),
+    );
+    const patched = graphOf({ ...s, issues: view });
+    const built = graphOf({ ...s, issues: new Map(view) });
+    const sorted = (m: ReadonlyMap<string, readonly string[]>) =>
+      [...m.entries()].sort(([a], [b]) => (a < b ? -1 : 1));
+    expect(sorted(patched.children)).toEqual(sorted(built.children));
+    expect(sorted(patched.dependents)).toEqual(sorted(built.dependents));
+    expect(patched.children.get(I(1))).toEqual([I(2), I(3), I(7)]);
+    expect([patched.children.has(I(5)), patched.children.has(I(2))]).toEqual([true, false]);
+    expect(patched.children.size).toBe(built.children.size);
+    expect([...patched.dependents.keys()].sort()).toEqual([...built.dependents.keys()].sort());
+    expect([...patched.dependents.values()].length).toBe(built.dependents.size);
+    const visited: string[] = [];
+    patched.children.forEach((_, key) => {
+      visited.push(key);
+    });
+    expect(visited.sort()).toEqual([...built.children.keys()].sort());
+    expect([...patched.children].length).toBe(built.children.size);
+  });
+
+  test('a view without edge changes reuses the lists of the base', () => {
+    const s = snap({ issues: [{ id: I(1) }, { id: I(2), parent: I(1) }] });
+    const e = s.issues.get(I(2)) as StoredEntity<Issue>;
+    const view = new LayeredMap(s.issues, new Map([[I(2), { ...e, body: 'neu\n' }]]));
+    expect(graphOf({ ...s, issues: view }).children).toBe(graphOf(s).children);
   });
 });

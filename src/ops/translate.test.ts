@@ -561,6 +561,24 @@ describe('translateEdits', () => {
       expect(() => applyBatch(s, r.ops, ctx())).not.toThrow();
     });
 
+    test('independent new issues come in id order whatever order the files have', () => {
+      const ids = [17, 11, 19, 13, 10, 18, 12, 16, 14, 15].map(I);
+      const files = ids.map((id) =>
+        added(
+          issueFile(id),
+          issueText({
+            id,
+            title: 'N',
+            state: 'todo',
+            creator: 'spw',
+            created: '2026-11-19T08:00:00Z',
+          }),
+        ),
+      );
+      const r = translateEdits(s, files, asSpw);
+      expect(r.ops.map((o) => (o as { id: string }).id)).toEqual([...ids].sort());
+    });
+
     test('new issues that reference each other in a cycle cannot be ordered', () => {
       const issue = (n: number, extra: Record<string, unknown>) =>
         added(
@@ -973,6 +991,103 @@ describe('translateEdits', () => {
       expect(r.ops.map((o) => (o as { id: string }).id)).toEqual([I(22), I(21), I(20)]);
       const out = applyBatch(family, r.ops, ctx()).snapshot.issues;
       expect([...out.values()].map((e) => e.data.state)).toEqual(['done', 'done', 'done']);
+    });
+
+    test.each([
+      ['A before B', I(1), I(2)],
+      ['B before A', I(2), I(1)],
+    ])('swapped parents translate in an order that applies (%s)', (_, a, b) => {
+      const pair = snap({
+        issues: [
+          { id: a, title: 'A' },
+          { id: b, title: 'B', parent: a },
+        ],
+      });
+      const reparent = (id: string, parent: string | undefined) =>
+        edit(
+          issueFile(id),
+          (f) => {
+            const data = parseEntityFile(f, issueFile(id)).data as Record<string, unknown>;
+            const next = { ...data, parent };
+            if (parent === undefined) delete next.parent;
+            return serializeEntityFile('issue', next, '');
+          },
+          pair,
+        );
+      const r = translateEdits(pair, [reparent(a, b), reparent(b, undefined)], asSpw);
+      expect(r.ops.map((o) => (o as { id: string }).id)).toEqual([b, a]);
+      const out = applyBatch(pair, r.ops, ctx()).snapshot.issues;
+      expect([out.get(a)?.data.parent, out.get(b)?.data.parent]).toEqual([b, undefined]);
+    });
+
+    test.each([
+      ['ascending ids', [I(1), I(2), I(3)]],
+      ['descending ids', [I(3), I(2), I(1)]],
+    ])('a reversed chain applies roots of the new tree first (%s)', (_, ids) => {
+      const [top, mid, low] = ids as [string, string, string];
+      const chain = snap({
+        issues: [
+          { id: top, title: 'Oben' },
+          { id: mid, title: 'Mitte', parent: top },
+          { id: low, title: 'Unten', parent: mid },
+        ],
+      });
+      const reparent = (id: string, parent: string | undefined) =>
+        edit(
+          issueFile(id),
+          (f) => {
+            const data = parseEntityFile(f, issueFile(id)).data as Record<string, unknown>;
+            const next = { ...data, parent };
+            if (parent === undefined) delete next.parent;
+            return serializeEntityFile('issue', next, '');
+          },
+          chain,
+        );
+      const files = [reparent(top, mid), reparent(mid, low), reparent(low, undefined)];
+      const r = translateEdits(chain, files, asSpw);
+      expect(r.ops.map((o) => (o as { id: string }).id)).toEqual([low, mid, top]);
+      expect(() => applyBatch(chain, r.ops, ctx())).not.toThrow();
+    });
+
+    test('an issue in the wrong shard is a validation error', () => {
+      const err = catchErr(() =>
+        translateEdits(
+          s,
+          [
+            {
+              path: 'issues/zz/bk-7f3k2/issue.md',
+              before: null,
+              after: issueText({ id: 'bk-7f3k2' }),
+            },
+          ],
+          asSpw,
+        ),
+      );
+      expect(err.code).toBe('validation');
+      expect(err.message).toBe(
+        'issues/zz/bk-7f3k2/issue.md: Issue gehört nach issues/7f/bk-7f3k2/issue.md',
+      );
+    });
+
+    test('an issue file under a directory that is no issue id is a validation error', () => {
+      const path = 'issues/7f/kein-issue/issue.md';
+      const err = catchErr(() =>
+        translateEdits(s, [{ path, before: null, after: issueText({ id: 'bk-7f3k2' }) }], asSpw),
+      );
+      expect([err.code, err.message]).toEqual([
+        'validation',
+        `${path}: kein gültiges Issue-Verzeichnis`,
+      ]);
+    });
+
+    test('deleting a misplaced issue file is a manual edit', () => {
+      const path = 'issues/zz/bk-7f3k2/issue.md';
+      const r = translateEdits(
+        s,
+        [{ path, before: issueText({ id: 'bk-7f3k2' }), after: null }],
+        asSpw,
+      );
+      expect([r.ops, r.manual]).toEqual([[], [path]]);
     });
 
     test.each([

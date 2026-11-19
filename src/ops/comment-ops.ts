@@ -5,7 +5,7 @@
 import { BackeError } from '../core/errors.ts';
 import type { Comment, Issue } from '../core/schemas.ts';
 import { canonicalBody, serializeEntityFile } from '../store/frontmatter.ts';
-import { attachmentsDir, commentsDir } from '../store/layout.ts';
+import { attachmentsDir, commentsDir, LFS_RULE } from '../store/layout.ts';
 import type { StoredEntity } from '../store/snapshot.ts';
 import type { Draft } from './draft.ts';
 import { violation } from './invariants.ts';
@@ -61,6 +61,17 @@ export function commentDelete(d: Draft, op: OpOf<'comment.delete'>): OpOf<'comme
   return op;
 }
 
+/**
+ * Mit `attachments.lfs` gehört `LFS_RULE` in `.gitattributes` (backe.md §2.8): Fehlt eine Zeile,
+ * die genau so lautet, kommt sie ans Ende, nach einem fehlenden Schluss-Newline.
+ */
+function ensureLfsRule(d: Draft): void {
+  const current = d.snapshot.attributes ?? '';
+  if (current.split('\n').some((line) => line === LFS_RULE)) return;
+  const head = current === '' || current.endsWith('\n') ? current : `${current}\n`;
+  d.putAttributes(`${head}${LFS_RULE}\n`);
+}
+
 export function attachAdd(d: Draft, op: OpOf<'attach.add'>): OpOf<'attach.add'> {
   const issue = d.issue(op.id).data;
   const list = issue.attachments ?? [];
@@ -89,6 +100,7 @@ export function attachAdd(d: Draft, op: OpOf<'attach.add'>): OpOf<'attach.add'> 
       );
     }
     d.putFile(`${attachmentsDir(op.id)}/${op.file}`, content);
+    if (d.config.attachments.lfs) ensureLfsRule(d);
     entry = { name: op.name, file: op.file };
   } else {
     entry = { name: op.name, url: op.url as string };

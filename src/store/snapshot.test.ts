@@ -2,10 +2,17 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { copyFixture, fixture, tempDir } from '../../test/helpers/backlog.ts';
 import { catchErr, catchErrAsync } from '../../test/helpers/catch.ts';
+import { I, snap } from '../../test/helpers/snapshot.ts';
 import { serializeEntityFile } from './frontmatter.ts';
 import { readJsonc } from './jsonc.ts';
 import { BACKLOG_CONFIG, issueFile } from './layout.ts';
-import { listComments, listIssueIds, loadRepoRegistry, loadSnapshot } from './snapshot.ts';
+import {
+  listComments,
+  listIssueIds,
+  loadRepoRegistry,
+  loadSnapshot,
+  snapshotAt,
+} from './snapshot.ts';
 
 const readHook = vi.hoisted(() => ({
   fn: undefined as undefined | ((path: unknown, ...rest: unknown[]) => Promise<unknown>),
@@ -351,4 +358,99 @@ test('listIssueIds and listComments refuse malformed input', async () => {
   for (const id of ['../x', 'bk-../../etc', '']) {
     expect((await catchErrAsync(() => listComments(root, id))).code).toBe('validation');
   }
+});
+
+/** Kanonischer Inhalt einer Issue-Datei mit Test-Defaults. */
+function issueText(data: { id: string; title?: string; parent?: string }): string {
+  return serializeEntityFile(
+    'issue',
+    { title: data.id, state: 'todo', creator: 'spw', created: '2026-11-18T10:00:00Z', ...data },
+    '',
+  );
+}
+
+describe('snapshotAt', () => {
+  test('snapshotAt replaces, adds and removes entities by path', () => {
+    const s0 = snap({
+      issues: [{ id: I(1), title: 'alt' }],
+      repos: { webapp: 'https://github.com/acme/webapp' },
+    });
+    const s1 = snapshotAt(s0, [
+      { path: issueFile(I(1)), content: issueText({ id: I(1), title: 'neu' }) },
+      { path: issueFile(I(2)), content: issueText({ id: I(2) }) },
+      { path: 'repos/webapp.md', content: null },
+    ]);
+    expect(s1.issues.get(I(1))?.data.title).toBe('neu');
+    expect([...s1.issues.keys()]).toEqual([I(1), I(2)]);
+    expect(s1.repos.size).toBe(0);
+    expect(s0.issues.get(I(1))?.data.title).toBe('alt');
+    expect([...s0.issues.keys()]).toEqual([I(1)]);
+    expect(s0.repos.size).toBe(1);
+  });
+
+  test('snapshotAt turns a broken file into a problem and drops the problem of a repaired one', () => {
+    const s0 = snap({ issues: [{ id: I(1) }] });
+    const broken = snapshotAt(s0, [{ path: issueFile(I(1)), content: '---\nid: [\n---\n' }]);
+    expect(broken.issues.has(I(1))).toBe(false);
+    expect(broken.problems).toEqual([
+      {
+        path: issueFile(I(1)),
+        message: expect.stringMatching(/issue\.md:\d+/),
+        kind: 'issue',
+        key: I(1),
+      },
+    ]);
+    const repaired = snapshotAt(broken, [
+      { path: issueFile(I(1)), content: issueText({ id: I(1) }) },
+    ]);
+    expect([repaired.problems, repaired.issues.has(I(1))]).toEqual([[], true]);
+  });
+
+  test('snapshotAt parses like loadSnapshot', async () => {
+    const root = await copyFixture('backlog-basic');
+    await put(root, 'users/Bad_Name.md', '---\nname: X\nkind: human\n---\n');
+    const s0 = await loadSnapshot(root);
+    const files: { path: string; content: string | null }[] = [
+      { path: issueFile('bk-a91c0'), content: '---\nid: [\n---\n' },
+      { path: 'issues/aa/bk-7f3k3/issue.md', content: issueText({ id: 'bk-7f3k3' }) },
+      { path: 'issues/7f/not-an-id/issue.md', content: issueText({ id: 'bk-7f3k4' }) },
+      { path: issueFile('bk-7f3k5'), content: issueText({ id: 'bk-7f3k6' }) },
+      { path: 'users/Bad_Name.md', content: null },
+      { path: 'users/Also_Bad.md', content: '---\nname: X\nkind: human\n---\n' },
+      { path: 'projects/web.md', content: null },
+      { path: 'sprints/2026-w48.md', content: '---\ntitle: W48\n---\n' },
+      { path: 'repos/api.md', content: '---\nurl: https://github.com/acme/api\n---\n' },
+      { path: '.gitattributes', content: '* text=auto\n' },
+      // Was loadSnapshot nicht liest, ändert auch hier nichts.
+      { path: 'issues/7f/bk-7f3k2/comments/20261118T100400Z-claude-1-q8x.md', content: null },
+      { path: 'issues/7f/bk-7f3k2/attachments/log.txt', content: 'x' },
+      { path: 'users/sub/nested.md', content: '---\nname: X\nkind: human\n---\n' },
+      { path: BACKLOG_CONFIG, content: 'kaputt' },
+      { path: 'README.md', content: 'x' },
+    ];
+    for (const f of files) {
+      if (f.path === BACKLOG_CONFIG) continue;
+      if (f.content === null) await rm(join(root, f.path));
+      else await put(root, f.path, f.content);
+    }
+    expect(snapshotAt(s0, files)).toEqual(await loadSnapshot(root));
+  });
+
+  test('snapshotAt keeps the order of keys sorted', () => {
+    const s0 = snap({ issues: [{ id: I(2) }], projects: ['b'] });
+    const s1 = snapshotAt(s0, [
+      { path: issueFile(I(1)), content: issueText({ id: I(1) }) },
+      { path: issueFile(I(3)), content: issueText({ id: I(3) }) },
+      { path: 'projects/a.md', content: '---\ntitle: A\n---\n' },
+    ]);
+    expect([...s1.issues.keys()]).toEqual([I(1), I(2), I(3)]);
+    expect([...s1.projects.keys()]).toEqual(['a', 'b']);
+  });
+});
+
+test('loadSnapshot reads .gitattributes', async () => {
+  const root = await copyFixture('backlog-basic');
+  expect((await loadSnapshot(root)).attributes).toBeUndefined();
+  await put(root, '.gitattributes', '*.png binary\n');
+  expect((await loadSnapshot(root)).attributes).toBe('*.png binary\n');
 });
