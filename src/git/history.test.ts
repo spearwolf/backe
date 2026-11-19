@@ -58,6 +58,17 @@ test('listCommits lists oldest first with parents and message, from exclusive', 
   expect(await listCommits(wc, { from: c, to: c })).toEqual([]);
 });
 
+test('listCommits reports the first line of the signature header', async () => {
+  const wc = await repo();
+  const signed = await rawCommit(wc, { files: { x: '1' }, key: await testKey('spw') });
+  const unsigned = await rawCommit(wc, { files: { x: '2' } });
+
+  const [first, second] = await listCommits(wc, { from: undefined, to: 'HEAD' });
+  expect(first).toMatchObject({ sha: signed, gpgsig: '-----BEGIN SSH SIGNATURE-----' });
+  expect(second?.sha).toBe(unsigned);
+  expect(second?.gpgsig).toBeUndefined();
+});
+
 test('signatures reports status, fingerprint and principal per commit', async () => {
   const wc = await repo();
   const spw = await testKey('spw');

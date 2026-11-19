@@ -189,17 +189,32 @@ function checkCommentFile(
 }
 
 const PROTECTED_DIRS = ['users/', '.backe/', 'issues/'];
+const PROTECTED_KINDS = new Set(['user', 'issue', 'comment']);
 
 /**
- * Pfad unter `users/`, `.backe/` oder `issues/`, dessen Verzeichnisse nur in Groß-/Kleinschreibung
- * vom (kleingeschriebenen) Layout abweichen: Auf Dateisystemen ohne Unterscheidung (macOS) landet
- * er im geschützten Verzeichnis, an den Regeln oben vorbei. Der Umweg über Großbuchstaben faltet
- * auch Zeichen wie `ſ` oder das Kelvin-Zeichen auf ihr ASCII-Gegenstück.
+ * Faltet wie ein Dateisystem ohne Groß-/Kleinschreibung (macOS): NFD, dann je Codepoint über
+ * Groß- zu Kleinbuchstaben, damit auch `ſ` oder das Kelvin-Zeichen auf ihr ASCII-Gegenstück fallen.
+ */
+function fold(s: string): string {
+  return [...s.normalize('NFD')].map((c) => c.toUpperCase().toLowerCase()).join('');
+}
+
+/**
+ * Pfad, der nur in Groß-/Kleinschreibung vom (kleingeschriebenen) Layout abweicht: Auf
+ * Dateisystemen ohne Unterscheidung landet er im geschützten Verzeichnis oder überschreibt eine
+ * geschützte Datei, an den Regeln oben vorbei. Geprüft werden die Verzeichnisse unter `users/`,
+ * `.backe/` und `issues/` sowie der ganze Pfad für `.backe/**`, User, Issues und Kommentare;
+ * Anhänge dürfen beliebig heißen.
  */
 function caseVariant(path: string): boolean {
   const dirs = path.slice(0, path.lastIndexOf('/') + 1);
-  const folded = dirs.toUpperCase().toLowerCase();
-  return dirs !== folded && PROTECTED_DIRS.some((d) => folded.startsWith(d));
+  const foldedDirs = fold(dirs);
+  if (dirs !== foldedDirs && PROTECTED_DIRS.some((d) => foldedDirs.startsWith(d))) return true;
+  const folded = fold(path);
+  return (
+    path !== folded &&
+    (folded.startsWith('.backe/') || PROTECTED_KINDS.has(classifyPath(folded).kind))
+  );
 }
 
 /** Datei in `comments/` eines Issues, deren Name nicht dem Kommentar-Namensschema folgt. */

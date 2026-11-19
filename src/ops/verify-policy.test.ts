@@ -150,7 +150,14 @@ describe('checkCommitPolicy', () => {
     [`Issues/t0/${ID}/issue.md`, 'D'],
     [`issues/T0/${ID}/issue.md`, 'M'],
     ['uſers/eve.md', 'A'],
-  ] as const)('a case variant of a layout directory is reported: %s', (path, status) =>
+    ['users/SPW.md', 'M'],
+    ['users/ſpw.md', 'A'],
+    ['users/spw.MD', 'A'],
+    ['Users/SPW.md', 'A'],
+    ['.backe/BACKLOG.jsonc', 'A'],
+    [`issues/t0/${ID}/ISSUE.md`, 'A'],
+    [`issues/t0/${ID}/iſſue.md`, 'A'],
+  ] as const)('a case variant of a layout path is reported once: %s', (path, status) =>
     expect(
       check({
         changes: [

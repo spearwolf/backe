@@ -178,9 +178,9 @@ async function allowedSigners(wc: string, state: State): Promise<string> {
   if (!exists) {
     const lines: string[] = [];
     for (const [handle, user] of state.users) {
-      const revoked = new Set((user.revoked_keys ?? []).map((r) => sshFingerprint(r.key)));
+      const active = activeFingerprints(user);
       for (const key of user.keys) {
-        if (!revoked.has(sshFingerprint(key))) lines.push(`${handle} namespaces="git" ${key}`);
+        if (active.has(sshFingerprint(key))) lines.push(`${handle} namespaces="git" ${key}`);
       }
     }
     await mkdir(dir, { recursive: true });
@@ -209,7 +209,9 @@ async function checkSignatures(
 ): Promise<Map<string, Signature>> {
   const groups = new Map<string, { state: State; shas: string[] }>();
   for (const commit of commits) {
-    if (commit.parents.length > 1) continue;
+    // Nur SSH-Signaturen gehen an git: andere Formate prüfte git gegen fremde Keyrings, und ein
+    // unbekanntes Format bricht `git log` ab.
+    if (commit.parents.length > 1 || !isSshSignature(commit.gpgsig)) continue;
     const state = signerState(commit, anchor, states);
     const group = groups.get(state.usersTree) ?? { state, shas: [] };
     group.shas.push(commit.sha);
@@ -224,10 +226,36 @@ async function checkSignatures(
   return result;
 }
 
-function signatureReasons(sig: Signature | undefined, users: Map<string, User>): string[] {
+const SSH_SIGNATURE = '-----BEGIN SSH SIGNATURE-----';
+
+function isSshSignature(gpgsig: string | undefined): boolean {
+  return gpgsig?.startsWith(SSH_SIGNATURE) === true;
+}
+
+/** Fingerprints der nicht widerrufenen Keys eines Users. */
+function activeFingerprints(user: User | undefined): Set<string> {
+  const revoked = new Set((user?.revoked_keys ?? []).map((r) => sshFingerprint(r.key)));
+  return new Set((user?.keys ?? []).map(sshFingerprint).filter((fp) => !revoked.has(fp)));
+}
+
+/**
+ * Gründe aus Signatur-Header und git-Ergebnis, gegen die Users des Signer-Stands. Ein `G` zählt
+ * nur, wenn der Key ein aktiver Key des gemeldeten Prinzipals ist.
+ */
+export function signatureReasons(
+  sig: Signature | undefined,
+  gpgsig: string | undefined,
+  users: ReadonlyMap<string, User>,
+): string[] {
+  if (gpgsig === undefined) return ['unsigniert'];
+  if (!isSshSignature(gpgsig)) return ['Signatur ist keine SSH-Signatur'];
   if (sig === undefined || sig.status === 'N') return ['unsigniert'];
-  if (sig.status === 'G') return [];
   if (sig.status === 'B') return ['Signatur ungültig'];
+  if (sig.status === 'G') {
+    return activeFingerprints(users.get(sig.principal)).has(sig.fingerprint)
+      ? []
+      : [`Key ${sig.fingerprint} gehört nicht zu ${sig.principal}`];
+  }
   for (const [handle, user] of users) {
     if ((user.revoked_keys ?? []).some((r) => sshFingerprint(r.key) === sig.fingerprint)) {
       return [`Key ${sig.fingerprint} von ${handle} ist widerrufen`];
@@ -345,7 +373,7 @@ async function checkCommit(
   const ops = trailers.get(TRAILER_OP) ?? [];
   const actor = actors.length === 1 ? actors[0] : undefined;
   const reasons = [
-    ...signatureReasons(sig, signerState(commit, anchor, states).users),
+    ...signatureReasons(sig, commit.gpgsig, signerState(commit, anchor, states).users),
     ...actorReasons(actors, sig),
   ];
   if (commit.sha === anchor) {

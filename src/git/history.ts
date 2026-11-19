@@ -8,7 +8,13 @@ import { git, gitBytes } from './exec.ts';
 const USER_FILE = /^users\/([^/]+)\.md$/;
 const OBJECT_HEADER = /^([0-9a-f]+) ([a-z]+) (\d+)$/;
 
-export type CommitInfo = { sha: string; parents: string[]; message: string };
+/** `gpgsig` ist die erste Zeile des Signatur-Headers (`gpgsig-sha256` bei SHA-256), sonst fehlt er. */
+export type CommitInfo = {
+  sha: string;
+  parents: string[];
+  message: string;
+  gpgsig: string | undefined;
+};
 export type Signature = { status: string; fingerprint: string; principal: string };
 export type RawChange = {
   path: string;
@@ -97,7 +103,10 @@ export async function listCommits(
     const [sha = '', ...parents] = line.split(' ');
     const raw = objects.get(sha)?.content ?? Buffer.alloc(0);
     const body = raw.indexOf('\n\n');
-    return { sha, parents, message: body < 0 ? '' : raw.toString('utf8', body + 2) };
+    const headers = raw.toString('utf8', 0, body < 0 ? raw.length : body).split('\n');
+    const prefix = sha.length === 64 ? 'gpgsig-sha256 ' : 'gpgsig ';
+    const gpgsig = headers.find((h) => h.startsWith(prefix))?.slice(prefix.length);
+    return { sha, parents, message: body < 0 ? '' : raw.toString('utf8', body + 2), gpgsig };
   });
 }
 

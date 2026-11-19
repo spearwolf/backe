@@ -13,13 +13,14 @@ import {
 } from '../../test/helpers/git.ts';
 import { I } from '../../test/helpers/snapshot.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
+import type { User } from '../core/schemas.ts';
 import { sshFingerprint } from '../core/ssh.ts';
 import { git } from '../git/exec.ts';
 import { readLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
 import { encodeOp, type Operation } from '../ops/operation.ts';
 import { serializeEntityFile } from '../store/frontmatter.ts';
 import { BACKLOG_CONFIG, issueFile, QUARANTINE, userFile } from '../store/layout.ts';
-import { assertVerified, verifyRange } from './verify.ts';
+import { assertVerified, signatureReasons, verifyRange } from './verify.ts';
 import { executeWrite } from './write.ts';
 
 const ID = I(1);
@@ -143,6 +144,86 @@ test('several Backe-Actor trailers are invalid', async () => {
   const r = await verifyRange(b.root);
 
   expect(r.invalid).toEqual([{ sha: twice, subject: 'raw', reasons: ['Backe-Actor mehrfach'] }]);
+});
+
+test.each(['-----BEGIN PGP SIGNATURE-----', '-----BEGIN FAKE SIGNATURE-----'])(
+  'a signature that is no SSH signature is invalid: %s',
+  async (header) => {
+    const tree = (await git(['rev-parse', `${anchor}^{tree}`], { cwd: b.root })).stdout.trim();
+    const object = [
+      `tree ${tree}`,
+      `parent ${anchor}`,
+      'author Raw <raw@backe.invalid> 1763550000 +0000',
+      'committer Raw <raw@backe.invalid> 1763550000 +0000',
+      `gpgsig ${header}`,
+      ' ',
+      ' aWdub3JpZXJ0',
+      ` ${header.replace('BEGIN', 'END')}`,
+      '',
+      'raw',
+      '',
+      'Backe-Actor: spw',
+      'Backe-Op: manual',
+      '',
+    ].join('\n');
+    const sha = (
+      await git(['hash-object', '-t', 'commit', '-w', '--stdin'], { cwd: b.root, input: object })
+    ).stdout.trim();
+    await git(['reset', '-q', '--hard', sha], { cwd: b.root });
+
+    const r = await verifyRange(b.root);
+
+    expect(r.invalid).toEqual([
+      { sha, subject: 'raw', reasons: ['Signatur ist keine SSH-Signatur'] },
+    ]);
+  },
+);
+
+describe('signatureReasons', () => {
+  const SSH = '-----BEGIN SSH SIGNATURE-----';
+  const user = (keys: TestKey[], revoked: TestKey[] = []): User => ({
+    name: 'x',
+    kind: 'human',
+    keys: keys.map((k) => k.line),
+    ...(revoked.length > 0 && {
+      revoked_keys: revoked.map((k) => ({ key: k.line, revoked: '2026-11-19T12:00:00Z' })),
+    }),
+  });
+  const good = (key: TestKey, principal: string) => ({
+    status: 'G',
+    fingerprint: sshFingerprint(key.line),
+    principal,
+  });
+  let users: Map<string, User>;
+  beforeEach(() => {
+    users = new Map([
+      ['spw', user([KEYS.spw])],
+      ['bob', user([KEYS.bob], [KEYS.mallory])],
+    ]);
+  });
+
+  test('a good signature by a key of the principal passes', () =>
+    expect(signatureReasons(good(KEYS.spw, 'spw'), SSH, users)).toEqual([]));
+
+  test.each<[string, Name, string]>([
+    ['a key of another user', 'bob', 'spw'],
+    ['a revoked key of the principal', 'mallory', 'bob'],
+    ['a principal that is no user', 'spw', 'eve'],
+  ])('a good status with %s is invalid', (_, name, principal) =>
+    expect(signatureReasons(good(KEYS[name], principal), SSH, users)).toEqual([
+      `Key ${sshFingerprint(KEYS[name].line)} gehört nicht zu ${principal}`,
+    ]),
+  );
+
+  test('the signature header decides before the status', () => {
+    expect(signatureReasons(undefined, undefined, users)).toEqual(['unsigniert']);
+    expect(signatureReasons(good(KEYS.spw, 'spw'), '-----BEGIN PGP SIGNATURE-----', users)).toEqual(
+      ['Signatur ist keine SSH-Signatur'],
+    );
+    expect(signatureReasons({ status: 'B', fingerprint: '', principal: '' }, SSH, users)).toEqual([
+      'Signatur ungültig',
+    ]);
+  });
 });
 
 test('a merge commit is invalid', async () => {
