@@ -14,6 +14,7 @@
     "node": ">=26"
   },
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks",
     "lint": "biome check . && tsc --noEmit",
     "test": "vitest run --coverage",
     "build": "tsdown",

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Prüft die gestagten Dateien mit Biome, bevor sie ins Repo gehen –
+# derselbe Check, an dem sonst erst die CI scheitert.
+exec pnpm exec biome check --staged --no-errors-on-unmatched
