@@ -16,7 +16,12 @@ import { commitPaths } from '../git/commit.ts';
 import { git } from '../git/exec.ts';
 import { objectInfo, readBlobs, removedHandles } from '../git/history.ts';
 import { readLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
-import { formatCommitMessage, TRAILER_ACTOR, TRAILER_OP } from '../git/message.ts';
+import {
+  formatCommitMessage,
+  parseCommitMessage,
+  TRAILER_ACTOR,
+  TRAILER_OP,
+} from '../git/message.ts';
 import { assertOnBranch, dirtyPaths, headState, rollbackPaths } from '../git/repo.ts';
 import { readPublicKey } from '../git/ssh.ts';
 import {
@@ -51,6 +56,14 @@ export type WriteInput =
   | { kind: 'op'; op: Operation }
   | { kind: 'batch'; ops: readonly Operation[] }
   | {
+      kind: 'derive';
+      /**
+       * Leitet die Operation unter dem Write-Lock aus dem frisch geladenen Snapshot ab; wirft sie,
+       * wird nichts geschrieben. Danach läuft der Write wie `kind: 'op'`.
+       */
+      derive: (snapshot: BacklogSnapshot, actor: string) => Operation;
+    }
+  | {
       kind: 'manual';
       subject: string;
       changes: readonly FileChange[];
@@ -79,6 +92,8 @@ export type WriteDeps = {
   hooks?: { afterFiles?: () => Promise<void>; afterCommit?: () => Promise<void> };
   raise?: (signal: NodeJS.Signals) => void;
 };
+
+type ResolvedInput = Exclude<WriteInput, { kind: 'derive' }>;
 
 type Planned = Omit<WriteResult, 'commit' | 'paths' | 'verifyNotices'> & {
   changes: readonly FileChange[];
@@ -123,15 +138,27 @@ async function firstParent(wc: string): Promise<string | undefined> {
 
 /**
  * Der Commit dieses Writes, falls er trotz eines Fehlers danach auf HEAD gelandet ist: HEAD steht
- * direkt auf `head` und enthält jeden geschriebenen Pfad mit genau dem geplanten Inhalt.
+ * direkt auf `head`, trägt Subject und `Backe-Actor` dieses Writes und enthält jeden geschriebenen
+ * Pfad mit genau dem geplanten Inhalt. Ein fremder Commit mit gleichem Baum zählt nicht.
  */
 async function landedCommit(
   wc: string,
   head: string,
   changes: readonly FileChange[],
+  message: string,
 ): Promise<string | undefined> {
   const now = (await headState(wc)).head;
   if (now === undefined || now === head || (await firstParent(wc)) !== head) return undefined;
+  const expected = parseCommitMessage(message);
+  const actual = parseCommitMessage(
+    (await git(['log', '-1', '--format=%B', now], { cwd: wc })).stdout,
+  );
+  if (
+    actual.subject !== expected.subject ||
+    actual.trailers.get(TRAILER_ACTOR)?.[0] !== expected.trailers.get(TRAILER_ACTOR)?.[0]
+  ) {
+    return undefined;
+  }
   const specs = changes.map((c) => `${now}:${c.path}`);
   const [info, blobs] = await Promise.all([objectInfo(wc, specs), readBlobs(wc, specs)]);
   const matches = changes.every((c, i) => {
@@ -232,7 +259,7 @@ async function plan(
   wc: string,
   snapshot: BacklogSnapshot,
   head: string,
-  input: WriteInput,
+  input: ResolvedInput,
   handle: string,
   deps: WriteDeps,
 ): Promise<Planned> {
@@ -258,7 +285,11 @@ async function plan(
 }
 
 /** Commit-Message nach backe.md §2.13; `recorded` ist hier nie leer, wenn Operationen schreiben. */
-function commitMessage(input: WriteInput, recorded: readonly Operation[], handle: string): string {
+function commitMessage(
+  input: ResolvedInput,
+  recorded: readonly Operation[],
+  handle: string,
+): string {
   const actor = [TRAILER_ACTOR, handle] as const;
   if (input.kind === 'manual') {
     return formatCommitMessage({
@@ -306,23 +337,25 @@ export async function executeWrite(
     await checkFormatVersion(wc);
     const snapshot = await loadSnapshot(wc);
     assertActorIsUser(snapshot, handle);
+    const resolved: ResolvedInput =
+      input.kind === 'derive' ? { kind: 'op', op: input.derive(snapshot, handle) } : input;
     const signers =
-      (input.kind === 'manual' ? input.signers : undefined) ??
+      (resolved.kind === 'manual' ? resolved.signers : undefined) ??
       new Map([...snapshot.users].map(([h, u]) => [h, u.data]));
     await checkSigningKey(ctx, key, handle, signers);
     const head = await assertOnBranch(wc, snapshot.config.sync.branch);
 
-    const { changes, ...planned } = await plan(wc, snapshot, head, input, handle, deps);
+    const { changes, ...planned } = await plan(wc, snapshot, head, resolved, handle, deps);
     if (changes.length === 0) return { commit: undefined, ...planned, paths: [], verifyNotices };
 
     const paths = [...new Set(changes.map((c) => c.path))].sort();
     const dirty = await dirtyPaths(wc, paths);
     if (dirty.length > 0) {
       throw new BackeError('conflict', `Ungesicherte Änderungen an ${dirty.join(', ')}`, {
-        hint: `backe commit, oder git -C ${wc} restore -- ${dirty.join(' ')}`,
+        hint: `backe commit, oder git -C ${wc} restore --staged --worktree -- ${dirty.join(' ')}`,
       });
     }
-    const message = commitMessage(input, planned.recorded, handle);
+    const message = commitMessage(resolved, planned.recorded, handle);
     const author = authorOf(handle, (snapshot.users.get(handle) as StoredEntity<User>).data.name);
 
     signals.install();
@@ -334,7 +367,7 @@ export async function executeWrite(
       commit = await commitPaths(wc, { paths, message, key, author, env: ctx.env, parent: head });
       await deps.hooks?.afterCommit?.();
     } catch (error) {
-      const done = await landedCommit(wc, head, changes).catch(() => undefined);
+      const done = await landedCommit(wc, head, changes, message).catch(() => undefined);
       if (done !== undefined) {
         // Der Commit steht schon auf HEAD: Ein Rollback würde ihn verfälschen, ein Retry verdoppeln.
         await rm(journal, { force: true });

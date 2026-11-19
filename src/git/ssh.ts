@@ -24,6 +24,30 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+const OPENSSH_PRIVATE_KEY = '-----BEGIN OPENSSH PRIVATE KEY-----';
+
+/**
+ * Leitet die Public-Key-Zeile per `ssh-keygen -y` ab. `-P ''`: Ein Key mit Passphrase scheitert
+ * sofort, statt am Terminal nachzufragen; bei einem OpenSSH-Key ist das der Fall „verschlüsselt,
+ * keine `.pub` daneben“ und bekommt den Hinweis, die `.pub` zu erzeugen.
+ */
+async function deriveFromPrivateKey(keyPath: string, content: string): Promise<string> {
+  try {
+    return firstLine(
+      (await sshKeygen(['-y', '-P', '', '-f', keyPath], { cwd: dirname(keyPath) })).stdout,
+    );
+  } catch (error) {
+    if (!content.startsWith(OPENSSH_PRIVATE_KEY)) throw error;
+    throw new BackeError(
+      'usage',
+      `Key »${keyPath}« ist verschlüsselt und hat keine ».pub« daneben`,
+      {
+        hint: `ssh-keygen -y -f ${keyPath} > ${keyPath}.pub`,
+      },
+    );
+  }
+}
+
 /** Public-Key-Zeile zu einem Pfad: der Key selbst, die `.pub` daneben oder per `ssh-keygen -y` abgeleitet. */
 export async function readPublicKey(keyPath: string): Promise<string> {
   const own = await readText(keyPath);
@@ -36,10 +60,7 @@ export async function readPublicKey(keyPath: string): Promise<string> {
     line =
       pub !== undefined && firstLine(pub).startsWith('ssh-')
         ? firstLine(pub)
-        : // `-P ''`: Ein Key mit Passphrase scheitert sofort, statt am Terminal nachzufragen.
-          firstLine(
-            (await sshKeygen(['-y', '-P', '', '-f', keyPath], { cwd: dirname(keyPath) })).stdout,
-          );
+        : await deriveFromPrivateKey(keyPath, own);
   }
   parseSshPublicKey(line);
   return line;

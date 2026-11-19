@@ -24,13 +24,15 @@ describe('ssh keys', () => {
     ]);
   });
 
-  test('a key with a passphrase and no .pub fails instead of prompting', async () => {
+  test('an encrypted private key without .pub is a usage error with hint', async () => {
     const dir = await tempDir();
     const locked = join(dir, 'locked');
     await sshKeygen(['-q', '-t', 'ed25519', '-N', 'geheim', '-f', locked], { cwd: dir });
     await rm(`${locked}.pub`);
     const err = await catchErrAsync(() => readPublicKey(locked));
-    expect(err.code).toBe('unexpected');
+    expect(err.code).toBe('usage');
+    expect(err.message).toBe(`Key »${locked}« ist verschlüsselt und hat keine ».pub« daneben`);
+    expect(err.hint).toBe(`ssh-keygen -y -f ${locked} > ${locked}.pub`);
   });
 
   test('readPublicKey reads a public key, the .pub next to a private key, or derives it', async () => {

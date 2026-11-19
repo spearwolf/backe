@@ -191,6 +191,68 @@ test('a foreign commit on the same base is no landed write', async () => {
   expect(await statusShort(b.root)).toEqual([]);
 });
 
+test('a foreign commit with the same tree but another actor or subject is not taken as landed', async () => {
+  for (const foreign of [
+    { actor: 'bob', subject: 'Issue A angelegt' },
+    { actor: 'spw', subject: 'fremd' },
+  ]) {
+    const base = await revParse(b.root, 'HEAD');
+    const err = await catchErrAsync(() =>
+      executeWrite(ctx, CREATE, {
+        now: () => NOW,
+        randomBytes: seqBytes(),
+        hooks: {
+          afterCommit: async () => {
+            await git(['reset', '--soft', base], { cwd: b.root });
+            const tree = (await git(['write-tree'], { cwd: b.root })).stdout.trim();
+            const msg = `${foreign.subject}\n\nBacke-Actor: ${foreign.actor}\n`;
+            const c = await git(['commit-tree', tree, '-p', base, '-m', msg], {
+              cwd: b.root,
+              env: {
+                GIT_AUTHOR_NAME: 'x',
+                GIT_AUTHOR_EMAIL: 'x@x.invalid',
+                GIT_COMMITTER_NAME: 'x',
+                GIT_COMMITTER_EMAIL: 'x@x.invalid',
+              },
+            });
+            await git(['update-ref', 'HEAD', c.stdout.trim()], { cwd: b.root });
+            throw new BackeError('unexpected', 'boom');
+          },
+        },
+      }),
+    );
+    expect(err.message).toBe('boom');
+    await git(['reset', '--hard', base], { cwd: b.root });
+  }
+});
+
+test('derive builds the operation against the locked snapshot', async () => {
+  const r = await executeWrite(ctx, {
+    kind: 'derive',
+    derive: (s, actor) => ({ op: 'issue.create', title: `von ${actor} bei ${s.issues.size}` }),
+  });
+  expect(r.recorded[0]).toMatchObject({ op: 'issue.create', title: 'von spw bei 0' });
+  expect(await logTrailers(b.root)).toHaveLength(2);
+  expect((await git(['log', '-1', '--format=%s'], { cwd: b.root })).stdout.trim()).toBe(
+    summarizeOp(r.recorded[0] as Operation),
+  );
+});
+
+test('a throwing derive writes nothing', async () => {
+  const err = await catchErrAsync(() =>
+    executeWrite(ctx, {
+      kind: 'derive',
+      derive: () => {
+        throw new BackeError('validation', 'nein');
+      },
+    }),
+  );
+  expect(err.message).toBe('nein');
+  expect(await revParse(b.root, 'HEAD')).toBe(head);
+  expect(await statusShort(b.root)).toEqual([]);
+  expect(await readdir(await stateDir(b.root))).not.toContain('write.journal');
+});
+
 test('a committed .gitignore does not keep a write from committing its file', async () => {
   await rawCommit(b.root, { files: { '.gitignore': '*.md\n' }, key: b.key, actor: 'spw' });
   const r = await executeWrite(ctx, CREATE);
@@ -403,7 +465,9 @@ test('a hand edit on an affected path is a conflict and stays untouched', async 
   );
   expect(err.code).toBe('conflict');
   expect(err.message).toBe(`Ungesicherte Änderungen an ${file}`);
-  expect(err.hint).toBe(`backe commit, oder git -C ${b.root} restore -- ${file}`);
+  expect(err.hint).toBe(
+    `backe commit, oder git -C ${b.root} restore --staged --worktree -- ${file}`,
+  );
   expect(await readFile(join(b.root, file), 'utf8')).toBe(edited);
   expect(await revParse(b.root, 'HEAD')).toBe(before);
 });
