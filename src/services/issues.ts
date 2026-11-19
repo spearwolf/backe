@@ -94,7 +94,7 @@ export function createIssue(
 
 const unique = <T>(list: readonly T[]): T[] => [...new Set(list)];
 
-export function editIssue(
+export async function editIssue(
   ctx: ResolvedContext,
   ref: string,
   input: IssueEditInput,
@@ -140,9 +140,15 @@ export function editIssue(
       const add: NonNullable<OpOf<'issue.edit'>['add']> = {};
       const remove: NonNullable<OpOf<'issue.edit'>['remove']> = {};
       for (const [field, adds, removes, have = []] of lists) {
-        const toAdd = unique(adds ?? []).filter((v) => !have.includes(v));
+        const toAdd = unique(adds ?? []);
+        for (const v of toAdd) {
+          if ((removes ?? []).includes(v)) {
+            throw new BackeError('usage', `»${v}« steht in add… und rm… (${field})`);
+          }
+        }
         const toRemove = unique(removes ?? []).filter((v) => have.includes(v));
-        if (toAdd.length > 0) add[field] = toAdd;
+        const missing = toAdd.filter((v) => !have.includes(v));
+        if (missing.length > 0) add[field] = missing;
         if (toRemove.length > 0) remove[field] = toRemove;
       }
       if (Object.keys(add).length > 0) op.add = add;

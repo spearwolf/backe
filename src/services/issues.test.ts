@@ -146,7 +146,6 @@ describe('editIssue', () => {
     const out = await editIssue(ctx, id, {
       title: 'T',
       addProjects: ['web', 'api'],
-      rmProjects: ['api'],
       rmSprints: ['s1'],
       props: ['a=1'],
       unsetProps: ['zz'],
@@ -195,5 +194,38 @@ describe('editIssue', () => {
     );
     expect(err.code).toBe('usage');
     expect(err.message).toContain('»a«');
+  });
+
+  test('editIssue rejects its promise instead of throwing synchronously', async () => {
+    await setup();
+    const id = (await createIssue(ctx, { title: 'T' })).id as string;
+    const pending = editIssue(ctx, id, { props: ['a=1'], unsetProps: ['a'] });
+    const err = await pending.then(
+      () => undefined,
+      (e: unknown) => e as { code: string },
+    );
+    expect(err?.code).toBe('usage');
+  });
+
+  test.each([
+    ['projects', { addProjects: ['web'], rmProjects: ['web'] }, 'web'],
+    ['sprints', { addSprints: ['s1'], rmSprints: ['s1'] }, 's1'],
+  ])('the same %s value in add and rm is a usage error', async (_f, input, value) => {
+    await setup();
+    const id = (await createIssue(ctx, { title: 'T' })).id as string;
+    const err = await catchErrAsync(() => editIssue(ctx, id, input));
+    expect(err.code).toBe('usage');
+    expect(err.message).toContain(`»${value}«`);
+  });
+
+  test('the same dep given as short id and full id in add and rm is a usage error', async () => {
+    await setup();
+    const dep = (await createIssue(ctx, { title: 'D' })).id as string;
+    const id = (await createIssue(ctx, { title: 'T' })).id as string;
+    const err = await catchErrAsync(() =>
+      editIssue(ctx, id, { addDeps: [dep.slice(0, 8)], rmDeps: [dep] }),
+    );
+    expect(err.code).toBe('usage');
+    expect(err.message).toContain(`»${dep}«`);
   });
 });
