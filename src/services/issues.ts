@@ -1,16 +1,20 @@
 /**
- * Issues anlegen und bearbeiten (backe.md §2.4, §2.14, §2.17, §2.23, §2.24). Jede Operation wird
+ * Issues anlegen, bearbeiten, verschieben, zuweisen, ranken, verknüpfen und löschen (backe.md §2.4,
+ * §2.6, §2.11, §2.14, §2.17, §2.22, §2.23, §2.24). Jede Operation wird
  * unter dem Write-Lock gegen den gesperrten Snapshot abgeleitet; Vorbedingungen (`from`) stammen
  * von dort, nicht aus einem früheren Lesen.
  */
 import { isDeepStrictEqual } from 'node:util';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
+import { isGitArg, parseRepoRef } from '../core/names.ts';
 import type { PropValue } from '../core/schemas.ts';
 import { normalizeStateInput } from '../core/state.ts';
+import { normalizeRepoUrl } from '../core/url.ts';
 import { bodyHash, type OpOf } from '../ops/operation.ts';
 import { parsePropAssignment } from '../ops/props.ts';
 import { canonicalBody } from '../store/frontmatter.ts';
+import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { type WriteOutcome, writeOp } from './outcome.ts';
 import { resolveHandle, resolveIssueRef } from './read.ts';
 import type { WriteDeps } from './write.ts';
@@ -174,6 +178,238 @@ export async function editIssue(
       if (Object.keys(op).length === 2) {
         throw new BackeError('usage', 'Nichts zu ändern');
       }
+      return op;
+    },
+    deps,
+  );
+}
+
+function currentIssue(s: BacklogSnapshot, ref: string) {
+  const id = resolveIssueRef(s, ref);
+  const current = s.issues.get(id);
+  if (current === undefined) throw new BackeError('not_found', `Issue »${id}« nicht gefunden`);
+  return current.data;
+}
+
+/** Leerer oder nur aus Whitespace bestehender Grund ist ein Wertfehler; `undefined` ist erlaubt. */
+function checkedReason(reason: string | undefined): string | undefined {
+  if (reason !== undefined && reason.trim() === '') {
+    throw new BackeError('validation', 'Begründung ist leer');
+  }
+  return reason;
+}
+
+export type IssueMoveInput = {
+  to: string;
+  reason?: string;
+  blockedBy?: string[];
+  force?: boolean;
+};
+
+export async function moveIssue(
+  ctx: ResolvedContext,
+  ref: string,
+  input: IssueMoveInput,
+  deps?: WriteDeps,
+): Promise<WriteOutcome> {
+  const reason = checkedReason(input.reason);
+  const to = normalizeStateInput(input.to);
+  return writeOp(
+    ctx,
+    (s) => {
+      const issue = currentIssue(s, ref);
+      const op: OpOf<'issue.move'> = { op: 'issue.move', id: issue.id, from: issue.state, to };
+      if (input.blockedBy !== undefined && input.blockedBy.length > 0) {
+        op.blocked_by = input.blockedBy.map((b) => resolveIssueRef(s, b));
+      }
+      if (input.force === true) op.force = true;
+      if (reason !== undefined) op.reason = reason;
+      return op;
+    },
+    deps,
+  );
+}
+
+export async function resumeIssue(
+  ctx: ResolvedContext,
+  ref: string,
+  input: { reason?: string } = {},
+  deps?: WriteDeps,
+): Promise<WriteOutcome> {
+  const reason = checkedReason(input.reason);
+  return writeOp(
+    ctx,
+    (s) => {
+      const issue = currentIssue(s, ref);
+      // Ein falscher State wird von der Ops-Schicht als ungültiger Übergang gemeldet.
+      const op = {
+        op: 'issue.resume',
+        id: issue.id,
+        from: issue.state,
+      } as OpOf<'issue.resume'>;
+      if (reason !== undefined) op.reason = reason;
+      return op;
+    },
+    deps,
+  );
+}
+
+export async function reopenIssue(
+  ctx: ResolvedContext,
+  ref: string,
+  input: { to?: string; reason?: string } = {},
+  deps?: WriteDeps,
+): Promise<WriteOutcome> {
+  const reason = checkedReason(input.reason);
+  const to = input.to === undefined ? undefined : normalizeStateInput(input.to);
+  return writeOp(
+    ctx,
+    (s) => {
+      const issue = currentIssue(s, ref);
+      const op = {
+        op: 'issue.reopen',
+        id: issue.id,
+        from: issue.state,
+      } as OpOf<'issue.reopen'>;
+      if (to !== undefined) op.to = to as NonNullable<OpOf<'issue.reopen'>['to']>;
+      if (reason !== undefined) op.reason = reason;
+      return op;
+    },
+    deps,
+  );
+}
+
+/** `me`, `none` (entfernt die Zuweisung) oder ein Handle. */
+export async function assignIssue(
+  ctx: ResolvedContext,
+  ref: string,
+  who: string,
+  deps?: WriteDeps,
+): Promise<WriteOutcome> {
+  return writeOp(
+    ctx,
+    (s) => {
+      const issue = currentIssue(s, ref);
+      const to = who === 'none' ? null : resolveHandle(ctx, who);
+      return {
+        op: 'issue.edit',
+        id: issue.id,
+        set: { assignee: { from: issue.assignee ?? null, to } },
+      };
+    },
+    deps,
+  );
+}
+
+export type RankPositionInput =
+  | { top: true }
+  | { bottom: true }
+  | { before: string }
+  | { after: string }
+  | { value: number };
+
+export async function rankIssue(
+  ctx: ResolvedContext,
+  ref: string,
+  pos: RankPositionInput,
+  deps?: WriteDeps,
+): Promise<WriteOutcome> {
+  return writeOp(
+    ctx,
+    (s) => {
+      const issue = currentIssue(s, ref);
+      const op: OpOf<'issue.rank'> = { op: 'issue.rank', id: issue.id, from: issue.rank ?? null };
+      if ('top' in pos) op.top = true;
+      else if ('bottom' in pos) op.bottom = true;
+      else if ('before' in pos) op.before = resolveIssueRef(s, pos.before);
+      else if ('after' in pos) op.after = resolveIssueRef(s, pos.after);
+      else op.value = pos.value;
+      return op;
+    },
+    deps,
+  );
+}
+
+/**
+ * Zerlegt das Ziel von `issue link` (backe.md §2.11): ein registrierter Repo-Name mit optionalem
+ * `@ref`, sonst eine URL, deren Ref nach dem letzten `@` steht, wenn dahinter kein `:` folgt und
+ * der Teil davor eine normalisierbare URL ungleich `git` ist (`git@host:pfad` bleibt ganz).
+ */
+function parseLinkTarget(
+  s: BacklogSnapshot,
+  target: string,
+): { repo: string; ref?: string } | { url: string; ref?: string } {
+  const first = target.split('@', 1)[0] ?? '';
+  if (s.repos.has(first)) {
+    const { name, ref } = parseRepoRef(target);
+    return ref === undefined ? { repo: name } : { repo: name, ref };
+  }
+  const at = target.lastIndexOf('@');
+  if (at > 0) {
+    const head = target.slice(0, at);
+    const tail = target.slice(at + 1);
+    if (head !== 'git' && !tail.includes(':') && normalizable(head)) {
+      if (!isGitArg(tail)) {
+        throw new BackeError('validation', `Ungültiger Ref in »${target}«`);
+      }
+      return { url: head, ref: tail };
+    }
+  }
+  normalizeRepoUrl(target);
+  return { url: target };
+}
+
+function normalizable(url: string): boolean {
+  try {
+    normalizeRepoUrl(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function linkIssue(
+  ctx: ResolvedContext,
+  ref: string,
+  target: string,
+  deps?: WriteDeps,
+): Promise<WriteOutcome> {
+  return writeOp(
+    ctx,
+    (s) => ({
+      op: 'issue.link',
+      id: resolveIssueRef(s, ref),
+      ...parseLinkTarget(s, target),
+    }),
+    deps,
+  );
+}
+
+export async function unlinkIssue(
+  ctx: ResolvedContext,
+  ref: string,
+  repo: string,
+  deps?: WriteDeps,
+): Promise<WriteOutcome> {
+  return writeOp(
+    ctx,
+    (s) => ({ op: 'issue.unlink', id: resolveIssueRef(s, ref), repo: parseRepoRef(repo).name }),
+    deps,
+  );
+}
+
+export async function deleteIssue(
+  ctx: ResolvedContext,
+  ref: string,
+  input: { force?: boolean; children?: 'orphan' | 'recursive' } = {},
+  deps?: WriteDeps,
+): Promise<WriteOutcome> {
+  return writeOp(
+    ctx,
+    (s) => {
+      const op: OpOf<'issue.delete'> = { op: 'issue.delete', id: resolveIssueRef(s, ref) };
+      if (input.force === true) op.force = true;
+      if (input.children !== undefined) op.children = input.children;
       return op;
     },
     deps,
