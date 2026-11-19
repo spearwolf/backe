@@ -1,0 +1,13 @@
+$ backe project list
+[exit 0]
+[stdout]
+api       0  API
+web       1  Web
+web/auth  1  Auth
+[stderr]
+
+$ backe project list --json
+[exit 0]
+[stdout]
+[{"path":"api","title":"API","open":0},{"path":"web","title":"Web","lead":"spw","open":1},{"path":"web/auth","title":"Auth","open":1}]
+[stderr]

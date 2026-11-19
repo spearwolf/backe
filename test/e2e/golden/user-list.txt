@@ -1,0 +1,13 @@
+$ backe user list
+[exit 0]
+[stdout]
+alice  human  Alice A.
+bot-2  agent  bot-2  operator=spw
+spw    human  spw  (admin)
+[stderr]
+
+$ backe user list --json
+[exit 0]
+[stdout]
+[{"handle":"alice","name":"Alice A.","kind":"human","admin":false},{"handle":"bot-2","name":"bot-2","kind":"agent","operator":"spw","admin":false},{"handle":"spw","name":"spw","kind":"human","admin":true}]
+[stderr]

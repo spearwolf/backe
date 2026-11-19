@@ -1,0 +1,14 @@
+$ backe sprint list
+[exit 0]
+[stdout]
+2026-w48  2026-11-23–            3  KW 48
+auth      –2026-12-01            0  Auth
+ideen     -                      0  Ideen
+2026-w47  2026-11-16–2026-11-22  3  KW 47  (geschlossen)
+[stderr]
+
+$ backe sprint list --json
+[exit 0]
+[stdout]
+[{"slug":"2026-w48","title":"KW 48","start":"2026-11-23","closed":false,"open":3},{"slug":"auth","title":"Auth","end":"2026-12-01","closed":false,"open":0},{"slug":"ideen","title":"Ideen","closed":false,"open":0},{"slug":"2026-w47","title":"KW 47","start":"2026-11-16","end":"2026-11-22","closed":true,"open":3}]
+[stderr]

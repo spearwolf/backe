@@ -162,7 +162,7 @@ test('an invalid handle is rejected before any file is written', async () => {
   const err = await catchErrAsync(async () =>
     createAgent(await b.context(), { handle: '../../x' }),
   );
-  expect(err.code).toBe('usage');
-  expect(err.message).toBe('Ungültiger Handle: ../../x');
+  expect(err.code).toBe('validation');
+  expect(err.message).toBe('Ungültiger Handle: »../../x«');
   expect(await present(join(b.homes.backeHome, 'keys'))).toBe(false);
 });

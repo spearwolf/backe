@@ -317,6 +317,23 @@ export async function stdinBody(io: CliIo, stdin: StdinGuard, clear: string): Pr
   return body;
 }
 
+/**
+ * Beschreibung beim Anlegen aus `-d <md|->` oder `-F <pfad>`; beide zusammen passen nicht, ohne
+ * Angabe gibt es keine. Leeres stdin ist ein Fehler (`stdinBody`), eine leere Datei nicht.
+ */
+export async function bodyArg(
+  env: CommandEnv,
+  opts: { description?: string; file?: string },
+): Promise<string | undefined> {
+  if (opts.description !== undefined && opts.file !== undefined) {
+    throw new BackeError('usage', '-d und -F schließen sich aus');
+  }
+  if (opts.description === '-') return stdinBody(env.io, env.stdin, "-d ''");
+  if (opts.description !== undefined) return opts.description;
+  if (opts.file !== undefined) return fileText(opts.file, env.io);
+  return undefined;
+}
+
 /** JSON oder Text, je nach Format. */
 export function emit(env: CommandEnv, value: unknown, textOut: () => string): void {
   env.out(env.format === 'json' ? json(value) : textOut());

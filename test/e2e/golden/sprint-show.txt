@@ -1,0 +1,51 @@
+$ backe sprint show 2026-w47
+[exit 0]
+[stdout]
+2026-w47  KW 47  2026-11-16–2026-11-22
+
+todo (2)
+bk-56789  todo         -    ⧗ SSO-Abbruch
+bk-01234  todo         spw  Token-Refresh
+
+in_progress (1)
+bk-abcde  in_progress  spw  Login-Seite
+
+done (1)
+bk-fghjk  done         -    Altes Login entfernt
+[stderr]
+
+$ backe sprint show 2026-w47 --sort created
+[exit 0]
+[stdout]
+2026-w47  KW 47  2026-11-16–2026-11-22
+
+todo (2)
+bk-01234  todo         spw  Token-Refresh
+bk-56789  todo         -    ⧗ SSO-Abbruch
+
+in_progress (1)
+bk-abcde  in_progress  spw  Login-Seite
+
+done (1)
+bk-fghjk  done         -    Altes Login entfernt
+[stderr]
+
+$ backe sprint show 2026-w47 -p web
+[exit 0]
+[stdout]
+2026-w47  KW 47  2026-11-16–2026-11-22
+
+todo (1)
+bk-56789  todo         -    ⧗ SSO-Abbruch
+
+in_progress (1)
+bk-abcde  in_progress  spw  Login-Seite
+[stderr]
+
+$ backe sprint show auth
+[exit 0]
+[stdout]
+auth  Auth  –2026-12-01
+
+Login stabil bekommen.
+[stderr]

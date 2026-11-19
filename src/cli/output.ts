@@ -83,6 +83,17 @@ export function columns(rows: readonly (readonly string[])[]): string[] {
   );
 }
 
+/** Body ohne abschließende Zeilenumbrüche als Zeilen, mit Leerzeile davor; leer ergibt nichts. */
+export function bodyBlock(body: string): string[] {
+  const trimmed = body.replace(/\n+$/, '');
+  return trimmed === '' ? [] : ['', ...trimmed.split('\n')];
+}
+
+/** Gesetzte Felder als `<label>  <wert>`, Labels auf das breiteste gepolstert. */
+export function fieldRows(rows: readonly (readonly [string, string | undefined])[]): string[] {
+  return columns(rows.filter((r): r is [string, string] => r[1] !== undefined && r[1] !== ''));
+}
+
 /** Zeilen als Text mit abschließendem Zeilenumbruch; ohne Zeilen leer. */
 export const lines = (rows: readonly string[]): string => rows.map((row) => `${row}\n`).join('');
 

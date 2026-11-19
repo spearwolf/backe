@@ -1,0 +1,23 @@
+$ backe project show web
+[exit 0]
+[stdout]
+web  Web
+lead         spw
+subprojects  web/auth
+issues       backlog 1, todo 1, done 1
+
+Alles Web.
+[stderr]
+
+$ backe project show web --json
+[exit 0]
+[stdout]
+{"path":"web","title":"Web","lead":"spw","body":"Alles Web.\n","subprojects":["web/auth"],"counts":{"backlog":1,"todo":1,"done":1}}
+[stderr]
+
+$ backe project show api
+[exit 0]
+[stdout]
+api  API
+issues  keine
+[stderr]

@@ -10,7 +10,8 @@ import { type WriteOutcome, writeOp } from './outcome.ts';
 import { effectiveFilter, openSnapshot } from './read.ts';
 import type { WriteDeps } from './write.ts';
 
-const GROUP_ORDER: readonly State[] = [
+/** Reihenfolge der States in Gruppen und Zählungen: Hauptlinie, Pausen, Abbrüche. */
+export const STATE_ORDER: readonly State[] = [
   'backlog',
   'todo',
   'in_progress',
@@ -108,7 +109,7 @@ export async function showSprint(
     .map((e) => e.data)
     .filter((i) => (i.sprints ?? []).includes(slug) && matchesFilter(i, filter, false))
     .sort(compare);
-  const groups = GROUP_ORDER.map((state) => ({
+  const groups = STATE_ORDER.map((state) => ({
     state,
     items: members
       .filter((i) => i.state === state)

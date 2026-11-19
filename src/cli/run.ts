@@ -15,6 +15,10 @@ import { contextCommand } from './commands/context.ts';
 import { initCommand } from './commands/init.ts';
 import { issueCommands } from './commands/issue.ts';
 import { nextCommand } from './commands/next.ts';
+import { projectCommands } from './commands/project.ts';
+import { repoCommands } from './commands/repo.ts';
+import { sprintCommands } from './commands/sprint.ts';
+import { userCommands } from './commands/user.ts';
 import { verifyCommand } from './commands/verify.ts';
 import type { CliIo } from './io.ts';
 import {
@@ -55,6 +59,10 @@ export function buildProgram(rt: Runtime): Command {
   issueCommands(program, rt);
   nextCommand(program, rt);
   commentCommands(program, rt);
+  projectCommands(program, rt);
+  sprintCommands(program, rt);
+  repoCommands(program, rt);
+  userCommands(program, rt);
   verifyCommand(program, rt);
   return program;
 }

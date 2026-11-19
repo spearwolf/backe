@@ -1,0 +1,13 @@
+$ backe repo list
+[exit 0]
+[stdout]
+backend  git@github.com:acme/api.git          -     0
+docs     gh:acme/docs                         -     0
+webapp   https://example.com/acme/webapp.git  main  2
+[stderr]
+
+$ backe repo list --json
+[exit 0]
+[stdout]
+[{"name":"backend","url":"git@github.com:acme/api.git","canonical":"github.com/acme/api","issues":0},{"name":"docs","url":"gh:acme/docs","canonical":"github.com/acme/docs","issues":0},{"name":"webapp","url":"https://example.com/acme/webapp.git","canonical":"example.com/acme/webapp","default_ref":"main","issues":2}]
+[stderr]

@@ -1,0 +1,34 @@
+$ backe user show me
+[exit 0]
+[stdout]
+spw  spw
+kind   human
+admin  ja
+keys   <fp-spw>
+[stderr]
+
+$ backe user show alice
+[exit 0]
+[stdout]
+alice  Alice A.
+kind     human
+admin    nein
+keys     keine
+revoked  <fp-alice> (widerrufen <ts>)
+[stderr]
+
+$ backe user show alice --json
+[exit 0]
+[stdout]
+{"handle":"alice","name":"Alice A.","kind":"human","admin":false,"revoked":[{"fingerprint":"<fp-alice>","revoked":"<ts>"}]}
+[stderr]
+
+$ backe user show bot-2
+[exit 0]
+[stdout]
+bot-2  bot-2
+kind      agent
+operator  spw
+admin     nein
+keys      <fp-bot-2>
+[stderr]

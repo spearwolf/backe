@@ -21,6 +21,7 @@ import {
 } from '../../services/issues.ts';
 import {
   action,
+  bodyArg,
   type CommandEnv,
   collect,
   emitNotices,
@@ -96,17 +97,7 @@ function defineCreate(parent: Command, name: string, rt: Runtime, description: s
     .option('--state <state>', 'Anfangszustand (Default backlog)')
     .action(
       action(rt, async (env, opts: CreateOpts) => {
-        if (opts.description !== undefined && opts.file !== undefined) {
-          throw new BackeError('usage', '-d und -F schließen sich aus');
-        }
-        const body =
-          opts.description === '-'
-            ? await stdinBody(env.io, env.stdin, "-d ''")
-            : opts.description !== undefined
-              ? opts.description
-              : opts.file !== undefined
-                ? await fileText(opts.file, env.io)
-                : undefined;
+        const body = await bodyArg(env, opts);
         const r = await createIssue(await env.context(), {
           title: opts.title,
           ...(body === undefined ? {} : { body }),
@@ -156,7 +147,8 @@ function listMode(opts: ListOpts): IssueListQuery['mode'] {
   return modes[0];
 }
 
-function listSort(value: string | undefined): IssueListQuery['sort'] {
+/** `--sort rank|created` für `issue list` und `sprint show`; sonst `validation`. */
+export function listSort(value: string | undefined): IssueListQuery['sort'] {
   if (value === undefined || value === 'rank' || value === 'created') return value;
   throw new BackeError('validation', `Ungültige Sortierung: »${value}«`, {
     hint: 'rank oder created',

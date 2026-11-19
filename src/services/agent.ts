@@ -20,7 +20,7 @@ export async function createAgent(
   deps?: WriteDeps,
 ): Promise<{ keyPath: string; commit: string }> {
   const { handle } = input;
-  if (!isHandle(handle)) throw new BackeError('usage', `Ungültiger Handle: ${handle}`);
+  if (!isHandle(handle)) throw new BackeError('validation', `Ungültiger Handle: »${handle}«`);
   const { handle: actor } = requireWriter(ctx);
   const backlog = ctx.backlog.value;
   if (ctx.userConfig.identities?.[backlog]?.[handle] !== undefined) {
