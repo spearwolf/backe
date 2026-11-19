@@ -6,6 +6,7 @@ import { type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { normalizeRepoUrl } from '../core/url.ts';
 import { git } from '../git/exec.ts';
+import { issueFile } from '../store/layout.ts';
 import { createIssue, linkIssue } from './issues.ts';
 import {
   checkRepos,
@@ -90,6 +91,20 @@ describe('checkRepos', () => {
     expect(repoCheckExit(checks)?.message).toBe('repo check: 4 Fehler');
     const only = await checkRepos(ctx, { names: ['badref'] }, { lsRemote: neverCalled });
     expect(only.map((c) => c.name)).toEqual(['badref']);
+  });
+
+  test('an issue with an invalid ref is a local error on its repo and never aborts', async () => {
+    const issue = await createIssue(ctx, { title: 'bad' });
+    const id = issue.id as string;
+    const file = join(b.root, issueFile(id));
+    const text = await readFile(file, 'utf8');
+    await writeFile(file, text.replace('\n---\n', '\nrepos:\n  - webapp@a:b\n---\n'));
+    const checks = await checkRepos(ctx, {}, { lsRemote: neverCalled, github: neverCalled });
+    const msgs = byName(checks, 'webapp').findings;
+    expect(msgs).toEqual([expect.objectContaining({ level: 'error', kind: 'local' })]);
+    expect(msgs[0]?.message).toContain(id);
+    expect(msgs[0]?.message).toContain('a:b');
+    expect(repoCheckExit(checks)?.code).toBe('validation');
   });
 
   test('remote: missing refs are errors, commit refs are info', async () => {
@@ -224,7 +239,9 @@ describe('checkRepos', () => {
     expect(calls).toBe(1);
     expect(second[0]?.cached).toBe(t0.toISOString());
     expect(second[0]?.findings).toEqual(first[0]?.findings);
-    await run(at(25));
+    await run(at(24));
+    expect(calls).toBe(2);
+    await run(at(25)); // der Eintrag von 24 h gilt wieder
     expect(calls).toBe(2);
     await run(at(25), true);
     expect(calls).toBe(3);

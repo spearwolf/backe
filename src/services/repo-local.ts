@@ -2,7 +2,7 @@
 import type { Dirent } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { exists, expandPath, isMissing, physicalPath } from '../context/paths.ts';
+import { exists, expandPath, physicalPath } from '../context/paths.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { updateUserConfig } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
@@ -57,10 +57,12 @@ async function findClones(dir: string): Promise<string[]> {
     try {
       entries = await readdir(path, { withFileTypes: true });
     } catch (error) {
-      if (isMissing(error) && depth === 0) {
+      if (depth > 0) return; // unlesbare Unterverzeichnisse werden übersprungen
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         throw new BackeError('not_found', `${path} existiert nicht`);
       }
-      return;
+      const code = (error as NodeJS.ErrnoException).code ?? String(error);
+      throw new BackeError('validation', `${path} lässt sich nicht durchsuchen (${code})`);
     }
     if (entries.some((e) => e.name === '.git')) {
       found.push(path);
@@ -124,14 +126,21 @@ export async function scanRepos(
 
   const current = new Map<string, string>(Object.entries(ctx.userConfig.repos ?? {}));
   const home = ctx.homes.home;
+  const chosen = new Set<string>();
   const entries: ScanEntry[] = [];
   const edits: { path: string[]; value: string }[] = [];
   for (const { name, canonical, path } of matches) {
     const old = current.get(canonical);
+    if (chosen.has(canonical)) {
+      // Weiterer Clone desselben Repos in diesem Lauf: der erste (nach Pfad) gilt.
+      entries.push({ name, path, status: 'differs', previous: old as string });
+      continue;
+    }
     if (old === undefined) {
       entries.push({ name, path, status: 'new' });
     } else if ((await physicalPath(expandPath(old, { home, base: home }))) === path) {
       entries.push({ name, path, status: 'unchanged' });
+      chosen.add(canonical);
       continue;
     } else if (input.force === true) {
       entries.push({ name, path, status: 'overwritten', previous: old });
@@ -140,6 +149,7 @@ export async function scanRepos(
       continue;
     }
     current.set(canonical, path);
+    chosen.add(canonical);
     edits.push({ path: ['repos', canonical], value: path });
   }
   if (edits.length > 0 && input.dryRun !== true) {

@@ -152,4 +152,27 @@ describe('scanRepos', () => {
     const err = await catchErrAsync(() => scanRepos(ctx, join(dir, 'missing'), {}));
     expect(err.code).toBe('not_found');
   });
+
+  test('scan rejects a file as root and a second clone never overwrites in one run', async () => {
+    const file = join(dir, 'plain');
+    await writeFile(file, 'x');
+    const err = await catchErrAsync(() => scanRepos(ctx, file, {}));
+    expect(err.code).toBe('validation');
+    expect(err.message).toContain(file);
+
+    await gitInit(join(dir, 'm'), { origin: 'https://github.com/acme/webapp' });
+    await gitInit(join(dir, 'n'), { origin: 'https://github.com/acme/webapp' });
+    const m = await realpath(join(dir, 'm'));
+    const n = await realpath(join(dir, 'n'));
+    for (const force of [false, true]) {
+      const entries = await scanRepos(ctx, dir, { force, dryRun: true });
+      expect(entries).toEqual([
+        { name: 'webapp', path: m, status: 'new' },
+        { name: 'webapp', path: n, status: 'differs', previous: m },
+      ]);
+    }
+    await scanRepos(ctx, dir, { force: true });
+    const forced = await scanRepos(await b.context(), dir, { force: true });
+    expect(forced.map((e) => e.status)).toEqual(['unchanged', 'differs']);
+  });
 });

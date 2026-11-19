@@ -7,10 +7,12 @@ import { promisify } from 'node:util';
 import type { Env } from '../context/paths.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
-import { parseRepoRef } from '../core/names.ts';
+import { isGitArg, isGitRef, parseRepoRef } from '../core/names.ts';
 import { normalizeRepoUrl } from '../core/url.ts';
 import { git, transportEnv } from '../git/exec.ts';
 import { writeFileAtomic } from '../store/files.ts';
+import { parseEntityFile } from '../store/frontmatter.ts';
+import type { Problem } from '../store/snapshot.ts';
 import { openSnapshot } from './read.ts';
 
 export type RepoFinding = {
@@ -191,7 +193,7 @@ export async function checkRepos(
   input: { names?: string[]; remote?: boolean; fresh?: boolean },
   deps: RepoCheckDeps = {},
 ): Promise<RepoCheck[]> {
-  const { snapshot: s } = await openSnapshot(ctx);
+  const { root, snapshot: s } = await openSnapshot(ctx);
 
   const refsOf = new Map<string, Set<string>>();
   for (const { data } of s.issues.values()) {
@@ -242,6 +244,7 @@ export async function checkRepos(
       findings: [{ level: 'error', kind: 'local', message: p.message }],
     });
   }
+  await addInvalidIssueRefs(root, s.problems, items);
   items.sort((a, b) => cmp(a.name, b.name));
 
   let selected = items;
@@ -267,6 +270,40 @@ export async function checkRepos(
     ...(i.github === undefined ? {} : { github: i.github }),
     ...(i.cached === undefined ? {} : { cached: i.cached }),
   }));
+}
+
+/**
+ * Issues mit ungültigem `name@ref` fallen aus dem Snapshot (sie stehen in `problems`). Ihre rohen
+ * `repos` werden hier sicher gelesen und der Fehler dem Repo zugeordnet.
+ */
+async function addInvalidIssueRefs(
+  root: string,
+  problems: readonly Problem[],
+  items: readonly RepoItem[],
+): Promise<void> {
+  for (const p of problems) {
+    if (p.kind !== 'issue' || p.key === undefined) continue;
+    let repos: unknown;
+    try {
+      repos = parseEntityFile(await readFile(join(root, p.path), 'utf8'), p.path).data.repos;
+    } catch {
+      continue; // nicht lesbar oder kein Frontmatter: das Problem selbst meldet `validation` anderswo
+    }
+    if (!Array.isArray(repos)) continue;
+    for (const raw of repos) {
+      if (typeof raw !== 'string' || raw.indexOf('@') < 0) continue;
+      const at = raw.indexOf('@');
+      const ref = raw.slice(at + 1);
+      if (isGitArg(ref) && isGitRef(ref)) continue;
+      items
+        .find((i) => i.name === raw.slice(0, at) && i.canonical !== undefined)
+        ?.findings.push({
+          level: 'error',
+          kind: 'local',
+          message: `Issue »${p.key}« (${p.path}): Ref »${ref}« ist ungültig`,
+        });
+    }
+  }
 }
 
 type Remote = { refs: string[]; github?: GithubInfo; cached?: string; githubFinding?: RepoFinding };
@@ -387,7 +424,7 @@ async function checkRemote(
       await mkdir(dirname(file), { recursive: true });
       await writeFileAtomic(file, `${JSON.stringify(cache)}\n`);
     } catch {
-      // Der Cache ist nur eine Beschleunigung; ein nicht schreibbares Verzeichnis ist kein Prüfergebnis.
+      // Bewusst still und nicht fatal: Der Cache ist nur eine Beschleunigung; ein nicht schreibbares Verzeichnis ist kein Prüfergebnis.
     }
   }
 }
