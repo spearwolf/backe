@@ -55,7 +55,7 @@ Eingaben, die der Spec impliziert, aber keine seiner Testlisten (§5) abdeckt. J
 | M3 | Configs und Kontext (`context`, `git/exec`) | §2.14, §2.15 | [`2026-11-18-backe-m3-kontext.md`](./2026-11-18-backe-m3-kontext.md) |
 | M4 | Git-Schicht und Schreibpfad (`git`, `services`) | §2.12, §2.13, §2.16.1 | [`2026-11-19-backe-m4-git.md`](./2026-11-19-backe-m4-git.md) |
 | M5a | CLI-Kern (`services`, `cli`): Gerüst, Ausgabe, alle Befehle außer den M5b-Gruppen | §2.4–2.7, §2.9–2.12, §2.14, §2.17, §2.18, §2.22–2.24 | [`2026-11-19-backe-m5a-cli-kern.md`](./2026-11-19-backe-m5a-cli-kern.md) |
-| M5b | `attach *` samt Größenlimit und LFS, `repo check\|where\|scan`, `commit` und `issue edit` per `$EDITOR`, `batch`, `doctor`, `config get\|set\|edit` | §2.8, §2.11, §2.13 (Hand-Edits), §2.15.1, §2.16.6 | entsteht nach M5a |
+| M5b | `attach *` samt Größenlimit und LFS, `repo check\|where\|scan`, `commit` und `issue edit` per `$EDITOR`, `batch`, `doctor`, `config get\|set\|edit` | §2.8, §2.11, §2.13 (Hand-Edits), §2.15.1, §2.16.6 | nächster Detailplan (M5a abgenommen) |
 | M6 | Sync, Replay, Claim | §2.16.2–2.16.5 | entsteht nach M5b |
 | M7 | MCP-Modus (`mcp`) | §2.19 | entsteht nach M6 |
 | M8 | Release | §2.21, README | entsteht nach M7 |
@@ -98,6 +98,8 @@ Eingaben, die der Spec impliziert, aber keine seiner Testlisten (§5) abdeckt. J
 **Liefert:** die Use-Cases als Services (ein Service-Layer für CLI und MCP, §3.7) und die CLI dazu: `context`, `init`, `verify`, `backlog *`, `issue *` ohne `claim`, `next` ohne `--claim`, `comment *`, `project *`, `sprint *`, `repo add|list|rm`, `user *` samt Aliasen (§2.17); Ausgabeformate `text|json|md`, `--fields`, Kopfzeile bei Kontextfiltern, Fehler-JSON, Exit-Codes (§2.18).
 
 **Abnahme:** `mise run check` grün, CI grün auf beiden Plattformen; E2E gegen `dist/cli.js` mit Golden-Files für Text und JSON jeder Befehlsgruppe, Exit-Codes `0`, `2`, `3`, `4`, `5` je mindestens einmal geprüft; Coverage-Gate für `src/services/**`.
+
+**Abgenommen** am 2026-11-19: Abschluss-Review über den ganzen Meilenstein ohne offene Befunde; 1943 Tests grün, Coverage 99,06 % Lines / 94,33 % Branches; CI grün auf `ubuntu-latest` und `macos-latest`. Offene Kleinbefunde stehen unter »Übernommen aus M5a«.
 
 ### M5b — Anhänge, Hand-Edits, Werkzeuge
 
