@@ -16,6 +16,8 @@ export type BatchOutcome = {
   /** Die aufgezeichneten (wirksamen) Operationen. */
   ops: Operation[];
   notices: Notice[];
+  /** Verify-Gründe, wenn dieser Batch die Arbeitskopie im Modus `warn` geklont hat. */
+  warnings: string[];
 };
 
 const FORBIDDEN: Partial<Record<Operation['op'], (op: Operation) => string | undefined>> = {
@@ -41,5 +43,11 @@ export async function runBatch(
   const ops = parseBatchInput(text.startsWith('﻿') ? text.slice(1) : text);
   rejectForbidden(ops);
   const r = await executeWrite(ctx, { kind: 'batch', ops }, deps);
-  return { commit: r.commit, refs: r.refs, ops: r.recorded, notices: r.notices };
+  return {
+    commit: r.commit,
+    refs: r.refs,
+    ops: r.recorded,
+    notices: r.notices,
+    warnings: r.verifyNotices,
+  };
 }

@@ -1,6 +1,12 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { logTrailers, statusShort, type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
+import {
+  logTrailers,
+  statusShort,
+  type TestBacklog,
+  testBacklog,
+  warnModeAgent,
+} from '../../test/helpers/git.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import type { Operation } from '../ops/operation.ts';
 import { commentsDir, issueFile } from '../store/layout.ts';
@@ -62,12 +68,13 @@ describe('commitEdits', () => {
       paths: [issueFile(a)],
     });
     expect(out.commits[0]?.recorded).toHaveLength(1);
-    expect(out.notices.sort()).toEqual(
+    expect(out.rewritten).toEqual(
       [
-        `${issueFile(c.id)}: keine wirksame Änderung`,
-        `${issueFile(d.id)}: keine wirksame Änderung`,
-      ].sort(),
+        { path: issueFile(c.id), reason: 'no_effect' },
+        { path: issueFile(d.id), reason: 'no_effect' },
+      ].sort((x, y) => (x.path < y.path ? -1 : 1)),
     );
+    expect(out.notices).toEqual([]);
     expect(await statusShort(b.root)).toEqual([]);
   });
 
@@ -77,6 +84,19 @@ describe('commitEdits', () => {
     const out = await commitEdits(ctx, {});
     expect(out.commits.map((c) => c.recorded.map((o) => o.op))).toEqual([['issue.delete']]);
     expect(await statusShort(b.root)).toEqual([]);
+  });
+
+  test('notices of the operations stay objects with code and ids', async () => {
+    const [p] = (await issues('P')) as [string];
+    const child = (
+      await executeWrite(ctx, { kind: 'op', op: { op: 'issue.create', title: 'C', parent: p } })
+    ).recorded[0] as { id: string };
+    const text = await read(issueFile(p));
+    await write(issueFile(p), text.replace(/^state: .*$/m, 'state: cancelled'));
+    const out = await commitEdits(ctx, {});
+    expect(out.commits.flatMap((c) => c.recorded.map((o) => o.op))).toEqual(['issue.move']);
+    expect(out.notices).toMatchObject([{ code: 'open_children', ids: [child.id] }]);
+    expect(out.warnings).toEqual([]);
   });
 
   test('a new comment file becomes comment.add', async () => {
@@ -93,7 +113,7 @@ describe('commitEdits', () => {
     const [a] = (await issues('A')) as [string];
     await write(issueFile(a), (await read(issueFile(a))).replace('title: A', 'title: A\nfoo: bar'));
     const out = await commitEdits(ctx, {});
-    expect(out.warnings).toEqual([{ path: issueFile(a), unknownKeys: ['foo'] }]);
+    expect(out.unknownKeys).toEqual([{ path: issueFile(a), keys: ['foo'] }]);
     expect(out.commits).toMatchObject([
       { kind: 'manual', summary: 'manual: 1 Dateien', recorded: [] },
     ]);
@@ -102,7 +122,14 @@ describe('commitEdits', () => {
 
   test('nothing to commit', async () => {
     expect((await commitEdits(ctx, {})).commits).toEqual([]);
-    expect((await commitEdits(ctx, { message: 'x' })).notices).toEqual([]);
+    expect((await commitEdits(ctx, { message: 'x' })).warnings).toEqual([]);
+  });
+
+  test('a fresh clone in warn mode passes the verify reasons on as warnings', async () => {
+    const { ctx: asClaude, notice } = await warnModeAgent();
+    const out = await commitEdits(asClaude, {});
+    expect(out.commits).toEqual([]);
+    expect(out.warnings).toEqual([notice]);
   });
 
   test('-m names the manual commit and is noted when unused', async () => {
@@ -110,13 +137,13 @@ describe('commitEdits', () => {
     await write(issueFile(a), (await read(issueFile(a))).replace('title: A', 'title: A\nfoo: bar'));
     const named = await commitEdits(ctx, { message: 'Notizen' });
     expect(named.commits[0]).toMatchObject({ kind: 'manual', summary: 'Notizen' });
-    expect(named.notices).toEqual([]);
+    expect(named.warnings).toEqual([]);
     expect((await logTrailers(b.root))[0]?.subject).toBe('Notizen');
 
     await write(issueFile(bb), (await read(issueFile(bb))).replace('title: B', 'title: B2'));
     const unused = await commitEdits(ctx, { message: 'Egal' });
     expect(unused.commits).toHaveLength(1);
-    expect(unused.notices).toEqual(['-m gilt nur für manuelle Änderungen']);
+    expect(unused.warnings).toEqual(['-m gilt nur für manuelle Änderungen']);
   });
 
   test('a canonical rewrite is noted', async () => {
@@ -129,7 +156,7 @@ describe('commitEdits', () => {
     ).recorded[0] as { id: string };
     await write(issueFile(z.id), (await read(issueFile(z.id))).replace(`[${x}]`, `[${y}, ${x}]`));
     const out = await commitEdits(ctx, {});
-    expect(out.notices).toEqual([`${issueFile(z.id)}: kanonisch umgeschrieben`]);
+    expect(out.rewritten).toEqual([{ path: issueFile(z.id), reason: 'canonical' }]);
   });
 
   test('a working copy that could not be aligned is noted', async () => {
@@ -149,7 +176,7 @@ describe('commitEdits', () => {
     try {
       const out = await commitEdits(ctx, {}, { hooks: { afterCommit: () => writeFile(lock, '') } });
       expect(out.commits).toHaveLength(1);
-      const unsettled = out.notices.find((n) => n.startsWith('Arbeitskopie nicht angeglichen'));
+      const unsettled = out.warnings.find((n) => n.startsWith('Arbeitskopie nicht angeglichen'));
       expect(unsettled).toContain(issueFile(a));
       expect(unsettled).toContain(issueFile(z.id));
       expect(unsettled).toContain('index.lock');

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll } from 'vitest';
 import { type Env, type Homes, resolveHomes } from '../../src/context/paths.ts';
+import { setIdentity } from '../../src/context/registry.ts';
 import {
   type ContextFlags,
   type ResolvedContext,
@@ -18,6 +19,7 @@ import {
   TRAILER_OP,
 } from '../../src/git/message.ts';
 import { initBacklog } from '../../src/services/init.ts';
+import { executeWrite } from '../../src/services/write.ts';
 import { tempDir } from './backlog.ts';
 
 export type TestKey = { priv: string; pub: string; line: string };
@@ -263,4 +265,50 @@ export async function rawCommit(wc: string, spec: RawCommitSpec): Promise<string
   } finally {
     await rm(indexFile, { force: true });
   }
+}
+
+/**
+ * Backlog mit Remote im Modus `verify: warn`, darauf ein unsignierter Commit, und der Agent
+ * `claude-1` ohne eigene Arbeitskopie: Sein erster Write klont und meldet den Commit als
+ * `<sha7>: unsigniert` in `verifyNotices`.
+ */
+export async function warnModeAgent(): Promise<{
+  remote: TestBacklog;
+  ctx: ResolvedContext;
+  notice: string;
+}> {
+  const remote = await testBacklog({ remote: true });
+  const spw = await remote.context();
+  const config = await readFile(join(remote.root, '.backe/backlog.jsonc'), 'utf8');
+  await executeWrite(spw, {
+    kind: 'manual',
+    subject: 'verify: warn',
+    changes: [
+      {
+        path: '.backe/backlog.jsonc',
+        content: config.replace(/\n}\n$/, ',\n  "verify": "warn"\n}\n'),
+      },
+    ],
+  });
+  const claude = await testKey('claude-1');
+  await executeWrite(spw, {
+    kind: 'op',
+    op: {
+      op: 'user.add',
+      handle: 'claude-1',
+      name: 'Claude',
+      kind: 'agent',
+      operator: 'spw',
+      keys: [claude.line],
+    },
+  });
+  const bad = await rawCommit(remote.root, {
+    files: { 'notes.md': 'x\n' },
+    actor: 'spw',
+    op: 'manual',
+  });
+  await git(['push', '-q', 'origin', 'main'], { cwd: remote.root });
+  await setIdentity(remote.homes, 'acme', 'claude-1', claude.priv);
+  const ctx = await remote.context({ as: 'claude-1', backlog: 'acme' });
+  return { remote, ctx, notice: `${bad.slice(0, 7)}: unsigniert` };
 }

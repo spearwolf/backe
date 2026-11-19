@@ -1,1 +1,1 @@
-{"commits":[{"commit":"<sha>","kind":"manual","summary":"manual: 1 Dateien","ops":[],"paths":["<issue-dir>/issue.md"]}],"warnings":[{"path":"<issue-dir>/issue.md","unknown_keys":["colour"]}]}
+{"commits":[{"commit":"<sha>","kind":"manual","summary":"manual: 1 Dateien","ops":[],"paths":["<issue-dir>/issue.md"]}],"unknown_keys":[{"path":"<issue-dir>/issue.md","keys":["colour"]}]}

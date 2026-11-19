@@ -399,6 +399,9 @@ async function checkRemote(
     if (remote.githubFinding !== undefined) item.findings.push(remote.githubFinding);
 
     const known = new Set(remote.refs);
+    // Ein Ref kann seit dem Cache-Eintrag angelegt worden sein; die Meldung sagt, wie man neu prüft.
+    const stale =
+      remote.cached === undefined ? '' : ` (Cache vom ${remote.cached}; --fresh prüft neu)`;
     const wanted: [string, string][] = [];
     if (item.defaultRef !== undefined) wanted.push(['default_ref', item.defaultRef]);
     for (const ref of item.refs) wanted.push(['Ref', ref]);
@@ -413,7 +416,7 @@ async function checkRemote(
         item.findings.push({
           level: 'error',
           kind: 'ref',
-          message: `${label} »${ref}« existiert im Remote nicht`,
+          message: `${label} »${ref}« existiert im Remote nicht${stale}`,
         });
       }
     }

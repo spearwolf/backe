@@ -6,7 +6,10 @@
 import type { ResolvedContext } from '../context/resolve.ts';
 import { requireWriter } from '../context/resolve.ts';
 import { git } from '../git/exec.ts';
+import type { Notice } from '../ops/notice.ts';
 import type { Operation } from '../ops/operation.ts';
+import type { Rewritten } from './hand-edits.ts';
+import type { UnknownKeys } from './verify.ts';
 import { type ChainEntry, executeWrite, type WriteDeps } from './write.ts';
 
 export type CommitOutcome = {
@@ -18,14 +21,15 @@ export type CommitOutcome = {
     recorded: Operation[];
     paths: string[];
   }[];
-  warnings: { path: string; unknownKeys: string[] }[];
-  notices: string[];
+  /** Hinweise der Operationen. */
+  notices: Notice[];
+  /** Hand-Edits, die nicht so committet wurden, wie sie dastanden. */
+  rewritten: Rewritten[];
+  /** `-m` ohne `manual`-Anteil, nicht angeglichene Arbeitskopie, Verify-Gründe eines frischen Klons. */
+  warnings: string[];
+  /** Hand-Edits mit Keys, die das Schema nicht kennt (wie bei `verify`). */
+  unknownKeys: UnknownKeys[];
 };
-
-const REWRITE_NOTICE = {
-  canonical: 'kanonisch umgeschrieben',
-  no_effect: 'keine wirksame Änderung',
-} as const;
 
 async function subjectOf(wc: string, commit: string): Promise<string> {
   const { stdout } = await git(['log', '-1', '--format=%s', '--end-of-options', commit], {
@@ -55,12 +59,9 @@ export async function commitEdits(
       paths: entry.paths,
     });
   }
-  const notices = [
-    ...r.notices.map((n) => n.message),
-    ...r.rewritten.map((w) => `${w.path}: ${REWRITE_NOTICE[w.reason]}`),
-  ];
+  const warnings = [...r.verifyNotices];
   if (r.unsettled !== undefined) {
-    notices.push(
+    warnings.push(
       `Arbeitskopie nicht angeglichen (${r.unsettled.paths.join(', ')}): ${r.unsettled.reason}`,
     );
   }
@@ -69,7 +70,13 @@ export async function commitEdits(
     r.chain.length > 0 &&
     !r.chain.some((c) => c.kind === 'manual')
   ) {
-    notices.push('-m gilt nur für manuelle Änderungen');
+    warnings.push('-m gilt nur für manuelle Änderungen');
   }
-  return { commits, warnings: r.warnings, notices };
+  return {
+    commits,
+    notices: r.notices,
+    rewritten: r.rewritten,
+    warnings,
+    unknownKeys: r.warnings.map((w) => ({ path: w.path, keys: w.unknownKeys })),
+  };
 }

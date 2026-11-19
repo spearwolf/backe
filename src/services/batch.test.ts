@@ -1,5 +1,5 @@
 import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { revParse, type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
+import { revParse, type TestBacklog, testBacklog, warnModeAgent } from '../../test/helpers/git.ts';
 import { git } from '../git/exec.ts';
 import { parseCommitMessage } from '../git/message.ts';
 import { encodeBatchBody, summarizeBatch } from '../ops/operation.ts';
@@ -12,6 +12,13 @@ beforeEach(async () => {
 });
 
 describe('runBatch', () => {
+  test('a fresh clone in warn mode passes the verify reasons on as warnings', async () => {
+    const { ctx: asClaude, notice } = await warnModeAgent();
+    const out = await runBatch(asClaude, '{"op":"issue.create","title":"X"}\n');
+    expect(out.commit).toBeDefined();
+    expect(out.warnings).toEqual([notice]);
+  });
+
   test('batch input from agents', async () => {
     const ctx = await b.context();
     const lines = [

@@ -51,6 +51,7 @@ export function batchCommand(program: Command, rt: Runtime): void {
               refs: r.refs,
               ops: r.ops.length,
               notices: r.notices.length === 0 ? undefined : r.notices,
+              warnings: r.warnings.length === 0 ? undefined : r.warnings,
             }),
           );
           return;
@@ -61,7 +62,7 @@ export function batchCommand(program: Command, rt: Runtime): void {
             ...columns(Object.entries(r.refs)),
           ]),
         );
-        emitNotices(env, r.notices);
+        emitNotices(env, r.notices, r.warnings);
       }),
     );
 }

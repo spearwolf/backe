@@ -41,7 +41,15 @@ test('commit translates hand edits and prints one line per commit', async () => 
   await handEdit(t, (s) => s.replace(/^title: .*/m, 'title: Dritter Titel'));
   const hinted = await run(t, ['commit', '-m', 'wird nicht gebraucht']);
   expect(norm(t, hinted.stdout)).toBe('issue edit <id>\n');
-  expect(hinted.stderr).toContain('Hinweis: -m gilt nur für manuelle Änderungen\n');
+  // `-m` ohne manuellen Anteil steht unter `warnings`, im Text also als Warnung.
+  expect(hinted.stderr).toContain('Warnung: -m gilt nur für manuelle Änderungen\n');
+  await handEdit(t, (s) => s.replace(/^title: .*/m, 'title: Vierter Titel'));
+  const asJsonHint = JSON.parse(ok(await run(t, ['commit', '-m', 'x', '--json']))) as {
+    warnings?: string[];
+    notices?: unknown;
+  };
+  expect(asJsonHint.warnings).toEqual(['-m gilt nur für manuelle Änderungen']);
+  expect(asJsonHint.notices).toBeUndefined();
 });
 
 test('commit with nothing changed', async () => {

@@ -250,6 +250,23 @@ describe('checkRepos', () => {
     expect(Object.keys(cache.entries)).toEqual([normalizeRepoUrl(bare)]);
   });
 
+  test('a missing ref from the cache names the cache time and --fresh', async () => {
+    const t0 = new Date('2026-11-19T08:00:00Z');
+    const deps: RepoCheckDeps = {
+      now: () => t0,
+      lsRemote: async () => ({ ok: true, refs: ['main', 'v1'] }),
+    };
+    const missing = (checks: Awaited<ReturnType<typeof checkRepos>>) =>
+      byName(checks, 'webapp').findings.find((f) => f.level === 'error')?.message;
+    const run = (fresh = false) =>
+      checkRepos(ctx, { names: ['webapp'], remote: true, fresh }, deps);
+    expect(missing(await run())).toBe('Ref »feat/x« existiert im Remote nicht');
+    expect(missing(await run())).toBe(
+      `Ref »feat/x« existiert im Remote nicht (Cache vom ${t0.toISOString()}; --fresh prüft neu)`,
+    );
+    expect(missing(await run(true))).toBe('Ref »feat/x« existiert im Remote nicht');
+  });
+
   test('unreachable results are not cached; a corrupt cache is discarded silently', async () => {
     let calls = 0;
     const lsRemote: RepoCheckDeps['lsRemote'] = async () => {
