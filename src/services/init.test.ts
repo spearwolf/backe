@@ -1,4 +1,13 @@
-import { copyFile, mkdir, readdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
@@ -199,3 +208,20 @@ test('a target that is a file is refused with its fs error and nothing is regist
   await expect(initBacklog({ ...input, dir })).rejects.toMatchObject({ code: 'ENOTDIR' });
   expect((await readUserConfig(input.homes.backeHome)).backlogs).toBeUndefined();
 });
+
+test.skipIf(process.getuid?.() === 0)(
+  'an unreadable parent of the default target is an unexpected error, not a missing directory',
+  async () => {
+    const { input } = await inputFor();
+    const locked = join(input.homes.backeHome, 'backlogs', input.name);
+    await mkdir(locked, { recursive: true });
+    await chmod(locked, 0o000);
+    try {
+      const target = workingCopyPath({}, input.homes, input.name, input.handle);
+      const err = await catchErrAsync(() => initBacklog(input));
+      expect([err.code, err.message]).toEqual(['unexpected', `${target}: EACCES`]);
+    } finally {
+      await chmod(locked, 0o700);
+    }
+  },
+);

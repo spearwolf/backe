@@ -1,6 +1,6 @@
-import { access, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
-import { type Env, type Homes, physicalPath } from '../context/paths.ts';
+import { type Env, exists, type Homes, physicalPath } from '../context/paths.ts';
 import { managedClonePath, registerBacklog, setIdentity } from '../context/registry.ts';
 import { readUserConfig } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
@@ -33,15 +33,6 @@ async function isEmptyOrMissing(dir: string): Promise<boolean> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
     throw error;
-  }
-}
-
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await access(p);
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -100,7 +91,7 @@ export async function initBacklog(input: InitInput): Promise<{ root: string; anc
   }
   const root =
     input.dir === undefined ? managedClonePath(homes, name, handle) : await physicalPath(input.dir);
-  const existed = await pathExists(root);
+  const existed = await exists(root);
   if (!(await isEmptyOrMissing(root))) {
     throw new BackeError('conflict', `Zielverzeichnis ist nicht leer: ${root}`);
   }
