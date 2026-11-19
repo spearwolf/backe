@@ -2,7 +2,13 @@ import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { rawCommit, revParse, type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
+import {
+  rawCommit,
+  revParse,
+  type TestBacklog,
+  testBacklog,
+  testKey,
+} from '../../test/helpers/git.ts';
 import { type Env, type Homes, physicalPath, resolveHomes } from '../context/paths.ts';
 import {
   managedClonePath,
@@ -652,4 +658,82 @@ test('purge refuses a bound clone that is the managed directory itself', async (
   );
   expect(err.code).toBe('conflict');
   expect(await exists(join(dir, BACKLOG_CONFIG))).toBe(true);
+});
+
+test('cloning a newer format succeeds with a read-only notice', async () => {
+  const config = await readFile(join(b.root, BACKLOG_CONFIG), 'utf8');
+  await rawCommit(b.root, {
+    files: { [BACKLOG_CONFIG]: config.replace(/"version":\s*1/, '"version": 2') },
+    key: b.key,
+    actor: 'spw',
+    op: 'manual',
+  });
+  await push();
+  const r = await cloneBacklog({
+    homes: other.homes,
+    env: other.env,
+    url: b.remote as string,
+    handle: 'spw',
+  });
+  expect(r.notices).toEqual(['Backlog-Format 2 ist neuer als dieses backe (1); nur lesen']);
+  expect(await exists(join(r.root, BACKLOG_CONFIG))).toBe(true);
+});
+
+test('a failed final move leaves no registration behind', async () => {
+  const target = managedClonePath(other.homes, 'acme', 'spw');
+  const err = await catchErrAsync(() =>
+    cloneBacklog(
+      { homes: other.homes, env: other.env, url: b.remote as string, handle: 'spw' },
+      {
+        beforeFinish: async () => {
+          await mkdir(dirname(target), { recursive: true });
+          await writeFile(target, 'x');
+        },
+      },
+    ),
+  );
+  expect(err.code).toBe('conflict');
+  expect((await readUserConfig(other.homes.backeHome)).backlogs?.acme).toBeUndefined();
+  expect(await tempEntries(other.homes)).toEqual([]);
+});
+
+test('a failed final move keeps a registration that existed before the call', async () => {
+  await cloneBacklog({
+    homes: other.homes,
+    env: other.env,
+    url: b.remote as string,
+    handle: 'spw',
+  });
+  const target = managedClonePath(other.homes, 'acme', 'claude-1');
+  const err = await catchErrAsync(() =>
+    cloneBacklog(
+      { homes: other.homes, env: other.env, url: b.remote as string, handle: 'claude-1' },
+      {
+        beforeFinish: async () => {
+          await mkdir(dirname(target), { recursive: true });
+          await writeFile(target, 'x');
+        },
+      },
+    ),
+  );
+  expect(err.code).toBe('conflict');
+  expect((await readUserConfig(other.homes.backeHome)).backlogs?.acme?.remote).toBe(b.remote);
+});
+
+test('addBacklog writes nothing when verify fails', async () => {
+  await push();
+  const dir = await ownClone();
+  await rawCommit(dir, {
+    files: { 'notes.md': 'x\n' },
+    key: await testKey('mallory'),
+    actor: 'spw',
+    op: 'manual',
+  });
+  const err = await catchErrAsync(() =>
+    addBacklog({ homes: other.homes, env: other.env, name: 'acme', path: dir, handle: 'spw' }),
+  );
+  expect(err.code).toBe('verify');
+  expect(await readUserConfig(other.homes.backeHome)).toEqual({});
+  expect(await readLocalState(dir, 'identity')).toBeUndefined();
+  expect(await readLocalState(dir, 'anchor')).toBeUndefined();
 });

@@ -29,10 +29,10 @@ import { fallbackRoot, type ResolvedContext, readBacklogName } from '../context/
 import { configLockPath, readUserConfig, userConfigPath } from '../context/user-config.ts';
 import { BackeError, schemaError } from '../core/errors.ts';
 import { isHandle } from '../core/names.ts';
-import { BacklogConfigSchema, type UserConfig } from '../core/schemas.ts';
+import { BACKLOG_FORMAT_VERSION, BacklogConfigSchema, type UserConfig } from '../core/schemas.ts';
 import { git, transportEnv } from '../git/exec.ts';
 import { isAncestor, readBlobs, resolveCommit, rootCommits } from '../git/history.ts';
-import { readLocalState, writeLocalState } from '../git/local-state.ts';
+import { clearLocalState, readLocalState, writeLocalState } from '../git/local-state.ts';
 import { gitRemotes, gitToplevel } from '../git/query.ts';
 import { headState } from '../git/repo.ts';
 import { readJsonc } from '../store/jsonc.ts';
@@ -47,6 +47,7 @@ export type CloneResult = { name: string; root: string; notices: string[] };
 
 /** Nur was der Clone braucht; unbekannte Felder einer neueren Formatversion stören nicht. */
 const CloneConfigSchema = z.object({
+  version: BacklogConfigSchema.shape.version,
   sync: BacklogConfigSchema.shape.sync,
   verify: BacklogConfigSchema.shape.verify,
 });
@@ -183,7 +184,7 @@ async function cloneInto(input: {
 }): Promise<{ name: string; notices: string[] }> {
   const { env, source, reference, temp, handle } = input;
   await gitClone(env, source, reference, temp);
-  const { sync } = await readCloneConfig(temp, source);
+  const { sync, version } = await readCloneConfig(temp, source);
   if ((await headState(temp)).branch !== sync.branch) {
     await git(['switch', '-q', sync.branch], { cwd: temp });
   }
@@ -204,7 +205,13 @@ async function cloneInto(input: {
     await writeLocalState(temp, 'verified', verified);
   }
   await writeLocalState(temp, 'identity', handle);
-  return { name, notices: await verifyClone(temp) };
+  const notices = await verifyClone(temp);
+  if (version > BACKLOG_FORMAT_VERSION) {
+    notices.unshift(
+      `Backlog-Format ${version} ist neuer als dieses backe (${BACKLOG_FORMAT_VERSION}); nur lesen`,
+    );
+  }
+  return { name, notices };
 }
 
 async function isWorkingCopyOf(dir: string, name: string): Promise<boolean> {
@@ -277,10 +284,16 @@ export async function cloneBacklog(
           : undefined;
       },
     });
+    const wasRegistered = (await readUserConfig(homes.backeHome)).backlogs?.[name] !== undefined;
     await registerBacklog(homes, { name, remote: url });
-    await hooks.beforeFinish?.();
-    const root = await finish(homes, name, temp, managedClonePath(homes, name, handle));
-    return { name, root, notices };
+    try {
+      await hooks.beforeFinish?.();
+      const root = await finish(homes, name, temp, managedClonePath(homes, name, handle));
+      return { name, root, notices };
+    } catch (error) {
+      if (!wasRegistered) await unregisterBacklog(homes, name).catch(() => undefined);
+      throw error;
+    }
   });
 }
 
@@ -380,12 +393,13 @@ export async function addBacklog(input: {
   }
   const cfg = await readUserConfig(homes.backeHome);
   const identity = await readLocalState(wanted, 'identity');
-  if (identity === undefined) {
-    await writeLocalState(wanted, 'identity', handle);
-  } else if (identity !== handle) {
+  if (identity !== undefined && identity !== handle) {
     throw identityMismatch(wanted, identity, handle, workingCopyPath(cfg, homes, name, handle));
   }
   const { sync } = await readCloneConfig(wanted, wanted);
+  // Der Anker muss vor dem Verify stehen; scheitert es, nimmt `add` ihn wieder weg. Identität und
+  // Registrierung folgen erst nach dem Verify.
+  let wroteAnchor = false;
   if ((await readLocalState(wanted, 'anchor')) === undefined) {
     const sibling = await fallbackRoot(cfg, homes, name, handle);
     const known =
@@ -395,15 +409,29 @@ export async function addBacklog(input: {
         ? await readLocalState(sibling, 'anchor')
         : undefined;
     await writeLocalState(wanted, 'anchor', known ?? (await singleRoot(wanted, wanted)));
+    wroteAnchor = true;
   }
-  const notices = await verifyClone(wanted);
+  let notices: string[];
+  try {
+    notices = await verifyClone(wanted);
+  } catch (error) {
+    if (wroteAnchor) await clearLocalState(wanted, 'anchor');
+    throw error;
+  }
   const remote = (await gitRemotes(wanted)).find((r) => r.name === sync.remote)?.url;
+  const wasRegistered = cfg.backlogs?.[name] !== undefined;
   await registerBacklog(homes, {
     name,
     ...(remote === undefined ? {} : { remote }),
     handle,
     path: wanted,
   });
+  try {
+    if (identity === undefined) await writeLocalState(wanted, 'identity', handle);
+  } catch (error) {
+    if (!wasRegistered) await unregisterBacklog(homes, name).catch(() => undefined);
+    throw error;
+  }
   return { root: wanted, notices };
 }
 

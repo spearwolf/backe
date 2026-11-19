@@ -1,4 +1,4 @@
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { writeFileAtomic } from '../store/files.ts';
 import { git } from './exec.ts';
@@ -34,4 +34,9 @@ export async function writeLocalState(
   value: string,
 ): Promise<void> {
   await writeFileAtomic(join(await stateDir(wc), name), `${value}\n`);
+}
+
+/** Entfernt einen Eintrag; ein fehlender ist kein Fehler. */
+export async function clearLocalState(wc: string, name: LocalStateName): Promise<void> {
+  await rm(join(await stateDir(wc), name), { force: true });
 }
