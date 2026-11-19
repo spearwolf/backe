@@ -73,6 +73,35 @@ describe('project.create', () => {
 });
 
 describe('project.mv', () => {
+  test('refuses to move a subtree that holds a broken project file', () => {
+    const s = snap({ projects: ['web'] });
+    const withProblem = {
+      ...s,
+      problems: [
+        {
+          path: projectFile('web/auth'),
+          message: 'kaputtes YAML',
+          kind: 'project' as const,
+          key: 'web/auth',
+        },
+      ],
+    };
+    const err = fail(withProblem, { op: 'project.mv', from: 'web', to: 'shop' });
+    expect([err.exitCode, reasonOf(err)]).toEqual([2, 'schema']);
+    expect(err.message).toBe('Projekt web/auth ist nicht lesbar: kaputtes YAML');
+  });
+
+  test('a broken project file outside the subtree does not block', () => {
+    const s = snap({ projects: ['web'] });
+    const withProblem = {
+      ...s,
+      problems: [
+        { path: projectFile('api'), message: 'kaputt', kind: 'project' as const, key: 'api' },
+      ],
+    };
+    expect(run(withProblem, { op: 'project.mv', from: 'web', to: 'shop' }).noop).toBe(false);
+  });
+
   test('moves the subtree and rewrites issues in one result', () => {
     const s = snap({
       projects: ['web', 'web/auth', 'platform', 'api'],

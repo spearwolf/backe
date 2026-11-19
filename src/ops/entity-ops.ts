@@ -83,6 +83,15 @@ export function projectMv(d: Draft, op: OpOf<'project.mv'>): OpOf<'project.mv'> 
     throw violation('exists', `Projekt ${to} existiert bereits`, { ids: [to] });
   }
   requireParent(d, to);
+  // Eine kaputte Datei im Teilbaum fehlt in den Maps und bliebe beim Verschieben zurück.
+  const unreadable = d.snapshot.problems.find(
+    (p) => p.kind === 'project' && p.key !== undefined && inSubtree(p.key, from),
+  );
+  if (unreadable !== undefined) {
+    throw violation('schema', `Projekt ${unreadable.key} ist nicht lesbar: ${unreadable.message}`, {
+      hint: 'Erst die Datei reparieren; bis dahin lässt sich der Teilbaum nicht verschieben.',
+    });
+  }
 
   const moved = [...d.snapshot.projects.keys()].filter((p) => inSubtree(p, from));
   const newPath = (p: string) => `${to}${p.slice(from.length)}`;

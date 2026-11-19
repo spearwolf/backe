@@ -132,16 +132,47 @@ describe('parsePropFilter', () => {
     expect(catchErr(() => parsePropFilter('k:=null')).code).toBe('usage'));
 
   test('>= and <= parse numbers when possible', () => {
-    expect(parsePropFilter('k>=3')).toEqual({ key: 'k', op: 'ge', value: 3 });
-    expect(parsePropFilter('k<=2.5')).toEqual({ key: 'k', op: 'le', value: 2.5 });
-    expect(parsePropFilter('k>=medium')).toEqual({ key: 'k', op: 'ge', value: 'medium' });
-    expect(parsePropFilter('k>=')).toEqual({ key: 'k', op: 'ge', value: '' });
-    expect(parsePropFilter('k>=1e999')).toEqual({ key: 'k', op: 'ge', value: '1e999' });
+    expect(parsePropFilter('k>=3')).toEqual({ key: 'k', op: 'ge', value: 3, raw: '3' });
+    expect(parsePropFilter('k<=2.5')).toEqual({ key: 'k', op: 'le', value: 2.5, raw: '2.5' });
+    expect(parsePropFilter('k>=medium')).toEqual({
+      key: 'k',
+      op: 'ge',
+      value: 'medium',
+      raw: 'medium',
+    });
+    expect(parsePropFilter('k>=')).toEqual({ key: 'k', op: 'ge', value: '', raw: '' });
+    expect(parsePropFilter('k>=1e999')).toEqual({
+      key: 'k',
+      op: 'ge',
+      value: '1e999',
+      raw: '1e999',
+    });
   });
 
   test('invalid expressions are usage errors', () => {
     expect(catchErr(() => parsePropFilter('K=1')).code).toBe('usage');
     expect(catchErr(() => parsePropFilter('k')).code).toBe('usage');
+  });
+});
+
+describe('ordered enums with number-like values', () => {
+  const levels = cfg({
+    props: {
+      level: { type: 'enum', values: ['03', '02', '01'], ordered: true, description: 'x' },
+    },
+  });
+  const issueWith = (level: string) => ({ level });
+
+  test('compare by position in values, not as numbers', () => {
+    expect(propMatches(issueWith('02'), parsePropFilter('level>=01'), levels)).toBe(true);
+    expect(propMatches(issueWith('02'), parsePropFilter('level>=03'), levels)).toBe(false);
+    expect(propMatches(issueWith('02'), parsePropFilter('level<=03'), levels)).toBe(true);
+    expect(propMatches(issueWith('03'), parsePropFilter('level<=01'), levels)).toBe(false);
+  });
+
+  test('the filter keeps the raw text', () => {
+    expect(parsePropFilter('level>=01')).toEqual({ key: 'level', op: 'ge', value: 1, raw: '01' });
+    checkPropFilter(parsePropFilter('level>=01'), levels);
   });
 });
 

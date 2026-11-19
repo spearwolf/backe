@@ -125,7 +125,7 @@ export function parsePropAssignment(expr: string): [key: string, value: PropValu
 
 export type PropFilter =
   | { key: string; op: 'eq'; values: PropValue[]; structural: boolean }
-  | { key: string; op: 'ge' | 'le'; value: string | number }
+  | { key: string; op: 'ge' | 'le'; value: string | number; raw: string }
   | { key: string; op: 'has' };
 
 export function parsePropFilter(expr: string): PropFilter {
@@ -134,7 +134,7 @@ export function parsePropFilter(expr: string): PropFilter {
   if (op === ':=') return { key, op: 'eq', values: [parseJsonValue(key, rest)], structural: true };
   const n = Number(rest);
   const value = rest.trim() !== '' && Number.isFinite(n) ? n : rest;
-  return { key, op: op === '>=' ? 'ge' : 'le', value };
+  return { key, op: op === '>=' ? 'ge' : 'le', value, raw: rest };
 }
 
 /** `>=`/`<=` gehen nur auf geordnete Enums, numerische Deklarationen und freie Keys mit Zahl. */
@@ -149,7 +149,7 @@ export function checkPropFilter(f: PropFilter, config: BacklogConfig): void {
     if (typeof f.value !== 'number') fail('der Vergleichswert muss eine Zahl sein');
   } else if (decl.type === 'enum') {
     if (decl.ordered !== true) fail('das Enum ist nicht geordnet (ordered: true fehlt)');
-    if (!(decl.values ?? []).includes(String(f.value)))
+    if (!(decl.values ?? []).includes(f.raw))
       fail(`unbekannter Wert, erlaubt: ${(decl.values ?? []).join(', ')}`);
   } else if (decl.type === 'integer' || decl.type === 'number') {
     if (typeof f.value !== 'number') fail('der Vergleichswert muss eine Zahl sein');
@@ -196,14 +196,14 @@ function eqMatches(actual: PropValue, wanted: PropValue, structural: boolean): b
 
 function rangeMatches(
   actual: PropValue,
-  f: { op: 'ge' | 'le'; value: string | number; key: string },
+  f: { op: 'ge' | 'le'; value: string | number; raw: string; key: string },
   config: BacklogConfig,
 ): boolean {
   const decl = declarationOf(config, f.key);
   if (decl?.type === 'enum' && decl.ordered === true) {
     const values = decl.values ?? [];
     const own = typeof actual === 'string' ? values.indexOf(actual) : -1;
-    const limit = values.indexOf(String(f.value));
+    const limit = values.indexOf(f.raw);
     if (own < 0 || limit < 0) return false;
     // `values` steht vom höchsten zum niedrigsten Wert: höher heißt kleinerer Index.
     return f.op === 'ge' ? own <= limit : own >= limit;
@@ -221,7 +221,7 @@ export function propMatches(
   const actual = props[f.key] as PropValue;
   if (f.op === 'has') return true;
   if (f.op === 'eq') return f.values.some((w) => eqMatches(actual, w, f.structural));
-  return rangeMatches(actual, { op: f.op, value: f.value, key: f.key }, config);
+  return rangeMatches(actual, f, config);
 }
 
 /** Je (Issue, Key) ein Eintrag, dessen aktueller Wert die Deklaration verletzt; nach ID, dann Key. */

@@ -411,7 +411,12 @@ const arbEntityEdit = fc
 /** Gültige Operationen aus allen Einträgen des Operationskatalogs, `content` inklusive. */
 export function arbOperation(): fc.Arbitrary<Operation> {
   const pausedFrom = fc.constantFrom('backlog', 'todo', 'in_progress', 'review');
-  const reasons = { reason: arbReason, reason_file: arbCommentFile };
+  // `reason_file` gibt es nur zusammen mit `reason`.
+  const reasonAlternatives = [
+    fc.constant({}),
+    fc.record({ reason: arbReason }),
+    fc.record({ reason: arbReason, reason_file: arbCommentFile }),
+  ] as const;
   const arbs = [
     variant(
       'issue.create',
@@ -439,20 +444,25 @@ export function arbOperation(): fc.Arbitrary<Operation> {
       },
     ),
     arbIssueEditOp,
-    variant(
-      'issue.move',
-      { id: arbIssueRef, from: arbState, to: arbState },
-      { blocked_by: arbRefList, force: fc.constant(true), ...reasons },
+    withOneOf(
+      variant(
+        'issue.move',
+        { id: arbIssueRef, from: arbState, to: arbState },
+        { blocked_by: arbRefList, force: fc.constant(true) },
+      ),
+      ...reasonAlternatives,
     ),
-    variant(
-      'issue.resume',
-      { id: arbIssueRef, from: fc.constantFrom('blocked', 'on_hold') },
-      reasons,
+    withOneOf(
+      variant('issue.resume', { id: arbIssueRef, from: fc.constantFrom('blocked', 'on_hold') }),
+      ...reasonAlternatives,
     ),
-    variant(
-      'issue.reopen',
-      { id: arbIssueRef, from: fc.constantFrom('done', 'cancelled', 'rejected') },
-      { to: pausedFrom, ...reasons },
+    withOneOf(
+      variant(
+        'issue.reopen',
+        { id: arbIssueRef, from: fc.constantFrom('done', 'cancelled', 'rejected') },
+        { to: pausedFrom },
+      ),
+      ...reasonAlternatives,
     ),
     variant('issue.claim', { id: arbIssueRef }),
     withOneOf(

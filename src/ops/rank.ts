@@ -23,7 +23,13 @@ function anchorIndex(s: BacklogSnapshot, id: string, anchor: string, list: Slot[
   if (anchor === id) {
     throw new BackeError('validation', `Anker ${anchor} ist das Issue selbst`);
   }
-  if (!s.issues.has(anchor)) throw new BackeError('not_found', `Issue ${anchor} nicht gefunden`);
+  if (!s.issues.has(anchor)) {
+    const broken = s.problems.find((p) => p.kind === 'issue' && p.key === anchor);
+    if (broken !== undefined) {
+      throw new BackeError('validation', `Anker ${anchor} ist nicht lesbar: ${broken.message}`);
+    }
+    throw new BackeError('not_found', `Issue ${anchor} nicht gefunden`);
+  }
   const index = list.findIndex((slot) => slot.id === anchor);
   if (index < 0) {
     throw new BackeError('validation', `Anker ${anchor} hat keinen rank`, {

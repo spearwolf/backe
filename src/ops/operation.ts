@@ -150,30 +150,46 @@ const IssueEdit = z
 
 const reasonFields = { reason: Reason.optional(), reason_file: CommentFile.optional() };
 
-const IssueMove = z.strictObject({
-  op: z.literal('issue.move'),
-  id: IssueRef,
-  from: State,
-  to: State,
-  blocked_by: RefList.optional(),
-  force: z.literal(true).optional(),
-  ...reasonFields,
-});
+/** Eine Datei für den Begründungskommentar braucht dessen Text. */
+function reasonFileNeedsReason(
+  o: { reason?: unknown; reason_file?: unknown },
+  ctx: z.RefinementCtx,
+) {
+  if (o.reason_file !== undefined && o.reason === undefined) {
+    ctx.addIssue({ code: 'custom', message: '»reason_file« nur zusammen mit »reason«' });
+  }
+}
 
-const IssueResume = z.strictObject({
-  op: z.literal('issue.resume'),
-  id: IssueRef,
-  from: State.extract(['blocked', 'on_hold']),
-  ...reasonFields,
-});
+const IssueMove = z
+  .strictObject({
+    op: z.literal('issue.move'),
+    id: IssueRef,
+    from: State,
+    to: State,
+    blocked_by: RefList.optional(),
+    force: z.literal(true).optional(),
+    ...reasonFields,
+  })
+  .superRefine(reasonFileNeedsReason);
 
-const IssueReopen = z.strictObject({
-  op: z.literal('issue.reopen'),
-  id: IssueRef,
-  from: State.extract(['done', 'cancelled', 'rejected']),
-  to: State.extract(['backlog', 'todo', 'in_progress', 'review']).optional(),
-  ...reasonFields,
-});
+const IssueResume = z
+  .strictObject({
+    op: z.literal('issue.resume'),
+    id: IssueRef,
+    from: State.extract(['blocked', 'on_hold']),
+    ...reasonFields,
+  })
+  .superRefine(reasonFileNeedsReason);
+
+const IssueReopen = z
+  .strictObject({
+    op: z.literal('issue.reopen'),
+    id: IssueRef,
+    from: State.extract(['done', 'cancelled', 'rejected']),
+    to: State.extract(['backlog', 'todo', 'in_progress', 'review']).optional(),
+    ...reasonFields,
+  })
+  .superRefine(reasonFileNeedsReason);
 
 const IssueClaim = z.strictObject({ op: z.literal('issue.claim'), id: IssueRef });
 

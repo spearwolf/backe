@@ -18,6 +18,17 @@ function catchError(fn: () => unknown): BackeError {
 }
 
 describe('rankPlacement', () => {
+  test('a broken anchor is a validation error naming the problem, not a missing issue', () => {
+    const s = ranked(1000);
+    s.problems.push({ path: 'x.md', message: 'kaputtes YAML', kind: 'issue', key: I(9) });
+    const err = catchError(() => rankPlacement(s, I(0), { before: I(9) }));
+    expect([err.code, err.message]).toEqual([
+      'validation',
+      `Anker ${I(9)} ist nicht lesbar: kaputtes YAML`,
+    ]);
+    expect(catchError(() => rankPlacement(s, I(0), { after: I(8) })).code).toBe('not_found');
+  });
+
   test('step is 1000', () => expect(RANK_STEP).toBe(1000));
 
   test('midpoint between neighbours', () =>

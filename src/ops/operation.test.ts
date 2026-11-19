@@ -39,6 +39,31 @@ function withoutContent(op: Operation): Operation {
 const invalid = (text: string) => catchErr(() => decodeOp(text)).code;
 const invalidOp = (op: object) => invalid(JSON.stringify(op));
 
+describe('operation validation details', () => {
+  test('decodeOp rejects -0 in props', () => {
+    const text = `{"op":"issue.edit","id":"${ID}","props":{"k":{"from":null,"to":-0}}}`;
+    expect(invalid(text)).toBe('validation');
+    expect(catchErr(() => decodeOp(text)).message).toContain('-0 ist kein gültiger Wert');
+  });
+
+  test('decodeOp rejects -0 nested in a prop value and in issue.create', () => {
+    const text = '{"op":"issue.create","title":"x","props":{"k":[1,{"a":-0}]}}';
+    expect(invalid(text)).toBe('validation');
+  });
+
+  test.each([
+    { op: 'issue.move', id: ID, from: 'todo', to: 'in_progress' },
+    { op: 'issue.resume', id: ID, from: 'blocked' },
+    { op: 'issue.reopen', id: ID, from: 'done' },
+  ])('reason_file without reason is rejected for $op', (base) => {
+    const text = JSON.stringify({ ...base, reason_file: '20261119T080000Z-spw-abc.md' });
+    expect(invalid(text)).toBe('validation');
+    expect(catchErr(() => decodeOp(text)).message).toContain('nur zusammen mit');
+    const ok = { ...base, reason: 'warum', reason_file: '20261119T080000Z-spw-abc.md' };
+    expect(() => decodeOp(JSON.stringify(ok))).not.toThrow();
+  });
+});
+
 describe('encodeOp / decodeOp', () => {
   test('spec example roundtrips byte-identically', () => {
     const line = '{"op":"issue.move","id":"bk-7f3k2","from":"in_progress","to":"review"}';

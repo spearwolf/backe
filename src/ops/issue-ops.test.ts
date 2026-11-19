@@ -372,6 +372,132 @@ describe('issue.edit', () => {
     expect(err.message).toContain('parent');
   });
 
+  test('depends_on from a child to its ancestor is a cycle', () => {
+    const s = snap({
+      issues: [{ id: I(1) }, { id: I(2), parent: I(1) }, { id: I(3), parent: I(2) }],
+    });
+    const err = editErr(s, { add: { depends_on: [I(1)] } }, I(3));
+    expect([err.code, reasonOf(err)]).toEqual(['validation', 'cycle']);
+    expect(err.message).toBe(`Zyklus über parent und depends_on: ${I(3)} -> ${I(1)}`);
+    expect(err.details).toMatchObject({ ids: [I(3), I(1)] });
+  });
+
+  test('depends_on from a parent to its descendant is a cycle', () => {
+    const s = snap({
+      issues: [{ id: I(1) }, { id: I(2), parent: I(1) }, { id: I(3), parent: I(2) }],
+    });
+    const err = editErr(s, { add: { depends_on: [I(3)] } }, I(1));
+    expect(reasonOf(err)).toBe('cycle');
+    expect(err.details).toMatchObject({ ids: [I(1), I(3)] });
+  });
+
+  test('depends_on between unrelated branches is fine', () => {
+    const s = snap({
+      issues: [{ id: I(1) }, { id: I(2), parent: I(1) }, { id: I(3), parent: I(1) }],
+    });
+    expect(data(edit(s, { add: { depends_on: [I(3)] } }, I(2)), I(2)).depends_on).toEqual([I(3)]);
+  });
+
+  test('reparenting under an issue the issue depends on is a cycle', () => {
+    const s = snap({ issues: [{ id: I(1) }, { id: I(2), depends_on: [I(1)] }] });
+    const err = editErr(s, { set: { parent: { from: null, to: I(1) } } }, I(2));
+    expect(reasonOf(err)).toBe('cycle');
+    expect(err.message).toBe(`Zyklus über parent und depends_on: ${I(2)} -> ${I(1)}`);
+    expect(err.details).toMatchObject({ ids: [I(2), I(1)] });
+  });
+
+  test('reparenting a subtree whose member depends on a new ancestor is a cycle', () => {
+    const s = snap({
+      issues: [{ id: I(1) }, { id: I(2) }, { id: I(3), parent: I(2), depends_on: [I(1)] }],
+    });
+    const err = editErr(s, { set: { parent: { from: null, to: I(1) } } }, I(2));
+    expect(reasonOf(err)).toBe('cycle');
+    expect(err.details).toMatchObject({ ids: [I(3), I(1)] });
+  });
+
+  test('reparenting under an issue that depends on the subtree is a cycle', () => {
+    const s = snap({
+      issues: [{ id: I(1), depends_on: [I(3)] }, { id: I(2) }, { id: I(3), parent: I(2) }],
+    });
+    const err = editErr(s, { set: { parent: { from: null, to: I(1) } } }, I(2));
+    expect(reasonOf(err)).toBe('cycle');
+    expect(err.details).toMatchObject({ ids: [I(1), I(3)] });
+  });
+
+  test('an open child under a done parent is refused', () => {
+    const s = snap({ issues: [{ id: I(1), state: 'done' }, { id: I(2) }] });
+    const err = editErr(s, { set: { parent: { from: null, to: I(1) } } }, I(2));
+    expect([err.exitCode, reasonOf(err)]).toEqual([4, 'settled_parent']);
+    expect(err.message).toBe(`${I(2)}: Parent ${I(1)} ist done`);
+    expect(err.hint).toBe(`backe issue reopen ${I(1)}`);
+  });
+
+  test('creating an open child under a done parent is refused, a settled one is not', () => {
+    const s = snap({ issues: [{ id: I(1), state: 'done' }] });
+    const err = catchErr(() =>
+      applyOperation(s, { op: 'issue.create', title: 'x', parent: I(1) }, ctx()),
+    );
+    expect(reasonOf(err)).toBe('settled_parent');
+    const ok = applyOperation(
+      s,
+      { op: 'issue.create', title: 'x', parent: I(1), state: 'done' },
+      ctx(),
+    );
+    expect(ok.noop).toBe(false);
+  });
+
+  test('reopening a child of a done parent is refused', () => {
+    const s = snap({
+      issues: [
+        { id: I(1), state: 'done' },
+        { id: I(2), parent: I(1), state: 'done' },
+      ],
+    });
+    const err = catchErr(() =>
+      applyOperation(s, { op: 'issue.reopen', id: I(2), from: 'done' }, ctx()),
+    );
+    expect(reasonOf(err)).toBe('settled_parent');
+  });
+
+  test('reopening a cancelled child of a done parent is refused', () => {
+    const s = snap({
+      issues: [
+        { id: I(1), state: 'done' },
+        { id: I(2), parent: I(1), state: 'cancelled' },
+      ],
+    });
+    const err = catchErr(() =>
+      applyOperation(s, { op: 'issue.reopen', id: I(2), from: 'cancelled', to: 'todo' }, ctx()),
+    );
+    expect(reasonOf(err)).toBe('settled_parent');
+  });
+
+  test('a forced move of an open child under a done parent passes the check', () => {
+    const s = snap({
+      issues: [
+        { id: I(1), state: 'done' },
+        { id: I(2), parent: I(1), state: 'todo' },
+      ],
+    });
+    const r = applyOperation(
+      s,
+      { op: 'issue.move', id: I(2), from: 'todo', to: 'in_progress', force: true },
+      ctx(),
+    );
+    expect(data(r, I(2)).state).toBe('in_progress');
+  });
+
+  test('an open child that already sits under a done parent may be edited', () => {
+    const s = snap({
+      issues: [
+        { id: I(1), state: 'done' },
+        { id: I(2), parent: I(1), state: 'todo' },
+      ],
+    });
+    const r = edit(s, { set: { title: { from: I(2), to: 'Neu' } } }, I(2));
+    expect(data(r, I(2)).title).toBe('Neu');
+  });
+
   test('add appends, remove drops, both are idempotent', () => {
     const s = snap({
       projects: ['web', 'api', 'ops'],
@@ -625,6 +751,18 @@ describe('issue.rank', () => {
   });
 });
 
+describe('issue.rank with a broken anchor', () => {
+  test.each(['before', 'after'] as const)('%s a broken issue file is a schema error', (side) => {
+    const s = snap({ issues: [{ id: I(1), rank: 1000 }, { id: I(3) }] });
+    s.problems.push({ path: issueFile(I(2)), message: 'kaputtes YAML', kind: 'issue', key: I(2) });
+    const err = catchErr(() =>
+      applyOperation(s, { op: 'issue.rank', id: I(3), from: null, [side]: I(2) }, ctx()),
+    );
+    expect([err.exitCode, reasonOf(err)]).toEqual([2, 'schema']);
+    expect(err.message).toBe(`Anker ${I(2)} ist nicht lesbar: kaputtes YAML`);
+  });
+});
+
 describe('issue.link', () => {
   const link = (s: BacklogSnapshot, fields: Partial<OpOf<'issue.link'>>) =>
     applyOperation(s, { op: 'issue.link', id: I(1), ...fields } as OpOf<'issue.link'>, ctx());
@@ -667,6 +805,14 @@ describe('issue.link', () => {
   test('a repo name that is not registered is a missing reference', () => {
     const err = catchErr(() => link(snap({ issues: [{ id: I(1) }] }), { repo: 'webapp' }));
     expect([err.exitCode, err.details]).toEqual([3, { reason: 'missing_ref', ids: ['webapp'] }]);
+  });
+
+  test('a url whose derived name is a broken repo file is a schema error', () => {
+    const s = snap({ issues: [{ id: I(1) }] });
+    s.problems.push({ path: 'repos/webapp.md', message: 'kaputt', kind: 'repo', key: 'webapp' });
+    const err = catchErr(() => link(s, { url: 'https://example.com/acme/webapp.git' }));
+    expect([err.exitCode, reasonOf(err)]).toEqual([2, 'schema']);
+    expect(err.message).toContain('repos/webapp.md');
   });
 
   test('an unusable url is rejected', () => {
