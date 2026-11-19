@@ -1,0 +1,68 @@
+$ backe ls
+[exit 0]
+[stdout]
+bk-01234  todo         -         Login überarbeiten
+bk-56789  in_progress  claude-1  Token-Refresh reparieren
+bk-abcde  todo         -         ⧗ SSO-Login bricht nach Token-Refresh ab
+bk-mnpqr  backlog      -         Doku aktualisieren
+bk-stvwx  blocked      spw       Build hängt
+bk-NEW01  todo         -         Neues Ticket
+[stderr]
+
+$ backe issue list --tree
+[exit 0]
+[stdout]
+bk-01234  todo         -         Login überarbeiten
+bk-56789  in_progress  claude-1    Token-Refresh reparieren
+bk-abcde  todo         -           ⧗ SSO-Login bricht nach Token-Refresh ab
+bk-mnpqr  backlog      -         Doku aktualisieren
+bk-stvwx  blocked      spw       Build hängt
+bk-NEW01  todo         -         Neues Ticket
+[stderr]
+
+$ backe ls --state all --sort created
+[exit 0]
+[stdout]
+bk-01234  todo         -         Login überarbeiten
+bk-56789  in_progress  claude-1  Token-Refresh reparieren
+bk-abcde  todo         -         ⧗ SSO-Login bricht nach Token-Refresh ab
+bk-fghjk  done         -         Altes Login entfernen
+bk-mnpqr  backlog      -         Doku aktualisieren
+bk-stvwx  blocked      spw       Build hängt
+bk-NEW01  todo         -         Neues Ticket
+[stderr]
+
+$ backe ls -a claude-1
+[exit 0]
+[stdout]
+bk-56789  in_progress  claude-1  Token-Refresh reparieren
+[stderr]
+
+$ backe ls --state done,blocked
+[exit 0]
+[stdout]
+bk-fghjk  done         -    Altes Login entfernen
+bk-stvwx  blocked      spw  Build hängt
+[stderr]
+
+$ backe ls -p web/auth --exact
+[exit 0]
+[stdout]
+bk-01234  todo         -         Login überarbeiten
+bk-56789  in_progress  claude-1  Token-Refresh reparieren
+bk-abcde  todo         -         ⧗ SSO-Login bricht nach Token-Refresh ab
+[stderr]
+
+$ backe ls -q login --limit 1
+[exit 0]
+[stdout]
+bk-01234  todo         -  Login überarbeiten
+[stderr]
+Hinweis: Liste gekürzt (--limit 1)
+
+$ backe ls --ready
+[exit 0]
+[stdout]
+bk-mnpqr  backlog      -  Doku aktualisieren
+bk-NEW01  todo         -  Neues Ticket
+[stderr]

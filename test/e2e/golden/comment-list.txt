@@ -1,0 +1,46 @@
+$ backe comment list bk-abcde
+[exit 0]
+[stdout]
+1  20260105T090800Z-spw-456.md  spw  Erster Kommentar
+2  20260105T090900Z-spw-789.md  spw  Aus der Datei.
+3  20260105T091000Z-spw-abc.md  spw  Von stdin
+[stderr]
+
+$ backe comment edit bk-abcde 1 -m 'Erster Kommentar, korrigiert'
+[exit 0]
+[stdout]
+comment edit bk-abcde
+[stderr]
+
+$ backe comment delete bk-abcde 20260105T090900Z-spw-789.md
+[exit 0]
+[stdout]
+comment delete bk-abcde
+[stderr]
+
+$ backe comment list bk-abcde
+[exit 0]
+[stdout]
+1  20260105T090800Z-spw-456.md  spw  Erster Kommentar, korrigiert
+2  20260105T091000Z-spw-abc.md  spw  Von stdin
+[stderr]
+
+$ backe comment list bk-abcde --limit 1
+[exit 0]
+[stdout]
+2  20260105T091000Z-spw-abc.md  spw  Von stdin
+[stderr]
+
+$ backe comment list bk-56789
+[exit 0]
+[stdout]
+1  20260105T090600Z-spw-yz0.md  spw  Fange mit dem Refresh an.
+2  20260105T090700Z-spw-123.md  spw  Zwischenstand: Refresh-Token wird jetzt rotiert.
+[stderr]
+
+$ backe comment delete bk-abcde 9
+[exit 3]
+[stdout]
+[stderr]
+Fehler: Kommentar »9« nicht gefunden
+Hinweis: Dateiname oder Nummer ab 1 aus der Kommentarliste angeben

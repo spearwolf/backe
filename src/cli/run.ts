@@ -10,8 +10,11 @@ import { readUserConfig } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
 import type { UserConfig } from '../core/schemas.ts';
 import { backlogCommands } from './commands/backlog.ts';
+import { commentCommands } from './commands/comment.ts';
 import { contextCommand } from './commands/context.ts';
 import { initCommand } from './commands/init.ts';
+import { issueCommands } from './commands/issue.ts';
+import { nextCommand } from './commands/next.ts';
 import { verifyCommand } from './commands/verify.ts';
 import type { CliIo } from './io.ts';
 import {
@@ -49,6 +52,9 @@ export function buildProgram(rt: Runtime): Command {
   contextCommand(program, rt);
   initCommand(program, rt);
   backlogCommands(program, rt);
+  issueCommands(program, rt);
+  nextCommand(program, rt);
+  commentCommands(program, rt);
   verifyCommand(program, rt);
   return program;
 }

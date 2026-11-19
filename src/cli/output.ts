@@ -46,7 +46,7 @@ export function useColor(io: CliIo, cfg: UserConfig): boolean {
   return io.isTTY && envValue(io.env, 'NO_COLOR') === undefined;
 }
 
-const STYLES = { bold: 1, dim: 2, red: 31, green: 32, yellow: 33 } as const;
+const STYLES = { bold: 1, dim: 2, red: 31, green: 32, yellow: 33, cyan: 36 } as const;
 export type Style = keyof typeof STYLES;
 
 /** `s` in ANSI-Farbe, wenn `on`; sonst unverändert. */

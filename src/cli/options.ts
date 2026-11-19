@@ -241,6 +241,17 @@ export function collect(value: string, prev: string[] = []): string[] {
   return [...prev, value];
 }
 
+/** `--limit <n>`: eine ganze Zahl ab 1, sonst `validation`. */
+export function limitArg(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!/^[1-9]\d*$/.test(value)) {
+    throw new BackeError('validation', `Ungültiges Limit: »${value}«`, {
+      hint: 'erwartet eine ganze Zahl ab 1',
+    });
+  }
+  return Number(value);
+}
+
 /** `~` gegen `HOME`, relativ gegen `cwd`. */
 export function absPath(p: string, io: CliIo): string {
   return expandPath(p, { home: resolveHomes(io.env, io.cwd).home, base: io.cwd });

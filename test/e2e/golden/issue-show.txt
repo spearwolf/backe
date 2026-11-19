@@ -1,0 +1,101 @@
+$ backe show bk-56789 --comments all
+[exit 0]
+[stdout]
+bk-56789  Token-Refresh reparieren
+state       in_progress
+reason      Fange mit dem Refresh an. — spw, <ts>
+assignee    claude-1
+creator     spw
+created     <ts>
+parent      bk-01234
+dependents  bk-abcde [todo]
+rank        1000
+projects    web/auth
+sprints     2026-w47
+repos       webapp
+comments    2
+
+--- 20260105T090600Z-spw-yz0.md (spw, <ts>, todo → in_progress)
+Fange mit dem Refresh an.
+Details folgen.
+
+--- 20260105T090700Z-spw-123.md (spw, <ts>)
+Zwischenstand: Refresh-Token wird jetzt rotiert.
+
+Noch offen: Tests.
+[stderr]
+
+$ backe issue show bk-01234
+[exit 0]
+[stdout]
+bk-01234  Login überarbeiten
+state       todo
+creator     spw
+created     <ts>
+children    1/3 erledigt
+            bk-56789  in_progress  Token-Refresh reparieren
+            bk-abcde  todo         SSO-Login bricht nach Token-Refresh ab
+            bk-fghjk  done         Altes Login entfernen
+rank        1000
+projects    web/auth
+sprints     2026-w47
+repos       webapp
+
+Sammelt die Login-Arbeiten.
+[stderr]
+
+$ backe show bk-stvwx
+[exit 0]
+[stdout]
+bk-stvwx  Build hängt
+state       blocked (aus todo), blockiert von bk-mnpqr [backlog]
+assignee    spw
+creator     spw
+created     <ts>
+projects    web
+[stderr]
+
+$ backe show bk-abcde --comments 1
+[exit 0]
+[stdout]
+bk-abcde  SSO-Login bricht nach Token-Refresh ab
+state       todo
+creator     spw
+created     <ts>
+parent      bk-01234
+depends_on  bk-56789 [in_progress]
+children    0/1 erledigt
+            bk-NEW02  backlog      Enkel
+rank        2000
+projects    web/auth
+sprints     2026-w47
+repos       webapp
+props       area: "api"
+            estimate_h: 3
+[stderr]
+
+$ backe show bk-NEW01
+[exit 0]
+[stdout]
+bk-NEW01  Neues Ticket
+state       todo
+creator     spw
+created     <ts>
+projects    web
+props       sev: "high"
+
+Text mit **Markdown**.
+[stderr]
+
+$ backe show bk-NEW02
+[exit 0]
+[stdout]
+bk-NEW02  Enkel
+state       backlog
+creator     spw
+created     <ts>
+parent      bk-abcde › bk-01234
+projects    web/auth
+sprints     2026-w47
+repos       webapp
+[stderr]
