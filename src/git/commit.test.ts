@@ -7,12 +7,6 @@ import { type CommitInput, commitPaths } from './commit.ts';
 import { git } from './exec.ts';
 import { stateDir } from './local-state.ts';
 
-const hasLfs = await git(['lfs', 'version'], { cwd: process.cwd() }).then(
-  () => true,
-  () => false,
-);
-if (!hasLfs) console.warn('git-lfs fehlt: LFS-Tests übersprungen');
-
 const AUTHOR = { name: 'Alice Author', email: 'alice@example.test' };
 const IDENT = ['-c', 'user.name=t', '-c', 'user.email=t@example.test'];
 
@@ -205,22 +199,6 @@ describe('commitPaths', () => {
     );
     expect(err.code).toBe('conflict');
     expect(await revParse(wc, 'HEAD')).toBe(head);
-  });
-
-  test.runIf(hasLfs)('lfs runs git add with the lfs filter from -c values only', async () => {
-    const { wc, input } = await setup();
-    await put(wc, '.gitattributes', 'a filter=lfs diff=lfs merge=lfs -text\n');
-    const sha = await commitPaths(wc, { ...input, paths: ['a', '.gitattributes'], lfs: true });
-    expect(await show(wc, `${sha}:a`)).toMatch(
-      /^version https:\/\/git-lfs\.github\.com\/spec\/v1\n/,
-    );
-  });
-
-  test('without lfs the attributes do not turn a file into a pointer', async () => {
-    const { wc, input } = await setup();
-    await put(wc, '.gitattributes', 'a filter=lfs diff=lfs merge=lfs -text\n');
-    const sha = await commitPaths(wc, { ...input, paths: ['a', '.gitattributes'] });
-    expect(await show(wc, `${sha}:a`)).toBe('A2');
   });
 
   test('no temp index is left behind', async () => {

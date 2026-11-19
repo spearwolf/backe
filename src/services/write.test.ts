@@ -39,7 +39,7 @@ import {
   summarizeBatch,
   summarizeOp,
 } from '../ops/operation.ts';
-import { commentsDir, issueFile } from '../store/layout.ts';
+import { attachmentsDir, commentsDir, issueFile } from '../store/layout.ts';
 import { executeWrite, type WriteInput } from './write.ts';
 
 const NOW = new Date('2026-11-19T10:00:00Z');
@@ -894,7 +894,8 @@ describe('edits', () => {
 
     const err = await catchErrAsync(() => executeWrite(ctx, EDITS));
     expect(err.code).toBe('validation');
-    expect(err.details).toMatchObject({ reason: 'cycle' });
+    expect(err.message).toMatch(/^Zyklus in depends_on: /);
+    expect(err.details).toEqual({ reason: 'cycle', ids: expect.any(Array) });
     expect(err.hint).toBe('Änderung auf zwei backe commit aufteilen');
     expect(await revParse(b.root, 'HEAD')).toBe(before);
     expect(await Promise.all([issueFile(a), issueFile(bb), 'notes.md'].map(read))).toEqual(edited);
@@ -913,7 +914,8 @@ describe('edits', () => {
     await rm(join(b.root, 'projects/web.md'));
     const err = await catchErrAsync(() => executeWrite(ctx, EDITS));
     expect(err.code).toBe('conflict');
-    expect(err.details).toMatchObject({ reason: 'has_subprojects' });
+    expect(err.message).toBe('web hat Unterprojekte: web/sub');
+    expect(err.details).toEqual({ reason: 'has_subprojects', ids: ['web/sub'] });
     expect(err.hint).toBe('Erst die Unterprojekte entfernen oder verschieben.');
     expect(await revParse(b.root, 'HEAD')).toBe(before);
     expect(await statusShort(b.root)).toEqual([' D projects/web.md']);
@@ -1153,6 +1155,43 @@ describe('edits', () => {
     ).toBe('');
   });
 
+  test('edits: a hand-edited sync.branch is checked against the branch from HEAD', async () => {
+    const config = await read('.backe/backlog.jsonc');
+    await write(
+      '.backe/backlog.jsonc',
+      config.replace(/\n}\n$/, ',\n  "sync": { "branch": "trunk" }\n}\n'),
+    );
+    const r = await executeWrite(ctx, EDITS);
+    expect(r.chain).toMatchObject([{ kind: 'manual', paths: ['.backe/backlog.jsonc'] }]);
+    expect(await show('HEAD:.backe/backlog.jsonc')).toContain('"branch": "trunk"');
+  });
+
+  test('edits: a failing reset after the commits is reported, not hidden', async () => {
+    const [x, y, a] = (await issues('X', 'Y', 'A')) as [string, string, string];
+    const z = await createdId({
+      kind: 'op',
+      op: { op: 'issue.create', title: 'Z', depends_on: [x, y] },
+    });
+    await edit(issueFile(z), (s) => s.replace(`[${x}, ${y}]`, `[${y}, ${x}]`));
+    await edit(issueFile(a), (s) => s.replace('title: A', 'title: A2'));
+    const lock = join(b.root, '.git', 'index.lock');
+    try {
+      const r = await executeWrite(ctx, EDITS, {
+        hooks: { afterCommit: () => writeFile(lock, '') },
+      });
+      expect(r.commit).toBe(await revParse(b.root, 'HEAD'));
+      expect(r.rewritten).toEqual([{ path: issueFile(z), reason: 'no_effect' }]);
+      expect(r.unsettled).toEqual({
+        paths: [issueFile(a), issueFile(z)].sort(),
+        reason: expect.stringContaining('index.lock'),
+      });
+    } finally {
+      await rm(lock, { force: true });
+    }
+    // Der Hand-Edit ohne Wirkung liegt noch da; verloren ist nichts.
+    expect(await read(issueFile(z))).toContain(`[${y}, ${x}]`);
+  });
+
   test('edits: nothing changed writes nothing', async () => {
     const r = await executeWrite(ctx, EDITS);
     expect(r).toMatchObject({ commit: undefined, chain: [], rewritten: [], warnings: [] });
@@ -1184,26 +1223,58 @@ describe('lfs', () => {
   test.runIf(hasLfs)('lfs: attachments are stored as lfs pointers', async () => {
     await enableLfs();
     const id = await createdId();
-    await executeWrite(ctx, {
+    const bytes = 'viele Bytes\n';
+    const path = `${attachmentsDir(id)}/log.txt`;
+    const add: WriteInput = {
       kind: 'op',
-      op: {
-        op: 'attach.add',
-        id,
-        name: 'log',
-        file: 'log.txt',
-        content: new TextEncoder().encode('viele Bytes\n'),
-      },
-    });
-    const pointer = await git(
-      ['cat-file', '-p', `HEAD:issues/${id.slice(3, 5)}/${id}/attachments/log.txt`],
-      {
-        cwd: b.root,
-      },
-    );
+      op: { op: 'attach.add', id, name: 'log', file: 'log.txt', content: Buffer.from(bytes) },
+    };
+    const rm: WriteInput = { kind: 'op', op: { op: 'attach.rm', id, name: 'log' } };
+    await executeWrite(ctx, add);
+    const pointer = await git(['cat-file', '-p', `HEAD:${path}`], { cwd: b.root });
     expect(pointer.stdout).toMatch(/^version https:\/\/git-lfs\.github\.com\/spec\/v1\n/);
     expect((await git(['show', 'HEAD:.gitattributes'], { cwd: b.root })).stdout).toContain(
       'filter=lfs',
     );
+    // Der Filter steht in der Arbeitskopie selbst; der Arbeitsbaum trägt die echten Bytes.
+    const filter = await git(['config', '--local', '--get', 'filter.lfs.process'], { cwd: b.root });
+    expect(filter.stdout.trim()).toBe('git-lfs filter-process');
+    expect(await readFile(join(b.root, path), 'utf8')).toBe(bytes);
+    expect(await statusShort(b.root)).toEqual([]);
+
+    // Ohne Hand-Edit ist der Anhang keiner.
+    expect(await executeWrite(ctx, { kind: 'edits' })).toMatchObject({
+      commit: undefined,
+      chain: [],
+    });
+
+    // Ein Rollback bringt die Bytes zurück, nicht den Pointer.
+    const err = await catchErrAsync(() =>
+      executeWrite(ctx, rm, {
+        hooks: {
+          afterFiles: async () => {
+            throw new BackeError('unexpected', 'boom');
+          },
+        },
+      }),
+    );
+    expect(err.message).toBe('boom');
+    expect(await readFile(join(b.root, path), 'utf8')).toBe(bytes);
+    expect(await statusShort(b.root)).toEqual([]);
+
+    await executeWrite(ctx, rm);
+    await expect(readFile(join(b.root, path))).rejects.toThrow();
+    expect(await statusShort(b.root)).toEqual([]);
+  });
+
+  test.runIf(hasLfs)('lfs: a foreign hook stays and the filter is set up anyway', async () => {
+    const hook = join(b.root, '.git/hooks/pre-push');
+    await writeFile(hook, '#!/bin/sh\necho eigener Hook\n', { mode: 0o755 });
+    await enableLfs();
+    await executeWrite(ctx, CREATE);
+    expect(await readFile(hook, 'utf8')).toBe('#!/bin/sh\necho eigener Hook\n');
+    const filter = await git(['config', '--local', '--get', 'filter.lfs.clean'], { cwd: b.root });
+    expect(filter.stdout.trim()).toBe('git-lfs clean -- %f');
   });
 
   test('lfs without git-lfs on PATH is a validation error', async () => {

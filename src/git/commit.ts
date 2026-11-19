@@ -18,21 +18,7 @@ export type CommitInput = {
    * Commit-Objekt (Glied einer Kette), ohne `update-ref` und ohne Index-Reset.
    */
   updateRef?: { from: string | undefined } | false;
-  /** Mit `attachments.lfs` (backe.md §2.8): `git add` läuft mit dem LFS-Filter aus `-c`-Werten. */
-  lfs?: boolean;
 };
-
-/** Der LFS-Filter nur für `git add`; die globale Git-Config bleibt unberührt. */
-const LFS_FILTER = [
-  '-c',
-  'filter.lfs.clean=git-lfs clean -- %f',
-  '-c',
-  'filter.lfs.smudge=git-lfs smudge -- %f',
-  '-c',
-  'filter.lfs.process=git-lfs filter-process',
-  '-c',
-  'filter.lfs.required=true',
-];
 
 type FailureDetails = { exitCode?: number; stderr?: string };
 
@@ -67,11 +53,7 @@ export async function commitPaths(wc: string, input: CommitInput): Promise<strin
       env,
     });
     // `-f`: Die Pfade gehören backe; eine `.gitignore` im Backlog darf sie nicht aussperren.
-    await git([...(input.lfs ? LFS_FILTER : []), 'add', '-A', '-f', ...pathspec], {
-      cwd: wc,
-      env,
-      input: pathList(input.paths),
-    });
+    await git(['add', '-A', '-f', ...pathspec], { cwd: wc, env, input: pathList(input.paths) });
     const tree = (await git(['write-tree'], { cwd: wc, env })).stdout.trim();
     const parentTree =
       parent === undefined

@@ -5,20 +5,14 @@
  */
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import {
-  BacklogConfigSchema,
-  type Comment,
-  type EntityKind,
-  validateEntity,
-} from '../core/schemas.ts';
+import { type Comment, type EntityKind, validateEntity } from '../core/schemas.ts';
 import { readBlobs } from '../git/history.ts';
 import { changedPaths } from '../git/status.ts';
 import type { Operation } from '../ops/operation.ts';
 import { type TranslateResult, translateEdits } from '../ops/translate.ts';
 import type { FileChange } from '../store/files.ts';
 import { entriesInFileOrder, parseEntityFile, serializeEntityFile } from '../store/frontmatter.ts';
-import { readJsonc } from '../store/jsonc.ts';
-import { BACKLOG_CONFIG, classifyPath } from '../store/layout.ts';
+import { classifyPath } from '../store/layout.ts';
 import {
   type BacklogSnapshot,
   listComments,
@@ -100,7 +94,8 @@ export function canonicalEdit(path: string, after: Buffer | null): string | Buff
 /**
  * Liest die Hand-Edits unter dem Lock: `before` aus `head`, `after` aus der Arbeitskopie. Die
  * `HEAD`-Basis entsteht aus `wcSnapshot` mit den Vorher-Inhalten plus den Projektdateien, die nur
- * mangels (von Hand gelöschtem) Elternprojekt fehlen. `undefined`, wenn nichts geändert ist.
+ * mangels (von Hand gelöschtem) Elternprojekt fehlen; `wcSnapshot.config` muss schon die Config
+ * aus `HEAD` sein (`snapshotAt` liest die Config nicht). `undefined`, wenn nichts geändert ist.
  */
 export async function readHandEdits(
   wc: string,
@@ -121,17 +116,10 @@ export async function readHandEdits(
   for (const path of orphanedProjectPaths(wcSnapshot)) {
     if (!editedSet.has(path)) orphans.push({ path, content: utf8(await readWorktree(wc, path)) });
   }
-  let base = snapshotAt(wcSnapshot, [
+  const base = snapshotAt(wcSnapshot, [
     ...edited.map((path) => ({ path, content: utf8(before.get(path) ?? null) })),
     ...orphans,
   ]);
-  const headConfig = before.get(BACKLOG_CONFIG);
-  if (headConfig != null) {
-    base = {
-      ...base,
-      config: BacklogConfigSchema.parse(readJsonc(headConfig.toString('utf8'), BACKLOG_CONFIG)),
-    };
-  }
 
   // Fremde Dateien und Anhänge vergleicht `translateEdits` nur auf Gleichheit; latin1 bildet
   // Bytes eins zu eins ab, auch wenn sie kein gültiges UTF-8 sind.

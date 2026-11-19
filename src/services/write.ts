@@ -10,7 +10,13 @@ import { workingCopyPath } from '../context/registry.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
 import { userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
-import { BACKLOG_FORMAT_VERSION, type Comment, type User } from '../core/schemas.ts';
+import {
+  BACKLOG_FORMAT_VERSION,
+  type BacklogConfig,
+  BacklogConfigSchema,
+  type Comment,
+  type User,
+} from '../core/schemas.ts';
 import { sshFingerprint } from '../core/ssh.ts';
 import { commitPaths } from '../git/commit.ts';
 import { git } from '../git/exec.ts';
@@ -120,6 +126,12 @@ export type WriteResult = {
   warnings: { path: string; unknownKeys: string[] }[];
   /** Hand-Edits, die nicht so committet wurden, wie sie dastanden (nur `edits`). */
   rewritten: Rewritten[];
+  /**
+   * Nur `edits`, nur wenn es scheiterte: Pfade, die nach den Commits nicht auf HEAD bzw. deren Index
+   * nicht angeglichen werden konnten (die Commits stehen trotzdem); `rewritten` beschreibt dann
+   * das Soll, nicht den Arbeitsbaum.
+   */
+  unsettled?: { paths: string[]; reason: string };
 };
 
 export type WriteDeps = {
@@ -449,8 +461,10 @@ function opStep(
 const SPLIT_HINT = 'Änderung auf zwei backe commit aufteilen';
 
 /**
- * Wendet die übersetzten Operationen der Hand-Edits als Batch an. Eine Verletzung behält Code und
- * Message; ohne eigenen Hinweis bekommt sie den, die Änderung aufzuteilen.
+ * Wendet die übersetzten Operationen der Hand-Edits als Batch an. Ein Fehler behält Code und
+ * Message, verliert aber die Batch-Zeile (`Zeile <n>: `, `details.line`): Sie zählt Operationen,
+ * die der User nie gesehen hat. Eine Verletzung ohne eigenen Hinweis bekommt den, die Änderung
+ * aufzuteilen.
  */
 function applyEditOps(
   s: BacklogSnapshot,
@@ -460,11 +474,13 @@ function applyEditOps(
   try {
     return applyBatch(s, ops, ctx);
   } catch (err) {
-    const reason = (err as BackeError | undefined)?.details as { reason?: unknown } | undefined;
-    if (!(err instanceof BackeError) || reason?.reason === undefined || err.hint !== undefined) {
-      throw err;
-    }
-    throw new BackeError(err.code, err.message, { details: err.details, hint: SPLIT_HINT });
+    if (!(err instanceof BackeError)) throw err;
+    const { line: _, ...details } = (err.details ?? {}) as { line?: number; reason?: unknown };
+    const hint = err.hint ?? (details.reason === undefined ? undefined : SPLIT_HINT);
+    throw new BackeError(err.code, err.message.replace(/^Zeile \d+: /, ''), {
+      details,
+      ...(hint === undefined ? {} : { hint }),
+    });
   }
 }
 
@@ -526,8 +542,14 @@ async function plan(
   return { steps, recorded, refs: {}, notices: r.notices };
 }
 
-/** Mit `attachments.lfs` muss `git lfs` laufen, sonst landeten Anhänge roh im Commit. */
-async function assertLfs(wc: string): Promise<void> {
+/**
+ * Mit `attachments.lfs` (backe.md §2.8) muss `git lfs` laufen, und die Arbeitskopie braucht den
+ * LFS-Filter in ihrer eigenen `.git/config` (`git lfs install --local`): Sonst landeten Anhänge roh
+ * im Commit, `git status` hielte jeden Anhang für geändert und ein Checkout schriebe den Pointer
+ * statt der Bytes. Die globale Git-Config bleibt unberührt. Liegt schon ein fremder Hook, den
+ * git-lfs nicht überschreibt, kommt nur der Filter dazu.
+ */
+async function setUpLfs(wc: string): Promise<void> {
   try {
     await git(['lfs', 'version'], { cwd: wc });
   } catch {
@@ -535,18 +557,35 @@ async function assertLfs(wc: string): Promise<void> {
       hint: 'backe doctor',
     });
   }
+  const filter = await git(['config', '--local', '--get', 'filter.lfs.process'], {
+    cwd: wc,
+    okExitCodes: [1],
+  });
+  if (filter.exitCode === 0) return;
+  await git(['lfs', 'install', '--local'], { cwd: wc }).catch(() =>
+    git(['lfs', 'install', '--local', '--skip-repo'], { cwd: wc }),
+  );
+}
+
+/** Die Backlog-Config in `HEAD`; `undefined` ohne Commit oder Datei. */
+async function headConfig(wc: string): Promise<BacklogConfig | undefined> {
+  const spec = `HEAD:${BACKLOG_CONFIG}`;
+  const blob = (await readBlobs(wc, [spec])).get(spec);
+  return blob == null
+    ? undefined
+    : BacklogConfigSchema.parse(readJsonc(blob.toString('utf8'), BACKLOG_CONFIG));
 }
 
 /**
  * Bringt die bearbeiteten Pfade auf den Stand nach den Commits: Pfade ohne wirksame Änderung
  * zurück auf HEAD, der Index aller bearbeiteten und committeten Pfade auf HEAD. Scheitert das,
- * bleiben die Hand-Edits eben liegen; verloren geht nichts.
+ * bleiben Hand-Edits bzw. Index eben liegen — verloren geht nichts —, und das Ergebnis sagt es.
  */
 async function settleWorkingCopy(
   wc: string,
   reset: readonly string[],
   paths: readonly string[],
-): Promise<void> {
+): Promise<WriteResult['unsettled']> {
   try {
     await rollbackPaths(wc, reset);
     if (paths.length === 0) return;
@@ -555,8 +594,9 @@ async function settleWorkingCopy(
       env: { GIT_LITERAL_PATHSPECS: '1' },
       input: paths.map((p) => `${p}\0`).join(''),
     });
-  } catch {
-    // Kosmetik nach dem Commit; `git status` zeigt die Pfade dann als geändert.
+    return undefined;
+  } catch (err) {
+    return { paths: [...paths], reason: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -586,12 +626,19 @@ export async function executeWrite(
     await checkIdentity(ctx, wc, handle);
     await checkFormatVersion(wc);
     const wcSnapshot = await loadSnapshot(wc);
-    const head = await assertOnBranch(wc, wcSnapshot.config.sync.branch);
+    // Hand-Edits gelten erst nach ihrer Prüfung; bis dahin regiert die Config aus HEAD.
+    const config =
+      input.kind === 'edits' ? ((await headConfig(wc)) ?? wcSnapshot.config) : wcSnapshot.config;
+    const head = await assertOnBranch(wc, config.sync.branch);
+    const lfs = config.attachments.lfs;
+    if (lfs) await setUpLfs(wc);
     if (input.kind === 'manual' && input.expectHead !== undefined && input.expectHead !== head) {
       throw new BackeError('conflict', 'Stand hat sich seit der Prüfung geändert');
     }
     const edits =
-      input.kind === 'edits' ? await readHandEdits(wc, wcSnapshot, head, handle) : undefined;
+      input.kind === 'edits'
+        ? await readHandEdits(wc, { ...wcSnapshot, config }, head, handle)
+        : undefined;
     // Hand-Edits prüft backe gegen HEAD; die Arbeitskopie trägt ja gerade die Änderungen.
     const snapshot = edits?.base ?? wcSnapshot;
     assertActorIsUser(snapshot, handle);
@@ -633,16 +680,15 @@ export async function executeWrite(
       })),
       rewritten: settled?.rewritten ?? [],
     });
-    const settle = async () => {
-      if (edits !== undefined && settled !== undefined) {
-        const paths = [...new Set([...edits.edited, ...changedPathsOf(allChanges)])].sort();
-        await settleWorkingCopy(wc, settled.reset, paths);
-      }
+    /** Gleicht die bearbeiteten Pfade an und liefert das Ergebnis mit `commits`. */
+    const settle = async (commits: readonly string[]): Promise<WriteResult> => {
+      const r = result(commits);
+      if (edits === undefined || settled === undefined) return r;
+      const paths = [...new Set([...edits.edited, ...changedPathsOf(allChanges)])].sort();
+      const unsettled = await settleWorkingCopy(wc, settled.reset, paths);
+      return unsettled === undefined ? r : { ...r, unsettled };
     };
-    if (steps.length === 0) {
-      await settle();
-      return result([]);
-    }
+    if (steps.length === 0) return settle([]);
 
     const paths = changedPathsOf(allChanges);
     const editedSet = new Set(edits?.edited ?? []);
@@ -653,8 +699,6 @@ export async function executeWrite(
         hint: `git -C ${wc} stash, oder git -C ${wc} restore --staged --worktree -- ${dirty.join(' ')}`,
       });
     }
-    const lfs = wcSnapshot.config.attachments.lfs;
-    if (lfs) await assertLfs(wc);
     const author = authorOf(handle, (snapshot.users.get(handle) as StoredEntity<User>).data.name);
 
     signals.install();
@@ -681,7 +725,6 @@ export async function executeWrite(
             env: ctx.env,
             parent: commits.at(-1) ?? head,
             updateRef: last ? { from: head } : false,
-            lfs,
           }),
         );
       }
@@ -691,8 +734,7 @@ export async function executeWrite(
       if (done !== undefined) {
         // Die Commits stehen schon auf HEAD: Ein Rollback würde sie verfälschen, ein Retry verdoppeln.
         await rm(journal, { force: true });
-        await settle();
-        return result(done);
+        return settle(done);
       }
       try {
         if (saved === undefined) await rollbackPaths(wc, paths);
@@ -704,8 +746,7 @@ export async function executeWrite(
       throw error;
     }
     await rm(journal, { force: true });
-    await settle();
-    return result(commits);
+    return settle(commits);
   }
 
   await deps.hooks?.beforeLock?.();
