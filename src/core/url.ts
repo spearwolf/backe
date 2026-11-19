@@ -4,8 +4,8 @@ const HINT =
   'Erlaubt: https://…, http://…, ssh://[user@]host[:port]/pfad, [user@]host:pfad, gh:owner/repo, absoluter Pfad (/…) oder file:///…';
 
 const NETWORK_RE = /^(?:https?|ssh):\/\/(?:[^@/\s]*@)?([^/:@\s]+)(?::\d+)?(\/.*)?$/i;
-/** Kanonische Form `<host>/<pfad>`; der Host enthält einen Punkt, damit `relative/pfad` nicht passt. */
-const CANONICAL_RE = /^([^/:@\s]+\.[^/:@\s]+)\/(.+)$/;
+/** Kanonische Form `<host>/<pfad>`: Host mit Punkt, oder ein kleingeschriebener Name ohne Punkt (`localhost`). */
+const CANONICAL_RE = /^([^/:@\s]+\.[^/:@\s]+|[a-z0-9-]+)\/(.+)$/;
 /** Forges, deren Pfad ohne Rücksicht auf die Schreibweise auflöst; dort wird er kleingeschrieben. */
 const CASE_INSENSITIVE_HOSTS = new Set([
   'github.com',
@@ -48,7 +48,7 @@ function local(input: string, path: string, stripGit = true): string {
 export function normalizeRepoUrl(input: string): string {
   if (input === '' || /\s/.test(input) || /[?#]/.test(input)) fail(input);
 
-  if (input.startsWith('file:/') && !input.startsWith('file://')) {
+  if (/^file:\//i.test(input) && !/^file:\/\//i.test(input)) {
     return local(input, input.slice('file:'.length), false);
   }
   if (input.startsWith('/')) return local(input, input);

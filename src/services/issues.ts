@@ -7,7 +7,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
-import { isGitRef, parseRepoRef } from '../core/names.ts';
+import { isGitArg, isGitRef, parseRepoRef } from '../core/names.ts';
 import type { PropValue } from '../core/schemas.ts';
 import { normalizeStateInput } from '../core/state.ts';
 import { normalizeRepoUrl } from '../core/url.ts';
@@ -350,7 +350,7 @@ function parseLinkTarget(
     const head = target.slice(0, at);
     const tail = target.slice(at + 1);
     if (head !== 'git' && !tail.includes(':') && normalizable(head)) {
-      if (!isGitRef(tail)) {
+      if (!isGitArg(tail) || !isGitRef(tail)) {
         throw new BackeError('validation', `Ungültiger Ref »${tail}«`);
       }
       return { url: head, ref: tail };

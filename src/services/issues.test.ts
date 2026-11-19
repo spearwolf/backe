@@ -431,6 +431,10 @@ describe('linkIssue and unlinkIssue', () => {
     expect(err.code).toBe('validation');
     const err2 = await catchErrAsync(() => linkIssue(ctx, id, 'https://example.com/a@-x'));
     expect(err2.code).toBe('validation');
+    for (const tail of ['-x', 'a\u0085b', 'a\u00a0b']) {
+      const e = await catchErrAsync(() => linkIssue(ctx, id, `https://example.com/a@${tail}`));
+      expect([e.code, e.message]).toEqual(['validation', `Ungültiger Ref »${tail}«`]);
+    }
   });
 
   test('link and unlink round trip', async () => {

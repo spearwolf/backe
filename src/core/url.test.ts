@@ -18,6 +18,9 @@ test.each([
   ['git@gitlab.com:Group/Proj.git', 'gitlab.com/group/proj'],
   ['https://git.example.org/Team/Repo', 'git.example.org/Team/Repo'],
   ['github.com/acme/a.git', 'github.com/acme/a.git'],
+  ['https://localhost/a/b', 'localhost/a/b'],
+  ['ssh://git@gitserver/repo.git', 'gitserver/repo'],
+  ['FILE:/srv/Git/A', 'file:/srv/Git/A'],
   ['file:/srv/git/a.git', 'file:/srv/git/a.git'],
   ['https://user@host.example/x/y', 'host.example/x/y'],
   ['host.example:x/y.git', 'host.example/x/y'],
@@ -25,13 +28,15 @@ test.each([
   ['/srv//git/backlog.git/', 'file:/srv/git/backlog'],
   ['gh:acme/webapp.git', 'github.com/acme/webapp'],
   ['https://github.com/acme/a.git.git', 'github.com/acme/a.git'],
-])('normalizeRepoUrl(%s)', (input, want) => expect(normalizeRepoUrl(input)).toBe(want));
+])('normalizeRepoUrl(%s)', (input, want) => {
+  expect(normalizeRepoUrl(input)).toBe(want);
+  expect(normalizeRepoUrl(want)).toBe(want);
+});
 
 test.each([
   'not a url',
   '',
   ' https://github.com/a/b',
-  'relative/path',
   'ftp://host/a/b',
   'https://',
   'https://host',

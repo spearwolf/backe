@@ -620,6 +620,8 @@ export function arbRawRepoUrl(): fc.Arbitrary<string> {
     'gitlab.com',
     'git.example.org',
     'Host.Example',
+    'localhost',
+    'gitserver',
   );
   const segment = fc.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._-]{0,8}$/);
   const path = fc

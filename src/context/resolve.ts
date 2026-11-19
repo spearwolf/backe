@@ -293,7 +293,7 @@ function levelRepo(level: Level): Resolved<string | null> | undefined {
   return undefined;
 }
 
-/** Kanonische URL oder `undefined`; */
+/** Kanonische URL oder `undefined`, wenn `raw` keine erkennbare Repo-URL ist. */
 function canonicalOrUndefined(raw: string): string | undefined {
   try {
     return normalizeRepoUrl(raw);
