@@ -1,4 +1,4 @@
-# backe
+# backe 🍑
 
 > [!WARNING]
 > **Experimental — work in progress.** backe is not usable yet. The data model,
@@ -6,7 +6,7 @@
 > tested; the CLI is still an empty shell, and sync, claim and the MCP server are
 > not built. Formats, commands and everything else may change without notice.
 
-**A git-based backlog for humans and agents.** Issues live as plain Markdown files
+**A git-based backlog for 🧑🏻‍🦰 humans and 🤖 agents.** Issues live as plain Markdown files
 in their own Git repository. Every change is a signed commit, attributable to
 exactly one identity — human or agent. Several agents can work the same backlog in
 parallel without merge-conflict hell, and no issue can be claimed by two of them at
@@ -42,7 +42,7 @@ itself apart through the **combination** of:
 - **Random IDs** like `bk-7f3k2` instead of sequential numbers, so offline creation
   never clashes. Short prefixes work like Git short hashes.
 - **Local-first writes, background sync.** Each command is one operation recorded
-  as intent; on sync, local operations are *replayed* against the remote state with
+  as intent; on sync, local operations are _replayed_ against the remote state with
   full validation instead of rebased as text.
 - **Token-frugal output.** Compact JSON, `--fields`, stable exit codes, comments
   only on request — "what's my next issue?" must not cost thousands of tokens.
@@ -53,6 +53,7 @@ An issue on disk:
 
 ```markdown
 ---
+
 id: bk-7f3k2
 title: SSO login breaks after token refresh
 state: in_progress
@@ -63,6 +64,7 @@ sprints: [2026-w47]
 repos: [webapp@feat/sso]
 created: 2026-11-18T10:04:00Z
 ---
+
 After the access token refresh the user lands on `/login` again.
 ```
 
@@ -78,8 +80,8 @@ backe issue move bk-7f3k2 review --reason "PR is up"
 ## The name
 
 **back-e** is the Germanized, personified short form of "backlog" — the way German
-turns a name into a nickname by clipping it and adding an *-e*. Say it like
-*back-eh*. As a bonus, *Backe* is German for "cheek", and *backe!* means "bake!" 🥐
+turns a name into a nickname by clipping it and adding an _-e_. Say it like
+_back-eh_. As a bonus, _Backe_ is German for "cheek", and _backe!_ means "bake!" 🥐
 
 ## Where it comes from
 
@@ -87,25 +89,25 @@ I built backe because I needed it. My daily work is orchestrating coding agents
 and myself on the same codebases, and I wanted one system in which humans and
 agents coordinate through issues — signed, versioned, offline-capable, without a
 server in the middle. Nothing I found fit, so I made my own tool, which is about
-the oldest reason there is to start an open-source project.
+the oldest reason there is to start an 🔓⛓️‍💥 open-source project.
 
-backe is **entirely vibe-coded**: AI agents write every line of code and test.
+backe is 👾 **entirely vibe-coded**: AI agents write every line of code and test.
 The technical direction is human — the spec, the architecture, the milestone cuts,
 the reviews and every decision come from a long-time engineer (that's me).
 It is also a working experiment in how far that combination carries.
 
 ## Status
 
-| Milestone | Scope | State |
-| --- | --- | --- |
-| M1 | scaffold, `core`, `store` — entities, formats, canonical serialization | done |
-| M2 | operations, state model, dependency graph (`ops`) | done |
-| M3 | configs and context resolution | done |
-| M4 | Git layer, signed write path, verify, quarantine | done |
-| M5 | services and CLI | next |
-| M6 | sync, replay, claim | planned |
-| M7 | MCP server | planned |
-| M8 | release | planned |
+| Milestone | Scope                                                                  | State   |
+| --------- | ---------------------------------------------------------------------- | ------- |
+| M1        | scaffold, `core`, `store` — entities, formats, canonical serialization | done    |
+| M2        | operations, state model, dependency graph (`ops`)                      | done    |
+| M3        | configs and context resolution                                         | done    |
+| M4        | Git layer, signed write path, verify, quarantine                       | done    |
+| M5        | services and CLI                                                       | next    |
+| M6        | sync, replay, claim                                                    | planned |
+| M7        | MCP server                                                             | planned |
+| M8        | release                                                                | planned |
 
 ## For agents (and curious humans)
 
