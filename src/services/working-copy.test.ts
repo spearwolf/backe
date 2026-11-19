@@ -585,3 +585,32 @@ test('purge and show of a backlog without managed clones', async () => {
     purged: undefined,
   });
 });
+
+test('add of a relative path is a usage error and writes nothing', async () => {
+  const err = await catchErrAsync(() =>
+    addBacklog({
+      homes: other.homes,
+      env: other.env,
+      name: 'acme',
+      path: 'relative/clone',
+      handle: 'claude-1',
+    }),
+  );
+  expect(err.code).toBe('usage');
+  expect(err.message).toBe('Pfad muss absolut sein: relative/clone');
+  expect(await readUserConfig(other.homes.backeHome)).toEqual({});
+});
+
+test('purge refuses a bound clone inside the managed directory', async () => {
+  const dir = join(b.homes.backeHome, 'backlogs', 'acme', 'elsewhere');
+  await git(['clone', '-q', b.remote as string, dir], { cwd: b.homes.backeHome });
+  await addBacklog({ homes: b.homes, env: b.env, name: 'acme', path: dir, handle: 'claude-1' });
+  const err = await catchErrAsync(() =>
+    removeBacklog({ homes: b.homes, name: 'acme', purge: true }),
+  );
+  expect(err.code).toBe('conflict');
+  expect(err.message).toContain('ist gebunden und liegt im verwalteten Verzeichnis');
+  expect((await readUserConfig(b.homes.backeHome)).backlogs?.acme).toBeDefined();
+  expect(await exists(join(dir, BACKLOG_CONFIG))).toBe(true);
+  expect(await exists(join(b.root, BACKLOG_CONFIG))).toBe(true);
+});

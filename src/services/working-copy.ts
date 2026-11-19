@@ -6,7 +6,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import { access, mkdir, readdir, readFile, rename, rm } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, sep } from 'node:path';
 import { z } from 'zod';
 import { withFileLock } from '../context/lock.ts';
 import { type Env, expandPath, type Homes, physicalPath, samePath } from '../context/paths.ts';
@@ -356,9 +356,10 @@ export async function addBacklog(input: {
   handle: string;
 }): Promise<{ root: string; notices: string[] }> {
   const { homes, name, handle } = input;
-  const wanted = await physicalPath(
-    expandPath(input.path, { home: homes.home, base: process.cwd() }),
-  );
+  if (!isAbsolute(input.path)) {
+    throw new BackeError('usage', `Pfad muss absolut sein: ${input.path}`);
+  }
+  const wanted = await physicalPath(input.path);
   const top = await gitToplevel(wanted).catch(() => undefined);
   const actual = top === wanted ? await readBacklogName(wanted) : undefined;
   if (top !== wanted || actual !== name) {
@@ -396,6 +397,25 @@ export async function addBacklog(input: {
   return { root: wanted, notices };
 }
 
+/** `--purge` löscht nur verwaltete Clones: ein gebundener Pfad im verwalteten Verzeichnis blockiert es. */
+async function assertNoBoundInManaged(homes: Homes, name: string): Promise<void> {
+  const cfg = await readUserConfig(homes.backeHome);
+  const managedDir = await physicalPath(join(homes.backeHome, 'backlogs', name));
+  for (const [handle, bound] of Object.entries(cfg.backlogs?.[name]?.paths ?? {})) {
+    const path = await physicalPath(expandPath(bound, { home: homes.home, base: homes.backeHome }));
+    if (path === (await physicalPath(managedClonePath(homes, name, handle)))) continue;
+    if (path.startsWith(managedDir + sep)) {
+      throw new BackeError(
+        'conflict',
+        `${path} ist gebunden und liegt im verwalteten Verzeichnis`,
+        {
+          hint: `paths.${handle} in ${userConfigPath(homes.backeHome)} entfernen oder den Clone verschieben`,
+        },
+      );
+    }
+  }
+}
+
 /** Nur für Tests: läuft zwischen Deregistrieren und Löschen. */
 export type RemoveHooks = { beforePurge?: () => Promise<void> };
 
@@ -409,6 +429,7 @@ export async function removeBacklog(
   hooks: RemoveHooks = {},
 ): Promise<{ purged: string | undefined }> {
   const { homes, name } = input;
+  if (input.purge === true) await assertNoBoundInManaged(homes, name);
   const { managedDir } = await unregisterBacklog(homes, name);
   if (input.purge !== true) return { purged: undefined };
   await hooks.beforePurge?.();
