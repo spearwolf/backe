@@ -146,14 +146,14 @@ describe('applyBatch', () => {
     expect(r.notices.map((n) => n.code)).toContain('forced_done');
   });
 
-  test('an empty batch is a usage error', () => {
-    expect(catchErr(() => applyBatch(snap({}), [], ctx())).code).toBe('usage');
+  test('an empty batch is a validation error', () => {
+    expect(catchErr(() => applyBatch(snap({}), [], ctx())).code).toBe('validation');
   });
 
   test('batch over 1000 ops is refused with a hint to split', () => {
     const ops = Array.from({ length: MAX_BATCH + 1 }, (_, i) => create(`t${i}`));
     const err = catchErr(() => applyBatch(snap({}), ops, ctx()));
-    expect([err.code, err.hint]).toEqual(['usage', expect.stringMatching(/mehrere Batches/)]);
+    expect([err.code, err.hint]).toEqual(['validation', expect.stringMatching(/mehrere Batches/)]);
   });
 
   test('errors that are not BackeErrors propagate unchanged', () => {

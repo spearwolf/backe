@@ -29,6 +29,7 @@ import {
 import { fallbackRoot, type ResolvedContext, readBacklogName } from '../context/resolve.ts';
 import { configLockPath, readUserConfig, userConfigPath } from '../context/user-config.ts';
 import { BackeError, schemaError } from '../core/errors.ts';
+import { shortSha } from '../core/ids.ts';
 import { isHandle } from '../core/names.ts';
 import { BACKLOG_FORMAT_VERSION, BacklogConfigSchema, type UserConfig } from '../core/schemas.ts';
 import { git, transportEnv } from '../git/exec.ts';
@@ -53,8 +54,6 @@ const CloneConfigSchema = z.object({
   verify: BacklogConfigSchema.shape.verify,
 });
 type CloneConfig = z.infer<typeof CloneConfigSchema>;
-
-const short = (sha: string) => sha.slice(0, 7);
 
 /** Führt `fn` mit einem frischen Temp-Pfad aus und räumt ihn danach immer weg. */
 async function withTempClone<T>(homes: Homes, fn: (temp: string) => Promise<T>): Promise<T> {
@@ -122,7 +121,7 @@ async function verifyClone(wc: string): Promise<string[]> {
   const mode = await trustedMode(wc, first.sha);
   if (mode === 'strict') assertVerified(report);
   if (mode === 'off') return [];
-  const reasons = report.invalid.flatMap((f) => f.reasons.map((r) => `${short(f.sha)}: ${r}`));
+  const reasons = report.invalid.flatMap((f) => f.reasons.map((r) => `${shortSha(f.sha)}: ${r}`));
   return [...reasons, ...report.notices];
 }
 
@@ -200,7 +199,7 @@ async function cloneInto(input: {
     if (!(await descendsFrom(temp, verified))) {
       throw new BackeError(
         'verify',
-        `${source} ist kein Nachfahre des zuletzt verifizierten Stands ${short(verified)}`,
+        `${source} ist kein Nachfahre des zuletzt verifizierten Stands ${shortSha(verified)}`,
       );
     }
     await writeLocalState(temp, 'verified', verified);
@@ -260,7 +259,7 @@ export async function cloneBacklog(
 ): Promise<CloneResult> {
   const { homes, env, url, handle } = input;
   if (!isHandle(handle)) {
-    throw new BackeError('usage', `Ungültiger Handle »${handle}«`, {
+    throw new BackeError('validation', `Ungültiger Handle »${handle}«`, {
       hint: 'Erlaubt sind Kleinbuchstaben, Ziffern und Bindestriche (2 bis 32 Zeichen); »me« ist reserviert.',
     });
   }

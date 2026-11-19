@@ -420,7 +420,7 @@ test('record with since needs since within the verified state', async () => {
   const second = await signed('spw', { x: '2' });
 
   const err = await catchErrAsync(() => verifyRange(b.root, { since: first, record: true }));
-  expect(err.code).toBe('usage');
+  expect(err.code).toBe('validation');
   expect(await readLocalState(b.root, 'verified')).toBe(anchor);
 
   await verifyRange(b.root, { since: anchor, record: true });
@@ -520,7 +520,7 @@ test('since must be an ancestor of to', async () => {
 
   const err = await catchErrAsync(() => verifyRange(b.root, { since: side, to: main }));
 
-  expect(err.code).toBe('usage');
+  expect(err.code).toBe('validation');
   expect(err.message).toBe(`since ${short(side)} ist kein Vorfahre von ${short(main)}`);
   expect((await verifyRange(b.root, { since: main, to: main })).checked).toBe(0);
 });

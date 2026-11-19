@@ -56,6 +56,13 @@ export function generateIssueId(
   );
 }
 
+const FULL_SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+
+/** Kurzform eines Commit-Hashs für Meldungen: 7 Zeichen eines vollen Hashs; alles andere unverändert. */
+export function shortSha(sha: string): string {
+  return FULL_SHA_RE.test(sha) ? sha.slice(0, 7) : sha;
+}
+
 export function shardOf(id: string): string {
   return id.slice(id.indexOf('-') + 1, id.indexOf('-') + 3);
 }
@@ -64,9 +71,10 @@ const MAX_LISTED_CANDIDATES = 10;
 
 /**
  * Löst eine Eingabe gegen die bekannten IDs auf, ohne Groß-/Kleinschreibung. Eine volle ID
- * gilt exakt; sonst zählt die Eingabe (ein Präfix samt Bindestrich wird abgeschnitten) als
- * Anfang des Zufallsteils. Ein Kandidat, dessen Zufallsteil genau der Eingabe entspricht,
- * gewinnt vor jeder Mehrdeutigkeit.
+ * gilt exakt; sonst zählt die Eingabe als Anfang des Zufallsteils. Ein Präfix samt Bindestrich
+ * wird nur abgeschnitten, wenn er der Präfix der bekannten IDs ist; ein fremder Präfix (etwa
+ * `ac-7f3` in einem `bk`-Backlog) passt zu keiner ID, statt still im falschen Backlog zu treffen.
+ * Ein Kandidat, dessen Zufallsteil genau der Eingabe entspricht, gewinnt vor jeder Mehrdeutigkeit.
  */
 export function resolveShortId(input: string, ids: readonly string[]): string {
   const wanted = input.toLowerCase();
@@ -74,7 +82,10 @@ export function resolveShortId(input: string, ids: readonly string[]): string {
     if (ids.includes(wanted)) return wanted;
     throw new BackeError('not_found', `Issue »${wanted}« nicht gefunden`);
   }
-  const short = wanted.replace(/^[a-z]{2,6}-/, '');
+  const notFound = () => new BackeError('not_found', `Keine Issue-ID passt zu »${input}«`);
+  const prefixed = /^([a-z]{2,6})-(.*)$/s.exec(wanted);
+  if (prefixed !== null && !ids.some((id) => id.startsWith(`${prefixed[1]}-`))) throw notFound();
+  const short = prefixed === null ? wanted : (prefixed[2] as string);
   if (short.length < MIN_SHORT_LENGTH) {
     throw new BackeError(
       'validation',
@@ -86,7 +97,7 @@ export function resolveShortId(input: string, ids: readonly string[]): string {
   const exact = candidates.find((id) => randomPart(id) === short);
   if (exact !== undefined) return exact;
   const [first] = candidates;
-  if (first === undefined) throw new BackeError('not_found', `Keine Issue-ID passt zu »${input}«`);
+  if (first === undefined) throw notFound();
   if (candidates.length > 1) {
     const listed = candidates.slice(0, MAX_LISTED_CANDIDATES).join(', ');
     const more = candidates.length > MAX_LISTED_CANDIDATES ? ', …' : '';

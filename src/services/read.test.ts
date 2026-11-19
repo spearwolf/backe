@@ -91,7 +91,7 @@ test.each([
 
 test('normalizeStates rejects all next to other states and unknown states', () => {
   const mixed = catchErr(() => normalizeStates(['all,todo']));
-  expect([mixed.code, mixed.message]).toEqual(['validation', '»all« steht allein']);
+  expect([mixed.code, mixed.message]).toEqual(['usage', '»all« steht allein']);
   const unknown = catchErr(() => normalizeStates(['nope']));
   expect([unknown.code, unknown.message]).toEqual(['validation', 'Unbekannter State: »nope«']);
 });

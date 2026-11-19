@@ -978,7 +978,7 @@ describe('translateEdits', () => {
     test.each([
       ['a new comment', null],
       ['a changed comment', commentText('author: spw\ncreated: 2026-11-19T08:00:00Z\n', 'Alt\n')],
-    ])('%s under a deleted issue is a usage error', (_, before) => {
+    ])('%s under a deleted issue is a validation error', (_, before) => {
       const path = commentPath(SPW_COMMENT, I(2));
       const err = catchErr(() =>
         translateEdits(
@@ -995,7 +995,7 @@ describe('translateEdits', () => {
         ),
       );
       expect([err.code, err.message.includes(path), err.message.includes(I(2))]).toEqual([
-        'usage',
+        'validation',
         true,
         true,
       ]);
@@ -1004,13 +1004,13 @@ describe('translateEdits', () => {
     test.each([
       ['a new attachment', null],
       ['a changed attachment', 'alt'],
-    ])('%s under a deleted issue is a usage error', (_, before) => {
+    ])('%s under a deleted issue is a validation error', (_, before) => {
       const path = `${attachmentsDir(I(2))}/shot.png`;
       const err = catchErr(() =>
         translateEdits(s, [removed(issueFile(I(2))), { path, before, after: 'neu' }], asSpw),
       );
       expect([err.code, err.message.includes(path), err.message.includes(I(2))]).toEqual([
-        'usage',
+        'validation',
         true,
         true,
       ]);

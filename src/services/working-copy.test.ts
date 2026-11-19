@@ -323,11 +323,11 @@ test('a remote without backlog is refused and leaves nothing', async () => {
   expect(await tempEntries(other.homes)).toEqual([]);
 });
 
-test('an invalid handle is a usage error before cloning', async () => {
+test('an invalid handle is a validation error before cloning', async () => {
   const err = await catchErrAsync(() =>
     cloneBacklog({ homes: other.homes, env: other.env, url: b.remote as string, handle: '../x' }),
   );
-  expect(err.code).toBe('usage');
+  expect(err.code).toBe('validation');
   expect(await exists(join(other.homes.backeHome, 'tmp'))).toBe(false);
 });
 

@@ -17,7 +17,7 @@ export function expandPath(p: string, opts: { home: string; base: string }): str
   if (p === '~') return resolve(opts.home);
   if (p.startsWith('~/')) return resolve(opts.home, p.slice(2));
   if (p.startsWith('~')) {
-    throw new BackeError('usage', `Pfad »${p}«: ~name wird nicht unterstützt`, {
+    throw new BackeError('validation', `Pfad »${p}«: ~name wird nicht unterstützt`, {
       hint: 'Nutze ~/… oder einen absoluten Pfad.',
     });
   }
@@ -32,9 +32,9 @@ export function resolveHomes(env: Env, cwd: string): Homes {
   try {
     return { home, backeHome: expandPath(configured, { home, base: cwd }) };
   } catch (error) {
-    // expandPath wirft nur `usage`; die Variable gehört in die Meldung.
+    // expandPath wirft nur `validation`; die Variable gehört in die Meldung.
     const e = error as BackeError;
-    throw new BackeError('usage', `BACKE_HOME: ${e.message}`, {
+    throw new BackeError('validation', `BACKE_HOME: ${e.message}`, {
       ...(e.hint === undefined ? {} : { hint: e.hint }),
     });
   }

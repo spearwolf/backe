@@ -17,7 +17,7 @@ test.each([
 ])('expandPath(%s) = %s', (p, out) => expect(expandPath(p, opts)).toBe(out));
 
 test('~user is not supported', () =>
-  expect(catchErr(() => expandPath('~bob/x', opts)).code).toBe('usage'));
+  expect(catchErr(() => expandPath('~bob/x', opts)).code).toBe('validation'));
 
 test('envValue treats empty and missing as undefined', () => {
   expect(envValue({ A: 'x', B: '' }, 'A')).toBe('x');
@@ -36,7 +36,7 @@ test.each([
 
 test('a ~name in BACKE_HOME names the variable', () => {
   const err = catchErr(() => resolveHomes({ HOME: '/h', BACKE_HOME: '~bob' }, '/w'));
-  expect([err.code, err.message]).toEqual(['usage', expect.stringContaining('BACKE_HOME')]);
+  expect([err.code, err.message]).toEqual(['validation', expect.stringContaining('BACKE_HOME')]);
 });
 
 test('resolveHomes returns HOME from env and falls back to os.homedir()', () => {

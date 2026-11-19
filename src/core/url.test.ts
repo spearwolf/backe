@@ -31,9 +31,9 @@ test.each([
   'gh:',
   '/',
   'file://relative/x',
-])('unparseable url %j is usage error with hint', (s) => {
+])('unparseable url %j is a validation error with hint', (s) => {
   const err = catchErr(() => normalizeRepoUrl(s));
-  expect(err.code).toBe('usage');
+  expect(err.code).toBe('validation');
   expect(err.hint).toBeTruthy();
 });
 

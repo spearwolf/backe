@@ -8,6 +8,7 @@ import { setIdentity } from '../context/registry.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
 import { userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
+import { shortSha } from '../core/ids.ts';
 import { isHandle } from '../core/names.ts';
 import { generateKeypair } from '../git/ssh.ts';
 import { executeWrite, type WriteDeps } from './write.ts';
@@ -63,7 +64,7 @@ export async function createAgent(
     const reason = error instanceof Error ? error.message : String(error);
     throw new BackeError(
       'unexpected',
-      `Agent ${handle} ist angelegt (Commit ${commit.slice(0, 7)}), aber die Identität konnte nicht eingetragen werden: ${reason}`,
+      `Agent ${handle} ist angelegt (Commit ${shortSha(commit)}), aber die Identität konnte nicht eingetragen werden: ${reason}`,
       {
         hint: `identities.${backlog}.${handle}.key = ${keyPath} in ${userConfigPath(ctx.homes.backeHome)} eintragen`,
         details: error,

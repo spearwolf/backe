@@ -54,7 +54,7 @@ test('remote lookup is canonical', async () => {
 test('remote lookup rejects an unparsable url', async () => {
   const cfg = await registerBacklog(await homes(), { name: 'acme', remote: 'gh:acme/backlog' });
   expect(() => findBacklogByRemote(cfg, 'not a url')).toThrow(
-    expect.objectContaining({ code: 'usage' }),
+    expect.objectContaining({ code: 'validation' }),
   );
 });
 

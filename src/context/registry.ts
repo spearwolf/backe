@@ -26,7 +26,7 @@ export function listBacklogs(cfg: UserConfig): BacklogEntry[] {
     }));
 }
 
-/** Name des Backlogs mit dieser Remote (kanonischer Vergleich); `usage`, wenn `url` nicht normalisierbar ist. */
+/** Name des Backlogs mit dieser Remote (kanonischer Vergleich); `validation`, wenn `url` nicht normalisierbar ist. */
 export function findBacklogByRemote(cfg: UserConfig, url: string): string | undefined {
   const wanted = normalizeRepoUrl(url);
   return Object.entries(cfg.backlogs ?? {}).find(

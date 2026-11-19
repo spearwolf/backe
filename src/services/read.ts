@@ -75,7 +75,7 @@ export function normalizeStates(input: readonly string[]): State[] | 'all' {
   if (parts.length === 0) throw new BackeError('validation', 'Kein State angegeben');
   if (parts.includes('all')) {
     if (parts.length > 1) {
-      throw new BackeError('validation', '»all« steht allein');
+      throw new BackeError('usage', '»all« steht allein');
     }
     return 'all';
   }

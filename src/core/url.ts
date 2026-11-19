@@ -8,7 +8,7 @@ const SCP_RE = /^(?:[^@/:\s]+@)?([^/:@\s]+):(.*)$/;
 const MAX_NAME_LENGTH = 64;
 
 function fail(input: string): never {
-  throw new BackeError('usage', `Repo-URL nicht erkannt: »${input}«`, { hint: HINT });
+  throw new BackeError('validation', `Repo-URL nicht erkannt: »${input}«`, { hint: HINT });
 }
 
 /** Doppelte Slashes kollabieren, abschließende Slashes und ein `.git` entfernen. */

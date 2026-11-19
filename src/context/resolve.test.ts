@@ -86,7 +86,7 @@ test('an unregistered backlog URL hints at backlog clone', async () => {
 test('an unusable backlog value names its source', async () => {
   const s = await setup();
   const err = await catchErrAsync(() => s.run({}, { BACKE_BACKLOG: 'not a ref' }));
-  expect([err.code, err.message]).toEqual(['usage', expect.stringContaining('BACKE_BACKLOG')]);
+  expect([err.code, err.message]).toEqual(['validation', expect.stringContaining('BACKE_BACKLOG')]);
 });
 
 test('cwd inside a backlog repo binds that working copy', async () => {
@@ -132,8 +132,8 @@ test.each([
 
 test.each([
   [{ backlog: 'nope' }, 'not_found'],
-  [{ backlog: '' }, 'usage'],
-  [{ as: 'Bad' }, 'usage'],
+  [{ backlog: '' }, 'validation'],
+  [{ as: 'Bad' }, 'validation'],
 ])('flags %o fail with %s', async (flags, code) =>
   expect((await catchErrAsync(async () => (await setup()).run(flags))).code).toBe(code),
 );
@@ -323,11 +323,11 @@ test('sprint from the backlog entry, then the global default', async () => {
 });
 test('invalid project from env names the source', async () => {
   const err = await catchErrAsync(async () => (await setup()).run({}, { BACKE_PROJECT: 'Web' }));
-  expect([err.code, err.message]).toEqual(['usage', expect.stringContaining('BACKE_PROJECT')]);
+  expect([err.code, err.message]).toEqual(['validation', expect.stringContaining('BACKE_PROJECT')]);
 });
-test('invalid sprint from a flag is a usage error', async () => {
+test('invalid sprint from a flag is a validation error', async () => {
   const err = await catchErrAsync(async () => (await setup()).run({ sprint: 'No Sprint' }));
-  expect([err.code, err.message]).toEqual(['usage', expect.stringContaining('flag')]);
+  expect([err.code, err.message]).toEqual(['validation', expect.stringContaining('flag')]);
 });
 
 test('repo context from a registered remote', async () => {

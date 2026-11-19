@@ -120,7 +120,7 @@ export function revokeKey(
         throw new BackeError(
           'ambiguous',
           `»${fingerprint}« passt auf mehrere Keys von »${handle}«`,
-          { details: hits.map(sshFingerprint) },
+          { details: { candidates: hits.map(sshFingerprint) } },
         );
       }
       return { op: 'user.revoke_key', handle, key };

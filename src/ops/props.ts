@@ -98,10 +98,10 @@ function parseJsonValue(key: string, text: string): PropValue {
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new BackeError('usage', `Property »${key}«: ungültiges JSON: ${text}`);
+    throw new BackeError('validation', `Property »${key}«: ungültiges JSON: ${text}`);
   }
   const problem = jsonProblem(parsed);
-  if (problem !== undefined) throw new BackeError('usage', `Property »${key}«: ${problem}`);
+  if (problem !== undefined) throw new BackeError('validation', `Property »${key}«: ${problem}`);
   return parsed as PropValue;
 }
 
@@ -113,7 +113,7 @@ function splitExpr(expr: string): [key: string, op: string, rest: string] {
   const m = EXPR_RE.exec(expr);
   if (m === null || !PROP_KEY_RE.test(m[1] ?? '')) {
     throw new BackeError(
-      'usage',
+      'validation',
       `Ungültiger Property-Ausdruck »${expr}« (erwartet key=wert oder key:=<json>)`,
     );
   }
@@ -125,7 +125,10 @@ export function parsePropAssignment(expr: string): [key: string, value: PropValu
   const [key, op, rest] = splitExpr(expr);
   if (op === '=') return [key, rest];
   if (op === ':=') return [key, parseJsonValue(key, rest)];
-  throw new BackeError('usage', `Property »${key}«: Zuweisung erwartet = oder :=, nicht ${op}`);
+  throw new BackeError(
+    'validation',
+    `Property »${key}«: Zuweisung erwartet = oder :=, nicht ${op}`,
+  );
 }
 
 export type PropFilter =

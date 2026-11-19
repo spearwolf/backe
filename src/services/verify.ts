@@ -9,6 +9,7 @@
  */
 import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
+import { shortSha } from '../core/ids.ts';
 import { type Quarantine, QuarantineSchema } from '../core/schemas.ts';
 import {
   type CommitInfo,
@@ -56,8 +57,6 @@ export type VerifyOptions = { since?: string; to?: string; record?: boolean };
 
 type Checked = VerifyFinding & { notices: string[]; quarantine?: Quarantine };
 
-const short = (sha: string) => sha.slice(0, 7);
-
 // --- Bereich und Anker ----------------------------------------------------------------------
 
 async function resolveRange(wc: string, opts: VerifyOptions) {
@@ -73,18 +72,21 @@ async function resolveRange(wc: string, opts: VerifyOptions) {
   if (verified !== undefined && !(await isAncestor(wc, verified, to))) {
     throw new BackeError(
       'verify',
-      `${toRev} ist kein Nachfahre des zuletzt verifizierten Stands ${short(verified)}`,
+      `${toRev} ist kein Nachfahre des zuletzt verifizierten Stands ${shortSha(verified)}`,
     );
   }
   const since = opts.since === undefined ? undefined : await resolveCommit(wc, opts.since);
   if (since !== undefined && !(await isAncestor(wc, since, to))) {
-    throw new BackeError('usage', `since ${short(since)} ist kein Vorfahre von ${short(to)}`);
+    throw new BackeError(
+      'validation',
+      `since ${shortSha(since)} ist kein Vorfahre von ${shortSha(to)}`,
+    );
   }
   if (opts.record && since !== undefined) {
     const covered = verified !== undefined && (await isAncestor(wc, since, verified));
     if (!covered) {
       throw new BackeError(
-        'usage',
+        'validation',
         `Aufzeichnen mit --since ${opts.since} geht nur, wenn ${opts.since} schon verifiziert ist`,
         { hint: 'Ohne --since prüfen oder ab dem zuletzt verifizierten Stand.' },
       );
@@ -105,13 +107,13 @@ function actorReasons(actors: readonly string[], sig: Signature | undefined): st
 }
 
 function opNotice(sha: string, ops: readonly string[]): string[] {
-  if (ops.length === 0) return [`${short(sha)}: Backe-Op fehlt`];
+  if (ops.length === 0) return [`${shortSha(sha)}: Backe-Op fehlt`];
   try {
     if (ops.length > 1) throw new Error('mehrfach');
     parseOpTrailer(ops[0] as string);
     return [];
   } catch {
-    return [`${short(sha)}: Backe-Op nicht dekodierbar`];
+    return [`${shortSha(sha)}: Backe-Op nicht dekodierbar`];
   }
 }
 
@@ -376,7 +378,7 @@ export function assertVerified(report: VerifyReport): void {
   if (report.invalid.length === 0) return;
   throw new BackeError(
     'verify',
-    `${report.invalid.length} ungültige Commits seit ${short(report.anchor)}`,
+    `${report.invalid.length} ungültige Commits seit ${shortSha(report.anchor)}`,
     { details: report },
   );
 }

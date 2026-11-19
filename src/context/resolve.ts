@@ -94,7 +94,7 @@ function describe(source: Source): string {
 function validHandle(handle: string, source: Source): string {
   if (!isHandle(handle)) {
     throw new BackeError(
-      'usage',
+      'validation',
       `Ungültiger User-Handle »${handle}« (Quelle: ${describe(source)})`,
     );
   }
@@ -171,9 +171,9 @@ async function resolveRef(
   try {
     ref = classifyBacklogRef(value, allowPath);
   } catch (error) {
-    // normalizeRepoUrl wirft nur `usage`; die Quelle gehört in die Meldung.
+    // normalizeRepoUrl wirft nur `validation`; die Quelle gehört in die Meldung.
     const e = error as BackeError;
-    throw new BackeError('usage', `${e.message} (Quelle: ${describe(source)})`, {
+    throw new BackeError('validation', `${e.message} (Quelle: ${describe(source)})`, {
       ...(e.hint === undefined ? {} : { hint: e.hint }),
     });
   }
@@ -255,7 +255,10 @@ function findScoped(
   const { env: envName, valid, label } = SCOPED[key];
   const pick = (value: string, source: Source): Resolved<string> => {
     if (!valid(value)) {
-      throw new BackeError('usage', `Ungültiger ${label} »${value}« (Quelle: ${describe(source)})`);
+      throw new BackeError(
+        'validation',
+        `Ungültiger ${label} »${value}« (Quelle: ${describe(source)})`,
+      );
     }
     return { value, source };
   };

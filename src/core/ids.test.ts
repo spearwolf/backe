@@ -6,6 +6,7 @@ import {
   isValidPrefix,
   resolveShortId,
   shardOf,
+  shortSha,
 } from './ids.ts';
 
 const bytes =
@@ -108,6 +109,17 @@ describe('resolveShortId', () => {
   });
   test('unknown is not_found', () =>
     expect(catchErr(() => resolveShortId('zzz', ids)).code).toBe('not_found'));
+  test('a short id with the backlog prefix resolves, case-insensitive', () =>
+    expect(resolveShortId('BK-A91', ids)).toBe('bk-a91c0'));
+  test('a short id with a foreign prefix is not_found, not a match in this backlog', () => {
+    const err = catchErr(() => resolveShortId('ac-a91', ids));
+    expect(err.code).toBe('not_found');
+    expect(err.message).toBe('Keine Issue-ID passt zu »ac-a91«');
+  });
+  test('a foreign prefix is not_found even when the rest would be too short', () =>
+    expect(catchErr(() => resolveShortId('ac-a9', ids)).code).toBe('not_found'));
+  test('without known ids any prefix is not_found', () =>
+    expect(catchErr(() => resolveShortId('bk-a91', [])).code).toBe('not_found'));
 });
 
 test('catchErr fails when nothing or a foreign error is thrown', () => {
@@ -138,4 +150,16 @@ test('generateIssueId rejects a short byte source', () =>
 test('defaultRandomBytes delivers the requested number of bytes', () => {
   expect(defaultRandomBytes(3)).toHaveLength(3);
   expect(defaultRandomBytes(0)).toHaveLength(0);
+});
+
+describe('shortSha', () => {
+  test('a full SHA-1 or SHA-256 hash shows its first 7 characters', () => {
+    expect(shortSha('a'.repeat(40))).toBe('aaaaaaa');
+    expect(shortSha(`0123456${'f'.repeat(57)}`)).toBe('0123456');
+  });
+  test('anything else stays as given (a short form or a ref the user typed)', () => {
+    expect(shortSha('abc1234')).toBe('abc1234');
+    expect(shortSha('HEAD~2')).toBe('HEAD~2');
+    expect(shortSha('A'.repeat(40))).toBe('A'.repeat(40));
+  });
 });

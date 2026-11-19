@@ -517,7 +517,7 @@ export function translateEdits(
       // Sonst landete der neue Inhalt im Commit und `issue.delete` entfernte ihn gleich wieder.
       const label = cls.kind === 'comment' ? 'Kommentar' : 'Anhang';
       throw new BackeError(
-        'usage',
+        'validation',
         `${path}: ${label} unter ${cls.id}, das im selben Edit gelöscht wird, ginge verloren`,
         { hint: `Den ${label} verwerfen oder ${cls.id} nicht löschen.` },
       );

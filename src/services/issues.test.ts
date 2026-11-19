@@ -407,11 +407,11 @@ describe('linkIssue and unlinkIssue', () => {
     expect(outcome.op).not.toHaveProperty('repo' in expected ? 'url' : 'repo');
   });
 
-  test('link with an unknown name that is no URL is a usage error', async () => {
+  test('link with an unknown name that is no URL is a validation error', async () => {
     await setup();
     const id = await newIssue('T');
     const err = await catchErrAsync(() => linkIssue(ctx, id, 'gibtsnicht'));
-    expect(err.code).toBe('usage');
+    expect(err.code).toBe('validation');
     expect(err.message).toContain('»gibtsnicht«');
   });
 

@@ -62,9 +62,9 @@ export function applyBatch(
   ops: readonly Operation[],
   ctx: ApplyContext,
 ): BatchResult {
-  if (ops.length === 0) throw new BackeError('usage', 'Der Batch enthält keine Operation');
+  if (ops.length === 0) throw new BackeError('validation', 'Der Batch enthält keine Operation');
   if (ops.length > MAX_BATCH) {
-    throw new BackeError('usage', `Ein Batch umfasst höchstens ${MAX_BATCH} Operationen`, {
+    throw new BackeError('validation', `Ein Batch umfasst höchstens ${MAX_BATCH} Operationen`, {
       hint: `${ops.length} Operationen auf mehrere Batches verteilen.`,
     });
   }

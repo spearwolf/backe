@@ -113,7 +113,9 @@ describe('parsePropAssignment', () => {
     'k:={',
     'k>=1',
     'nokey',
-  ])('rejects %s', (expr) => expect(catchErr(() => parsePropAssignment(expr)).code).toBe('usage'));
+  ])('rejects %s', (expr) =>
+    expect(catchErr(() => parsePropAssignment(expr)).code).toBe('validation'),
+  );
 
   test('the key appears in the message', () =>
     expect(catchErr(() => parsePropAssignment('mykey:=null')).message).toContain('mykey'));
@@ -137,7 +139,7 @@ describe('parsePropFilter', () => {
     }));
 
   test('k:=json rejects invalid values', () =>
-    expect(catchErr(() => parsePropFilter('k:=null')).code).toBe('usage'));
+    expect(catchErr(() => parsePropFilter('k:=null')).code).toBe('validation'));
 
   test('>= and <= parse numbers when possible', () => {
     expect(parsePropFilter('k>=3')).toEqual({ key: 'k', op: 'ge', value: 3, raw: '3' });
@@ -157,9 +159,9 @@ describe('parsePropFilter', () => {
     });
   });
 
-  test('invalid expressions are usage errors', () => {
-    expect(catchErr(() => parsePropFilter('K=1')).code).toBe('usage');
-    expect(catchErr(() => parsePropFilter('k')).code).toBe('usage');
+  test('invalid expressions are validation errors', () => {
+    expect(catchErr(() => parsePropFilter('K=1')).code).toBe('validation');
+    expect(catchErr(() => parsePropFilter('k')).code).toBe('validation');
   });
 });
 

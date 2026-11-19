@@ -7,6 +7,7 @@ import { applyEdits, modify } from 'jsonc-parser';
 import { ZodError } from 'zod';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
+import { shortSha } from '../core/ids.ts';
 import {
   type BacklogConfig,
   BacklogConfigSchema,
@@ -97,7 +98,7 @@ async function revertChanges(
     if (!sameBytes(blobs.get(`HEAD:${path}`), blobs.get(`${sha}:${path}`))) {
       throw new BackeError(
         'conflict',
-        `${path} wurde nach ${sha.slice(0, 7)} geändert; Umkehr von Hand`,
+        `${path} wurde nach ${shortSha(sha)} geändert; Umkehr von Hand`,
       );
     }
     return { path, content: blobs.get(`${parent}:${path}`) ?? null };
@@ -166,7 +167,7 @@ export async function quarantineCommit(
   const raw = parent === undefined ? [] : await treeChanges(wc, parent, sha);
   const text = quarantineText ?? EMPTY;
   if (parseQuarantine(text).entries.some((e) => e.sha === sha)) {
-    throw new BackeError('conflict', `Commit ${sha.slice(0, 7)} steht schon in der Quarantäne`);
+    throw new BackeError('conflict', `Commit ${shortSha(sha)} steht schon in der Quarantäne`);
   }
   const edits = modify(
     text,
@@ -191,7 +192,7 @@ export async function quarantineCommit(
     ctx,
     {
       kind: 'manual',
-      subject: `verify ${verb} ${sha.slice(0, 7)}`,
+      subject: `verify ${verb} ${shortSha(sha)}`,
       changes,
       signers: state.users,
     },
