@@ -53,8 +53,10 @@ export function resolveCommentRef(comments: readonly CommentView[], ref: string)
 }
 
 /**
- * Löst Issue und Kommentar auf und liefert den gelesenen Stand. Die Ops-Schicht prüft unter
- * dem Write-Lock gegen diesen Stand (`from_hash`) und lehnt fremde Kommentare ab.
+ * Löst Issue und Kommentar auf und liefert den gelesenen Stand. Das Lesen geschieht vor dem
+ * Write-Lock: `derive` bekommt keine Kommentare. Ändert jemand den Kommentar dazwischen, lehnt
+ * die Ops-Schicht unter dem Lock wegen des abweichenden `from_hash` ab (Konflikt), statt still
+ * zu überschreiben; fremde Kommentare lehnt sie ebenfalls dort ab.
  */
 async function target(ctx: ResolvedContext, ref: string, comment: string) {
   const { root, snapshot: s } = await openSnapshot(ctx);
@@ -62,9 +64,10 @@ async function target(ctx: ResolvedContext, ref: string, comment: string) {
   const stored = await listComments(root, id);
   const file = resolveCommentRef(stored.map(commentView), comment);
   const found = stored.find((c) => commentView(c).file === file);
-  return { file, body: found?.body ?? '' };
+  return { id, file, body: found?.body ?? '' };
 }
 
+/** Bearbeitet einen Kommentar; Vorbedingung ist der vor dem Lock gelesene Stand (siehe `target`). */
 export async function editComment(
   ctx: ResolvedContext,
   ref: string,
@@ -76,9 +79,9 @@ export async function editComment(
   const t = await target(ctx, ref, comment);
   return writeOp(
     ctx,
-    (s) => ({
+    () => ({
       op: 'comment.edit',
-      id: resolveIssueRef(s, ref),
+      id: t.id,
       file: t.file,
       from_hash: bodyHash(t.body),
       body,
@@ -87,6 +90,7 @@ export async function editComment(
   );
 }
 
+/** Löscht einen Kommentar; Auflösung wie bei `editComment`, die Ops-Schicht prüft den Autor unter dem Lock. */
 export async function deleteComment(
   ctx: ResolvedContext,
   ref: string,
@@ -94,9 +98,5 @@ export async function deleteComment(
   deps?: WriteDeps,
 ): Promise<WriteOutcome> {
   const t = await target(ctx, ref, comment);
-  return writeOp(
-    ctx,
-    (s) => ({ op: 'comment.delete', id: resolveIssueRef(s, ref), file: t.file }),
-    deps,
-  );
+  return writeOp(ctx, () => ({ op: 'comment.delete', id: t.id, file: t.file }), deps);
 }

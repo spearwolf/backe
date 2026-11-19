@@ -1,6 +1,7 @@
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
+import { resolveContext } from '../context/resolve.ts';
 import { createIssue } from './issues.ts';
 import { createProject } from './projects.ts';
 import { closeSprint, createSprint, listSprints, showSprint } from './sprints.ts';
@@ -68,6 +69,22 @@ describe('sprints', () => {
     expect(await catchErrAsync(() => showSprint(ctx, 'nix'))).toMatchObject({
       code: 'not_found',
     });
+  });
+
+  test('the header names a project that comes from the context, not from a flag', async () => {
+    await createProject(ctx, { path: 'web', title: 'Web' });
+    await createSprint(ctx, { slug: 's1', title: 'S1' });
+    await createIssue(ctx, { title: 'a', sprints: ['s1'], projects: ['web'] });
+    await createIssue(ctx, { title: 'b', sprints: ['s1'] });
+    const fromEnv = await resolveContext({
+      cwd: b.root,
+      env: { ...b.env, BACKE_PROJECT: 'web' },
+      flags: { as: b.handle },
+    });
+    const shown = await showSprint(fromEnv, 's1');
+    expect(shown.header).toEqual({ backlog: 'acme', project: 'web' });
+    expect(shown.groups.flatMap((g) => g.items.map((i) => i.issue.title))).toEqual(['a']);
+    expect((await showSprint(fromEnv, 's1', { all: true })).header).toEqual({});
   });
 
   test('sprint close --carry-over adds open issues to the successor', async () => {

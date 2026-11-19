@@ -1,6 +1,8 @@
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
+import { git } from '../git/exec.ts';
+import { loadSnapshot } from '../store/snapshot.ts';
 import { createIssue } from './issues.ts';
 import {
   createProject,
@@ -52,11 +54,15 @@ describe('projects', () => {
   test('project mv rewrites issues in one commit', async () => {
     await createProject(ctx, { path: 'web', title: 'Web' });
     const a = (await createIssue(ctx, { title: 'a', projects: ['web'] })).id as string;
+    const count = async () =>
+      Number((await git(['rev-list', '--count', 'HEAD'], { cwd: b.root })).stdout.trim());
+    const before = await count();
     const out = await moveProject(ctx, 'web', 'site');
     expect(out.commit).toBeDefined();
+    expect(await count()).toBe(before + 1);
+    expect((await loadSnapshot(b.root)).issues.get(a)?.data.projects).toEqual(['site']);
     expect((await listProjects(ctx)).map((p) => p.path)).toEqual(['site']);
     expect((await showProject(ctx, 'site')).counts).toEqual({ backlog: 1 });
-    expect(a).toBeDefined();
   });
 
   test('project rm with detach or reassign, and exclusive options', async () => {

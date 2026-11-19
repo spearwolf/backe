@@ -1,8 +1,10 @@
+import { readFileSync, writeFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
+import type { BackeError } from '../core/errors.ts';
 import { listComments } from '../store/snapshot.ts';
 import {
   addComment,
@@ -80,6 +82,29 @@ describe('comments', () => {
     const err = await catchErrAsync(() => editComment(ctx, id, '1', 'fremd'));
     expect(err).toBeDefined();
     expect((err as Error).message).toContain('bob');
-    expect(await catchErrAsync(() => deleteComment(ctx, id, '1'))).toBeDefined();
+    const del = await catchErrAsync(() => deleteComment(ctx, id, '1'));
+    expect(del).toMatchObject({ code: expect.any(String) });
+    expect((del as Error).message).toContain('bob');
+    expect((del as BackeError).code).toBe((err as BackeError).code);
+  });
+
+  test('a comment changed between read and write yields a conflict and keeps the other content', async () => {
+    await addComment(ctx, id, 'alt');
+    const [stored] = await listComments(b.root, id);
+    const path = join(b.root, (stored as { path: string }).path);
+    let changed = false;
+    // `now` läuft im Write nach dem Vorab-Lesen, aber vor dem Laden der Kommentare unter dem Lock.
+    const now = () => {
+      if (!changed) {
+        changed = true;
+        writeFileSync(path, readFileSync(path, 'utf8').replace('alt', 'zwischendurch'));
+      }
+      return new Date();
+    };
+    const err = await catchErrAsync(() => editComment(ctx, id, '1', 'meins', { now }));
+    expect(err).toMatchObject({ code: 'conflict' });
+    expect((err as Error).message).toContain('inzwischen geändert');
+    expect(readFileSync(path, 'utf8')).toContain('zwischendurch');
+    expect(readFileSync(path, 'utf8')).not.toContain('meins');
   });
 });

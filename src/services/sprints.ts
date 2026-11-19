@@ -97,8 +97,10 @@ export async function showSprint(
     ...(project === undefined ? {} : { project }),
     ...(repo === undefined ? {} : { repo }),
   };
-  delete header.sprint;
-  const shownHeader = Object.keys(header).length === 1 ? {} : header;
+  // Der Sprint steht im Titel der Ausgabe; der Header nennt nur Projekt und Repo aus dem Kontext.
+  const { sprint: _sprint, ...contextual } = header;
+  const shownHeader =
+    contextual.project === undefined && contextual.repo === undefined ? {} : contextual;
 
   const compare: (a: Issue, b: Issue) => number =
     q.sort === 'created' ? compareCreated : compareIssues;
