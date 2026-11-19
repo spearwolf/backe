@@ -1,10 +1,12 @@
 # backe 🍑
 
 > [!WARNING]
-> **Experimental — work in progress.** backe is not usable yet. The data model,
-> file formats, signatures, verification and the signed write path exist and are
-> tested; the CLI is still an empty shell, and sync, claim and the MCP server are
-> not built. Formats, commands and everything else may change without notice.
+> **Experimental — work in progress.** backe works locally but is not released.
+> The CLI covers issues, comments, projects, sprints, repos, users and backlogs,
+> `next` (without claim), `context`, `init` and `verify`, with text, JSON and
+> Markdown output. Attachments, hand-edit commits, `batch`, `doctor` and `config`
+> come next; sync, claim and the MCP server are not built yet. Formats, commands
+> and everything else may change without notice.
 
 **A git-based backlog for 🧑🏻‍🦰 humans and 🤖 agents.** Issues live as plain Markdown files
 in their own Git repository. Every change is a signed commit, attributable to
@@ -66,7 +68,7 @@ created: 2026-11-18T10:04:00Z
 After the access token refresh the user lands on `/login` again.
 ```
 
-Planned usage (**not implemented yet**):
+Usage (works locally today, except `--claim`, which arrives with sync):
 
 ```sh
 backe init --name acme --prefix bk
@@ -102,7 +104,8 @@ It is also a working experiment in how far that combination carries.
 | M2        | operations, state model, dependency graph (`ops`)                      | done    |
 | M3        | configs and context resolution                                         | done    |
 | M4        | Git layer, signed write path, verify, quarantine                       | done    |
-| M5        | services and CLI                                                       | next    |
+| M5a       | services and CLI core — issues, comments, projects, output formats     | done    |
+| M5b       | attachments, repo checks, hand-edit commits, batch, doctor, config     | next    |
 | M6        | sync, replay, claim                                                    | planned |
 | M7        | MCP server                                                             | planned |
 | M8        | release                                                                | planned |
