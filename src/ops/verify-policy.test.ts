@@ -175,6 +175,50 @@ describe('checkCommitPolicy', () => {
     expect(check({ actor: 'bob', changes: [comment('A', 'bob')] })).toEqual([]);
   });
 
+  describe('comment forgery', () => {
+    const at = (name: string, status: 'A' | 'M' | 'D', author: string): TreeChange => ({
+      ...comment(status, author),
+      path: `${commentsDir(ID)}/${name}`,
+    });
+
+    test('a comment file with a non-layout name is rejected', () => {
+      const path = `${commentsDir(ID)}/evil.md`;
+      expect(check({ actor: 'bob', changes: [at('evil.md', 'A', 'bob')] })).toEqual([
+        `Kommentar-Datei mit ungültigem Namen: ${path}`,
+      ]);
+      const upper = `20261118T100000Z-bob-ABC.md`;
+      expect(check({ actor: 'bob', changes: [at(upper, 'A', 'bob')] })).toEqual([
+        `Kommentar-Datei mit ungültigem Namen: ${commentsDir(ID)}/${upper}`,
+      ]);
+    });
+
+    test('a frontmatter author different from the file name author is rejected', () => {
+      expect(check({ actor: 'spw', changes: [at(COMMENT, 'A', 'spw')] })).toEqual([
+        `Kommentar ${COMMENT}: author spw passt nicht zum Dateinamen`,
+      ]);
+    });
+
+    test('the author of a comment cannot be rewritten', () => {
+      const change: TreeChange = { ...comment('M', 'spw'), after: commentText('bob') };
+      const file = commentFileName(CREATED, 'spw', 'abc');
+      expect(
+        check({
+          actor: 'spw',
+          changes: [{ ...change, path: `${commentsDir(ID)}/${file}` }],
+        }),
+      ).toEqual([
+        `Kommentar ${file}: author bob passt nicht zum Dateinamen`,
+        `author von Kommentar ${file} geändert`,
+      ]);
+    });
+
+    test('a foreign comment edit is not excused by deleting the issue', () => {
+      expect(check({ changes: [comment('M', 'bob'), deleteIssue()] })).toEqual([
+        `Kommentar ${COMMENT} von bob, Akteur ist spw`,
+      ]);
+    });
+  });
+
   test('an unparseable user file is not checkable', () => {
     const reasons = check({
       changes: [userChange('bob', 'A', null, null, 'kein frontmatter')],
@@ -187,7 +231,7 @@ describe('checkCommitPolicy', () => {
     const bob = human('bob');
     const after = state(['spw'], [bob]);
     expect(check({ actor: 'alice', after, changes: [userChange('bob', 'A', null, bob)] })).toEqual([
-      expect.stringContaining('bob'),
+      'alice darf den User bob nicht anlegen',
     ]);
     expect(check({ actor: 'spw', after, changes: [userChange('bob', 'A', null, bob)] })).toEqual(
       [],

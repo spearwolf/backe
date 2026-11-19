@@ -3,9 +3,10 @@
  * `verify` ruft `checkCommitPolicy` für jeden Commit mit den Tree-Änderungen gegenüber dem Parent.
  */
 import { BackeError } from '../core/errors.ts';
+import { isIssueId, shardOf } from '../core/ids.ts';
 import { type BacklogConfig, type Issue, type User, validateEntity } from '../core/schemas.ts';
 import { parseEntityFile } from '../store/frontmatter.ts';
-import { classifyPath, issueFile, userFile } from '../store/layout.ts';
+import { classifyPath, issueFile, parseCommentFileName, userFile } from '../store/layout.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { checkUserChange } from './policy.ts';
 
@@ -54,6 +55,9 @@ function checkChange(
   if (change.newMode === '160000') reasons.push(`Submodule: ${path}`);
   if (path.startsWith('.backe/') && !admin) reasons.push(`nur Admins ändern ${path}`);
 
+  if (change.status !== 'D' && misnamedComment(path)) {
+    reasons.push(`Kommentar-Datei mit ungültigem Namen: ${path}`);
+  }
   const cls = classifyPath(path);
   if (cls.kind === 'user') reasons.push(...checkUserFile(input, change, cls.key));
   else if (cls.kind === 'issue') reasons.push(...checkIssueFile(input.actor, change, cls.id));
@@ -150,18 +154,47 @@ function checkCommentFile(
   file: string,
   issueDeleted: boolean,
 ): string[] {
-  const { path } = change;
+  const { path, status } = change;
   const foreign = (author: string) => `Kommentar ${file} von ${author}, Akteur ist ${actor}`;
+  const reasons: string[] = [];
   try {
-    if (change.status === 'A') {
-      if (change.after === null) return [];
-      const { author } = parseAs<{ author: string }>('comment', change.after, path);
-      return author === actor ? [] : [foreign(author)];
+    const after =
+      status !== 'D' && change.after !== null
+        ? parseAs<{ author: string }>('comment', change.after, path)
+        : undefined;
+    const nameAuthor = parseCommentFileName(file)?.author;
+    if (after !== undefined && nameAuthor !== undefined && after.author !== nameAuthor) {
+      reasons.push(`Kommentar ${file}: author ${after.author} passt nicht zum Dateinamen`);
     }
-    if (issueDeleted || change.before === null) return [];
-    const { author } = parseAs<{ author: string }>('comment', change.before, path);
-    return author === actor ? [] : [foreign(author)];
+    if (status === 'A') {
+      if (after !== undefined && after.author !== actor) reasons.push(foreign(after.author));
+      return reasons;
+    }
+    if (change.before === null) return reasons;
+    const before = parseAs<{ author: string }>('comment', change.before, path);
+    // Nur das Löschen zusammen mit dem Issue ist frei; Ändern bleibt Sache des Autors.
+    if (!(status === 'D' && issueDeleted) && before.author !== actor) {
+      reasons.push(foreign(before.author));
+    }
+    if (after !== undefined && after.author !== before.author) {
+      reasons.push(`author von Kommentar ${file} geändert`);
+    }
   } catch (err) {
-    return [unverifiable(path, err)];
+    reasons.push(unverifiable(path, err));
   }
+  return reasons;
+}
+
+/** Datei in `comments/` eines Issues, deren Name nicht dem Kommentar-Namensschema folgt. */
+function misnamedComment(path: string): boolean {
+  const [top, shard, id = '', sub, name, ...rest] = path.split('/');
+  return (
+    top === 'issues' &&
+    sub === 'comments' &&
+    name !== undefined &&
+    rest.length === 0 &&
+    isIssueId(id) &&
+    shardOf(id) === shard &&
+    parseCommentFileName(name) === undefined
+  );
 }
