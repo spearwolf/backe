@@ -44,7 +44,8 @@ export async function commitPaths(wc: string, input: CommitInput): Promise<strin
       cwd: wc,
       env,
     });
-    await git(['add', '-A', ...pathspec], { cwd: wc, env, input: pathList(input.paths) });
+    // `-f`: Die Pfade gehören backe; eine `.gitignore` im Backlog darf sie nicht aussperren.
+    await git(['add', '-A', '-f', ...pathspec], { cwd: wc, env, input: pathList(input.paths) });
     const tree = (await git(['write-tree'], { cwd: wc, env })).stdout.trim();
     const parentTree =
       parent === undefined
@@ -105,11 +106,13 @@ export async function commitPaths(wc: string, input: CommitInput): Promise<strin
       },
     );
 
+    // Der Commit ist gelandet; den Index nachzuziehen ist Kosmetik. Scheitert es (index.lock
+    // gehalten, Signal an den git-Prozess), zeigt `git status` die Pfade eben als geändert.
     await git(['reset', '-q', ...pathspec], {
       cwd: wc,
       env: { GIT_LITERAL_PATHSPECS: '1' },
       input: pathList(input.paths),
-    });
+    }).catch(() => undefined);
     return sha;
   } finally {
     await rm(indexFile, { force: true });

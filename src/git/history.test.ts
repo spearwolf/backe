@@ -10,6 +10,7 @@ import {
   listCommits,
   listTree,
   objectInfo,
+  parseCatFile,
   readBlobs,
   removedHandles,
   resolveCommit,
@@ -88,6 +89,54 @@ test('signatures reports status, fingerprint and principal per commit', async ()
     ]),
   );
   expect(await signatures(wc, [], signers)).toEqual(new Map());
+});
+
+describe('a hostile git config or repo', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test('log.showSignature in the user config disturbs neither signatures nor removedHandles', async () => {
+    const wc = await repo();
+    const spw = await testKey('spw');
+    await rawCommit(wc, { files: { 'users/ann.md': 'a\n' }, key: spw });
+    const removal = await rawCommit(wc, { files: { 'users/ann.md': null }, key: spw });
+    const signers = join(await realpath(await tempDir()), 'allowed_signers');
+    await writeFile(signers, `spw namespaces="git" ${spw.line}\n`);
+    const config = join(await realpath(await tempDir()), 'gitconfig');
+    await writeFile(config, '[log]\n\tshowSignature = true\n');
+    vi.stubEnv('GIT_CONFIG_GLOBAL', config);
+
+    expect((await signatures(wc, [removal], signers)).get(removal)).toEqual({
+      status: 'G',
+      fingerprint: sshFingerprint(spw.line),
+      principal: 'spw',
+    });
+    expect(await removedHandles(wc, 'HEAD')).toEqual(new Set(['ann']));
+  });
+
+  test('replace refs do not swap the commits verify reads', async () => {
+    const wc = await repo();
+    const base = await rawCommit(wc, { files: { x: '1' } });
+    const decoy = await rawCommit(wc, { files: { x: '2' }, subject: 'decoy' });
+    const real = await rawCommit(wc, { files: { x: '3' }, subject: 'real', parents: [base] });
+    await git(['replace', real, decoy], { cwd: wc });
+
+    const [, last] = await listCommits(wc, { from: undefined, to: real });
+    expect(last?.message).toMatch(/^real\n/);
+    expect((await readBlobs(wc, [`${real}:x`])).get(`${real}:x`)?.toString()).toBe('3');
+  });
+});
+
+test('parseCatFile rejects truncated output', () => {
+  const header = Buffer.from(`${'a'.repeat(40)} blob 5\0`);
+  const full = Buffer.concat([header, Buffer.from('hallo\0')]);
+  expect(parseCatFile(full, ['x'], true).get('x')?.content?.toString()).toBe('hallo');
+  for (const cut of [Buffer.from(`${'a'.repeat(40)} blob 5`), full.subarray(0, -3)]) {
+    expect(() => parseCatFile(cut, ['x'], true)).toThrow(
+      expect.objectContaining({ code: 'unexpected' }),
+    );
+  }
 });
 
 test('treeChanges lists raw changes with modes, without rename detection', async () => {

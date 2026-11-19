@@ -141,6 +141,26 @@ describe('commitPaths', () => {
     expect(await revParse(wc, 'HEAD')).toBe(input.parent);
   });
 
+  test('a failing index refresh after the ref update still returns the landed commit', async () => {
+    const { wc, input } = await setup();
+    const lock = join(wc, '.git', 'index.lock');
+    await writeFile(lock, '');
+    try {
+      const sha = await commitPaths(wc, input);
+      expect(await revParse(wc, 'HEAD')).toBe(sha);
+    } finally {
+      await rm(lock, { force: true });
+    }
+  });
+
+  test('ignore rules of the repository do not keep a given path out of the commit', async () => {
+    const { wc, input } = await setup();
+    await put(wc, '.gitignore', '*.md\n');
+    await put(wc, 'issues/x.md', 'X');
+    const sha = await commitPaths(wc, { ...input, paths: ['issues/x.md'] });
+    expect(await show(wc, `${sha}:issues/x.md`)).toBe('X');
+  });
+
   test('no temp index is left behind', async () => {
     const { wc, input } = await setup();
     await commitPaths(wc, input);

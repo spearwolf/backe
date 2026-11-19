@@ -8,6 +8,12 @@ import { git, gitBytes } from './exec.ts';
 const USER_FILE = /^users\/([^/]+)\.md$/;
 const OBJECT_HEADER = /^([0-9a-f]+) ([a-z]+) (\d+)$/;
 
+/** Für jeden Aufruf hier: Replace-Refs (`git replace`) schieben verify keine anderen Objekte unter. */
+const ENV = { GIT_NO_REPLACE_OBJECTS: '1' } as const;
+
+/** `git log` ohne `log.showSignature` aus der User-Config, das die Ausgabe verändern würde. */
+const LOG = ['-c', 'log.showSignature=false', 'log'] as const;
+
 /** `gpgsig` ist die erste Zeile des Signatur-Headers (`gpgsig-sha256` bei SHA-256), sonst fehlt er. */
 export type CommitInfo = {
   sha: string;
@@ -28,7 +34,7 @@ export type TreeEntry = { mode: string; type: string; oid: string; name: string 
 export async function removedHandles(wc: string, rev: string): Promise<Set<string>> {
   const { stdout } = await git(
     [
-      'log',
+      ...LOG,
       '--format=',
       '--name-only',
       '-z',
@@ -38,7 +44,7 @@ export async function removedHandles(wc: string, rev: string): Promise<Set<strin
       '--',
       'users/',
     ],
-    { cwd: wc, env: { GIT_LITERAL_PATHSPECS: '1' } },
+    { cwd: wc, env: { ...ENV, GIT_LITERAL_PATHSPECS: '1' } },
   );
   const handles = new Set<string>();
   for (const entry of stdout.split('\0')) {
@@ -50,33 +56,50 @@ export async function removedHandles(wc: string, rev: string): Promise<Set<strin
 
 type CatObject = { oid: string; type: string; content: Buffer | undefined };
 
-/** `cat-file --batch[-check] -Z`; fehlende oder mehrdeutige Spezifikationen fehlen in der Map. */
-async function catFile(
-  wc: string,
+const truncated = () => new BackeError('unexpected', 'Ausgabe von git cat-file ist abgeschnitten');
+
+/**
+ * Zerlegt die Ausgabe von `cat-file --batch[-check] -Z` zu `specs`; fehlende oder mehrdeutige
+ * Spezifikationen fehlen in der Map. Endet die Ausgabe vor dem letzten Eintrag → `unexpected`.
+ */
+export function parseCatFile(
+  stdout: Buffer,
   specs: readonly string[],
   withContent: boolean,
-): Promise<Map<string, CatObject>> {
+): Map<string, CatObject> {
   const found = new Map<string, CatObject>();
-  if (specs.length === 0) return found;
-  const { stdout } = await gitBytes(['cat-file', withContent ? '--batch' : '--batch-check', '-Z'], {
-    cwd: wc,
-    input: specs.map((s) => `${s}\0`).join(''),
-  });
   let pos = 0;
   for (const spec of specs) {
     const end = stdout.indexOf(0, pos);
+    if (end < 0) throw truncated();
     const header = OBJECT_HEADER.exec(stdout.toString('utf8', pos, end));
     pos = end + 1;
     if (header === null) continue;
     const [, oid = '', type = '', size = '0'] = header;
     let content: Buffer | undefined;
     if (withContent) {
+      if (pos + Number(size) + 1 > stdout.length) throw truncated();
       content = stdout.subarray(pos, pos + Number(size));
       pos += Number(size) + 1;
     }
     found.set(spec, { oid, type, content });
   }
   return found;
+}
+
+/** `cat-file --batch[-check] -Z` über `specs`. */
+async function catFile(
+  wc: string,
+  specs: readonly string[],
+  withContent: boolean,
+): Promise<Map<string, CatObject>> {
+  if (specs.length === 0) return new Map();
+  const { stdout } = await gitBytes(['cat-file', withContent ? '--batch' : '--batch-check', '-Z'], {
+    cwd: wc,
+    env: ENV,
+    input: specs.map((s) => `${s}\0`).join(''),
+  });
+  return parseCatFile(stdout, specs, withContent);
 }
 
 /**
@@ -91,7 +114,7 @@ export async function listCommits(
   const revs = range.from === undefined ? [range.to] : [range.to, `^${range.from}`];
   const { stdout } = await git(
     ['rev-list', '--topo-order', '--reverse', '--parents', '--end-of-options', ...revs, '--'],
-    { cwd: wc },
+    { cwd: wc, env: ENV },
   );
   const lines = stdout.split('\n').filter((l) => l !== '');
   const objects = await catFile(
@@ -122,12 +145,12 @@ export async function signatures(
     [
       '-c',
       `gpg.ssh.allowedSignersFile=${allowedSigners}`,
-      'log',
+      ...LOG,
       '--no-walk=unsorted',
       '--stdin',
       '--format=%H%x00%G?%x00%GK%x00%GS%x1e',
     ],
-    { cwd: wc, input: `${shas.join('\n')}\n` },
+    { cwd: wc, env: ENV, input: `${shas.join('\n')}\n` },
   );
   for (const record of stdout.split('\x1e')) {
     const [sha = '', status = '', fingerprint = '', principal = ''] = record
@@ -148,7 +171,7 @@ export async function treeChanges(
     parent === undefined ? ['--root', '--end-of-options', sha] : ['--end-of-options', parent, sha];
   const { stdout } = await git(
     ['diff-tree', '-r', '-z', '--no-renames', '--raw', '--no-commit-id', ...revs],
-    { cwd: wc },
+    { cwd: wc, env: ENV },
   );
   const fields = stdout.split('\0');
   const changes: RawChange[] = [];
@@ -194,7 +217,10 @@ export async function objectInfo(
 
 /** Einträge eines Baums (nicht rekursiv). */
 export async function listTree(wc: string, tree: string): Promise<TreeEntry[]> {
-  const { stdout } = await git(['ls-tree', '-z', '--end-of-options', tree], { cwd: wc });
+  const { stdout } = await git(['ls-tree', '-z', '--end-of-options', tree], {
+    cwd: wc,
+    env: ENV,
+  });
   return stdout
     .split('\0')
     .filter((e) => e !== '')
@@ -208,6 +234,7 @@ export async function listTree(wc: string, tree: string): Promise<TreeEntry[]> {
 export async function isAncestor(wc: string, a: string, b: string): Promise<boolean> {
   const { exitCode } = await git(['merge-base', '--is-ancestor', '--end-of-options', a, b], {
     cwd: wc,
+    env: ENV,
     okExitCodes: [1],
   });
   return exitCode === 0;
@@ -217,6 +244,7 @@ export async function isAncestor(wc: string, a: string, b: string): Promise<bool
 export async function rootCommits(wc: string, rev: string): Promise<string[]> {
   const { stdout } = await git(['rev-list', '--max-parents=0', '--end-of-options', rev, '--'], {
     cwd: wc,
+    env: ENV,
   });
   return stdout.split('\n').filter((l) => l !== '');
 }
@@ -225,7 +253,7 @@ export async function rootCommits(wc: string, rev: string): Promise<string[]> {
 export async function resolveCommit(wc: string, rev: string): Promise<string> {
   const { stdout } = await git(
     ['rev-parse', '-q', '--verify', '--end-of-options', `${rev}^{commit}`],
-    { cwd: wc, okExitCodes: [1, 128] },
+    { cwd: wc, env: ENV, okExitCodes: [1, 128] },
   );
   const sha = stdout.trim();
   if (sha === '') throw new BackeError('not_found', `Revision ${rev} nicht gefunden`);

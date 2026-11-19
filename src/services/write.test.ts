@@ -151,6 +151,54 @@ test('a failure after writing restores the working copy', async () => {
   expect(await logTrailers(b.root)).toHaveLength(2);
 });
 
+test('a failure after the commit landed reports the write as done', async () => {
+  const r = await executeWrite(ctx, CREATE, {
+    hooks: {
+      afterCommit: async () => {
+        throw new BackeError('unexpected', 'boom');
+      },
+    },
+  });
+  expect(r.commit).toBe(await revParse(b.root, 'HEAD'));
+  expect(await revParse(b.root, 'HEAD^')).toBe(head);
+  expect(r.recorded).toHaveLength(1);
+  expect(await readdir(await stateDir(b.root))).not.toContain('write.journal');
+  expect(await statusShort(b.root)).toEqual([]);
+});
+
+test('a foreign commit on the same base is no landed write', async () => {
+  const err = await catchErrAsync(() =>
+    executeWrite(ctx, CREATE, {
+      hooks: {
+        afterFiles: async () => {
+          const tree = (await git(['rev-parse', `${head}^{tree}`], { cwd: b.root })).stdout.trim();
+          const foreign = await git(['commit-tree', tree, '-p', head, '-m', 'fremd'], {
+            cwd: b.root,
+            env: {
+              GIT_AUTHOR_NAME: 'x',
+              GIT_AUTHOR_EMAIL: 'x@x.invalid',
+              GIT_COMMITTER_NAME: 'x',
+              GIT_COMMITTER_EMAIL: 'x@x.invalid',
+            },
+          });
+          await git(['update-ref', 'HEAD', foreign.stdout.trim()], { cwd: b.root });
+        },
+      },
+    }),
+  );
+  expect(err.code).toBe('conflict');
+  expect(await statusShort(b.root)).toEqual([]);
+});
+
+test('a committed .gitignore does not keep a write from committing its file', async () => {
+  await rawCommit(b.root, { files: { '.gitignore': '*.md\n' }, key: b.key, actor: 'spw' });
+  const r = await executeWrite(ctx, CREATE);
+  const [path] = r.paths;
+  expect(
+    (await git(['ls-tree', '--name-only', 'HEAD', '--', path as string], { cwd: b.root })).stdout,
+  ).toBe(`${path}\n`);
+});
+
 test('SIGINT is deferred until the write finished', async () => {
   const raised: string[] = [];
   const listeners = process.listenerCount('SIGINT');

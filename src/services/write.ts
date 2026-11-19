@@ -11,7 +11,7 @@ import { BackeError } from '../core/errors.ts';
 import { BACKLOG_FORMAT_VERSION, type Comment, type User } from '../core/schemas.ts';
 import { commitPaths } from '../git/commit.ts';
 import { git } from '../git/exec.ts';
-import { removedHandles } from '../git/history.ts';
+import { objectInfo, readBlobs, removedHandles } from '../git/history.ts';
 import { readLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
 import { formatCommitMessage, TRAILER_ACTOR, TRAILER_OP } from '../git/message.ts';
 import { assertOnBranch, dirtyPaths, headState, rollbackPaths } from '../git/repo.ts';
@@ -61,7 +61,8 @@ export type WriteDeps = {
   now?: () => Date;
   randomBytes?: (n: number) => Uint8Array;
   lock?: LockOptions;
-  hooks?: { afterFiles?: () => Promise<void> };
+  /** Nur für Tests: `afterFiles` nach dem Schreiben der Dateien, `afterCommit` nach dem Commit. */
+  hooks?: { afterFiles?: () => Promise<void>; afterCommit?: () => Promise<void> };
   raise?: (signal: NodeJS.Signals) => void;
 };
 
@@ -111,6 +112,27 @@ async function firstParent(wc: string): Promise<string | undefined> {
   const { stdout } = await git(['log', '-1', '--format=%P', 'HEAD'], { cwd: wc });
   const [parent] = stdout.trim().split(' ');
   return parent === '' ? undefined : parent;
+}
+
+/**
+ * Der Commit dieses Writes, falls er trotz eines Fehlers danach auf HEAD gelandet ist: HEAD steht
+ * direkt auf `head` und enthält jeden geschriebenen Pfad mit genau dem geplanten Inhalt.
+ */
+async function landedCommit(
+  wc: string,
+  head: string,
+  changes: readonly FileChange[],
+): Promise<string | undefined> {
+  const now = (await headState(wc)).head;
+  if (now === undefined || now === head || (await firstParent(wc)) !== head) return undefined;
+  const specs = changes.map((c) => `${now}:${c.path}`);
+  const [info, blobs] = await Promise.all([objectInfo(wc, specs), readBlobs(wc, specs)]);
+  const matches = changes.every((c, i) => {
+    const spec = specs[i] as string;
+    if (c.content === null) return info.get(spec) === undefined;
+    return blobs.get(spec)?.equals(Buffer.from(c.content)) === true;
+  });
+  return matches ? now : undefined;
 }
 
 /**
@@ -284,7 +306,14 @@ export async function executeWrite(
       await applyFileChanges(wc, changes);
       await deps.hooks?.afterFiles?.();
       commit = await commitPaths(wc, { paths, message, key, author, env: ctx.env, parent: head });
+      await deps.hooks?.afterCommit?.();
     } catch (error) {
+      const done = await landedCommit(wc, head, changes).catch(() => undefined);
+      if (done !== undefined) {
+        // Der Commit steht schon auf HEAD: Ein Rollback würde ihn verfälschen, ein Retry verdoppeln.
+        await rm(journal, { force: true });
+        return { commit: done, ...planned, paths, verifyNotices };
+      }
       try {
         await rollbackPaths(wc, paths);
         await rm(journal, { force: true });

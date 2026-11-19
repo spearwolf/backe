@@ -50,6 +50,25 @@ test('create-agent writes a 0600 key, a user signed by the operator and the iden
   );
 });
 
+test('a failure after the agent commit landed keeps the key and registers the identity', async () => {
+  const r = await createAgent(
+    await b.context(),
+    { handle: 'claude-1' },
+    {
+      hooks: {
+        afterCommit: async () => {
+          throw new Error('unterbrochen');
+        },
+      },
+    },
+  );
+  expect(r.commit).toBe(await revParse(b.root, 'HEAD'));
+  expect(await present(r.keyPath)).toBe(true);
+  expect((await readUserConfig(b.homes.backeHome)).identities?.acme?.['claude-1']?.key).toBe(
+    r.keyPath,
+  );
+});
+
 test('the new agent writes in its own working copy after the operator pushed', async () => {
   b = await testBacklog({ remote: true });
   const r = await createAgent(await b.context(), { handle: 'claude-1' });
