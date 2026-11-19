@@ -1,0 +1,59 @@
+/**
+ * Agents anlegen (backe.md §2.12): eigenes Keypair, User-Eintrag mit dem ausführenden Menschen als
+ * Operator (der Commit wird von ihm signiert) und die Identität in der User-Config.
+ */
+import { rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { setIdentity } from '../context/registry.ts';
+import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
+import { BackeError } from '../core/errors.ts';
+import { generateKeypair } from '../git/ssh.ts';
+import { executeWrite, type WriteDeps } from './write.ts';
+
+export type CreateAgentInput = { handle: string; name?: string; body?: string };
+
+export async function createAgent(
+  ctx: ResolvedContext,
+  input: CreateAgentInput,
+  deps?: WriteDeps,
+): Promise<{ keyPath: string; commit: string }> {
+  const { handle: actor } = requireWriter(ctx);
+  const backlog = ctx.backlog.value;
+  const { handle } = input;
+  if (ctx.userConfig.identities?.[backlog]?.[handle] !== undefined) {
+    throw new BackeError('conflict', `Für "${handle}" ist schon eine Identität eingetragen`, {
+      hint: `identities.${backlog}.${handle} in der User-Config prüfen`,
+    });
+  }
+  const keyPath = join(ctx.homes.backeHome, 'keys', backlog, handle);
+  const pub = await generateKeypair(keyPath, `${handle}@backe`);
+  let commit: string | undefined;
+  try {
+    const result = await executeWrite(
+      ctx,
+      {
+        kind: 'op',
+        op: {
+          op: 'user.add',
+          handle,
+          name: input.name ?? handle,
+          kind: 'agent',
+          operator: actor,
+          keys: [pub],
+          ...(input.body === undefined ? {} : { body: input.body }),
+        },
+      },
+      deps,
+    );
+    commit = result.commit;
+  } catch (error) {
+    // Ein Fehler beim Aufräumen darf den ursprünglichen Fehler nicht verdecken.
+    await Promise.allSettled([rm(keyPath, { force: true }), rm(`${keyPath}.pub`, { force: true })]);
+    throw error;
+  }
+  if (commit === undefined) {
+    throw new BackeError('unexpected', `Der Write für "${handle}" hat keinen Commit erzeugt`);
+  }
+  await setIdentity(ctx.homes, backlog, handle, keyPath);
+  return { keyPath, commit };
+}
