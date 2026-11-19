@@ -154,3 +154,133 @@ test('comments in an existing quarantine.jsonc survive', async () => {
   expect(text).toContain('// Notiz bleibt');
   expect(text).toContain(bad);
 });
+
+const FORGED = JSON.stringify({
+  entries: [{ sha: 'a'.repeat(40), decision: 'accepted', reason: 'gefälscht' }],
+});
+
+describe('a commit that changed quarantine.jsonc itself', () => {
+  test.each(['reverted', 'accepted'] as const)(
+    '%s keeps only the admin entry',
+    async (decision) => {
+      const before = await readFile(join(b.root, USER_FILE), 'utf8');
+      const bad = await badCommit({ [USER_FILE]: FOREIGN_EDIT, [QUARANTINE]: FORGED });
+      await quarantineCommit(await b.context(), { sha: bad, decision, reason: 'echt' });
+      const text = await readFile(join(b.root, QUARANTINE), 'utf8');
+      expect(JSON.parse(text).entries).toEqual([{ sha: bad, decision, reason: 'echt' }]);
+      expect(await readFile(join(b.root, USER_FILE), 'utf8')).toBe(
+        decision === 'reverted' ? before : FOREIGN_EDIT,
+      );
+      expect((await verifyRange(b.root)).invalid).toEqual([]);
+    },
+  );
+});
+
+test('a revert whose own commit would be invalid is a conflict and writes nothing', async () => {
+  const comment = 'issues/ab/bk-abcde/comments/20260101T000000Z-bob-abc.md';
+  const bad = await badCommit({
+    [USER_FILE]: FOREIGN_EDIT,
+    [comment]: '---\nauthor: bob\ncreated: 2026-01-01T00:00:00Z\n---\nhi\n',
+  });
+  const head = await revParse(b.root, 'HEAD');
+  const err = await catchErrAsync(async () =>
+    quarantineCommit(await b.context(), { sha: bad, decision: 'reverted', reason: 'x' }),
+  );
+  expect(err).toMatchObject({ code: 'conflict' });
+  expect(err.message).toMatch(/^Umkehr von Hand nötig: /);
+  expect(await revParse(b.root, 'HEAD')).toBe(head);
+  expect(await statusShort(b.root)).toEqual([]);
+});
+
+test('a revert of a commit with a symlink is a conflict', async () => {
+  const bad = await rawCommit(b.root, {
+    files: { 'notes/link': { symlink: 'x' } },
+    key: bob,
+    actor: 'bob',
+  });
+  const err = await catchErrAsync(async () =>
+    quarantineCommit(await b.context(), { sha: bad, decision: 'reverted', reason: 'x' }),
+  );
+  expect(err).toMatchObject({
+    code: 'conflict',
+    message: 'Umkehr von Hand nötig: Symlink oder Submodule notes/link',
+  });
+});
+
+test('a commit outside the history of HEAD is not_found', async () => {
+  const tree = (await git(['rev-parse', 'HEAD^{tree}'], { cwd: b.root })).stdout.trim();
+  const orphan = (
+    await git(['commit-tree', tree, '-m', 'orphan'], {
+      cwd: b.root,
+      env: {
+        GIT_AUTHOR_NAME: 'x',
+        GIT_AUTHOR_EMAIL: 'x@x.invalid',
+        GIT_COMMITTER_NAME: 'x',
+        GIT_COMMITTER_EMAIL: 'x@x.invalid',
+      },
+    })
+  ).stdout.trim();
+  const err = await catchErrAsync(async () =>
+    quarantineCommit(await b.context(), { sha: orphan, decision: 'accepted', reason: 'x' }),
+  );
+  expect(err).toMatchObject({ code: 'not_found' });
+});
+
+test('an invalid existing quarantine.jsonc is a validation error', async () => {
+  await rawCommit(b.root, {
+    files: { [QUARANTINE]: '{"entries": [{"sha": "nope"}]}' },
+    key: b.key,
+    actor: 'spw',
+  });
+  const bad = await badCommit();
+  const err = await catchErrAsync(async () =>
+    quarantineCommit(await b.context(), { sha: bad, decision: 'accepted', reason: 'x' }),
+  );
+  expect(err).toMatchObject({ code: 'validation' });
+});
+
+test('reverting commits that touch users and the config re-checks the planned state', async () => {
+  const ctx = await b.context();
+  const add = await executeWrite(ctx, {
+    kind: 'op',
+    op: {
+      op: 'user.add',
+      handle: 'eve',
+      name: 'Eve',
+      kind: 'human',
+      keys: [(await testKey('eve')).line],
+    },
+  });
+  await quarantineCommit(ctx, { sha: add.commit as string, decision: 'reverted', reason: 'a' });
+  await expect(readFile(join(b.root, 'users/eve.md'))).rejects.toThrow();
+  const config = JSON.stringify({
+    version: 1,
+    name: 'acme',
+    id_prefix: 'bk',
+    admins: ['spw', 'bob'],
+  });
+  const widen = await rawCommit(b.root, {
+    files: { [BACKLOG_CONFIG]: config },
+    key: b.key,
+    actor: 'spw',
+  });
+  await quarantineCommit(ctx, { sha: widen, decision: 'reverted', reason: 'b' });
+  expect(await readFile(join(b.root, BACKLOG_CONFIG), 'utf8')).not.toContain('bob"]');
+});
+
+test('reverting the removal of a user brings the user file back', async () => {
+  const ctx = await b.context();
+  await executeWrite(ctx, {
+    kind: 'op',
+    op: {
+      op: 'user.add',
+      handle: 'eve',
+      name: 'Eve',
+      kind: 'human',
+      keys: [(await testKey('eve')).line],
+    },
+  });
+  const rm = await executeWrite(ctx, { kind: 'op', op: { op: 'user.rm', handle: 'eve' } });
+  await quarantineCommit(ctx, { sha: rm.commit as string, decision: 'reverted', reason: 'c' });
+  expect(await readFile(join(b.root, 'users/eve.md'), 'utf8')).toContain('Eve');
+});
