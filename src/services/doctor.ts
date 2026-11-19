@@ -49,7 +49,7 @@ export type DoctorInput = {
 const MIN_NODE = 26;
 const MIN_GIT: readonly [number, number] = [2, 38];
 const CLONE_TEMP_MAX_AGE_MS = 3_600_000;
-const LOCK_TEMP = /^(?:write|config)\.lock\.(\d+)\.[0-9a-f]{6}$/;
+const LOCK_TEMP = /^(?:write|config)\.lock\.(\d+)\.[0-9a-f]{12}$/;
 
 function defaultRun(env: Env): NonNullable<DoctorDeps['run']> {
   const merged: Record<string, string> = { LC_ALL: 'C' };
@@ -279,10 +279,15 @@ async function checkLfsRule(snapshot: BacklogSnapshot, root: string): Promise<Do
       'kommt mit dem nächsten attach add',
     );
   }
-  const filter = await git(['config', '--local', '--get', 'filter.lfs.process'], {
-    cwd: root,
-    okExitCodes: [1],
-  });
+  let filter: Awaited<ReturnType<typeof git>>;
+  try {
+    filter = await git(['config', '--local', '--get', 'filter.lfs.process'], {
+      cwd: root,
+      okExitCodes: [1],
+    });
+  } catch (error) {
+    return check('lfs-rule', 'warn', message(error));
+  }
   return filter.exitCode === 0
     ? check('lfs-rule', 'ok', 'LFS-Regel und lokaler Filter vorhanden')
     : check(
@@ -465,7 +470,11 @@ export async function runDoctor(input: DoctorInput, deps: DoctorDeps = {}): Prom
     );
   }
   if (ctx !== undefined && root !== undefined && snapshot !== undefined) {
-    checks.push(await checkIdentity(ctx, snapshot, root));
+    try {
+      checks.push(await checkIdentity(ctx, snapshot, root));
+    } catch (error) {
+      checks.push(check('identity', 'fail', message(error)));
+    }
     checks.push(await checkLfsRule(snapshot, root));
   }
 

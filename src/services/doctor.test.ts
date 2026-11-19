@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
@@ -102,6 +103,11 @@ describe('runDoctor', () => {
     const checks = await runDoctor(await input());
     expect(one(checks, 'git').status).toBe('ok');
     expect(one(checks, 'ssh-keygen').status).toBe('ok');
+  });
+
+  test('an Apple git version string is accepted', async () => {
+    const run = fakeRun({ git: 'git version 2.39.5 (Apple Git-154)' });
+    expect(one(await runDoctor(await input(), deps({ run })), 'git').status).toBe('ok');
   });
 
   test('node older than 26 fails', async () => {
@@ -234,6 +240,15 @@ describe('runDoctor', () => {
     ).toBe(1);
   });
 
+  test('a failing local git config read warns instead of aborting', async () => {
+    await setLfs(true);
+    await writeFile(join(b.root, '.gitattributes'), `${LFS_RULE}\n`);
+    const start = await input();
+    await writeFile(join(b.root, '.git/config'), '[broken\n');
+    const checks = await runDoctor(start, deps());
+    expect(one(checks, 'lfs-rule').status).toBe('warn');
+  });
+
   test('missing bound paths warn', async () => {
     const gone = join(await tempDir(), 'gone');
     await mkdir(b.homes.backeHome, { recursive: true });
@@ -277,12 +292,14 @@ describe('runDoctor', () => {
     await writeFile(join(tmp, 'clone-abc', 'f'), 'x');
     await ago(join(tmp, 'clone-abc'), 2 * 3_600_000);
     await mkdir(join(tmp, 'clone-new'), { recursive: true });
-    const lock = join(b.root, '.git/backe/write.lock.99999.abcdef');
+    const lock = `${join(b.root, '.git/backe/write.lock')}.99999.${randomBytes(6).toString('hex')}`;
     await writeFile(lock, `99999\n${new Date().toISOString()}\n${HOST}\n`);
-    const foreign = join(b.root, '.git/backe/write.lock.99998.abcdef');
+    const foreign = `${join(b.root, '.git/backe/write.lock')}.99998.${randomBytes(6).toString('hex')}`;
     await writeFile(foreign, `99998\n${new Date().toISOString()}\nother\n`);
-    const alive = join(b.homes.backeHome, 'config.lock.99997.abcdef');
+    const alive = `${join(b.homes.backeHome, 'config.lock')}.99997.${randomBytes(6).toString('hex')}`;
     await writeFile(alive, `99997\n${new Date().toISOString()}\n${HOST}\n`);
+    const bare = [join(b.root, '.git/backe/write.lock'), join(b.homes.backeHome, 'config.lock')];
+    for (const file of bare) await writeFile(file, `99999\n${new Date().toISOString()}\n${HOST}\n`);
     const live = deps({ isAlive: (pid) => pid === 99997 });
 
     let checks = await runDoctor(await input(), live);
@@ -296,6 +313,7 @@ describe('runDoctor', () => {
     expect(await exists(join(tmp, 'clone-new'))).toBe(true);
     expect(await exists(foreign)).toBe(true);
     expect(await exists(alive)).toBe(true);
+    for (const file of bare) expect(await exists(file)).toBe(true);
     expect(one(await runDoctor(await input(), live), 'temp').status).toBe('ok');
   });
 
