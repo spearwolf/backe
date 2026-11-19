@@ -62,8 +62,21 @@ export async function registerBacklog(
   homes: Homes,
   entry: { name: string; remote?: string; handle?: string; path?: string },
 ): Promise<UserConfig> {
+  return (await registerBacklogTracked(homes, entry)).config;
+}
+
+/**
+ * Wie `registerBacklog`, liefert aber zusätzlich den Stand, den der Aufruf unter dem Config-Lock
+ * vorgefunden hat: Was davor schon registriert oder gebunden war, ist nicht Sache eines Rollbacks.
+ */
+export async function registerBacklogTracked(
+  homes: Homes,
+  entry: { name: string; remote?: string; handle?: string; path?: string },
+): Promise<{ config: UserConfig; before: UserConfig }> {
   const { name, remote, handle, path } = entry;
-  return updateUserConfig(homes.backeHome, (cfg) => {
+  let before: UserConfig = {};
+  const config = await updateUserConfig(homes.backeHome, (cfg) => {
+    before = cfg;
     if (path !== undefined && handle === undefined) {
       throw new BackeError('usage', '--path braucht --user (Handle), dem der Pfad gehört');
     }
@@ -110,6 +123,7 @@ export async function registerBacklog(
     if (cfg.current === undefined) edits.push({ path: ['current'], value: name });
     return edits;
   });
+  return { config, before };
 }
 
 export async function useBacklog(homes: Homes, name: string): Promise<UserConfig> {
@@ -135,13 +149,14 @@ export async function unregisterBacklog(
 
 /**
  * Nimmt zurück, was ein `registerBacklog` an einem schon bestehenden Eintrag ergänzt hat: die
- * Bindung `paths.<handle>` und, falls verlangt, die Remote. Der Eintrag selbst bleibt; ein
- * fehlender Eintrag ist kein Fehler.
+ * Bindung `paths.<handle>`, falls verlangt die Remote und, falls der Aufruf `current` gesetzt hat
+ * (`current: true`), auch diesen Verweis. Der Eintrag selbst bleibt; ein fehlender Eintrag ist
+ * kein Fehler.
  */
 export async function revertBinding(
   homes: Homes,
   name: string,
-  undo: { handle?: string; remote?: boolean },
+  undo: { handle?: string; remote?: boolean; current?: boolean },
 ): Promise<UserConfig> {
   return updateUserConfig(homes.backeHome, (cfg) => {
     const entry = cfg.backlogs?.[name];
@@ -152,6 +167,9 @@ export async function revertBinding(
     }
     if (undo.remote === true && entry.remote !== undefined) {
       edits.push({ path: ['backlogs', name, 'remote'], value: undefined });
+    }
+    if (undo.current === true && cfg.current === name) {
+      edits.push({ path: ['current'], value: undefined });
     }
     return edits;
   });

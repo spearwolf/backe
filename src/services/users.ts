@@ -18,7 +18,7 @@ export async function addUser(
   deps?: WriteDeps,
 ): Promise<WriteOutcome> {
   if (input.operator !== undefined && input.agent !== true) {
-    throw new BackeError('usage', '»--operator« gilt nur zusammen mit »--agent«');
+    throw new BackeError('usage', '--operator gilt nur zusammen mit --agent');
   }
   const handle = resolveHandle(ctx, input.handle);
   const key = await readPublicKey(input.keyFile);

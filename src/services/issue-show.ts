@@ -15,7 +15,7 @@ import { compareIssues } from '../ops/order.ts';
 import { listComments, type StoredEntity } from '../store/snapshot.ts';
 import { openSnapshot, resolveIssueRef } from './read.ts';
 
-export type IssueRefView = { id: string; state: State; title: string };
+export type IssueRefView = { id: string; state: State; title: string; assignee?: string };
 
 /** Eine Referenz, deren Issue es im Backlog nicht (mehr) gibt. */
 export type MissingRefView = { id: string; missing: true };
@@ -77,7 +77,16 @@ export async function showIssue(
   const issue = stored.data;
   const view = (other: string): IssueRefView[] => {
     const o = s.issues.get(other)?.data;
-    return o === undefined ? [] : [{ id: o.id, state: o.state, title: o.title }];
+    return o === undefined
+      ? []
+      : [
+          {
+            id: o.id,
+            state: o.state,
+            title: o.title,
+            ...(o.assignee === undefined ? {} : { assignee: o.assignee }),
+          },
+        ];
   };
   const sorted = (ids: readonly string[] | undefined): IssueRefView[] =>
     (ids ?? [])

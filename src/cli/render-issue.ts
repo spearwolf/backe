@@ -67,27 +67,43 @@ const maxWidth = (cells: readonly string[]): number => Math.max(0, ...cells.map(
  * durch `safeText`.
  */
 export function issueLines(items: readonly IssueListItem[], color: boolean): string[] {
-  const ids = items.map((i) => safeText(i.issue.id));
-  const assignees = items.map((i) => safeText(i.issue.assignee ?? '-'));
+  return listRows(
+    items.map(({ issue, depth, openDeps }) => ({
+      ...issue,
+      ...(depth === undefined ? {} : { depth }),
+      openDeps,
+    })),
+    color,
+  );
+}
+
+type ListRow = {
+  id: string;
+  state: State;
+  assignee?: string | undefined;
+  title: string;
+  depth?: number;
+  openDeps?: boolean;
+};
+
+/** Die Spalten von `issueLines` für alles, was id, state, assignee und title trägt. */
+function listRows(rows: readonly ListRow[], color: boolean): string[] {
+  const ids = rows.map((r) => safeText(r.id));
+  const assignees = rows.map((r) => safeText(r.assignee ?? '-'));
   const idWidth = maxWidth(ids);
   const assigneeWidth = maxWidth(assignees);
-  return items.map(({ issue, depth, openDeps }, n) =>
+  return rows.map((r, n) =>
     [
       pad(ids[n] as string, idWidth),
-      stateText(issue.state, color, true),
+      stateText(r.state, color, true),
       pad(assignees[n] as string, assigneeWidth),
-      `${'  '.repeat(depth ?? 0)}${openDeps ? '⧗ ' : ''}${safeText(issue.title)}`,
+      `${'  '.repeat(r.depth ?? 0)}${r.openDeps ? '⧗ ' : ''}${safeText(r.title)}`,
     ].join('  '),
   );
 }
 
-/** Zeilen für Sub-Issues: `<id>  <state>  <titel>`; eine Referenz trägt keinen Assignee. */
-function refLines(refs: readonly IssueRefView[], color: boolean): string[] {
-  const idWidth = maxWidth(refs.map((r) => safeText(r.id)));
-  return refs.map((r) =>
-    [pad(safeText(r.id), idWidth), stateText(r.state, color, true), safeText(r.title)].join('  '),
-  );
-}
+/** Zeilen für Sub-Issues in den Listenspalten: `<id>  <state>  <assignee oder ->  <titel>`. */
+const refLines = (refs: readonly IssueRefView[], color: boolean): string[] => listRows(refs, color);
 
 /** `<id> [<state>]`, eine fehlende Referenz als `<id> [fehlt]`. */
 const refWithState = (r: IssueRefView | MissingRefView, color: boolean): string =>

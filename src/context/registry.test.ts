@@ -5,6 +5,7 @@ import {
   findBacklogByRemote,
   listBacklogs,
   registerBacklog,
+  registerBacklogTracked,
   revertBinding,
   setIdentity,
   unregisterBacklog,
@@ -156,4 +157,30 @@ test('revertBinding keeps the remote unless asked and ignores unknown entries', 
   const cfg = await revertBinding(h, 'acme', { handle: 'spw' });
   expect(cfg.backlogs?.acme?.remote).toBe('gh:acme/backlog');
   await revertBinding(h, 'nope', { handle: 'spw', remote: true });
+});
+
+test('revertBinding resets a current it set', async () => {
+  const h = await homes();
+  await registerBacklog(h, { name: 'acme', handle: 'spw', path: '/p/a' });
+  const cfg = await revertBinding(h, 'acme', { handle: 'spw', current: true });
+  expect(cfg.current).toBeUndefined();
+  expect(cfg.backlogs?.acme?.paths?.spw).toBeUndefined();
+});
+
+test('revertBinding leaves a current that points elsewhere', async () => {
+  const h = await homes();
+  await registerBacklog(h, { name: 'other' });
+  await registerBacklog(h, { name: 'acme', handle: 'spw', path: '/p/a' });
+  const cfg = await revertBinding(h, 'acme', { handle: 'spw', current: true });
+  expect(cfg.current).toBe('other');
+});
+
+test('registerBacklogTracked reports the state it found under the lock', async () => {
+  const h = await homes();
+  const first = await registerBacklogTracked(h, { name: 'acme' });
+  expect(first.before).toEqual({});
+  const second = await registerBacklogTracked(h, { name: 'acme', remote: 'gh:acme/backlog' });
+  expect(second.before.backlogs?.acme).toEqual({});
+  expect(second.before.current).toBe('acme');
+  expect(second.config.backlogs?.acme?.remote).toBe('gh:acme/backlog');
 });

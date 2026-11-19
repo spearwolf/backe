@@ -24,27 +24,31 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-const OPENSSH_PRIVATE_KEY = '-----BEGIN OPENSSH PRIVATE KEY-----';
-
 /**
  * Leitet die Public-Key-Zeile per `ssh-keygen -y` ab. `-P ''`: Ein Key mit Passphrase scheitert
- * sofort, statt am Terminal nachzufragen; bei einem OpenSSH-Key ist das der Fall „verschlüsselt,
- * keine `.pub` daneben“ und bekommt den Hinweis, die `.pub` zu erzeugen.
+ * sofort, statt am Terminal nachzufragen; nennt ssh-keygen eine Passphrase, ist das der Fall
+ * „verschlüsselt, keine `.pub` daneben“ und bekommt den Hinweis, die `.pub` zu erzeugen. Jeder andere
+ * Fehler ist ein nicht lesbarer Key.
  */
-async function deriveFromPrivateKey(keyPath: string, content: string): Promise<string> {
+async function deriveFromPrivateKey(keyPath: string): Promise<string> {
   try {
     return firstLine(
       (await sshKeygen(['-y', '-P', '', '-f', keyPath], { cwd: dirname(keyPath) })).stdout,
     );
   } catch (error) {
-    if (!content.startsWith(OPENSSH_PRIVATE_KEY)) throw error;
-    throw new BackeError(
-      'usage',
-      `Key »${keyPath}« ist verschlüsselt und hat keine ».pub« daneben`,
-      {
-        hint: `ssh-keygen -y -f ${keyPath} > ${keyPath}.pub`,
-      },
-    );
+    // Ein fehlendes ssh-keygen (oder ein anderer Startfehler) trägt keinen stderr des Programms.
+    const details =
+      error instanceof BackeError ? (error.details as { stderr?: unknown }) : undefined;
+    const stderr = typeof details?.stderr === 'string' ? details.stderr : undefined;
+    if (stderr === undefined) throw error;
+    if (/passphrase/i.test(stderr)) {
+      throw new BackeError(
+        'usage',
+        `Key »${keyPath}« ist verschlüsselt und hat keine ».pub« daneben`,
+        { hint: `ssh-keygen -y -f ${keyPath} > ${keyPath}.pub` },
+      );
+    }
+    throw new BackeError('validation', `Key »${keyPath}« ist nicht lesbar: ${firstLine(stderr)}`);
   }
 }
 
@@ -60,7 +64,7 @@ export async function readPublicKey(keyPath: string): Promise<string> {
     line =
       pub !== undefined && firstLine(pub).startsWith('ssh-')
         ? firstLine(pub)
-        : await deriveFromPrivateKey(keyPath, own);
+        : await deriveFromPrivateKey(keyPath);
   }
   parseSshPublicKey(line);
   return line;

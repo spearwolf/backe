@@ -58,3 +58,14 @@ test('CLI JSON keys are snake_case in every golden file', async () => {
   }
   expect(hits).toEqual([]);
 });
+
+test('flag names are not quoted', async () => {
+  const hits: string[] = [];
+  for (const file of await sources(SRC)) {
+    const lines = (await readFile(file, 'utf8')).split('\n');
+    for (const [i, line] of lines.entries()) {
+      if (line.includes('»--')) hits.push(`${file.slice(SRC.length + 1)}:${i + 1}: ${line.trim()}`);
+    }
+  }
+  expect(hits).toEqual([]);
+});

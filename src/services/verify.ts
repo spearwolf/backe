@@ -29,7 +29,7 @@ import { parseOpTrailer } from '../ops/operation.ts';
 import { propViolations } from '../ops/props.ts';
 import { checkCommitPolicy, type TreeChange } from '../ops/verify-policy.ts';
 import { BACKLOG_CONFIG, classifyPath, QUARANTINE } from '../store/layout.ts';
-import { loadSnapshot } from '../store/snapshot.ts';
+import { loadSnapshot, type StoredEntity } from '../store/snapshot.ts';
 import { requireRoot } from './read.ts';
 import {
   loadStates,
@@ -354,12 +354,19 @@ export async function verifyRange(wc: string, opts: VerifyOptions = {}): Promise
   return report;
 }
 
-export type BacklogVerifyReport = VerifyReport & { propNotices: string[] };
+/** Eine Datei mit Top-Level-Keys, die das Schema nicht kennt (backe.md §2.3), in Dateireihenfolge. */
+export type UnknownKeys = { path: string; keys: string[] };
+
+export type BacklogVerifyReport = VerifyReport & {
+  propNotices: string[];
+  unknownKeys: UnknownKeys[];
+};
 
 /**
  * `backe verify` für die Arbeitskopie des Kontexts: der Bericht von `verifyRange`, dazu je
  * Property, deren Wert eine (inzwischen verschärfte) Deklaration verletzt, ein Hinweis
- * `<id> <key>: <meldung>` — ein Hinweis, kein Fehler (backe.md §2.24).
+ * `<id> <key>: <meldung>` — ein Hinweis, kein Fehler (backe.md §2.24) — und je Datei mit unbekannten
+ * Keys ein Eintrag in `unknownKeys` (backe.md §2.3), nach Pfad sortiert.
  */
 export async function verifyBacklog(
   ctx: ResolvedContext,
@@ -367,10 +374,20 @@ export async function verifyBacklog(
 ): Promise<BacklogVerifyReport> {
   const root = requireRoot(ctx);
   const report = await verifyRange(root, opts);
-  const propNotices = propViolations(await loadSnapshot(root)).map(
-    (v) => `${v.id} ${v.key}: ${v.message}`,
-  );
-  return { ...report, propNotices };
+  const snapshot = await loadSnapshot(root);
+  const propNotices = propViolations(snapshot).map((v) => `${v.id} ${v.key}: ${v.message}`);
+  const unknownKeys = [
+    snapshot.users,
+    snapshot.projects,
+    snapshot.sprints,
+    snapshot.repos,
+    snapshot.issues,
+  ]
+    .flatMap((entities) => [...entities.values()] as StoredEntity<unknown>[])
+    .filter((e) => e.extra.length > 0)
+    .map((e) => ({ path: e.path, keys: e.extra.map(([k]) => k) }))
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return { ...report, propNotices, unknownKeys };
 }
 
 /**

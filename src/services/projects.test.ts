@@ -21,15 +21,31 @@ beforeEach(async () => {
 });
 
 describe('projects', () => {
-  test('create takes a lead of me and list counts direct open issues', async () => {
+  test('create takes a lead of me and list counts open issues of subprojects', async () => {
     await createProject(ctx, { path: 'web', title: 'Web', lead: 'me', body: 'Text' });
     await createProject(ctx, { path: 'web/auth', title: 'Auth' });
     await createIssue(ctx, { title: 'a', projects: ['web'] });
     await createIssue(ctx, { title: 'b', projects: ['web/auth'] });
     await createIssue(ctx, { title: 'c', projects: ['web'], state: 'done' });
     expect(await listProjects(ctx)).toEqual([
-      { path: 'web', title: 'Web', lead: 'spw', open: 1 },
+      { path: 'web', title: 'Web', lead: 'spw', open: 2 },
       { path: 'web/auth', title: 'Auth', open: 1 },
+    ]);
+  });
+
+  test('project list counts open issues of subprojects', async () => {
+    await createProject(ctx, { path: 'web', title: 'Web' });
+    await createProject(ctx, { path: 'web/auth', title: 'Auth' });
+    await createProject(ctx, { path: 'web/auth/sso', title: 'SSO' });
+    await createProject(ctx, { path: 'webapp', title: 'Webapp' });
+    await createIssue(ctx, { title: 'a', projects: ['web/auth/sso'] });
+    await createIssue(ctx, { title: 'b', projects: ['web/auth', 'web/auth/sso'] });
+    await createIssue(ctx, { title: 'c', projects: ['webapp'] });
+    expect((await listProjects(ctx)).map((p) => [p.path, p.open])).toEqual([
+      ['web', 2],
+      ['web/auth', 2],
+      ['web/auth/sso', 2],
+      ['webapp', 1],
     ]);
   });
 

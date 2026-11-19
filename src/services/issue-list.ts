@@ -113,7 +113,7 @@ export async function listIssues(
   q: IssueListQuery,
 ): Promise<IssueListResult> {
   if (q.parent !== undefined && q.topLevel === true) {
-    throw new BackeError('usage', '»--parent« und »--top-level« schließen sich aus');
+    throw new BackeError('usage', '--parent und --top-level schließen sich aus');
   }
   if (q.limit !== undefined && !(Number.isInteger(q.limit) && q.limit >= 1)) {
     throw new BackeError('validation', `Ungültiges Limit: »${q.limit}«`, {

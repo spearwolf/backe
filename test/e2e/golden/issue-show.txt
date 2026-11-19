@@ -33,9 +33,9 @@ state       todo
 creator     spw
 created     <ts>
 children    1/3 erledigt
-            bk-56789  in_progress  Token-Refresh reparieren
-            bk-abcde  todo         SSO-Login bricht nach Token-Refresh ab
-            bk-fghjk  done         Altes Login entfernen
+            bk-56789  in_progress  claude-1  Token-Refresh reparieren
+            bk-abcde  todo         -         SSO-Login bricht nach Token-Refresh ab
+            bk-fghjk  done         -         Altes Login entfernen
 rank        1000
 projects    web/auth
 sprints     2026-w47
@@ -65,7 +65,7 @@ created     <ts>
 parent      bk-01234
 depends_on  bk-56789 [in_progress]
 children    0/1 erledigt
-            bk-NEW02  backlog      Enkel
+            bk-NEW02  backlog      -  Enkel
 rank        2000
 projects    web/auth
 sprints     2026-w47

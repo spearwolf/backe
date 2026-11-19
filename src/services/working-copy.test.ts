@@ -545,10 +545,28 @@ describe('purge keeps the only copy of unpushed work', () => {
     );
     expect(err).toMatchObject({
       code: 'conflict',
-      message: `Der verwaltete Clone »${b.root}« enthält Commits, die auf keiner Remote liegen`,
+      message: `Der verwaltete Clone »${b.root}« enthält Commits, die auf keiner Remote liegen (Branches: »main«)`,
       hint: 'backe backlog remove acme --purge --force löscht trotzdem',
     });
     expect((await readUserConfig(b.homes.backeHome)).backlogs?.acme).toBeDefined();
+    expect(await exists(join(b.root, BACKLOG_CONFIG))).toBe(true);
+  });
+
+  test('purge refuses unpushed commits on any local branch', async () => {
+    await git(['switch', '-c', 'wip'], { cwd: b.root });
+    await writeFile(join(b.root, 'wip.txt'), 'wip\n');
+    await git(['add', 'wip.txt'], { cwd: b.root });
+    await git(['-c', 'user.name=t', '-c', 'user.email=t@x', 'commit', '-qm', 'nur auf wip'], {
+      cwd: b.root,
+    });
+    await git(['switch', 'main'], { cwd: b.root });
+    await push();
+    const err = await catchErrAsync(() =>
+      removeBacklog({ homes: b.homes, name: 'acme', purge: true }),
+    );
+    expect(err.code).toBe('conflict');
+    expect(err.message).toContain('»wip«');
+    expect(err.message).not.toContain('»main«');
     expect(await exists(join(b.root, BACKLOG_CONFIG))).toBe(true);
   });
 
@@ -598,7 +616,7 @@ describe('purge keeps the only copy of unpushed work', () => {
     );
   });
 
-  test('a repo without backlog config is checked on main', async () => {
+  test('a repo without backlog config is checked on all branches', async () => {
     const stray = join(managed(), 'stray');
     await git(['clone', '-q', b.remote as string, stray], { cwd: managed() });
     await rm(join(stray, BACKLOG_CONFIG));
@@ -609,7 +627,7 @@ describe('purge keeps the only copy of unpushed work', () => {
       removeBacklog({ homes: b.homes, name: 'acme', purge: true }),
     );
     expect(err.message).toBe(
-      `Der verwaltete Clone »${await physicalPath(stray)}« enthält Commits, die auf keiner Remote liegen`,
+      `Der verwaltete Clone »${await physicalPath(stray)}« enthält Commits, die auf keiner Remote liegen (Branches: »main«)`,
     );
   });
 });

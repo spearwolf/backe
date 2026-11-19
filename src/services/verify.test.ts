@@ -675,3 +675,22 @@ describe('verifyBacklog', () => {
     expect(err.code).toBe('not_found');
   });
 });
+
+describe('unknown keys', () => {
+  test('verifyBacklog lists files with unknown keys', async () => {
+    const text = await readFile(
+      join(
+        import.meta.dirname,
+        '../../test/fixtures/backlog-unknown-key/issues/7f/bk-7f3k2/issue.md',
+      ),
+      'utf8',
+    );
+    await signed('spw', { [issueFile('bk-7f3k2')]: text });
+    const r = await verifyBacklog(ctx);
+    expect(r.unknownKeys).toEqual([{ path: issueFile('bk-7f3k2'), keys: ['legacy', '2'] }]);
+  });
+
+  test('a clean backlog has no unknown keys', async () => {
+    expect((await verifyBacklog(ctx)).unknownKeys).toEqual([]);
+  });
+});

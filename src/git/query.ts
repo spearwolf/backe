@@ -41,3 +41,20 @@ export async function unpushedCount(cwd: string, branch: string): Promise<number
   const r = await git(['rev-list', '--count', ref, '--not', '--remotes', '--'], { cwd });
   return Number(r.stdout.trim());
 }
+
+/**
+ * Lokale Branches mit Commits, die in keinem Remote-Tracking-Ref stehen (`git rev-list --branches
+ * --not --remotes` ist nicht leer), nach Name sortiert. Ohne Remotes zählt jeder Branch mit Commits.
+ */
+export async function branchesWithUnpushed(cwd: string): Promise<string[]> {
+  const refs = await git(['for-each-ref', '--format=%(refname:short)', 'refs/heads/'], { cwd });
+  const names = refs.stdout.split('\n').filter((n) => n !== '');
+  const out: string[] = [];
+  for (const name of names.sort()) {
+    const r = await git(['rev-list', '--count', `refs/heads/${name}`, '--not', '--remotes', '--'], {
+      cwd,
+    });
+    if (Number(r.stdout.trim()) > 0) out.push(name);
+  }
+  return out;
+}

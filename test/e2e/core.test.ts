@@ -317,6 +317,32 @@ test('verify reports a clean history', async () => {
   await expect(normalize(json.stdout, s.names)).toMatchFileSnapshot('golden/verify.json');
 });
 
+test('verify warns about unknown keys, text on stderr and JSON as unknown_keys', async () => {
+  const s = await setup();
+  const fixture = join(
+    import.meta.dirname,
+    '../fixtures/backlog-unknown-key/issues/7f/bk-7f3k2/issue.md',
+  );
+  await rawCommit(s.b.root, {
+    files: { 'issues/7f/bk-7f3k2/issue.md': await readFile(fixture, 'utf8') },
+    key: s.b.key,
+    actor: 'spw',
+    op: 'manual',
+    subject: 'Altlast',
+  });
+  const text = await cli(['verify'], { env: s.env, cwd: s.cwd });
+  expect(text.code).toBe(0);
+  expect(text.stderr).toBe(
+    'Warnung: issues/7f/bk-7f3k2/issue.md: unbekannte Keys legacy, 2 — eigene Daten gehören nach props\n',
+  );
+  const json = await cli(['--json', 'verify'], { env: s.env, cwd: s.cwd });
+  expect(json.code).toBe(0);
+  expect(json.stderr).toBe('');
+  expect(JSON.parse(json.stdout).unknown_keys).toEqual([
+    { path: 'issues/7f/bk-7f3k2/issue.md', keys: ['legacy', '2'] },
+  ]);
+});
+
 test('verify fails with exit 5 until the commit is quarantined', async () => {
   const s = await setup();
   const bad = await rawCommit(s.b.root, {

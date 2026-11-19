@@ -214,3 +214,13 @@ test('raw is the file as on disk', async () => {
   const dir = join(ctx.backlog.root as string, 'issues', id.X.slice(3, 5), id.X);
   expect(d.raw).toBe(await readFile(join(dir, 'issue.md'), 'utf8'));
 });
+
+test('show children carry their assignee', async () => {
+  const r = await executeWrite(ctx, {
+    kind: 'batch',
+    ops: [{ op: 'issue.create', ref: '$M', title: 'Mit Assignee', parent: id.X, assignee: 'spw' }],
+  });
+  const d = await showIssue(ctx, id.X);
+  expect(d.children.find((c) => c.id === r.refs.$M)?.assignee).toBe('spw');
+  expect(d.children.find((c) => c.id === id.C4)).not.toHaveProperty('assignee');
+});

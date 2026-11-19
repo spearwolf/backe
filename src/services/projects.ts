@@ -23,10 +23,16 @@ export async function listProjects(
   ctx: ResolvedContext,
 ): Promise<{ path: string; title: string; lead?: string; open: number }[]> {
   const { snapshot: s } = await openSnapshot(ctx);
+  // Wie `showProject`: ein Issue zählt für jedes Projekt und alle seine Vorfahren, je einmal.
   const open = new Map<string, number>();
   for (const { data } of s.issues.values()) {
     if (isSettled(data.state)) continue;
-    for (const p of new Set(data.projects ?? [])) open.set(p, (open.get(p) ?? 0) + 1);
+    const counted = new Set<string>();
+    for (const p of data.projects ?? []) {
+      const parts = p.split('/');
+      for (let n = 1; n <= parts.length; n++) counted.add(parts.slice(0, n).join('/'));
+    }
+    for (const path of counted) open.set(path, (open.get(path) ?? 0) + 1);
   }
   return [...s.projects.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -83,7 +89,7 @@ export function removeProject(
   deps?: WriteDeps,
 ): Promise<WriteOutcome> {
   if (input.reassign !== undefined && input.detach === true) {
-    throw new BackeError('usage', '»--reassign« und »--detach« schließen sich aus');
+    throw new BackeError('usage', '--reassign und --detach schließen sich aus');
   }
   const op: OpOf<'project.rm'> = { op: 'project.rm', path };
   if (input.reassign !== undefined) op.reassign = input.reassign;

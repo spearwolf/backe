@@ -1,8 +1,9 @@
-import { copyFile, rm, stat } from 'node:fs/promises';
+import { copyFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { testKey } from '../../test/helpers/git.ts';
+import { BackeError } from '../core/errors.ts';
 import { sameKey } from '../core/ssh.ts';
 import { sshKeygen } from './exec.ts';
 import { generateKeypair, readPublicKey } from './ssh.ts';
@@ -33,6 +34,27 @@ describe('ssh keys', () => {
     expect(err.code).toBe('usage');
     expect(err.message).toBe(`Key »${locked}« ist verschlüsselt und hat keine ».pub« daneben`);
     expect(err.hint).toBe(`ssh-keygen -y -f ${locked} > ${locked}.pub`);
+  });
+
+  test('a broken key is not reported as encrypted', async () => {
+    const dir = await tempDir();
+    const broken = join(dir, 'broken');
+    await writeFile(broken, '-----BEGIN OPENSSH PRIVATE KEY-----\nmüll\n');
+    const err = await catchErrAsync(() => readPublicKey(broken));
+    expect(err.code).toBe('validation');
+    expect(err.message).toMatch(new RegExp(`^Key »${broken}« ist nicht lesbar: \\S`));
+    expect(err.message).not.toMatch(/verschlüsselt/);
+  });
+
+  test('a missing ssh-keygen is an unexpected error, not an unreadable key', async () => {
+    const dir = await tempDir();
+    const broken = join(dir, 'broken');
+    await writeFile(broken, 'müll\n');
+    vi.mocked(sshKeygen).mockRejectedValueOnce(
+      new BackeError('unexpected', 'ssh-keygen nicht gefunden'),
+    );
+    const err = await catchErrAsync(() => readPublicKey(broken));
+    expect(err).toMatchObject({ code: 'unexpected', message: 'ssh-keygen nicht gefunden' });
   });
 
   test('readPublicKey reads a public key, the .pub next to a private key, or derives it', async () => {

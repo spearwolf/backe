@@ -76,7 +76,10 @@ export function userCommands(program: Command, rt: Runtime): void {
   subcommand(user, 'show <handle|me>', 'User mit aktiven und widerrufenen Keys').action(
     action(rt, async (env, who: string) => {
       const r = await showUser(await env.context(), who);
-      const revoked = r.revoked.map((k) => `${k.fingerprint} (widerrufen ${k.revoked ?? '?'})`);
+      const revoked = r.revoked.map(
+        (k) =>
+          `${k.fingerprint} ${k.revoked === undefined ? 'widerrufen' : `(widerrufen ${k.revoked})`}`,
+      );
       emit(
         env,
         {

@@ -46,12 +46,17 @@ export function useColor(io: CliIo, cfg: UserConfig): boolean {
   return io.isTTY && envValue(io.env, 'NO_COLOR') === undefined;
 }
 
-/** Steuerzeichen (`\p{Cc}`: C0, DEL, C1) außer Zeilenumbruch und Tab. */
-const CONTROL = /(?![\n\t])\p{Cc}/gu;
+/**
+ * Steuerzeichen (`\p{Cc}`: C0, DEL, C1) außer Zeilenumbruch und Tab, dazu Formatzeichen (`\p{Cf}`:
+ * Bidi-Steuerung, Zero-Width-Space, Soft Hyphen, Tag-Zeichen) außer ZWNJ und ZWJ, die Emoji-
+ * und Schriftsequenzen zusammenhalten.
+ */
+const CONTROL = /(?![\n\t\u200C\u200D])[\p{Cc}\p{Cf}]/gu;
 
 /**
  * Text aus Issues, Kommentaren, Configs oder Git für ein Terminal: Steuerzeichen außer `\n` und
- * `\t` werden sichtbar (`ESC` als `␛`, alle anderen als `\u{XX}`), damit ein Titel keine
+ * `\t` werden sichtbar (`ESC` als `␛`, alle anderen als `\u{XX}`, Formatzeichen wie U+202E als
+ * `\u{202E}`), damit ein Titel keine
  * Escape-Sequenzen (Farben, Cursor, OSC-Links, Fenstertitel) ins Terminal schreibt. Gilt für jede
  * Text-Ausgabe; JSON und `--format md` bleiben unverändert.
  */
@@ -157,16 +162,26 @@ export function headerLine(header: Readonly<Record<string, string>>): string | u
     .join(' ');
 }
 
-const snake = (key: string): string => key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+/** Die TS-Namen, unter denen Services Details ablegen; nur sie werden umbenannt. */
+const DETAIL_KEYS: Readonly<Record<string, string>> = {
+  exitCode: 'exit_code',
+  fromHash: 'from_hash',
+  reasonFile: 'reason_file',
+};
 
 /**
- * Fehler-Details mit snake_case-Keys, rekursiv; Werte bleiben. Details sind ungetypt und kommen aus
- * allen Schichten (etwa `exitCode` eines git-Aufrufs), die ihre TS-Namen behalten.
+ * Fehler-Details für JSON: nur die festen Keys aus `DETAIL_KEYS` werden snake_case, überall wo sie
+ * als Key stehen. Alle anderen Keys (etwa Nutzer-Keys unter `props`) und alle Werte bleiben.
  */
-function snakeKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(snakeKeys);
+function detailKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(detailKeys);
   if (value === null || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.entries(value).map(([k, v]) => [snake(k), snakeKeys(v)]));
+  return Object.fromEntries(
+    Object.entries(value).map(([k, v]) => [
+      Object.hasOwn(DETAIL_KEYS, k) ? DETAIL_KEYS[k] : k,
+      detailKeys(v),
+    ]),
+  );
 }
 
 /** Exit-Code eines Fehlers: der eines `BackeError`, sonst `1`. */
@@ -188,7 +203,7 @@ export function renderError(err: unknown, format: Format): string {
           `Unerwarteter Fehler: ${err instanceof Error ? err.message : String(err)}`,
         );
   if (format === 'json') {
-    const details = e.details === undefined ? undefined : snakeKeys(e.details);
+    const details = e.details === undefined ? undefined : detailKeys(e.details);
     return json({ error: { code: e.code, message: e.message, hint: e.hint, details } });
   }
   return safeText(`Fehler: ${e.message}\n${e.hint === undefined ? '' : `Hinweis: ${e.hint}\n`}`);

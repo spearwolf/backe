@@ -13,7 +13,7 @@ import {
   subcommand,
   text,
 } from '../options.ts';
-import { json, lines, paint, renderHints, safeText } from '../output.ts';
+import { json, lines, paint, renderHints, renderNotices, safeText } from '../output.ts';
 
 type Opts = { since?: string; accept?: string; revert?: string; reason?: string };
 
@@ -33,10 +33,14 @@ function render(report: BacklogVerifyReport, since: string | undefined, color: b
   ]);
 }
 
-/** Bericht als JSON mit snake_case-Keys (`prop_notices`). */
+/** Bericht als JSON mit snake_case-Keys (`prop_notices`, `unknown_keys`). */
 function verifyJson(report: BacklogVerifyReport): Record<string, unknown> {
-  const { propNotices, ...rest } = report;
-  return { ...rest, prop_notices: propNotices };
+  const { propNotices, unknownKeys, ...rest } = report;
+  return {
+    ...rest,
+    prop_notices: propNotices,
+    ...(unknownKeys.length === 0 ? {} : { unknown_keys: unknownKeys }),
+  };
 }
 
 async function quarantine(env: CommandEnv, opts: Opts): Promise<void> {
@@ -90,6 +94,11 @@ export function verifyCommand(program: Command, rt: Runtime): void {
           env.out(render(report, opts.since, env.color));
           const hints = [...report.notices, ...report.propNotices];
           if (hints.length > 0) env.io.stderr(renderHints(hints));
+          const warnings = report.unknownKeys.map(
+            (u) =>
+              `${u.path}: unbekannte Keys ${u.keys.join(', ')} — eigene Daten gehören nach props`,
+          );
+          if (warnings.length > 0) env.io.stderr(renderNotices([], warnings));
         }
         assertVerified(report, reportJson);
       }),

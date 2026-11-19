@@ -33,15 +33,44 @@ describe('safeText', () => {
   });
 });
 
-test('error details in JSON have snake_case keys, values stay', () => {
+test('error details in JSON rename only the fixed keys, values stay', () => {
   const err = new BackeError('unexpected', 'git fehlgeschlagen', {
-    details: { args: ['rev-parse'], exitCode: 128, nested: [{ fooBar: 'keepMe' }] },
+    details: {
+      args: ['rev-parse'],
+      exitCode: 128,
+      nested: [{ fooBar: 'keepMe' }],
+      fromHash: 'a',
+      reasonFile: 'r',
+    },
   });
   expect(JSON.parse(renderError(err, 'json'))).toEqual({
     error: {
       code: 'unexpected',
       message: 'git fehlgeschlagen',
-      details: { args: ['rev-parse'], exit_code: 128, nested: [{ foo_bar: 'keepMe' }] },
+      details: {
+        args: ['rev-parse'],
+        exit_code: 128,
+        nested: [{ fooBar: 'keepMe' }],
+        from_hash: 'a',
+        reason_file: 'r',
+      },
     },
+  });
+});
+
+test('safeText shows bidi controls but keeps emoji joiners', () => {
+  expect(safeText('a\u202Eb')).toBe('a\\u{202E}b');
+  expect(safeText('a\u200Bb\u00ADc')).toBe('a\\u{200B}b\\u{AD}c');
+  expect(safeText('👩\u200D💻')).toBe('👩\u200D💻');
+  expect(safeText('a\u200Cb')).toBe('a\u200Cb');
+});
+
+test('error details keep user keys', () => {
+  const err = new BackeError('validation', 'x', {
+    details: { exitCode: 2, props: { estimate_h: 1, someKey: 2 } },
+  });
+  expect(JSON.parse(renderError(err, 'json')).error.details).toEqual({
+    exit_code: 2,
+    props: { estimate_h: 1, someKey: 2 },
   });
 });

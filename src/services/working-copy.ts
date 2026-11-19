@@ -21,7 +21,7 @@ import {
   type BacklogEntry,
   listBacklogs,
   managedClonePath,
-  registerBacklog,
+  registerBacklogTracked,
   revertBinding,
   unregisterBacklog,
   workingCopyPath,
@@ -35,7 +35,7 @@ import { BACKLOG_FORMAT_VERSION, BacklogConfigSchema, type UserConfig } from '..
 import { git, transportEnv } from '../git/exec.ts';
 import { isAncestor, readBlobs, resolveCommit, rootCommits } from '../git/history.ts';
 import { clearLocalState, readLocalState, writeLocalState } from '../git/local-state.ts';
-import { gitRemotes, gitToplevel, unpushedCount } from '../git/query.ts';
+import { branchesWithUnpushed, gitRemotes, gitToplevel } from '../git/query.ts';
 import { headState } from '../git/repo.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
@@ -284,8 +284,8 @@ export async function cloneBacklog(
           : undefined;
       },
     });
-    const wasRegistered = (await readUserConfig(homes.backeHome)).backlogs?.[name] !== undefined;
-    await registerBacklog(homes, { name, remote: url });
+    const { before } = await registerBacklogTracked(homes, { name, remote: url });
+    const wasRegistered = before.backlogs?.[name] !== undefined;
     try {
       await hooks.beforeFinish?.();
       const root = await finish(homes, name, temp, managedClonePath(homes, name, handle));
@@ -422,13 +422,13 @@ export async function addBacklog(input: {
     throw error;
   }
   const remote = (await gitRemotes(wanted)).find((r) => r.name === sync.remote)?.url;
-  const before = cfg.backlogs?.[name];
-  await registerBacklog(homes, {
+  const { before: priorConfig } = await registerBacklogTracked(homes, {
     name,
     ...(remote === undefined ? {} : { remote }),
     handle,
     path: wanted,
   });
+  const before = priorConfig.backlogs?.[name];
   try {
     if (identity === undefined) await writeLocalState(wanted, 'identity', handle);
   } catch (error) {
@@ -439,6 +439,7 @@ export async function addBacklog(input: {
       await revertBinding(homes, name, {
         ...(before.paths?.[handle] === undefined ? { handle } : {}),
         remote: before.remote === undefined,
+        current: priorConfig.current === undefined,
       }).catch(() => undefined);
     }
     await undoAnchor();
@@ -468,7 +469,7 @@ async function assertNoBoundInManaged(homes: Homes, name: string): Promise<void>
 
 /**
  * `--purge` ohne `--force` löscht keine Arbeit, die nur hier liegt: Jeder verwaltete Clone unter
- * `<BACKE_HOME>/backlogs/<name>` braucht eine Remote, und sein Sync-Branch darf keine Commits
+ * `<BACKE_HOME>/backlogs/<name>` braucht eine Remote, und kein lokaler Branch darf Commits
  * tragen, die in keinem Remote-Tracking-Ref stehen. Ein Verzeichnis, das kein Clone ist, zählt nicht.
  */
 async function assertNothingOnlyHere(homes: Homes, name: string): Promise<void> {
@@ -483,12 +484,11 @@ async function assertNothingOnlyHere(homes: Homes, name: string): Promise<void> 
         hint: `backe backlog remove ${name} --purge --force löscht trotzdem`,
       });
     if ((await gitRemotes(clone)).length === 0) throw refuse('hat keine Remote');
-    const branch = await readCloneConfig(clone, clone).then(
-      (c) => c.sync.branch,
-      () => 'main',
-    );
-    if ((await unpushedCount(clone, branch)) > 0) {
-      throw refuse('enthält Commits, die auf keiner Remote liegen');
+    const unpushed = await branchesWithUnpushed(clone);
+    if (unpushed.length > 0) {
+      throw refuse(
+        `enthält Commits, die auf keiner Remote liegen (Branches: ${unpushed.map((b) => `»${b}«`).join(', ')})`,
+      );
     }
   }
 }
