@@ -90,8 +90,18 @@ test.each([
 });
 
 test('normalizeStates rejects all next to other states and unknown states', () => {
-  expect(catchErr(() => normalizeStates(['all,todo'])).code).toBe('usage');
-  expect(catchErr(() => normalizeStates(['nope'])).code).toBe('usage');
+  const mixed = catchErr(() => normalizeStates(['all,todo']));
+  expect([mixed.code, mixed.message]).toEqual(['validation', '»all« steht allein']);
+  const unknown = catchErr(() => normalizeStates(['nope']));
+  expect([unknown.code, unknown.message]).toEqual(['validation', 'Unbekannter State: »nope«']);
+});
+
+test('normalizeStates drops empty elements and rejects empty input', () => {
+  expect(normalizeStates(['todo,', ' ,review'])).toEqual(['todo', 'review']);
+  for (const input of [[''], [], [',']]) {
+    const err = catchErr(() => normalizeStates(input));
+    expect([err.code, err.message]).toEqual(['validation', 'Kein State angegeben']);
+  }
 });
 
 const withContext = (

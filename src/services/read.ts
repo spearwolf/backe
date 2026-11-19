@@ -62,10 +62,14 @@ export function resolveHandle(ctx: ResolvedContext, input: string): string {
 
 /** Komma-getrennte States (auch `in-progress`) oder `all` allein. */
 export function normalizeStates(input: readonly string[]): State[] | 'all' {
-  const parts = input.flatMap((v) => v.split(',')).map((v) => v.trim());
+  const parts = input
+    .flatMap((v) => v.split(','))
+    .map((v) => v.trim())
+    .filter((v) => v !== '');
+  if (parts.length === 0) throw new BackeError('validation', 'Kein State angegeben');
   if (parts.includes('all')) {
     if (parts.length > 1) {
-      throw new BackeError('usage', '»all« steht allein und nicht neben anderen States');
+      throw new BackeError('validation', '»all« steht allein');
     }
     return 'all';
   }

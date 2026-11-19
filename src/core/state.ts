@@ -39,8 +39,8 @@ export function normalizeStateInput(s: string): State {
   const snake = s.trim().replaceAll('-', '_');
   const found = ALL_STATES.find((st) => st === snake);
   if (found === undefined) {
-    throw new BackeError('usage', `Unbekannter State: '${s}'`, {
-      hint: `Erlaubt: ${ALL_STATES.join(', ')}`,
+    throw new BackeError('validation', `Unbekannter State: »${s}«`, {
+      hint: `Erlaubt: ${ALL_STATES.join(', ')} (auch kebab-case)`,
     });
   }
   return found;

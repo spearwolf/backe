@@ -385,7 +385,8 @@ test('normalizeStateInput accepts kebab-case', () => {
   expect(normalizeStateInput('done')).toBe('done');
 });
 
-test('normalizeStateInput rejects unknown input with usage', () => {
-  expect(catchErr(() => normalizeStateInput('wip')).code).toBe('usage');
-  expect(catchErr(() => normalizeStateInput('')).code).toBe('usage');
+test('normalizeStateInput rejects unknown input with validation', () => {
+  expect(catchErr(() => normalizeStateInput('wip')).code).toBe('validation');
+  expect(catchErr(() => normalizeStateInput('')).code).toBe('validation');
+  expect(catchErr(() => normalizeStateInput('wip')).message).toBe('Unbekannter State: »wip«');
 });
