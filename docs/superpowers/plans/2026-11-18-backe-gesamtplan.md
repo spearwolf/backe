@@ -54,8 +54,9 @@ Eingaben, die der Spec impliziert, aber keine seiner Testlisten (§5) abdeckt. J
 | M2 | Operationen und Graph (`ops`) | §2.6, §2.16.4, §2.16.6, §2.22–2.24 | [`2026-11-18-backe-m2-ops.md`](./2026-11-18-backe-m2-ops.md) |
 | M3 | Configs und Kontext (`context`, `git/exec`) | §2.14, §2.15 | [`2026-11-18-backe-m3-kontext.md`](./2026-11-18-backe-m3-kontext.md) |
 | M4 | Git-Schicht und Schreibpfad (`git`, `services`) | §2.12, §2.13, §2.16.1 | [`2026-11-19-backe-m4-git.md`](./2026-11-19-backe-m4-git.md) |
-| M5 | Services und CLI (`services`, `cli`) | §2.7–2.11, §2.17, §2.18, `doctor`, `commit` | entsteht nach M4; darf sich in M5a Services / M5b CLI teilen |
-| M6 | Sync, Replay, Claim | §2.16.2–2.16.5 | entsteht nach M5 |
+| M5a | CLI-Kern (`services`, `cli`): Gerüst, Ausgabe, alle Befehle außer den M5b-Gruppen | §2.4–2.7, §2.9–2.12, §2.14, §2.17, §2.18, §2.22–2.24 | [`2026-11-19-backe-m5a-cli-kern.md`](./2026-11-19-backe-m5a-cli-kern.md) |
+| M5b | `attach *` samt Größenlimit und LFS, `repo check\|where\|scan`, `commit` und `issue edit` per `$EDITOR`, `batch`, `doctor`, `config get\|set\|edit` | §2.8, §2.11, §2.13 (Hand-Edits), §2.15.1, §2.16.6 | entsteht nach M5a |
+| M6 | Sync, Replay, Claim | §2.16.2–2.16.5 | entsteht nach M5b |
 | M7 | MCP-Modus (`mcp`) | §2.19 | entsteht nach M6 |
 | M8 | Release | §2.21, README | entsteht nach M7 |
 
@@ -92,11 +93,17 @@ Eingaben, die der Spec impliziert, aber keine seiner Testlisten (§5) abdeckt. J
 
 **Abnahme:** Integrationstests aus §5 zu `init`, `clone`, Signaturen, `verify`, Identität je Arbeitskopie (ohne Replay) gegen Bare-Remotes im Temp-Verzeichnis.
 
-### M5 — Services und CLI
+### M5a — CLI-Kern
 
-**Liefert:** alle Use-Cases als Services (ein Service-Layer für CLI und MCP, §3.7), alle Befehle und Aliase aus §2.17 außer `sync`, `claim` und `next --claim`; Ausgabeformate `text|json|md`, `--fields`, Kopfzeile bei Kontextfiltern, Fehler-JSON, Exit-Codes (§2.18); Anhänge inkl. Größenlimit und LFS-Pflege (§2.8); Repo-Registry inkl. `check --remote`, `where`, `scan` (§2.11); `backe commit` und `issue edit` per `$EDITOR` (§2.13, Hand-Edits); `batch`; `doctor`; `config get|set|edit`.
+**Liefert:** die Use-Cases als Services (ein Service-Layer für CLI und MCP, §3.7) und die CLI dazu: `context`, `init`, `verify`, `backlog *`, `issue *` ohne `claim`, `next` ohne `--claim`, `comment *`, `project *`, `sprint *`, `repo add|list|rm`, `user *` samt Aliasen (§2.17); Ausgabeformate `text|json|md`, `--fields`, Kopfzeile bei Kontextfiltern, Fehler-JSON, Exit-Codes (§2.18).
 
-**Abnahme:** E2E gegen `dist/cli.js` mit Golden-Files für Text und JSON; Exit-Codes. Coverage-Gate für `src/services/**`.
+**Abnahme:** `mise run check` grün, CI grün auf beiden Plattformen; E2E gegen `dist/cli.js` mit Golden-Files für Text und JSON jeder Befehlsgruppe, Exit-Codes `0`, `2`, `3`, `4`, `5` je mindestens einmal geprüft; Coverage-Gate für `src/services/**`.
+
+### M5b — Anhänge, Hand-Edits, Werkzeuge
+
+**Liefert:** Anhänge inkl. Größenlimit und LFS-Pflege (§2.8); `repo check [--remote]|where|scan` (§2.11); `backe commit` und `issue edit` per `$EDITOR` (§2.13, Hand-Edits); `batch` (§2.16.6); `doctor`; `config get|set|edit`; die mit `M5b:` markierten übernommenen Punkte.
+
+**Abnahme:** E2E gegen `dist/cli.js` mit Golden-Files für Text und JSON der neuen Befehlsgruppen; Coverage-Gate für `src/services/**`.
 
 ### M6 — Sync, Replay, Claim
 
@@ -129,7 +136,8 @@ Ergebnisse der M1-Reviews, die ein späterer Detailplan einlösen muss. Abgehakt
 - ✓ **M2:** `.git`-Segment-Check in `assertRelative` case-insensitiv (macOS/APFS), NTFS-Aliase für später notieren. → M2, Task 1
 - ✓ **M3:** JSON Schemas tragen die `.refine`-Prüfungen nicht (als `.regex()` nachziehen), eigenes Schema für `.backlog.local.jsonc`; `UserConfig.current`, `ProjectConfig.backlog`, `backlogs.*.remote` beschränken; ProjectConfig-Werte formal prüfen (`isProjectPath` usw.). → M3, Task 1
 - ✓ **M4:** Symlinks schreib- und leseseitig; `rm(tmp)` im Fehlerpfad darf den Originalfehler nicht maskieren; Major-`version` der Backlog-Config → Writes verweigern (§2.15.3). → M4, Task 1 und 8
-- **M5:** `resolveShortId` — exakter Suffix-Treffer vor Mehrdeutigkeit, Groß-/Kleinschreibung ignorieren, volle ID ohne Treffer sauber melden; Fehlercodes `usage` vs. `validation` vereinheitlichen; Groß-/Kleinschreibung im URL-Pfad (`github.com/Acme/WebApp`) entscheiden; Git-Argv immer mit `--`; Query/Fragment in Repo-URLs; `listIssueIds`/`listComments` Eingabeform prüfen; Ref-Validierung nach `git check-ref-format`.
+- ✓ **M5:** `resolveShortId` — exakter Suffix-Treffer vor Mehrdeutigkeit, Groß-/Kleinschreibung ignorieren, volle ID ohne Treffer sauber melden; Fehlercodes `usage` vs. `validation` vereinheitlichen. → M5a, Task 1
+- **M5b:** Groß-/Kleinschreibung im URL-Pfad (`github.com/Acme/WebApp`) entscheiden; Git-Argv immer mit `--`; Query/Fragment in Repo-URLs; `listIssueIds`/`listComments` Eingabeform prüfen; Ref-Validierung nach `git check-ref-format`.
 - **M8:** `ci.yml` mit `permissions: contents: read`; `packageManager`-Feld.
 
 ## Übernommen aus M2
@@ -137,9 +145,11 @@ Ergebnisse der M1-Reviews, die ein späterer Detailplan einlösen muss. Abgehakt
 Offene Punkte aus den Reviews von M2, die ein späterer Detailplan einlösen muss. Abgehakt wird hier, sobald der jeweilige Detailplan sie aufgenommen hat.
 
 - ✓ **Spec-Fragen (vor M4):** Handle-Wiederverwendung nach `user.rm` — ein neuer User erbt die Autorschaft alter Kommentare (§2.13 Punkt 4); Keys sind nicht eindeutig über Users; ein User kann per `entity.edit` einen eigenen Key aus `revoked_keys` zurückholen; ein Operator kann seinen Agent ohne Zustimmung weitergeben; ein Admin kann »Operator ist Mensch« über einen `kind`-Wechsel des Operators umgehen. → M4, Abschnitt »Spec-Fragen aus M2«, Task 6
-- **Spec-Frage (vor M5, `next`):** `parent` und `depends_on` über Kreuz zwischen Vorfahre und Nachfahre ergeben einen Stillstand ohne `cycle`-Fehler; §2.23 erlaubt beides ausdrücklich. Vorschlag: `depends_on` zwischen Vorfahre und Nachfahre als `cycle` ablehnen. Ebenso: »kein `done`-Parent mit offenen Sub-Issues« wird nur beim Übergang geprüft, nicht beim Anlegen, Umhängen oder Wiedereröffnen eines Kindes.
+- ✓ **Spec-Frage (vor M5, `next`):** `parent` und `depends_on` über Kreuz zwischen Vorfahre und Nachfahre ergeben einen Stillstand ohne `cycle`-Fehler; §2.23 erlaubt beides ausdrücklich. Vorschlag: `depends_on` zwischen Vorfahre und Nachfahre als `cycle` ablehnen. Ebenso: »kein `done`-Parent mit offenen Sub-Issues« wird nur beim Übergang geprüft, nicht beim Anlegen, Umhängen oder Wiedereröffnen eines Kindes. → M5a, Task 2
 - ✓ **M4:** `verify` nutzt `checkUserChange` (Admin-Rechte nur für existierende menschliche User; Nicht-Admins legen keine Handles aus `config.admins` an — seit M2 umgesetzt) mit dem Stand nach der Änderung und ruft es für jede Änderung an `users/<handle>.md` auf, auch für Body und unbekannte Keys; Trailer-Bytes nie vergleichen, nur dekodierte Operationen (`decodeOp` akzeptiert nicht-kanonisches JSON); `issue.md` als Symlink wird seit M2 gelesen statt übersprungen; `mapPool` in `loadSnapshot` liest nach einem Fehler weiter. → M4, Task 1, 9 und 10
-- **M5:** Batch-Laufzeit wächst mit O(k·n) (jede Operation materialisiert `d.snapshot`; 1 000 Creates auf 20 000 Issues ≈ 2,5 s), dazu quadratisches `topoOrder` in `translate`; `backe commit` ersetzt die Arbeitskopie durch die kanonischen Changes (Mengen-Differenz ändert Listen-Reihenfolge) und legt die Commit-Strategie für gemischte Ergebnisse (`ops` + `manual`) fest — Ops, die auf `manual`-Dateien verweisen, scheitern sonst mit `missing_ref`; getauschte Parents zweier Issues in einem Hand-Edit scheitern ID-abhängig an `cycle`; `project.mv` lässt eine kaputte Unterprojekt-Datei am alten Pfad zurück; geordnetes Enum mit zahlenartigen Werten (`"01"`) fällt bei `>=`/`<=` durch; `-0` gelangt über `decodeOp` in `props` (im PropValue-Schema ablehnen); `reason_file` ohne `reason` bleibt in `recorded` (im Schema verbieten); `user.rm` lässt `lead`/`assignee` hängen (Hinweis in `doctor`); CLI-Flags stehen in Hints der `ops`-Schicht; ein rank-Anker auf einer kaputten Datei meldet `missing_ref` statt `schema`, `issue.link` mit URL weicht dabei von `repo.add` ab.
+- ✓ **M5:** `project.mv` lässt eine kaputte Unterprojekt-Datei am alten Pfad zurück; geordnetes Enum mit zahlenartigen Werten (`"01"`) fällt bei `>=`/`<=` durch; `-0` gelangt über `decodeOp` in `props` (im PropValue-Schema ablehnen); `reason_file` ohne `reason` bleibt in `recorded` (im Schema verbieten); ein rank-Anker auf einer kaputten Datei meldet `missing_ref` statt `schema`, `issue.link` mit URL weicht dabei von `repo.add` ab. → M5a, Task 2
+- ✓ **M5:** CLI-Flags stehen in Hints der `ops`-Schicht. → M5a, Festlegung »Hints mit CLI-Flags in `ops`/`context`« (bleiben; die Übersetzung für MCP entscheidet M7)
+- **M5b:** Batch-Laufzeit wächst mit O(k·n) (jede Operation materialisiert `d.snapshot`; 1 000 Creates auf 20 000 Issues ≈ 2,5 s), dazu quadratisches `topoOrder` in `translate`; `backe commit` ersetzt die Arbeitskopie durch die kanonischen Changes (Mengen-Differenz ändert Listen-Reihenfolge) und legt die Commit-Strategie für gemischte Ergebnisse (`ops` + `manual`) fest — Ops, die auf `manual`-Dateien verweisen, scheitern sonst mit `missing_ref`; getauschte Parents zweier Issues in einem Hand-Edit scheitern ID-abhängig an `cycle`; `user.rm` lässt `lead`/`assignee` hängen (Hinweis in `doctor`).
 - **M6:** `commentsNeeded` deckt vorgegebene Kommentarnamen (`comment.add.file`, `reason_file`, `blocker_comments`) nicht ab — beim Replay würde ein vorhandener Kommentar still überschrieben; `issue.resume` kennt kein »Ziel erreicht → No-op« (Scheinkonflikt bei zwei parallelen Resumes, Vorschlag: `to*` aufzeichnen); ein `move` nach `blocked` über eine bestehende Blockade verwirft neue Blocker still; `issue.link` mit `url` zeichnet den abgeleiteten Repo-Namen nicht auf; `substituteIds`/`referencedIds` schreiben nach Feldnamen um (Test über alle Varianten); Replay-Tests sollen `decodeOp(encodeOp(recorded))` anwenden statt der Operation im Speicher.
 - **Doku nach Abnahme:** `backe.md` §2.16.4 (Beispiele `issue.body`, `issue.rank` ohne `from`, `comment.add` ohne `body`), §2.24 (`issue.prop`) und §2.13 (Hand-Edits nennen `issue.body`) an den Operationskatalog angleichen; die M2-Planentscheidungen als Präzisierung übernehmen.
 
@@ -150,7 +160,9 @@ Offene Punkte aus den Reviews von M3, die ein späterer Detailplan einlösen mus
 - ✓ **M4 — vor `write.lock`:** `withFileLock` übernimmt verwaiste Locks nur per PID — über PID-Namespaces und Hosts hinweg (geteiltes `~/.backe` mit Devcontainer, NFS-Home) gilt ein lebender fremder Halter als tot, nach einem Reboot mit wiederverwendeter PID bleibt ein Lock gehalten. Vorschlag: Hostname als dritte Zeile, automatische Übernahme nur bei gleichem Host, Lock mit Zeitstempel vor dem Boot ist verwaist, fremder Host → `conflict` mit Hint. Restgrenzen des mtime-Leases auf `<lock>.reap` dokumentieren (Reaper > 10 s angehalten, stat-then-unlink bei drei Konkurrenten, unbedingte Freigabe), `ORPHANED_REAP_MS` (10 s) > `timeoutMs` (5 s), Temp-Dateien nach Absturz, `link` ohne Hardlink-Support (EPERM/ENOTSUP → `BackeError` mit Hint), Lock ohne lesbare PID → Hint »falls kein backe-Prozess läuft: <pfad> löschen«. Lock-Reihenfolge festlegen (`write.lock` vor `config.lock`); `withFileLock` ist nicht reentrant — Sync innerhalb von `executeWrite` darf denselben Lock nicht erneut holen. → M4, Task 2 (Temp-Dateien nach Absturz räumt `doctor`, M5)
 - ✓ **M4 — Identität je Arbeitskopie:** `requireWriter` lehnt seit M3 eine gebundene Arbeitskopie ab, die laut User-Config einem anderen Handle gehört; `.git/backe/identity` schon bei Clone und `backlog add` setzen und beim Write prüfen (§2.16.1). `registerBacklog` überschreibt bei gleichem Handle einen anderen Pfad still — für `backlog add` `conflict` oder ausdrückliches Umbinden entscheiden. `--purge` löscht außerhalb des Config-Locks (Race mit parallelem Clone). → M4, Task 8, 11 und 12
 - ✓ **M4 — Git:** `gitToplevel` macht aus jedem Exit 128 »kein Repo«, auch aus »dubious ownership« (`safe.directory`) — nur bei `not a git repository` `undefined`, sonst werfen. `git()` nimmt `HOME`/`SSH_AUTH_SOCK` aus `process.env`; die Signing-Umgebung legt M4 fest. `writeFileAtomic` ersetzt eine per Symlink eingebundene `config.jsonc` durch eine reguläre Datei und setzt den Modus zurück (gehört zu »Symlinks schreib- und leseseitig«). → M4, Task 1 und 5
-- **M5:** JSONC-Edit, dessen Ergebnis ungültig ist (Komma am Zeilenanfang), als `unexpected` »Edit konnte nicht angewendet werden« melden statt die Datei zu beschuldigen; `findProjectConfig` liest beide Dateien per `Promise.all` — Fehlerreihenfolge nichtdeterministisch (Golden Files); rohe Node-Fehler statt `BackeError` (`physicalPath` mit ENOTDIR, `exists()` schluckt EACCES, `readBacklogName`/`readdir`, `ownerOf` bei kaputten fremden `paths`); `normalizeRepoUrl` ist auf der kanonischen Form nicht idempotent (Falle für `repo where`/`scan`); `loadRepoRegistry` läuft bei jeder Auflösung, `gitToplevel(cwd)` zweimal; Meldungen der `context`-Schicht nennen CLI-Flags (`--path`, `--user`) und den Hint `backe backlog list` auch bei einem Pfad; Anführungszeichen uneinheitlich (`»…«` vs. `"…"`); `schemaError` gehört nicht nach `user-config.ts`.
+- ✓ **M5:** `findProjectConfig` liest beide Dateien per `Promise.all` — Fehlerreihenfolge nichtdeterministisch (Golden Files); rohe Node-Fehler statt `BackeError` (`physicalPath` mit ENOTDIR, `exists()` schluckt EACCES, `readBacklogName`/`readdir`, `ownerOf` bei kaputten fremden `paths`); `gitToplevel(cwd)` zweimal; Anführungszeichen uneinheitlich (`»…«` vs. `"…"`); `schemaError` gehört nicht nach `user-config.ts`. → M5a, Task 1
+- ✓ **M5:** Meldungen der `context`-Schicht nennen CLI-Flags (`--path`, `--user`). → M5a, Festlegung »Hints mit CLI-Flags in `ops`/`context`« (bleiben; die Übersetzung für MCP entscheidet M7)
+- **M5b:** JSONC-Edit, dessen Ergebnis ungültig ist (Komma am Zeilenanfang), als `unexpected` »Edit konnte nicht angewendet werden« melden statt die Datei zu beschuldigen (`config set`); `normalizeRepoUrl` ist auf der kanonischen Form nicht idempotent (Falle für `repo where`/`scan`); `loadRepoRegistry` läuft bei jeder Auflösung; der Hint `backe backlog list` erscheint auch bei einem Pfad.
 - **M8:** Biome meldet 9 `noNonNullAssertion`-Warnungen in `resolve.test.ts` (`s.env.HOME!`) — durch `s.at('home/…')` ersetzen.
 
 ## Übernommen aus M4
@@ -167,16 +179,16 @@ Offene Punkte aus den Reviews von M4, die ein späterer Detailplan einlösen mus
   - Die Abstammungsprüfung beim Clone gegen `verified` einer vertrauten Arbeitskopie schlägt fehl, sobald `verified` auf ungepushte lokale Commits zeigen kann.
   - Die Signal-Verzögerung in `executeWrite` hält nur das erste Signal zurück und verträgt keine eigenen `SIGINT`-Listener von CLI oder MCP. Beides muss mit diesem Mechanismus zusammenarbeiten.
 - **M5 — CLI und Services:**
-  - `init` und `backlog add` verlangen absolute Pfade. Die CLI expandiert `~` und relative Pfade gegen das cwd.
-  - Manuelle Writes haben keine HEAD-Vorbedingung, damit sind Lost Updates möglich. Festlegen zusammen mit `backe commit`.
-  - Die Formatversion wird beim Clone nicht geprüft.
-  - Nach einem gescheiterten finalen Move bleibt die Registrierung stehen.
-  - `addBacklog` schreibt Identität und Anker vor `verify` und Registrierung.
-  - Ein verschlüsselter Private Key ohne `.pub` daneben ergibt `unexpected` statt `usage` mit Hinweis.
-  - Nach einem gescheiterten Index-Abgleich ist der Dirty-Hinweis irreführend. Richtig wäre `reset -q -- <pfade>` bzw. `restore --staged --worktree`.
-  - `landedCommit` sollte zusätzlich `Backe-Actor` oder die Message vergleichen.
-  - Ein leerer Quarantäne-Grund kommt bisher aus dem Service; die CLI soll ihn vorab prüfen.
-- **M5 — `doctor`:**
+  - ✓ `init` und `backlog add` verlangen absolute Pfade. Die CLI expandiert `~` und relative Pfade gegen das cwd. → M5a, Task 12
+  - M5b: Manuelle Writes haben keine HEAD-Vorbedingung, damit sind Lost Updates möglich. Festlegen zusammen mit `backe commit`.
+  - ✓ Die Formatversion wird beim Clone nicht geprüft. → M5a, Task 4
+  - ✓ Nach einem gescheiterten finalen Move bleibt die Registrierung stehen. → M5a, Task 4
+  - ✓ `addBacklog` schreibt Identität und Anker vor `verify` und Registrierung. → M5a, Task 4
+  - ✓ Ein verschlüsselter Private Key ohne `.pub` daneben ergibt `unexpected` statt `usage` mit Hinweis. → M5a, Task 3
+  - ✓ Nach einem gescheiterten Index-Abgleich ist der Dirty-Hinweis irreführend. Richtig wäre `reset -q -- <pfade>` bzw. `restore --staged --worktree`. → M5a, Task 3
+  - ✓ `landedCommit` sollte zusätzlich `Backe-Actor` oder die Message vergleichen. → M5a, Task 3
+  - ✓ Ein leerer Quarantäne-Grund kommt bisher aus dem Service; die CLI soll ihn vorab prüfen. → M5a, Task 12
+- **M5b — `doctor`:**
   - Mindestversion Git 2.38, wegen `cat-file -Z`; die Spec nennt 2.34 »ungeprüft«.
   - Liegengebliebene `tmp/clone-*` und Lock-Temp-Dateien abgestürzter Prozesse.
   - Kaputte Alternates von Clones, die mit `--reference` angelegt wurden.
@@ -208,6 +220,7 @@ Offene Punkte aus den Reviews von M4, die ein späterer Detailplan einlösen mus
     - Groß-/Kleinschreibungs-Varianten ungültig;
     - Kommentar-`author` passt zum Dateinamen und ist unveränderlich.
   - Format von `.backe/quarantine.jsonc` festhalten. Git-Mindestversion 2.38 eintragen.
+  - Aus M5a: §2.12 (`keys` darf fehlen — kein aktiver Key, der User kann nicht signieren), §2.7 (Kommentare derselben Sekunde ordnet der Dateiname), §2.18 (Fehlercodes `usage`/`validation`, Hinweise und Warnungen im JSON-Modus nur im Objekt); dazu die M5a-Zeilen der Planentscheidungen als Präzisierung.
 
 ## Planentscheidungen
 
@@ -269,3 +282,33 @@ Stellen, die der Spec offenlässt und die dieser Plan festlegt. Nach Abnahme des
 | §2.12 Widerruf | Widerrufen werden nur eigene Keys (ein neuer Eintrag in `revoked_keys` stand vorher in `keys` desselben Users) | M4 |
 | §2.16.1 Signier-Key | `executeWrite` lehnt einen Key ab, der kein aktiver Key des Schreibenden ist (Exit-Code 2); `git add -f` für die betroffenen Pfade, damit Ignore-Regeln keinen Write blockieren | M4 |
 | §2.20 Git-Version | Mindestens Git 2.38 (`cat-file -Z`), nicht 2.34 | M4 |
+| Schnitt M5 | M5a: Gerüst, Ausgabe, alle Befehle außer den M5b-Gruppen. M5b: `attach *` samt Größenlimit und LFS, `repo check\|where\|scan`, `commit` und `issue edit` per `$EDITOR`, `batch`, `doctor`, `config get\|set\|edit`. | M5a |
+| Spec-Frage `parent`/`depends_on` über Kreuz | `depends_on` zwischen Vorfahre und Nachfahre ist ein Zyklus (`cycle`, Exit 2) — beim Setzen der Abhängigkeit wie beim Umhängen, das eine solche Beziehung erzeugt. | M5a |
+| Spec-Frage offenes Kind unter `done`-Parent | Anlegen, Umhängen, `move`/`resume`/`reopen` eines Kindes in einen offenen State unter einem `done`-Parent → `settled_parent` (`conflict`, Exit 4), Hint `backe issue reopen <parent>`. `move --force` übergeht es wie bei der `done`-Sperre. | M5a |
+| §2.18 `issue list` Default | ohne `--state` nur offene Issues (nicht `done`, `cancelled`, `rejected`); `--state all` zeigt alle. | M5a |
+| §2.18 mehrfache Filter | Werte innerhalb eines Flags oder einer Komma-Liste sind ODER, verschiedene Flags UND; `-p` filtert rekursiv, `--exact` nur genau. | M5a |
+| §2.14 Kopfzeile | genau die Filter, deren Wert aus dem Kontext stammt (nicht aus einem expliziten Flag), plus `backlog`; ohne solche Filter keine Kopfzeile. Text: `backlog=acme project=web/auth repo=webapp`. JSON: Feld `context` mit denselben Keys, sonst fehlt es. | M5a |
+| §2.18 Text-Liste | `<id>  <state, 11 breit>  <assignee oder ->  <titel>`; IDs und Assignees auf die breiteste Zeile gepolstert (Codepoints); `⧗ ` vor dem Titel bei offenen `depends_on`; `--tree` rückt den Titel um zwei Leerzeichen je Ebene ein. | M5a |
+| §2.18 `--fields` | nur mit `--format json` (sonst `usage`); wirkt auf die Issue-Objekte von `issue list`, `issue show`, `next`; unbekanntes Feld → `usage` mit der Liste der erlaubten. | M5a |
+| §2.18 `--format md` | nur `issue show` (Datei wie auf der Platte plus angeforderte Kommentare); andere Befehle → `usage`. | M5a |
+| Write-Ausgabe | Text: `issue create` druckt nur die neue ID; sonst `summarizeOp(op)`; ohne Änderung `unverändert: <summary>`, Exit 0. JSON: `{"commit":<sha\|null>,"op":<aufgezeichnet>,"id"?:…,"notices"?:[…]}`. Hinweise der Operation nach stderr als `Hinweis: …`. | M5a |
+| Fehler-Ausgabe | Text: `Fehler: <message>` und optional `Hinweis: <hint>`. JSON: `{"error":{"code","message","hint"?,"details"?}}` — `details` mit Kandidaten, Zyklus-IDs, Zeile. | M5a |
+| `issue create` Vorbelegung | ohne `--parent`: `projects`/`sprints`/`repos` aus dem Kontext, sofern kein Flag; mit `--parent` erbt die Operation vom Parent (M2), der Kontext füllt nichts. | M5a |
+| Kommentar-Referenz | `comment edit\|delete <id> <kommentar>`: voller Dateiname oder 1-basierter Index aus `comment list`. | M5a |
+| `issue link <ziel>` | passt `ziel` auf `<repo-name>[@<ref>]` und ist der Name registriert → Repo; sonst URL: steht nach dem letzten `@` kein `:` und ist der Teil davor eine normalisierbare URL ungleich `git`, ist der Rest der Ref. | M5a |
+| `init`-Identität | Handle aus `--as` → `BACKE_USER` → `user` der User-Config, sonst `usage`; Key aus `--key` → `~/.ssh/id_ed25519.pub`, falls vorhanden, sonst `usage`. | M5a |
+| Hints mit CLI-Flags in `ops`/`context` | bleiben; M7 entscheidet die Übersetzung für MCP. | M5a |
+| Clone eines neueren Formats | erlaubt (Lesen geht), `CloneResult.notices` meldet `Backlog-Format <v> ist neuer als dieses backe (<max>); nur lesen`. | M5a |
+| §2.12 User ohne aktiven Key | `keys` darf fehlen (kein aktiver Key, User kann nicht signieren); der letzte Key ist widerrufbar; `user add` verlangt weiter ≥ 1 Key; ein neu von Hand angelegter User ohne Keys ist `manual` | M5a |
+| §2.12 Key von Hand entfernen | erlaubt ohne `revoked_keys`-Eintrag; der Key ist ab dem Commit ungültig (verify liest Keys aus dem Parent-Stand), keine Anmaßung möglich (§3.10) | M5a |
+| §2.18 Fehlercodes | fehlender Pflichtwert und sich ausschließende Angaben = `usage`; gelieferter, aber leerer Wert (auch leeres stdin), ungültiger State, ungültiger Bereichsfilter, zu kurze Kurz-ID = `validation` | M5a |
+| §2.18 JSON-Modus | Hinweise und Warnungen eines Writes stehen nur im JSON-Objekt (`notices`, `warnings`); Text-Modus: `Hinweis:`/`Warnung:` auf stderr. Ein Format-Default aus `BACKE_FORMAT`/`output.format`, den ein Befehl nicht kann, fällt auf Text zurück; nur ein explizites `--format`/`--json` ist `usage` | M5a |
+| §2.14 `-A` | verwirft nur Werte aus dem Kontext; explizite Filter-Flags filtern weiter | M5a |
+| §2.5 Kurzform | Vergleich ohne Groß-/Kleinschreibung, Präfix `bk-` erlaubt, exakter Treffer des Zufallsteils gewinnt vor Mehrdeutigkeit, Kurzform < 3 Zeichen = `validation` | M5a |
+| §2.17 `issue edit` | gleicher Wert in `--add-x` und `--rm-x` sowie in `--prop` und `--unset-prop` = `usage`; `--parent` mit `--no-parent` = `usage`; Werte gleich dem Ist-Stand fallen weg, bleibt nichts → `usage` »Nichts zu ändern« | M5a |
+| §2.17 Beschreibung aus stdin | leeres stdin bei `-d -`/`--body-file -` = `validation` »Beschreibung ist leer«; `-d ''` oder eine leere Datei leeren den Body bewusst | M5a |
+| §2.17 `issue list --blocked` | heißt State `blocked` | M5a |
+| §2.7 Kommentar-Reihenfolge | nach Dateiname; Kommentare derselben Sekunde ordnet das Zufallssuffix (deterministisch für gegebene Dateien) | M5a |
+| §2.6 Begründung in `issue show` | `lastReason` = jüngster Transition-Kommentar, dessen `to` der aktuelle State ist | M5a |
+| §2.13 Kommentar ändern/löschen | Kommentar-Ref und `from_hash` werden vor dem Write-Lock gelesen; `ops` prüft den Hash unter dem Lock, eine zwischenzeitliche Änderung ist `conflict` | M5a |
+| §2.14 `backlog add` | Anker wird vor `verify` geschrieben (verify liest ihn) und bei Fehlschlag entfernt; Registrierung und Identität erst nach `verify`; ein Fehler danach nimmt genau die eigene Bindung zurück | M5a |
