@@ -9,6 +9,7 @@ import {
   ProjectConfigSchema,
   ProjectLocalConfigSchema,
   ProjectSchema,
+  QuarantineSchema,
   RepoSchema,
   SprintSchema,
   UserConfigSchema,
@@ -535,5 +536,14 @@ test('nested __proto__ in props is rejected', () => {
   const props = JSON.parse('{"a":{"b":[{"__proto__":{"x":1}}]}}');
   expect(catchErr(() => validateEntity('issue', { ...base, props }, 'f')).message).toContain(
     'props.a.b.0.__proto__',
+  );
+});
+
+test('quarantine entries need sha, decision and reason', () => {
+  const entry = { sha: 'a'.repeat(40), decision: 'accepted', reason: 'ok' };
+  expect(QuarantineSchema.safeParse({ entries: [entry] }).success).toBe(true);
+  expect(QuarantineSchema.safeParse({ entries: [{ ...entry, sha: 'abc' }] }).success).toBe(false);
+  expect(QuarantineSchema.safeParse({ entries: [{ ...entry, decision: 'ignored' }] }).success).toBe(
+    false,
   );
 });

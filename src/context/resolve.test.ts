@@ -459,3 +459,9 @@ describe('a bound working copy that belongs to another handle', () => {
     expect(requireWriter(ctx).workingCopy).toBe(s.at('repo'));
   });
 });
+
+test('the resolved context carries its input env', async () => {
+  const t = await setup();
+  const env = { ...t.env };
+  expect((await resolveContext({ cwd: t.at('work'), env, flags: {} })).env).toBe(env);
+});

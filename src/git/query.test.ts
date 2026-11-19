@@ -1,6 +1,7 @@
-import { mkdir, realpath } from 'node:fs/promises';
+import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
+import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { git } from './exec.ts';
 import { gitRemotes, gitToplevel } from './query.ts';
 
@@ -50,4 +51,11 @@ describe('gitRemotes', () => {
     await git(['init', '-q'], { cwd: dir });
     expect(await gitRemotes(dir)).toEqual([]);
   });
+});
+
+test('a git error other than "not a git repository" is thrown', async () => {
+  const dir = await tempDir();
+  await git(['init', '-q'], { cwd: dir });
+  await writeFile(join(dir, '.git/config'), '[broken\n');
+  expect((await catchErrAsync(() => gitToplevel(dir))).code).toBe('unexpected');
 });

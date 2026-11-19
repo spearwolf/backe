@@ -29,6 +29,8 @@ export type SourceKind =
 export type Source = { kind: SourceKind; detail?: string };
 export type Resolved<T> = { value: T; source: Source };
 export type ResolvedContext = {
+  /** Das Eingabe-Env von `resolveContext`. */
+  env: Env;
   homes: Homes;
   userConfig: UserConfig;
   /** `boundTo`: Handle, dem eine direkt gebundene Arbeitskopie laut User-Config gehört. */
@@ -417,6 +419,7 @@ export async function resolveContext(input: ContextInput): Promise<ResolvedConte
       ? undefined
       : expandPath(keyRaw, { home: homes.home, base: homes.backeHome });
   return {
+    env: input.env,
     homes,
     userConfig,
     backlog: {

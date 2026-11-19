@@ -80,7 +80,10 @@ async function listMarkdown(root: string, dir: string, deep: boolean): Promise<s
 
 const MAX_CONCURRENT_READS = 32;
 
-/** Wendet `fn` auf alle Elemente an, mit höchstens `limit` gleichzeitig laufenden Aufrufen. */
+/**
+ * Wendet `fn` auf alle Elemente an, mit höchstens `limit` gleichzeitig laufenden Aufrufen.
+ * Nach der ersten Ablehnung startet kein weiterer Aufruf; das Ergebnis lehnt mit diesem Fehler ab.
+ */
 async function mapPool<T, R>(
   items: readonly T[],
   limit: number,
@@ -88,10 +91,16 @@ async function mapPool<T, R>(
 ): Promise<R[]> {
   const results = new Array<R>(items.length);
   let next = 0;
+  let failed = false;
   const worker = async (): Promise<void> => {
-    while (next < items.length) {
+    while (!failed && next < items.length) {
       const i = next++;
-      results[i] = await fn(items[i] as T);
+      try {
+        results[i] = await fn(items[i] as T);
+      } catch (err) {
+        failed = true;
+        throw err;
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));

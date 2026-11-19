@@ -1,10 +1,22 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { copyFixture, tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { applyFileChanges } from './files.ts';
+import { applyFileChanges, writeFileAtomic } from './files.ts';
 import { issueFile } from './layout.ts';
+
+const rmFails = vi.hoisted(() => ({ on: false }));
+vi.mock('node:fs/promises', async (orig) => {
+  const actual = await orig<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    rm: async (...args: Parameters<typeof actual.rm>) => {
+      if (rmFails.on) throw new Error('cleanup kaputt');
+      return actual.rm(...args);
+    },
+  };
+});
 
 test('applyFileChanges writes, deletes and prunes empty dirs', async () => {
   const root = await copyFixture('backlog-basic');
@@ -187,4 +199,50 @@ test.each(['.GIT/config', 'a/.Git/x'])('rejects %s case-insensitively', async (p
   expect((await catchErrAsync(() => applyFileChanges(root, [{ path, content: 'x' }]))).code).toBe(
     'validation',
   );
+});
+
+test('writeFileAtomic replaces the target of a symlink and keeps the link', async () => {
+  const dir = await tempDir();
+  await writeFile(join(dir, 'real.jsonc'), '{}\n');
+  await symlink('real.jsonc', join(dir, 'config.jsonc'));
+  await writeFileAtomic(join(dir, 'config.jsonc'), '{"a":1}\n');
+  expect((await lstat(join(dir, 'config.jsonc'))).isSymbolicLink()).toBe(true);
+  expect(await readFile(join(dir, 'real.jsonc'), 'utf8')).toBe('{"a":1}\n');
+});
+
+test('writeFileAtomic keeps the mode of an existing file', async () => {
+  const f = join(await tempDir(), 'k');
+  await writeFile(f, 'x', { mode: 0o600 });
+  await writeFileAtomic(f, 'y');
+  expect((await stat(f)).mode & 0o777).toBe(0o600);
+});
+
+test('a failing cleanup does not mask the write error', async () => {
+  const dir = await tempDir();
+  await mkdir(join(dir, 'target'));
+  rmFails.on = true;
+  try {
+    const err = await writeFileAtomic(join(dir, 'target'), 'x').then(
+      () => undefined,
+      (e: unknown) => e as Error,
+    );
+    expect(err).toBeDefined();
+    expect(err?.message).not.toContain('cleanup kaputt');
+  } finally {
+    rmFails.on = false;
+  }
+});
+
+test.each([
+  ['issues', 'issues/7f/bk-7f3k2/issue.md'],
+  ['issues/7f/bk-7f3k2/issue.md', 'issues/7f/bk-7f3k2/issue.md'],
+])('applyFileChanges refuses symlinked paths (link at %s)', async (link, path) => {
+  const root = await tempDir();
+  const outside = await tempDir();
+  await mkdir(join(root, link, '..'), { recursive: true });
+  await symlink(outside, join(root, link));
+  const err = await catchErrAsync(() => applyFileChanges(root, [{ path, content: 'x' }]));
+  expect(err.code).toBe('validation');
+  expect(err.message).toContain('Symlink im Backlog');
+  expect(await readdir(outside)).toEqual([]);
 });

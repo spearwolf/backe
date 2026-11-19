@@ -1,9 +1,15 @@
+import { BackeError } from '../core/errors.ts';
 import { git } from './exec.ts';
 
 /** Physischer Pfad der Wurzel des Arbeitsverzeichnisses, `undefined` außerhalb eines Repos. */
 export async function gitToplevel(cwd: string): Promise<string | undefined> {
   const r = await git(['rev-parse', '--show-toplevel'], { cwd, okExitCodes: [128] });
-  if (r.exitCode === 128) return undefined;
+  if (r.exitCode === 128) {
+    if (r.stderr.includes('not a git repository')) return undefined;
+    throw new BackeError('unexpected', `git rev-parse fehlgeschlagen: ${r.stderr.trim()}`, {
+      details: { cwd, stderr: r.stderr },
+    });
+  }
   return r.stdout.replace(/\n$/, '');
 }
 

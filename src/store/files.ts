@@ -2,7 +2,17 @@
  * Atomares Schreiben und Löschen von Dateien unter der Backlog-Wurzel.
  */
 import { randomBytes } from 'node:crypto';
-import { mkdir, rename, rm, rmdir, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { basename, dirname, join, posix } from 'node:path';
 import { BackeError } from '../core/errors.ts';
 import { isIssueId, shardOf } from '../core/ids.ts';
@@ -63,17 +73,50 @@ function assertRecursiveAllowed(change: FileChange): void {
   }
 }
 
+/**
+ * Schreibt per Temp-Datei + `rename`. Ein Symlink bleibt erhalten, ersetzt wird sein Ziel; eine
+ * bestehende Datei behält ihren Modus. Scheitert das Aufräumen, fliegt der ursprüngliche Fehler.
+ */
 export async function writeFileAtomic(abs: string, content: string | Uint8Array): Promise<void> {
+  let target = abs;
+  try {
+    target = await realpath(abs);
+  } catch {
+    // Datei fehlt (noch): es gibt nichts aufzulösen.
+  }
   const tmp = join(
-    dirname(abs),
-    `.${basename(abs)}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`,
+    dirname(target),
+    `.${basename(target)}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`,
   );
   try {
+    const existing = await stat(target).catch(() => undefined);
     await writeFile(tmp, content);
-    await rename(tmp, abs);
+    if (existing?.isFile()) await chmod(tmp, existing.mode & 0o7777);
+    await rename(tmp, target);
   } catch (err) {
-    await rm(tmp, { force: true });
+    await rm(tmp, { force: true }).catch(() => undefined);
     throw err;
+  }
+}
+
+/** Wirft, wenn eine vorhandene Pfadkomponente unterhalb von `root` ein Symlink ist. */
+async function assertNoSymlinks(root: string, path: string): Promise<void> {
+  let current = root;
+  for (const segment of path.split('/')) {
+    current = join(current, segment);
+    let isLink: boolean;
+    try {
+      isLink = (await lstat(current)).isSymbolicLink();
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') return;
+      throw err;
+    }
+    if (isLink) {
+      throw new BackeError('validation', `Symlink im Backlog: ${path}`, {
+        hint: 'backe schreibt nicht durch Symlinks; den Link durch eine Datei oder ein Verzeichnis ersetzen.',
+      });
+    }
   }
 }
 
@@ -102,6 +145,7 @@ export async function applyFileChanges(
     assertRelative(change.path);
     assertRecursiveAllowed(change);
   }
+  for (const change of changes) await assertNoSymlinks(root, change.path);
   for (const { path, content, recursive } of changes) {
     const abs = join(root, path);
     if (content === null) {

@@ -7,6 +7,18 @@ import { readJsonc } from './jsonc.ts';
 import { BACKLOG_CONFIG, issueFile } from './layout.ts';
 import { listComments, listIssueIds, loadRepoRegistry, loadSnapshot } from './snapshot.ts';
 
+const readHook = vi.hoisted(() => ({
+  fn: undefined as undefined | ((path: unknown, ...rest: unknown[]) => Promise<unknown>),
+}));
+vi.mock('node:fs/promises', async (orig) => {
+  const actual = await orig<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    readFile: (...args: Parameters<typeof actual.readFile>) =>
+      readHook.fn ? readHook.fn(...args) : actual.readFile(...args),
+  };
+});
+
 async function put(root: string, path: string, content: string): Promise<void> {
   await mkdir(join(root, path, '..'), { recursive: true });
   await writeFile(join(root, path), content);
@@ -289,4 +301,30 @@ test('loadRepoRegistry loads only repos and skips broken files', async () => {
   await writeFile(join(root, 'repos/broken.md'), '---\nurl: [\n---\n');
   await rm(join(root, '.backe/backlog.jsonc'));
   expect([...(await loadRepoRegistry(root)).keys()]).toEqual(['webapp']);
+});
+
+test('loading stops reading after the first failure', async () => {
+  const root = await copyFixture('backlog-basic');
+  for (let n = 0; n < 60; n++) {
+    await put(root, `issues/zz/bk-zz${String(n).padStart(3, '0')}/issue.md`, 'x');
+  }
+  const real = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  const reads: string[] = [];
+  readHook.fn = async (path, ...rest) => {
+    if (String(path).endsWith('/issue.md')) {
+      reads.push(String(path));
+      throw Object.assign(new Error('nope'), { code: 'EACCES' });
+    }
+    return real.readFile(path as never, ...(rest as []));
+  };
+  try {
+    const err = await loadSnapshot(root).then(
+      () => undefined,
+      (e: unknown) => e as NodeJS.ErrnoException,
+    );
+    expect(err?.code).toBe('EACCES');
+    expect(reads.length).toBeLessThanOrEqual(32);
+  } finally {
+    readHook.fn = undefined;
+  }
 });

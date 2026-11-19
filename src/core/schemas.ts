@@ -467,6 +467,22 @@ export const BacklogConfigSchema = z.strictObject({
     .default({}),
 });
 
+/** Formatversion, die `backe` in `.backe/backlog.jsonc` schreibt und lesen kann. */
+export const BACKLOG_FORMAT_VERSION = 1;
+
+/** Entscheidungen zu quarantänierten Commits (`.backe/quarantine.json`). */
+export const QuarantineSchema = z.strictObject({
+  $schema: SchemaRef,
+  entries: z.array(
+    z.strictObject({
+      sha: z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/),
+      decision: z.enum(['accepted', 'reverted']),
+      reason: nonEmpty,
+    }),
+  ),
+});
+export type Quarantine = z.infer<typeof QuarantineSchema>;
+
 export const UserConfigSchema = z.strictObject({
   $schema: SchemaRef,
   current: BacklogName.optional(),
