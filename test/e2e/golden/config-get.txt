@@ -1,0 +1,62 @@
+$ backe config get
+[exit 0]
+[stdout]
+// meine Config
+{
+  "user": "spw",
+  "output": {
+    "color": "never"
+  },
+  "repos": {
+    "github.com/acme/webapp": "~/code/webapp"
+  }
+}
+[stderr]
+
+$ backe config get --json
+[exit 0]
+[stdout]
+{"user":"spw","repos":{"github.com/acme/webapp":"~/code/webapp"},"output":{"color":"never"}}
+[stderr]
+
+$ backe config get output.color
+[exit 0]
+[stdout]
+never
+[stderr]
+
+$ backe config get repos
+[exit 0]
+[stdout]
+{"github.com/acme/webapp":"~/code/webapp"}
+[stderr]
+
+$ backe config get repos.github.com/acme/webapp
+[exit 0]
+[stdout]
+~/code/webapp
+[stderr]
+
+$ backe config get nope
+[exit 2]
+[stdout]
+[stderr]
+Fehler: Unbekannter Key »nope«; erlaubt: $schema, current, user, project, sprint, identities, backlogs, repos, output
+
+$ backe config set output.color bunt
+[exit 2]
+[stdout]
+[stderr]
+Fehler: <backe>/config.jsonc: output.color: Invalid option: expected one of "auto"|"always"|"never"
+
+$ backe config set --unset output.color
+[exit 0]
+[stdout]
+[stderr]
+
+$ backe config get output.color
+[exit 3]
+[stdout]
+[stderr]
+Fehler: »output.color« ist nicht gesetzt
+

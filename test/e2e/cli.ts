@@ -64,7 +64,7 @@ export function normalize(text: string, names: Record<string, string>): string {
   const keys = Object.keys(names).sort((a, b) => b.length - a.length);
   for (const key of keys) out = out.split(key).join(names[key] as string);
   return out
-    .replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ/g, '<ts>')
+    .replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z/g, '<ts>')
     .replace(/\b[0-9a-f]{40}\b/g, '<sha>');
 }
 

@@ -1,0 +1,17 @@
+$ backe doctor
+[exit 0]
+[stdout]
+<status>  node  <detail>
+<status>  git  <detail>
+<status>  ssh-keygen  <detail>
+<status>  git-lfs  <detail>
+<status>  gh  <detail>
+ok  user-config  gültig
+ok  backlog  acme in <root>
+ok  identity  spw
+ok  lfs-rule  attachments.lfs ist aus
+ok  bindings  alle gebundenen Pfade existieren
+ok  alternates  alle Referenzen existieren
+ok  temp  keine Temp-Reste
+ok  problems  keine Problem-Dateien
+ok  references  alle Verweise zeigen auf Users

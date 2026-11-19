@@ -147,6 +147,8 @@ export type CommandSpec = {
   formats?: readonly Format[];
   /** Erlaubte Felder für `--fields`; ohne Angabe kennt der Befehl `--fields` nicht. */
   fields?: readonly string[];
+  /** Eine ungültige User-Config bricht den Befehl nicht ab (Defaults gelten); nur für `doctor`. */
+  lenientConfig?: boolean;
 };
 
 const CONTEXT_KEYS = [
@@ -168,7 +170,12 @@ async function commandEnv(rt: Runtime, cmd: Command, spec: CommandSpec): Promise
   const { io } = rt;
   const g = globalOpts(cmd);
   const homes = resolveHomes(io.env, io.cwd);
-  const userConfig = await readUserConfig(homes.backeHome);
+  let userConfig: UserConfig = {};
+  try {
+    userConfig = await readUserConfig(homes.backeHome);
+  } catch (error) {
+    if (spec.lenientConfig !== true) throw error;
+  }
   const name = `»${commandPath(cmd)}«`;
   let format = resolveFormat(g, io.env, userConfig);
   const formats = spec.formats ?? ['text', 'json'];

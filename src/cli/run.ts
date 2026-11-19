@@ -14,7 +14,9 @@ import { backlogCommands } from './commands/backlog.ts';
 import { batchCommand } from './commands/batch.ts';
 import { commentCommands } from './commands/comment.ts';
 import { commitCommand } from './commands/commit.ts';
+import { configCommands } from './commands/config.ts';
 import { contextCommand } from './commands/context.ts';
+import { doctorCommand } from './commands/doctor.ts';
 import { initCommand } from './commands/init.ts';
 import { issueCommands } from './commands/issue.ts';
 import { nextCommand } from './commands/next.ts';
@@ -70,6 +72,8 @@ export function buildProgram(rt: Runtime): Command {
   repoCommands(program, rt);
   userCommands(program, rt);
   verifyCommand(program, rt);
+  doctorCommand(program, rt);
+  configCommands(program, rt);
   return program;
 }
 

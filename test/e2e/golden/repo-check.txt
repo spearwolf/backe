@@ -1,0 +1,15 @@
+$ backe repo check --remote --fresh
+[exit 2]
+[stdout]
+webapp  fehler  <bare>
+  error: Ref »feat/fehlt« existiert im Remote nicht
+[stderr]
+Fehler: repo check: 1 Fehler
+
+$ backe repo check webapp --remote --json
+[exit 2]
+[stdout]
+{"repos":[{"name":"webapp","url":"<bare>","canonical":"file:<remote-dir>/webapp","findings":[{"level":"error","kind":"ref","message":"Ref »feat/fehlt« existiert im Remote nicht"}],"cached":"<ts>"}]}
+[stderr]
+{"error":{"code":"validation","message":"repo check: 1 Fehler"}}
+

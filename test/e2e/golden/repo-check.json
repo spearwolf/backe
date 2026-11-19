@@ -1,0 +1,1 @@
+{"repos":[{"name":"webapp","url":"<bare>","canonical":"file:<remote-dir>/webapp","findings":[{"level":"error","kind":"ref","message":"Ref »feat/fehlt« existiert im Remote nicht"}],"cached":"<ts>"}]}

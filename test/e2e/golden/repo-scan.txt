@@ -1,0 +1,37 @@
+$ backe repo scan <src> --dry-run
+[exit 0]
+[stdout]
+webapp  <clone>  neu
+[stderr]
+
+$ backe repo where webapp
+[exit 3]
+[stdout]
+[stderr]
+Fehler: Kein lokaler Pfad für »webapp«
+Hinweis: backe repo scan <verzeichnis> oder backe config set repos.file:<remote-dir>/webapp <pfad>
+
+$ backe repo scan <src>
+[exit 0]
+[stdout]
+webapp  <clone>  neu
+[stderr]
+
+$ backe repo where webapp
+[exit 0]
+[stdout]
+<clone>
+[stderr]
+
+$ backe repo scan <src>
+[exit 0]
+[stdout]
+webapp  <clone>  unverändert
+[stderr]
+
+$ backe repo scan <src> --json
+[exit 0]
+[stdout]
+{"entries":[{"name":"webapp","path":"<clone>","status":"unchanged"}]}
+[stderr]
+

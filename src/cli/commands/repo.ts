@@ -1,8 +1,18 @@
-/** `backe repo add | list | rm` (backe.md §2.11, §2.17). */
+/** `backe repo add | list | rm | check | where | scan` (backe.md §2.11, §2.17). */
 import type { Command } from 'commander';
+import { checkRepos, type RepoCheck, repoCheckExit } from '../../services/repo-check.ts';
+import { locateRepo, type ScanEntry, scanRepos } from '../../services/repo-local.ts';
 import { addRepo, listRepos, removeRepo } from '../../services/repos.ts';
-import { action, bodyArg, emit, emitOutcome, type Runtime, subcommand } from '../options.ts';
-import { columns, lines } from '../output.ts';
+import {
+  absPath,
+  action,
+  bodyArg,
+  emit,
+  emitOutcome,
+  type Runtime,
+  subcommand,
+} from '../options.ts';
+import { columns, lines, safeText } from '../output.ts';
 
 type AddOpts = { name?: string; ref?: string; description?: string };
 
@@ -51,4 +61,104 @@ export function repoCommands(program: Command, rt: Runtime): void {
       emitOutcome(env, await removeRepo(await env.context(), name), 'other');
     }),
   );
+
+  subcommand(repo, 'check [name...]', 'Repos prüfen; mit --remote auch Erreichbarkeit und Refs')
+    .option('--remote', 'Remote abfragen (Erreichbarkeit, Refs, GitHub-Status)')
+    .option('--fresh', 'den Cache der Remote-Ergebnisse umgehen')
+    .action(
+      action(rt, async (env, names: string[], opts: { remote?: boolean; fresh?: boolean }) => {
+        const checks = await checkRepos(await env.context(), {
+          names,
+          ...(opts.remote === true ? { remote: true } : {}),
+          ...(opts.fresh === true ? { fresh: true } : {}),
+        });
+        emit(env, { repos: checks.map(checkJson) }, () => lines(checks.flatMap(checkLines)));
+        const failure = repoCheckExit(checks);
+        if (failure !== undefined) throw failure;
+      }),
+    );
+
+  subcommand(repo, 'where <name>', 'lokaler Pfad eines Repos (aus der User-Config)').action(
+    action(rt, async (env, name: string) => {
+      const r = await locateRepo(await env.context(), name);
+      emit(
+        env,
+        {
+          name: r.name,
+          url: r.url,
+          canonical: r.canonical,
+          default_ref: r.defaultRef,
+          path: r.path,
+        },
+        () => `${safeText(r.path)}\n`,
+      );
+    }),
+  );
+
+  subcommand(
+    repo,
+    'scan <verzeichnis>',
+    'Clones registrierter Repos unter einem Verzeichnis eintragen',
+  )
+    .option('--force', 'abweichende Einträge überschreiben')
+    .option('--dry-run', 'nichts schreiben')
+    .action(
+      action(rt, async (env, dir: string, opts: { force?: boolean; dryRun?: boolean }) => {
+        const entries = await scanRepos(await env.context(), absPath(dir, env.io), {
+          ...(opts.force === true ? { force: true } : {}),
+          ...(opts.dryRun === true ? { dryRun: true } : {}),
+        });
+        emit(
+          env,
+          {
+            entries: entries.map(({ name, path, status, previous }) => ({
+              name,
+              path,
+              status,
+              previous,
+            })),
+          },
+          () => lines(entries.map((e) => safeText(scanLine(e)))),
+        );
+      }),
+    );
+}
+
+const SCAN_STATUS: Record<ScanEntry['status'], string> = {
+  new: 'neu',
+  unchanged: 'unverändert',
+  differs: 'abweichend',
+  overwritten: 'überschrieben',
+};
+
+function scanLine(e: ScanEntry): string {
+  const status =
+    e.status === 'differs' ? `${SCAN_STATUS.differs} (${e.previous})` : SCAN_STATUS[e.status];
+  return `${e.name}  ${e.path}  ${status}`;
+}
+
+function checkJson(c: RepoCheck): Record<string, unknown> {
+  return {
+    name: c.name,
+    url: c.url,
+    canonical: c.canonical,
+    findings: c.findings,
+    github: c.github,
+    cached: c.cached,
+  };
+}
+
+function checkLines(c: RepoCheck): string[] {
+  const state = c.findings.some((f) => f.level === 'error')
+    ? 'fehler'
+    : c.findings.some((f) => f.level === 'warning')
+      ? 'warnung'
+      : 'ok';
+  const out = [`${c.name}  ${state}  ${c.url}`];
+  for (const f of c.findings) out.push(`  ${f.level}: ${f.message}`);
+  if (c.github !== undefined) {
+    out.push(`  github: ${c.github.visibility}${c.github.archived ? ', archiviert' : ''}`);
+  }
+  if (c.cached !== undefined) out.push(`  (Cache vom ${c.cached})`);
+  return out.map(safeText);
 }
