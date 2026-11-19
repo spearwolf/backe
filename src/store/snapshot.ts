@@ -143,7 +143,7 @@ async function readEntity<T>(
   return parseStored<T>(await readFile(join(root, path), 'utf8'), path, kind);
 }
 
-export function parseStored<T>(text: string, path: string, kind: EntityKind): StoredEntity<T> {
+function parseStored<T>(text: string, path: string, kind: EntityKind): StoredEntity<T> {
   const parsed = parseEntityFile(text, path);
   const { data, unknownKeys } = validateEntity(kind, parsed.data, path);
   const extra = entriesInFileOrder(parsed, unknownKeys);
@@ -426,6 +426,11 @@ export async function loadSnapshot(root: string): Promise<BacklogSnapshot> {
  * Unterprojekte ohne Elternprojekt werden wie beim Laden zu Problemen. Ein Unterprojekt, das
  * schon in `s` mangels Elternprojekt verworfen war, bleibt verworfen, solange seine eigene Datei
  * nicht in `files` steht: Sein Inhalt liegt dem Snapshot nicht vor.
+ *
+ * Einen anderen Stand rekonstruieren (etwa `HEAD` aus der Arbeitskopie): `files` sind die
+ * geänderten Pfade mit ihrem Inhalt in jenem Stand **plus** die Pfade aus
+ * `orphanedProjectPaths(s)` mit ihrem unveränderten Inhalt. Sonst fehlt ein Unterprojekt, dessen
+ * Elternprojekt nur in `s` gelöscht ist, auch im Ergebnis.
  */
 export function snapshotAt(
   s: BacklogSnapshot,
@@ -485,6 +490,22 @@ export function snapshotAt(
     (a, b) => rank(a) - rank(b) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0),
   );
   return next;
+}
+
+/**
+ * Pfade der Projektdateien, die in `s` fehlen und deren Elternprojekt in `s` fehlt, sortiert.
+ * Darunter sind alle, die `loadSnapshot` nur mangels Elternprojekt verworfen hat (backe.md §2.9);
+ * eine solche Datei, die zusätzlich kaputt ist, steht ebenfalls da. Für `snapshotAt` ist das
+ * unschädlich: Eine unveränderte Datei erneut zu parsen ergibt, was `loadSnapshot` ergäbe.
+ */
+export function orphanedProjectPaths(s: BacklogSnapshot): string[] {
+  const paths = new Set<string>();
+  for (const p of s.problems) {
+    if (p.kind !== 'project' || p.key === undefined || s.projects.has(p.key)) continue;
+    const slash = p.key.lastIndexOf('/');
+    if (slash >= 0 && !s.projects.has(p.key.slice(0, slash))) paths.add(p.path);
+  }
+  return [...paths].sort();
 }
 
 /** Wie `loadNamed` für eine einzelne Datei mit bekanntem Inhalt. */

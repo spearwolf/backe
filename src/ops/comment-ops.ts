@@ -63,11 +63,12 @@ export function commentDelete(d: Draft, op: OpOf<'comment.delete'>): OpOf<'comme
 
 /**
  * Mit `attachments.lfs` gehört `LFS_RULE` in `.gitattributes` (backe.md §2.8): Fehlt eine Zeile,
- * die genau so lautet, kommt sie ans Ende, nach einem fehlenden Schluss-Newline.
+ * die genau so lautet (ein CR am Zeilenende zählt nicht), kommt sie ans Ende, nach einem
+ * fehlenden Schluss-Newline.
  */
 function ensureLfsRule(d: Draft): void {
   const current = d.snapshot.attributes ?? '';
-  if (current.split('\n').some((line) => line === LFS_RULE)) return;
+  if (current.split('\n').some((line) => line.replace(/\r$/, '') === LFS_RULE)) return;
   const head = current === '' || current.endsWith('\n') ? current : `${current}\n`;
   d.putAttributes(`${head}${LFS_RULE}\n`);
 }

@@ -252,6 +252,12 @@ describe('attach.add', () => {
       expect([attributesOf(r.changes), r.snapshot.attributes]).toEqual([[], before]);
     });
 
+    test('a rule line with CRLF counts as present', () => {
+      const before = `* text=auto\r\n${LFS_RULE}\r\n`;
+      const r = applyOperation(lfs(before), file('a'), ctx());
+      expect([attributesOf(r.changes), r.snapshot.attributes]).toEqual([[], before]);
+    });
+
     test('a url attachment leaves .gitattributes alone', () => {
       const r = applyOperation(
         lfs(),

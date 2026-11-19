@@ -2,7 +2,9 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { copyFixture, fixture, tempDir } from '../../test/helpers/backlog.ts';
 import { catchErr, catchErrAsync } from '../../test/helpers/catch.ts';
-import { I, snap } from '../../test/helpers/snapshot.ts';
+import { I, seqBytes, snap } from '../../test/helpers/snapshot.ts';
+import { applyBatch } from '../ops/batch.ts';
+import { translateEdits } from '../ops/translate.ts';
 import { serializeEntityFile } from './frontmatter.ts';
 import { readJsonc } from './jsonc.ts';
 import { BACKLOG_CONFIG, issueFile } from './layout.ts';
@@ -11,6 +13,7 @@ import {
   listIssueIds,
   loadRepoRegistry,
   loadSnapshot,
+  orphanedProjectPaths,
   snapshotAt,
 } from './snapshot.ts';
 
@@ -434,6 +437,46 @@ describe('snapshotAt', () => {
       else await put(root, f.path, f.content);
     }
     expect(snapshotAt(s0, files)).toEqual(await loadSnapshot(root));
+  });
+
+  test('a parent project deleted by hand comes back together with its orphans', async () => {
+    const head = await copyFixture('backlog-basic');
+    const worktree = await copyFixture('backlog-basic');
+    const webBefore = await readFile(join(head, 'projects/web.md'), 'utf8');
+    await rm(join(worktree, 'projects/web.md'));
+    const wc = await loadSnapshot(worktree);
+    expect(orphanedProjectPaths(wc)).toEqual(['projects/web/auth.md']);
+    const orphans = await Promise.all(
+      orphanedProjectPaths(wc).map(async (path) => ({
+        path,
+        content: await readFile(join(worktree, path), 'utf8'),
+      })),
+    );
+    const atHead = snapshotAt(wc, [{ path: 'projects/web.md', content: webBefore }, ...orphans]);
+    expect(atHead).toEqual(await loadSnapshot(head));
+
+    const edits = [{ path: 'projects/web.md', before: webBefore, after: null }];
+    const ctx = { actor: 'spw', now: '2026-11-19T08:00:00Z', randomBytes: seqBytes() };
+    const err = catchErr(() => applyBatch(atHead, translateEdits(atHead, edits, ctx).ops, ctx));
+    expect((err.details as { reason?: string }).reason).toBe('has_subprojects');
+    // Ohne die Waisen sähe der rekonstruierte Stand das Unterprojekt nicht.
+    const naive = snapshotAt(wc, [{ path: 'projects/web.md', content: webBefore }]);
+    expect(() => applyBatch(naive, translateEdits(naive, edits, ctx).ops, ctx)).not.toThrow();
+  });
+
+  test('orphanedProjectPaths lists every project dropped below a missing parent', () => {
+    const s = {
+      ...snap({ projects: ['web'] }),
+      problems: [
+        { path: 'projects/ops/a.md', message: 'm', kind: 'project' as const, key: 'ops/a' },
+        { path: 'projects/ops/a/b.md', message: 'm', kind: 'project' as const, key: 'ops/a/b' },
+        { path: 'projects/web/x.md', message: 'kaputt', kind: 'project' as const, key: 'web/x' },
+        { path: 'projects/top.md', message: 'kaputt', kind: 'project' as const, key: 'top' },
+        { path: 'projects/Bad.md', message: 'Name', kind: 'project' as const },
+        { path: issueFile(I(1)), message: 'kaputt', kind: 'issue' as const, key: I(1) },
+      ],
+    };
+    expect(orphanedProjectPaths(s)).toEqual(['projects/ops/a.md', 'projects/ops/a/b.md']);
   });
 
   test('snapshotAt keeps the order of keys sorted', () => {
