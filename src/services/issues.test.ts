@@ -1,16 +1,21 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
+import { logTrailers, revParse, type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
-import { bodyHash, type Operation } from '../ops/operation.ts';
+import { type Operation, summarizeOp } from '../ops/operation.ts';
+import { issueFile } from '../store/layout.ts';
 import { listComments, loadSnapshot } from '../store/snapshot.ts';
 import {
   assignIssue,
   createIssue,
   deleteIssue,
   editIssue,
+  editIssueText,
   linkIssue,
   moveIssue,
   rankIssue,
+  readIssueFile,
   reopenIssue,
   resumeIssue,
   unlinkIssue,
@@ -169,55 +174,6 @@ describe('editIssue', () => {
     expect(out.op).not.toHaveProperty('remove');
   });
 
-  test('edit with nothing to change is a usage error', async () => {
-    await setup();
-    const id = (await createIssue(ctx, { title: 'T' })).id as string;
-    const err = await catchErrAsync(() => editIssue(ctx, id, { title: 'T' }));
-    expect(err.code).toBe('usage');
-    expect(err.message).toBe('Nichts zu ändern');
-  });
-
-  test('edit sets the body with the hash of the old body', async () => {
-    await setup();
-    const id = (await createIssue(ctx, { title: 'T', body: 'alt\n' })).id as string;
-    const out = await editIssue(ctx, id, { body: 'neu\n' });
-    expect(out.op).toMatchObject({ body: { from_hash: bodyHash('alt\n'), to: 'neu\n' } });
-    expect((await issueOf(id)).body).toBe('neu\n');
-  });
-
-  test('editing a broken issue is a validation error naming the file', async () => {
-    await setup();
-    const id = (await createIssue(ctx, { title: 'T' })).id as string;
-    const { path } = await issueOf(id);
-    const { writeFile } = await import('node:fs/promises');
-    const { join } = await import('node:path');
-    await writeFile(join(b.root, path), '---\nkaputt: [\n---\n');
-    const err = await catchErrAsync(() => editIssue(ctx, id, { title: 'X' }));
-    expect(err.code).toBe('validation');
-    expect(err.message).toContain(path);
-  });
-
-  test('the same key in props and unsetProps is a usage error', async () => {
-    await setup();
-    const id = (await createIssue(ctx, { title: 'T' })).id as string;
-    const err = await catchErrAsync(() =>
-      editIssue(ctx, id, { props: ['a=1'], unsetProps: ['a'] }),
-    );
-    expect(err.code).toBe('usage');
-    expect(err.message).toContain('»a«');
-  });
-
-  test('editIssue rejects its promise instead of throwing synchronously', async () => {
-    await setup();
-    const id = (await createIssue(ctx, { title: 'T' })).id as string;
-    const pending = editIssue(ctx, id, { props: ['a=1'], unsetProps: ['a'] });
-    const err = await pending.then(
-      () => undefined,
-      (e: unknown) => e as { code: string },
-    );
-    expect(err?.code).toBe('usage');
-  });
-
   test.each([
     ['projects', { addProjects: ['web'], rmProjects: ['web'] }, 'web'],
     ['sprints', { addSprints: ['s1'], rmSprints: ['s1'] }, 's1'],
@@ -293,7 +249,7 @@ describe('moveIssue', () => {
 
   test('force is passed on and closes a parent with open children', async () => {
     await setup();
-    const parent = await newIssue('P', { state: 'review' });
+    const parent = await newIssue('P', { state: 'in-progress' });
     await newIssue('K', { parent });
     const err = await catchErrAsync(() => moveIssue(ctx, parent, { to: 'done' }));
     expect(err.code).not.toBe('usage');
@@ -469,5 +425,93 @@ describe('deleteIssue', () => {
     expect(out.op).toMatchObject({ children: 'recursive', force: true });
     const s = await loadSnapshot(b.root);
     expect([s.issues.has(parent), s.issues.has(child)]).toEqual([false, false]);
+  });
+});
+
+describe('editIssueText', () => {
+  async function seed() {
+    await setup();
+    const id = (await createIssue(ctx, { title: 'Alt', projects: ['web'] })).id as string;
+    return { id, file: await readIssueFile(ctx, id.slice(0, 8)) };
+  }
+
+  test('readIssueFile returns the file as it is on disk', async () => {
+    const { id, file } = await seed();
+    expect(file.id).toBe(id);
+    expect(file.path).toBe(issueFile(id));
+    expect(file.text).toBe(await readFile(join(b.root, file.path), 'utf8'));
+  });
+
+  test('editIssueText turns a title and state change into one batch commit', async () => {
+    const { id, file } = await seed();
+    const after = file.text
+      .replace('title: Alt', 'title: Neu')
+      .replace(/^state: .*$/m, 'state: in_progress');
+    const out = await editIssueText(ctx, id, file.text, after);
+    expect(out.commit).toBeDefined();
+    expect(out.id).toBe(id);
+    expect((('ops' in out ? out.ops : []) ?? []).map((o) => o.op).sort()).toEqual([
+      'issue.edit',
+      'issue.move',
+    ]);
+    const issue = (await issueOf(id)).data;
+    expect(issue).toMatchObject({ title: 'Neu', state: 'in_progress' });
+    expect((await logTrailers(b.root))[0]?.op).toBe('batch');
+  });
+
+  test('editIssueText with unchanged text writes nothing', async () => {
+    const { id, file } = await seed();
+    const head = await revParse(b.root, 'HEAD');
+    const out = await editIssueText(ctx, id, file.text, file.text);
+    expect(out.commit).toBeUndefined();
+    expect('op' in out && summarizeOp(out.op)).toBe(`issue edit ${id}`);
+    expect(await revParse(b.root, 'HEAD')).toBe(head);
+  });
+
+  test('editIssueText refuses a change without operation', async () => {
+    const { id, file } = await seed();
+    const err = await catchErrAsync(() =>
+      editIssueText(ctx, id, file.text, file.text.replace('title: Alt', 'title: Alt\nfoo: bar')),
+    );
+    expect(err.code).toBe('validation');
+    expect(err.message).toBe('Diese Änderung lässt sich nicht als Operation ausdrücken');
+    expect(err.hint).toBe('Datei direkt bearbeiten und backe commit');
+  });
+
+  test('editIssueText after a concurrent change is a conflict', async () => {
+    const { id, file } = await seed();
+    await editIssue(ctx, id, { title: 'Dazwischen' });
+    const err = await catchErrAsync(() =>
+      editIssueText(ctx, id, file.text, file.text.replace('title: Alt', 'title: Mein')),
+    );
+    expect(err.code).toBe('conflict');
+    expect((await issueOf(id)).data.title).toBe('Dazwischen');
+  });
+
+  test('a parse error names file and line', async () => {
+    const { id, file } = await seed();
+    const err = await catchErrAsync(() =>
+      editIssueText(ctx, id, file.text, file.text.replace('title: Alt', 'title: [Alt')),
+    );
+    expect(err.code).toBe('validation');
+  });
+});
+
+describe('editIssue without effect', () => {
+  test('edit flags equal to the current values are a no-op', async () => {
+    await setup();
+    const id = (await createIssue(ctx, { title: 'Gleich', projects: ['web'] })).id as string;
+    const head = await revParse(b.root, 'HEAD');
+    const out = await editIssue(ctx, id, { title: 'Gleich', addProjects: ['web'] });
+    expect(out.commit).toBeUndefined();
+    expect(summarizeOp(out.op)).toBe(`issue edit ${id}`);
+    expect(await revParse(b.root, 'HEAD')).toBe(head);
+  });
+
+  test('edit with no input at all stays a usage error', async () => {
+    await setup();
+    const id = (await createIssue(ctx, { title: 'X' })).id as string;
+    const err = await catchErrAsync(() => editIssue(ctx, id, { addProjects: [] }));
+    expect(err).toMatchObject({ code: 'usage', message: 'Nichts zu ändern' });
   });
 });

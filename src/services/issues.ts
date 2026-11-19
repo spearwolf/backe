@@ -4,6 +4,8 @@
  * unter dem Write-Lock gegen den gesperrten Snapshot abgeleitet; Vorbedingungen (`from`) stammen
  * von dort, nicht aus einem früheren Lesen.
  */
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
@@ -11,12 +13,14 @@ import { isGitArg, isGitRef, parseRepoRef } from '../core/names.ts';
 import type { PropValue } from '../core/schemas.ts';
 import { normalizeStateInput } from '../core/state.ts';
 import { normalizeRepoUrl } from '../core/url.ts';
-import { bodyHash, type OpOf } from '../ops/operation.ts';
+import { bodyHash, type Operation, type OpOf } from '../ops/operation.ts';
 import { parsePropAssignment } from '../ops/props.ts';
+import { translateEdits } from '../ops/translate.ts';
 import { canonicalBody } from '../store/frontmatter.ts';
+import { issueFile } from '../store/layout.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
-import { type WriteOutcome, writeOp } from './outcome.ts';
-import { resolveHandle, resolveIssueRef } from './read.ts';
+import { type WriteOpsOutcome, type WriteOutcome, writeOp } from './outcome.ts';
+import { openSnapshot, resolveHandle, resolveIssueRef } from './read.ts';
 import type { WriteDeps } from './write.ts';
 
 export type IssueCreateInput = {
@@ -104,6 +108,9 @@ export async function editIssue(
   input: IssueEditInput,
   deps?: WriteDeps,
 ): Promise<WriteOutcome> {
+  if (Object.values(input).every((v) => v === undefined || (Array.isArray(v) && v.length === 0))) {
+    throw new BackeError('usage', 'Nichts zu ändern');
+  }
   const props = parseProps(input.props ?? []);
   const unset = unique(input.unsetProps ?? []);
   for (const key of unset) {
@@ -175,13 +182,58 @@ export async function editIssue(
         op.body = { from_hash: bodyHash(current.body), to: input.body };
       }
 
-      if (Object.keys(op).length === 2) {
-        throw new BackeError('usage', 'Nichts zu ändern');
-      }
+      // Ohne wirksame Änderung bleibt `op` die bloße `{op, id}`: `executeWrite` schreibt nichts, und
+      // `writeOp` meldet sie als abgeleitete Operation (die CLI druckt `unverändert: issue edit <id>`).
       return op;
     },
     deps,
   );
+}
+
+/** Die Issue-Datei so, wie sie in der Arbeitskopie liegt: Ausgangstext für `issue edit` per Editor. */
+export async function readIssueFile(
+  ctx: ResolvedContext,
+  ref: string,
+): Promise<{ id: string; path: string; text: string }> {
+  const { root, snapshot } = await openSnapshot(ctx);
+  const id = resolveIssueRef(snapshot, ref);
+  if (!snapshot.issues.has(id)) throw new BackeError('not_found', `Issue »${id}« nicht gefunden`);
+  const path = issueFile(id);
+  return { id, path, text: await readFile(join(root, path), 'utf8') };
+}
+
+/**
+ * `issue edit` per Editor (backe.md §2.17): übersetzt den Unterschied zwischen `before` (der Text,
+ * von dem der User ausging) und `after` unter dem Lock in Operationen. Ist `before` nicht mehr der
+ * Stand des Backlogs, scheitern die `from`-Vorbedingungen (`conflict`). Ohne Änderung oder ohne
+ * wirksame Änderung (etwa nur umsortiert) wird nichts geschrieben; das Ergebnis trägt dann die bloße
+ * `issue.edit`-Operation ohne Commit, wie bei `editIssue` ohne wirksame Flags. Mehrere Operationen
+ * (etwa `issue.edit` und `issue.move`) ergeben einen Batch-Commit und `ops` statt `op`.
+ */
+export async function editIssueText(
+  ctx: ResolvedContext,
+  ref: string,
+  before: string,
+  after: string,
+  deps?: WriteDeps,
+): Promise<WriteOutcome | WriteOpsOutcome> {
+  const derive = (s: BacklogSnapshot, actor: string): Operation | readonly Operation[] => {
+    const id = resolveIssueRef(s, ref);
+    const noEffect: OpOf<'issue.edit'> = { op: 'issue.edit', id };
+    if (after === before) return noEffect;
+    const r = translateEdits(s, [{ path: issueFile(id), before, after }], { actor });
+    if (r.manual.length > 0) {
+      throw new BackeError(
+        'validation',
+        'Diese Änderung lässt sich nicht als Operation ausdrücken',
+        {
+          hint: 'Datei direkt bearbeiten und backe commit',
+        },
+      );
+    }
+    return r.ops.length === 0 ? noEffect : r.ops;
+  };
+  return writeOp(ctx, derive as (s: BacklogSnapshot, actor: string) => Operation, deps);
 }
 
 function currentIssue(s: BacklogSnapshot, ref: string) {
