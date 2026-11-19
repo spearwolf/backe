@@ -1,5 +1,5 @@
 import { catchErr } from '../../test/helpers/catch.ts';
-import { I, seqBytes, snap } from '../../test/helpers/snapshot.ts';
+import { I, seqBytes, snap, testKey } from '../../test/helpers/snapshot.ts';
 import type { Sprint, User } from '../core/schemas.ts';
 import { serializeEntityFile } from '../store/frontmatter.ts';
 import { issueFile, projectFile, repoFile, sprintFile, userFile } from '../store/layout.ts';
@@ -401,7 +401,7 @@ describe('repo.rm', () => {
   });
 });
 
-const KEY = 'ssh-ed25519 AAAAbob bob';
+const KEY = testKey('bob');
 
 describe('user.add', () => {
   test('an admin adds a human', () => {
@@ -446,6 +446,31 @@ describe('user.add', () => {
     expect(reasonOf(fail(snap(), human, 'alice'))).toBe('policy');
   });
 
+  test('user.add honours removedHandles from the apply context', () => {
+    const op: Operation = {
+      op: 'user.add',
+      handle: 'a-1',
+      name: 'A',
+      kind: 'agent',
+      keys: [KEY],
+      operator: 'alice',
+    };
+    const removed = { ...ctx('alice'), removedHandles: new Set(['a-1']) };
+    expect(reasonOf(catchErr(() => applyOperation(snap(), op, removed)))).toBe('policy');
+    expect(
+      applyOperation(snap(), op, {
+        ...ctx('spw'),
+        removedHandles: new Set(['a-1']),
+      }).snapshot.users.has('a-1'),
+    ).toBe(true);
+    expect(
+      applyOperation(snap(), op, {
+        ...ctx('alice'),
+        removedHandles: new Set(['other']),
+      }).snapshot.users.has('a-1'),
+    ).toBe(true);
+  });
+
   test('rejects an existing handle and an unknown operator', () => {
     const add = (handle: string, operator: string): Operation => ({
       op: 'user.add',
@@ -472,7 +497,8 @@ describe('user.add', () => {
 });
 
 describe('user.revoke_key', () => {
-  const alice = 'ssh-ed25519 AAAAalice alice';
+  const alice =
+    'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGFsaWNlAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA alice';
 
   test('moves the key with the given time', () => {
     const r = run(snap(), {
@@ -497,7 +523,8 @@ describe('user.revoke_key', () => {
   });
 
   test('appends to the revoked keys and keeps the other keys', () => {
-    const second = 'ssh-ed25519 AAAAzwei zwei';
+    const second =
+      'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHp3ZWkAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA zwei';
     const base = snap();
     const a = base.users.get('alice');
     if (a === undefined) throw new Error('setup');
@@ -508,14 +535,22 @@ describe('user.revoke_key', () => {
         data: {
           ...a.data,
           keys: [alice, second],
-          revoked_keys: [{ key: 'ssh-ed25519 AAAAalt', revoked: '2026-01-01T00:00:00Z' }],
+          revoked_keys: [
+            {
+              key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGFsdAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+              revoked: '2026-01-01T00:00:00Z',
+            },
+          ],
         },
       }),
     };
     const r = run(s, { op: 'user.revoke_key', handle: 'alice', key: alice });
     expect(r.snapshot.users.get('alice')?.data).toMatchObject({
       keys: [second],
-      revoked_keys: [{ key: 'ssh-ed25519 AAAAalt' }, { key: alice, revoked: NOW }],
+      revoked_keys: [
+        { key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGFsdAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
+        { key: alice, revoked: NOW },
+      ],
     });
   });
 
@@ -535,7 +570,7 @@ describe('user.revoke_key', () => {
     const unknown = fail(snap(), {
       op: 'user.revoke_key',
       handle: 'alice',
-      key: 'ssh-ed25519 AAAAnone',
+      key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG5vbmUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     });
     expect(reasonOf(unknown)).toBe('missing_ref');
     const nobody = fail(snap(), { op: 'user.revoke_key', handle: 'nobody', key: alice });
@@ -547,7 +582,11 @@ describe('user.revoke_key', () => {
     expect(own.noop).toBe(false);
     const foreign = fail(
       snap(),
-      { op: 'user.revoke_key', handle: 'spw', key: 'ssh-ed25519 AAAAspw spw' },
+      {
+        op: 'user.revoke_key',
+        handle: 'spw',
+        key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHNwdwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA spw',
+      },
       'alice',
     );
     expect(reasonOf(foreign)).toBe('policy');
@@ -581,7 +620,7 @@ describe('user.rm', () => {
       handle: 'x',
       name: 'X',
       kind: 'agent',
-      keys: [KEY],
+      keys: [testKey('x')],
       operator: 'bob',
     }).snapshot;
     const err = fail(withAgent, { op: 'user.rm', handle: 'bob' });
@@ -647,7 +686,9 @@ describe('orphaned operator', () => {
       name: 'bob-1',
       kind: 'agent',
       operator: 'bob',
-      keys: ['ssh-ed25519 AAAAbob1 bob-1'],
+      keys: [
+        'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGJvYjEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA bob-1',
+      ],
     };
     const users = new Map(base.users).set('bob-1', {
       data,
@@ -672,7 +713,20 @@ describe('orphaned operator', () => {
   });
 
   test('an agent carrying the handle of an orphaned operator cannot edit its agents', () => {
-    const withBob = run(orphanSnap(), addBob, 'spw').snapshot;
+    // Ein Admin darf `bob` nicht als Agent anlegen, solange `bob-1` ihn als Operator nennt (der
+    // Operator bleibt Mensch); der Zustand entsteht also nur über einen rohen Commit.
+    const orphan = orphanSnap();
+    const bob: User = { name: 'Bob', kind: 'agent', operator: 'alice', keys: [KEY] };
+    const withBob = {
+      ...orphan,
+      users: new Map(orphan.users).set('bob', {
+        data: bob,
+        extra: [],
+        body: '',
+        path: userFile('bob'),
+      }),
+    };
+    expect(reasonOf(fail(orphan, addBob, 'spw'))).toBe('references');
     const err = fail(
       withBob,
       {
@@ -681,8 +735,13 @@ describe('orphaned operator', () => {
         key: 'bob-1',
         set: {
           keys: {
-            from: ['ssh-ed25519 AAAAbob1 bob-1'],
-            to: ['ssh-ed25519 AAAAbob1 bob-1', KEY],
+            from: [
+              'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGJvYjEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA bob-1',
+            ],
+            to: [
+              'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGJvYjEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA bob-1',
+              KEY,
+            ],
           },
         },
       },
@@ -739,8 +798,10 @@ describe('entity.edit', () => {
   });
 
   test('compares structurally', () => {
-    const k1 = 'ssh-ed25519 AAAAalice alice';
-    const k2 = 'ssh-ed25519 AAAAneu neu';
+    const k1 =
+      'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGFsaWNlAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA alice';
+    const k2 =
+      'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG5ldQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA neu';
     const r = run(snap(), {
       op: 'entity.edit',
       kind: 'user',

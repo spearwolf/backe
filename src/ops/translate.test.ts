@@ -682,7 +682,8 @@ describe('translateEdits', () => {
   });
 
   describe('projects, sprints, repos and users', () => {
-    const key = 'ssh-ed25519 AAAAbob bob';
+    const key =
+      'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGJvYgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA bob';
 
     test('new entities become their create operations', () => {
       const r = translateEdits(
@@ -697,7 +698,7 @@ describe('translateEdits', () => {
           added(repoFile('api'), '---\nurl: https://github.com/acme/api\ndefault_ref: main\n---\n'),
           added(
             userFile('bob'),
-            `---\nname: Bob\nkind: human\nkeys:\n  - ${key}\nrevoked_keys:\n  - key: ssh-ed25519 AAAAold bob\n    revoked: 2026-11-01T00:00:00Z\n---\n`,
+            `---\nname: Bob\nkind: human\nkeys:\n  - ${key}\nrevoked_keys:\n  - key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG9sZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA bob\n    revoked: 2026-11-01T00:00:00Z\n---\n`,
           ),
         ],
         asSpw,
@@ -711,7 +712,12 @@ describe('translateEdits', () => {
           set: {
             revoked_keys: {
               from: null,
-              to: [{ key: 'ssh-ed25519 AAAAold bob', revoked: '2026-11-01T00:00:00Z' }],
+              to: [
+                {
+                  key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG9sZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA bob',
+                  revoked: '2026-11-01T00:00:00Z',
+                },
+              ],
             },
           },
         },
@@ -808,11 +814,11 @@ describe('translateEdits', () => {
       [
         added(
           userFile('a-1'),
-          '---\nname: A1\nkind: agent\noperator: zed\nkeys:\n  - ssh-ed25519 AAAAa1 a-1\n---\n',
+          '---\nname: A1\nkind: agent\noperator: zed\nkeys:\n  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGExAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA a-1\n---\n',
         ),
         added(
           userFile('zed'),
-          '---\nname: Zed\nkind: human\nkeys:\n  - ssh-ed25519 AAAAzed zed\n---\n',
+          '---\nname: Zed\nkind: human\nkeys:\n  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHplZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA zed\n---\n',
         ),
       ],
       asSpw,
@@ -829,8 +835,9 @@ describe('translateEdits', () => {
 
   describe('order of dependent edits', () => {
     const agentText = (operator: string) =>
-      `---\nname: Z1\nkind: agent\noperator: ${operator}\nkeys:\n  - ssh-ed25519 AAAAz1 zz-1\n---\n`;
-    const humanText = '---\nname: Zed\nkind: human\nkeys:\n  - ssh-ed25519 AAAAzed zed\n---\n';
+      `---\nname: Z1\nkind: agent\noperator: ${operator}\nkeys:\n  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHoxAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA zz-1\n---\n`;
+    const humanText =
+      '---\nname: Zed\nkind: human\nkeys:\n  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHplZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA zed\n---\n';
 
     test('a deleted agent goes before its deleted operator', () => {
       const withAgent = applyBatch(
@@ -842,7 +849,9 @@ describe('translateEdits', () => {
             name: 'Z1',
             kind: 'agent',
             operator: 'alice',
-            keys: ['ssh-ed25519 AAAAz1 zz-1'],
+            keys: [
+              'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHoxAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA zz-1',
+            ],
           },
         ],
         ctx(),
@@ -964,7 +973,7 @@ describe('translateEdits', () => {
       added(projectFile('zz'), '---\ntitle: ZZ\n---\n'),
       added(
         userFile('bob'),
-        '---\nname: Bob\nkind: human\nkeys:\n  - ssh-ed25519 AAAAbob bob\n---\n',
+        '---\nname: Bob\nkind: human\nkeys:\n  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGJvYgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA bob\n---\n',
       ),
       { path: '.unchanged', before: 'x', after: 'x' },
       { path: 'gone', before: null, after: null },

@@ -3,6 +3,7 @@
  * entfernen darf. Die Regel gilt für `applyOperation` und für die Prüfung fremder Commits.
  */
 import type { User } from '../core/schemas.ts';
+import { sameKey, sshFingerprint } from '../core/ssh.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { violation } from './invariants.ts';
 
@@ -17,14 +18,19 @@ import { violation } from './invariants.ts';
  * Entscheidung trifft wie `applyOperation`.
  *
  * Für alle, auch Admins: Der `operator` eines Agents ist ein existierender Mensch (backe.md §2.12),
- * sobald er neu gesetzt wird; ein User, der noch Operator von Agents ist, wird nicht entfernt.
+ * sobald er neu gesetzt wird; ein User, der noch Operator von Agents ist, wird weder entfernt noch
+ * zum Agent. Ein Key steht bei genau einem User (`keys` und `revoked_keys` aller User, verglichen
+ * nach Typ und Blob, nicht nach Kommentar); ein widerrufener Key bleibt widerrufen und wird weder
+ * gelöscht noch wieder aktiv.
+ *
  * Admin ist nur, wer in `config.admins` steht und als Mensch existiert (bei einer Änderung am
  * eigenen User zählt der Stand davor); ein Agent oder ein Handle ohne User-Datei im Admin-Eintrag
- * hat keine Admin-Rechte. Einen User, dessen Handle in `config.admins` steht, legt nur ein Admin
- * an. Admins dürfen sonst alles. Alle anderen dürfen einen User ändern, wenn sie es
- * selbst sind oder wenn es ihr Agent ist (`operator`, nur wenn der Akteur ein Mensch ist), dabei
- * aber weder `kind` ändern noch den `operator` anders als dessen Mensch; einen neuen User nur
- * anlegen, wenn es ein Agent mit ihnen als `operator` ist und kein bestehender User den Handle
+ * hat keine Admin-Rechte. Einen User, dessen Handle in `config.admins` steht oder der früher schon
+ * einmal entfernt wurde (`opts.removedBefore`), legt nur ein Admin an. Admins dürfen sonst alles.
+ * Alle anderen dürfen einen User ändern, wenn sie es selbst sind oder wenn es ihr Agent ist
+ * (`operator`, nur wenn der Akteur ein Mensch ist), dabei aber weder `kind` noch `operator`
+ * ändern (den Operator wechseln nur Admins, auch der bisherige Operator nicht); einen neuen User
+ * nur anlegen, wenn es ein Agent mit ihnen als `operator` ist und kein bestehender User den Handle
  * als `operator` nennt (sonst übernähme der Neue fremde Agents); entfernen nie.
  */
 export function checkUserChange(
@@ -33,10 +39,65 @@ export function checkUserChange(
   handle: string,
   before: User | undefined,
   after: User | undefined,
+  opts: { removedBefore?: boolean } = {},
 ): void {
-  checkRights(s, actor, handle, before, after);
+  checkRights(s, actor, handle, before, after, opts.removedBefore === true);
   checkOperator(s, before, after);
+  if (after !== undefined) {
+    checkKeysUnique(s, handle, before, after);
+    checkRevocations(before, after);
+  }
   if (after === undefined) checkNoAgents(s, handle);
+  else if (after.kind === 'agent') checkOperatorStaysHuman(s, handle);
+}
+
+/** Ein neu hinzugekommener Key gehört keinem anderen User, weder aktiv noch widerrufen. */
+function checkKeysUnique(
+  s: BacklogSnapshot,
+  handle: string,
+  before: User | undefined,
+  after: User,
+): void {
+  for (const key of after.keys) {
+    if ((before?.keys ?? []).some((old) => sameKey(old, key))) continue;
+    for (const [other, { data }] of s.users) {
+      if (other === handle) continue;
+      const taken = [...data.keys, ...(data.revoked_keys ?? []).map((r) => r.key)];
+      if (taken.some((k) => sameKey(k, key))) {
+        throw violation('policy', `Key ${sshFingerprint(key)} gehört schon ${other}`, {
+          hint: 'Jeder Key gehört genau einem User.',
+        });
+      }
+    }
+  }
+}
+
+/** Ein widerrufener Key bleibt widerrufen: nicht gelöscht, nicht wieder aktiv. */
+function checkRevocations(before: User | undefined, after: User): void {
+  for (const { key } of before?.revoked_keys ?? []) {
+    const stays = (after.revoked_keys ?? []).some((r) => sameKey(r.key, key));
+    const active = after.keys.some((k) => sameKey(k, key));
+    if (!stays || active) {
+      throw violation('policy', `Der Widerruf von ${sshFingerprint(key)} ist endgültig`, {
+        hint: 'Einen widerrufenen Key neu zu vergeben ist nicht möglich; einen neuen Key anlegen.',
+      });
+    }
+  }
+}
+
+/** Wer von anderen Users als `operator` genannt wird, bleibt Mensch. */
+function checkOperatorStaysHuman(s: BacklogSnapshot, handle: string): void {
+  const agents = agentsOf(s, handle);
+  if (agents.length > 0) {
+    throw violation(
+      'references',
+      `${handle} ist Operator von ${agents.join(', ')}; ein Operator bleibt Mensch`,
+      {
+        ids: agents,
+        hint: 'Erst die Agents entfernen oder ihren Operator ändern.',
+      },
+    );
+  }
 }
 
 /** Handles der Users, die `handle` als `operator` nennen, sortiert. */
@@ -96,6 +157,7 @@ function checkRights(
   handle: string,
   before: User | undefined,
   after: User | undefined,
+  removedBefore: boolean,
 ): void {
   if (isAdmin(s, actor, handle, before)) return;
   if (before !== undefined && after !== undefined) {
@@ -114,14 +176,19 @@ function checkRights(
         hint: 'Die Art (human/agent) ändern nur Admins.',
       });
     }
-    if (before.operator !== after.operator && actor !== before.operator) {
+    if (before.operator !== after.operator) {
       throw violation('policy', `${actor} darf den Operator von ${handle} nicht ändern`, {
-        hint: 'Den Operator ändern nur Admins und der bisherige Operator.',
+        hint: 'Den Operator ändern nur Admins.',
       });
     }
     return;
   }
   if (before === undefined && after !== undefined) {
+    if (removedBefore) {
+      throw violation('policy', `${actor} darf den User ${handle} nicht neu anlegen`, {
+        hint: `${handle} wurde früher entfernt; neu anlegen darf ihn nur ein Admin.`,
+      });
+    }
     if (s.config.admins.includes(handle)) {
       throw violation('policy', `${actor} darf den User ${handle} nicht anlegen`, {
         hint: `${handle} ist als Admin eingetragen; anlegen darf ihn nur ein Admin.`,

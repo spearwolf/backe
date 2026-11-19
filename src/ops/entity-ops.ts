@@ -210,7 +210,9 @@ export function userAdd(d: Draft, op: OpOf<'user.add'>): OpOf<'user.add'> {
   }
   const user: User = { name: op.name, kind: op.kind, operator: op.operator, keys: [...op.keys] };
   d.putEntity('user', op.handle, user, op.body ?? '');
-  checkUserChange(d.snapshot, d.ctx.actor, op.handle, undefined, d.entity('user', op.handle).data);
+  checkUserChange(d.snapshot, d.ctx.actor, op.handle, undefined, d.entity('user', op.handle).data, {
+    removedBefore: d.ctx.removedHandles?.has(op.handle) ?? false,
+  });
   return op;
 }
 

@@ -1,11 +1,15 @@
 import { catchErr } from '../../test/helpers/catch.ts';
-import { snap } from '../../test/helpers/snapshot.ts';
+import { snap, testKey } from '../../test/helpers/snapshot.ts';
 import type { User } from '../core/schemas.ts';
+import { sshFingerprint } from '../core/ssh.ts';
 import { userFile } from '../store/layout.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { checkUserChange } from './policy.ts';
 
-const KEY = 'ssh-ed25519 AAAAkey';
+const KEY = testKey('key');
+const KEY_A = testKey('a');
+const KEY_B = testKey('b');
+const KEY_C = testKey('c');
 const human = (name: string): User => ({ name, kind: 'human', keys: [] });
 const agent = (name: string, operator: string): User => ({
   name,
@@ -111,11 +115,13 @@ describe('checkUserChange', () => {
       );
     });
 
-    test('an operator may hand the agent to another human, an admin may change the kind', () => {
+    test('only an admin may hand an agent to another human, an admin may change the kind', () => {
       const custom = snap({ config: { admins: ['alice'] } });
-      expect(() =>
-        checkUserChange(custom, 'spw', 'claude-1', claude, agent('claude-1', 'alice')),
-      ).not.toThrow();
+      const handover = agent('claude-1', 'alice');
+      expect(reason(() => checkUserChange(custom, 'spw', 'claude-1', claude, handover))).toBe(
+        'policy',
+      );
+      expect(() => checkUserChange(custom, 'alice', 'claude-1', claude, handover)).not.toThrow();
       const asHuman: User = { name: 'claude-1', kind: 'human', keys: [] };
       expect(() => checkUserChange(custom, 'alice', 'claude-1', claude, asHuman)).not.toThrow();
     });
@@ -213,5 +219,109 @@ describe('orphaned operators', () => {
     const err = catchErr(() => checkUserChange(after, 'spw', 'alice', human('alice'), undefined));
     expect(err.details).toEqual({ reason: 'references', ids: ['a-2', 'z-1'] });
     expect(err.code).toBe('conflict');
+  });
+});
+
+describe('identity rules', () => {
+  const reason = (fn: () => void) => (catchErr(fn).details as { reason: string }).reason;
+  const keyed = (name: string, keys: string[], more: Partial<User> = {}): User => ({
+    name,
+    kind: 'human',
+    keys,
+    ...more,
+  });
+  const base = snap({ users: ['bob'] });
+  const own = withUsers(base, {
+    spw: keyed('spw', [KEY_A]),
+    alice: keyed('alice', [KEY_B]),
+    bob: keyed('bob', []),
+  });
+
+  test('a removed handle is re-created only by an admin', () => {
+    const x: User = { name: 'X', kind: 'agent', operator: 'alice', keys: [KEY_C] };
+    const after = withUsers(own, { x });
+    const err = catchErr(() =>
+      checkUserChange(after, 'alice', 'x', undefined, x, { removedBefore: true }),
+    );
+    expect(err.details).toMatchObject({ reason: 'policy' });
+    expect(err.message).toBe('alice darf den User x nicht neu anlegen');
+    expect(() => checkUserChange(after, 'alice', 'x', undefined, x)).not.toThrow();
+    expect(() =>
+      checkUserChange(after, 'spw', 'x', undefined, x, { removedBefore: true }),
+    ).not.toThrow();
+  });
+
+  test('a key of another user is refused, even with another comment and for admins', () => {
+    const stolen = keyed('bob', [testKey('a', 'other-comment')]);
+    const after = withUsers(own, { bob: stolen });
+    for (const actor of ['bob', 'spw']) {
+      const err = catchErr(() =>
+        checkUserChange(after, actor, 'bob', own.users.get('bob')?.data, stolen),
+      );
+      expect(err.details).toMatchObject({ reason: 'policy' });
+      expect(err.message).toContain('gehört schon spw');
+    }
+  });
+
+  test('a revoked key of another user is refused as well', () => {
+    const alice = keyed('alice', [KEY_B], {
+      revoked_keys: [{ key: KEY_C, revoked: '2026-11-01T00:00:00Z' }],
+    });
+    const taken = keyed('bob', [KEY_C]);
+    const after = withUsers(own, { alice, bob: taken });
+    expect(
+      reason(() => checkUserChange(after, 'spw', 'bob', own.users.get('bob')?.data, taken)),
+    ).toBe('policy');
+  });
+
+  test('an unchanged key list does not trigger the uniqueness check', () => {
+    const bob = keyed('bob', [KEY_A]);
+    const dup = withUsers(own, { bob });
+    expect(() => checkUserChange(dup, 'bob', 'bob', bob, { ...bob, name: 'Bob' })).not.toThrow();
+  });
+
+  test('a revoked key stays revoked, even for admins', () => {
+    const revoked = [{ key: KEY_C, revoked: '2026-11-01T00:00:00Z' }];
+    const before = keyed('bob', [], { revoked_keys: revoked });
+    const state = withUsers(own, { bob: before });
+    const cases: User[] = [
+      keyed('bob', [], {}),
+      keyed('bob', [testKey('c', 'renamed')], { revoked_keys: revoked }),
+    ];
+    for (const after of cases) {
+      const err = catchErr(() =>
+        checkUserChange(withUsers(state, { bob: after }), 'spw', 'bob', before, after),
+      );
+      expect(err.details).toMatchObject({ reason: 'policy' });
+      expect(err.message).toBe(`Der Widerruf von ${sshFingerprint(KEY_C)} ist endgültig`);
+    }
+    const kept = keyed('bob', [], {
+      revoked_keys: [...revoked, { key: KEY_A, revoked: '2026-11-02T00:00:00Z' }],
+    });
+    expect(() =>
+      checkUserChange(withUsers(state, { bob: kept }), 'spw', 'bob', before, kept),
+    ).not.toThrow();
+  });
+
+  test('the previous operator can no longer hand over an agent', () => {
+    const custom = withUsers(own, { 'a-1': agent('a-1', 'bob') });
+    const err = catchErr(() =>
+      checkUserChange(custom, 'alice', 'a-1', agent('a-1', 'alice'), agent('a-1', 'bob')),
+    );
+    expect(err.details).toMatchObject({ reason: 'policy' });
+    expect(err.message).toBe('alice darf den Operator von a-1 nicht ändern');
+  });
+
+  test('an operator of agents does not become an agent, even by an admin', () => {
+    const asAgent: User = { name: 'Bob', kind: 'agent', operator: 'alice', keys: [] };
+    const state = withUsers(own, {
+      bob: asAgent,
+      'a-1': agent('a-1', 'bob'),
+      'a-2': agent('a-2', 'bob'),
+    });
+    const err = catchErr(() => checkUserChange(state, 'spw', 'bob', keyed('bob', []), asAgent));
+    expect(err.details).toEqual({ reason: 'references', ids: ['a-1', 'a-2'] });
+    expect(err.code).toBe('conflict');
+    expect(err.message).toBe('bob ist Operator von a-1, a-2; ein Operator bleibt Mensch');
   });
 });

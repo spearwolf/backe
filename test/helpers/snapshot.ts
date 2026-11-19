@@ -50,11 +50,20 @@ function sortedByKey<T>(entries: [string, StoredEntity<T>][]): Map<string, Store
   return new Map(entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
+/** Gültige ed25519-Public-Key-Zeile, deterministisch aus `seed`; verschiedene Seeds ergeben verschiedene Blobs. */
+export function testKey(seed: string, comment = seed): string {
+  const field = (bytes: Buffer) => Buffer.concat([Buffer.from([0, 0, 0, bytes.length]), bytes]);
+  const material = Buffer.alloc(32);
+  material.write(seed);
+  const blob = Buffer.concat([field(Buffer.from('ssh-ed25519')), field(material)]);
+  return `ssh-ed25519 ${blob.toString('base64')} ${comment}`;
+}
+
 function user(handle: string, extra: Partial<User>): [string, StoredEntity<User>] {
   const data = UserSchema.parse({
     name: handle,
     kind: 'human',
-    keys: [`ssh-ed25519 AAAA${handle.replace(/[^A-Za-z0-9]/g, '')} ${handle}`],
+    keys: [testKey(handle)],
     ...extra,
   });
   return [handle, stored(data, userFile(handle))];

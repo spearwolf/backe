@@ -37,6 +37,8 @@ export type ApplyContext = {
   randomBytes?: (n: number) => Uint8Array;
   /** Kommentare je Issue-ID, soweit `commentsNeeded` sie verlangt. */
   comments?: ReadonlyMap<string, readonly StoredEntity<Comment>[]>;
+  /** Handles, deren User früher schon einmal entfernt wurde; sie legt nur ein Admin neu an. */
+  removedHandles?: ReadonlySet<string>;
 };
 
 export type ApplyResult = {
