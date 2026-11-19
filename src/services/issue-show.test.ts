@@ -121,6 +121,8 @@ test('show flags an unblockable issue', async () => {
   });
   const d = await showIssue(ctx, blocked.refs.$U as string);
   expect(d.notices.map((n) => n.code)).toEqual(['unblockable']);
+  expect(d.blockedBy).toEqual([{ id: id.C1, state: 'done', title: 'Kind 1' }]);
+  expect((await showIssue(ctx, id.X)).blockedBy).toEqual([]);
 });
 
 test('show carries the latest transition reason of the current state', async () => {

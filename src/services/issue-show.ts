@@ -32,6 +32,8 @@ export type IssueDetail = {
   body: string;
   raw: string;
   parents: IssueRefView[];
+  /** Blocker aus `blocked_by` mit ihrem State, in der Reihenfolge der Datei. */
+  blockedBy: IssueRefView[];
   dependsOn: IssueRefView[];
   dependents: IssueRefView[];
   children: IssueRefView[];
@@ -102,6 +104,7 @@ export async function showIssue(
     body: stored.body,
     raw: await readFile(join(root, stored.path), 'utf8'),
     parents: ancestors(s, id).flatMap(view),
+    blockedBy: (issue.blocked_by ?? []).flatMap(view),
     dependsOn: (issue.depends_on ?? []).flatMap(view),
     dependents: sorted(graph.dependents.get(id)),
     children: sorted(childIds),
