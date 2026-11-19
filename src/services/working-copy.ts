@@ -35,7 +35,7 @@ import { BACKLOG_FORMAT_VERSION, BacklogConfigSchema, type UserConfig } from '..
 import { git, transportEnv } from '../git/exec.ts';
 import { isAncestor, readBlobs, resolveCommit, rootCommits } from '../git/history.ts';
 import { clearLocalState, readLocalState, writeLocalState } from '../git/local-state.ts';
-import { gitRemotes, gitToplevel } from '../git/query.ts';
+import { gitRemotes, gitToplevel, unpushedCount } from '../git/query.ts';
 import { headState } from '../git/repo.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
@@ -466,20 +466,51 @@ async function assertNoBoundInManaged(homes: Homes, name: string): Promise<void>
   }
 }
 
+/**
+ * `--purge` ohne `--force` löscht keine Arbeit, die nur hier liegt: Jeder verwaltete Clone unter
+ * `<BACKE_HOME>/backlogs/<name>` braucht eine Remote, und sein Sync-Branch darf keine Commits
+ * tragen, die in keinem Remote-Tracking-Ref stehen. Ein Verzeichnis, das kein Clone ist, zählt nicht.
+ */
+async function assertNothingOnlyHere(homes: Homes, name: string): Promise<void> {
+  const managedDir = join(homes.backeHome, 'backlogs', name);
+  const entries = await readdir(managedDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const clone = join(managedDir, entry.name);
+    if ((await gitToplevel(clone)) !== (await physicalPath(clone))) continue;
+    const refuse = (what: string) =>
+      new BackeError('conflict', `Der verwaltete Clone »${clone}« ${what}`, {
+        hint: `backe backlog remove ${name} --purge --force löscht trotzdem`,
+      });
+    if ((await gitRemotes(clone)).length === 0) throw refuse('hat keine Remote');
+    const branch = await readCloneConfig(clone, clone).then(
+      (c) => c.sync.branch,
+      () => 'main',
+    );
+    if ((await unpushedCount(clone, branch)) > 0) {
+      throw refuse('enthält Commits, die auf keiner Remote liegen');
+    }
+  }
+}
+
 /** Nur für Tests: läuft zwischen Deregistrieren und Löschen. */
 export type RemoveHooks = { beforePurge?: () => Promise<void> };
 
 /**
  * `backe backlog remove` (backe.md §2.14): deregistriert; `purge` löscht danach die verwalteten
- * Clones unter `<BACKE_HOME>/backlogs/<name>`, nie einen gebundenen Pfad. Wurde der Backlog
- * inzwischen neu registriert, bleibt alles stehen.
+ * Clones unter `<BACKE_HOME>/backlogs/<name>`, nie einen gebundenen Pfad. Ohne `force` verweigert
+ * `purge` einen Clone ohne Remote oder mit ungepushten Commits, bevor irgendetwas deregistriert
+ * ist. Wurde der Backlog inzwischen neu registriert, bleibt alles stehen.
  */
 export async function removeBacklog(
-  input: { homes: Homes; name: string; purge?: boolean },
+  input: { homes: Homes; name: string; purge?: boolean; force?: boolean },
   hooks: RemoveHooks = {},
 ): Promise<{ purged: string | undefined }> {
   const { homes, name } = input;
-  if (input.purge === true) await assertNoBoundInManaged(homes, name);
+  if (input.purge === true) {
+    await assertNoBoundInManaged(homes, name);
+    if (input.force !== true) await assertNothingOnlyHere(homes, name);
+  }
   const { managedDir } = await unregisterBacklog(homes, name);
   if (input.purge !== true) return { purged: undefined };
   await hooks.beforePurge?.();

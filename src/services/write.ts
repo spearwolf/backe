@@ -351,8 +351,9 @@ export async function executeWrite(
     const paths = [...new Set(changes.map((c) => c.path))].sort();
     const dirty = await dirtyPaths(wc, paths);
     if (dirty.length > 0) {
+      // Erst der Weg, der nichts verwirft; `restore` löscht die Hand-Edits.
       throw new BackeError('conflict', `Ungesicherte Änderungen an ${dirty.join(', ')}`, {
-        hint: `backe commit, oder git -C ${wc} restore --staged --worktree -- ${dirty.join(' ')}`,
+        hint: `git -C ${wc} stash, oder git -C ${wc} restore --staged --worktree -- ${dirty.join(' ')}`,
       });
     }
     const message = commitMessage(resolved, planned.recorded, handle);

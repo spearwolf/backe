@@ -1,6 +1,7 @@
 /** `backe backlog list | use | clone | add | remove | show` (backe.md §2.14). */
 import type { Command } from 'commander';
 import { listBacklogs, useBacklog } from '../../context/registry.ts';
+import { BackeError } from '../../core/errors.ts';
 import {
   addBacklog,
   cloneBacklog,
@@ -90,13 +91,18 @@ export function backlogCommands(program: Command, rt: Runtime): void {
   );
 
   subcommand(backlog, 'remove <name>', 'Backlog deregistrieren')
-    .option('--purge', 'verwaltete Clones löschen')
+    .option('--purge', 'verwaltete Clones löschen (nicht ohne Remote oder mit ungepushten Commits)')
+    .option('--force', 'mit --purge auch Clones ohne Remote oder mit ungepushten Commits löschen')
     .action(
-      action(rt, async (env, name: string, opts: { purge?: boolean }) => {
+      action(rt, async (env, name: string, opts: { purge?: boolean; force?: boolean }) => {
+        if (opts.force === true && opts.purge !== true) {
+          throw new BackeError('usage', '--force gehört zu --purge');
+        }
         const { purged } = await removeBacklog({
           homes: env.homes,
           name,
           purge: opts.purge === true,
+          force: opts.force === true,
         });
         emit(env, { removed: name, purged }, () =>
           lines([`entfernt: ${name}`, ...(purged === undefined ? [] : [`gelöscht: ${purged}`])]),

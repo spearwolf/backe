@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { git } from './exec.ts';
-import { gitRemotes, gitToplevel } from './query.ts';
+import { gitRemotes, gitToplevel, unpushedCount } from './query.ts';
 
 describe('gitToplevel', () => {
   test('toplevel of a nested dir, undefined outside a repo', async () => {
@@ -58,4 +58,35 @@ test('a git error other than "not a git repository" is thrown', async () => {
   await git(['init', '-q'], { cwd: dir });
   await writeFile(join(dir, '.git/config'), '[broken\n');
   expect((await catchErrAsync(() => gitToplevel(dir))).code).toBe('unexpected');
+});
+
+describe('unpushedCount', () => {
+  async function commit(dir: string, name: string): Promise<void> {
+    await writeFile(join(dir, name), name);
+    await git(['add', name], { cwd: dir });
+    await git(['-c', 'user.name=t', '-c', 'user.email=t@x', 'commit', '-q', '-m', name], {
+      cwd: dir,
+    });
+  }
+
+  test('counts commits of the branch that no remote-tracking ref contains', async () => {
+    const remote = join(await tempDir(), 'r.git');
+    await git(['init', '--bare', '-q', '-b', 'main', remote], { cwd: await tempDir() });
+    const dir = await tempDir();
+    await git(['init', '-q', '-b', 'main'], { cwd: dir });
+    await git(['remote', 'add', 'origin', remote], { cwd: dir });
+    await commit(dir, 'a');
+    await commit(dir, 'b');
+    expect(await unpushedCount(dir, 'main')).toBe(2);
+    await git(['push', '-q', 'origin', 'main'], { cwd: dir });
+    expect(await unpushedCount(dir, 'main')).toBe(0);
+    await commit(dir, 'c');
+    expect(await unpushedCount(dir, 'main')).toBe(1);
+  });
+
+  test('a branch that does not exist counts zero', async () => {
+    const dir = await tempDir();
+    await git(['init', '-q', '-b', 'main'], { cwd: dir });
+    expect(await unpushedCount(dir, 'main')).toBe(0);
+  });
 });

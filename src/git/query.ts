@@ -26,3 +26,18 @@ export async function gitRemotes(cwd: string): Promise<{ name: string; url: stri
     (a, b) => rank(a.name) - rank(b.name) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
   );
 }
+
+/**
+ * Commits von `refs/heads/<branch>`, die in keinem Remote-Tracking-Ref enthalten sind
+ * (`git rev-list --count <branch> --not --remotes`); ein Branch, den es nicht gibt, zählt 0.
+ */
+export async function unpushedCount(cwd: string, branch: string): Promise<number> {
+  const ref = `refs/heads/${branch}`;
+  const known = await git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], {
+    cwd,
+    okExitCodes: [1],
+  });
+  if (known.exitCode === 1) return 0;
+  const r = await git(['rev-list', '--count', ref, '--not', '--remotes', '--'], { cwd });
+  return Number(r.stdout.trim());
+}

@@ -491,7 +491,7 @@ test('a hand edit on an affected path is a conflict and stays untouched', async 
   expect(err.code).toBe('conflict');
   expect(err.message).toBe(`Ungesicherte Änderungen an ${file}`);
   expect(err.hint).toBe(
-    `backe commit, oder git -C ${b.root} restore --staged --worktree -- ${file}`,
+    `git -C ${b.root} stash, oder git -C ${b.root} restore --staged --worktree -- ${file}`,
   );
   expect(await readFile(join(b.root, file), 'utf8')).toBe(edited);
   expect(await revParse(b.root, 'HEAD')).toBe(before);

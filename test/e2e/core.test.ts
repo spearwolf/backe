@@ -262,7 +262,19 @@ test('backlog list, use, show', async () => {
   const json = await cli(['--json', 'backlog', 'list'], { env: s.env, cwd: s.cwd });
   await expect(normalize(json.stdout, s.names)).toMatchFileSnapshot('golden/backlog-list.json');
 
-  const removed = await cli(['backlog', 'remove', 'beta', '--purge'], { env: s.env, cwd: s.cwd });
+  // beta hat keine Remote: --purge allein löscht die einzige Kopie nicht.
+  const refused = await cli(['backlog', 'remove', 'beta', '--purge'], { env: s.env, cwd: s.cwd });
+  expect([refused.code, normalize(refused.stderr, s.names)]).toEqual([
+    4,
+    'Fehler: Der verwaltete Clone »<beta>« hat keine Remote\n' +
+      'Hinweis: backe backlog remove beta --purge --force löscht trotzdem\n',
+  ]);
+  const loneForce = await cli(['backlog', 'remove', 'beta', '--force'], { env: s.env, cwd: s.cwd });
+  expect([loneForce.code, loneForce.stderr]).toEqual([2, 'Fehler: --force gehört zu --purge\n']);
+  const removed = await cli(['backlog', 'remove', 'beta', '--purge', '--force'], {
+    env: s.env,
+    cwd: s.cwd,
+  });
   expect(normalize(removed.stdout, s.names)).toBe(
     'entfernt: beta\ngelöscht: <backe>/backlogs/beta\n',
   );

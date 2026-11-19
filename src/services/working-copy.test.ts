@@ -1,4 +1,4 @@
-import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { vi } from 'vitest';
 import { tempDir } from '../../test/helpers/backlog.ts';
@@ -529,6 +529,89 @@ test('remove --purge deletes the managed clones but never a bound path', async (
   expect(await exists(b.root)).toBe(false);
   expect(await exists(join(dir, BACKLOG_CONFIG))).toBe(true);
   expect((await readUserConfig(b.homes.backeHome)).backlogs?.acme).toBeUndefined();
+});
+
+describe('purge keeps the only copy of unpushed work', () => {
+  const managed = () => join(b.homes.backeHome, 'backlogs', 'acme');
+
+  test('a managed clone with commits on no remote is refused, registration intact', async () => {
+    await executeWrite(await b.context(), {
+      kind: 'manual',
+      subject: 'lokal',
+      changes: [{ path: 'notes.txt', content: 'nur hier\n' }],
+    });
+    const err = await catchErrAsync(() =>
+      removeBacklog({ homes: b.homes, name: 'acme', purge: true }),
+    );
+    expect(err).toMatchObject({
+      code: 'conflict',
+      message: `Der verwaltete Clone »${b.root}« enthält Commits, die auf keiner Remote liegen`,
+      hint: 'backe backlog remove acme --purge --force löscht trotzdem',
+    });
+    expect((await readUserConfig(b.homes.backeHome)).backlogs?.acme).toBeDefined();
+    expect(await exists(join(b.root, BACKLOG_CONFIG))).toBe(true);
+  });
+
+  test('--force purges the unpushed clone anyway', async () => {
+    await executeWrite(await b.context(), {
+      kind: 'manual',
+      subject: 'lokal',
+      changes: [{ path: 'notes.txt', content: 'nur hier\n' }],
+    });
+    const r = await removeBacklog({ homes: b.homes, name: 'acme', purge: true, force: true });
+    expect(r.purged).toBe(managed());
+    expect(await exists(b.root)).toBe(false);
+  });
+
+  test('a managed clone whose commits are all pushed is purged', async () => {
+    await executeWrite(await b.context(), {
+      kind: 'manual',
+      subject: 'gepusht',
+      changes: [{ path: 'notes.txt', content: 'auch drüben\n' }],
+    });
+    await push();
+    expect((await removeBacklog({ homes: b.homes, name: 'acme', purge: true })).purged).toBe(
+      managed(),
+    );
+  });
+
+  test('a managed clone without a remote is refused unless forced', async () => {
+    const local = await testBacklog({ name: 'solo' });
+    const err = await catchErrAsync(() =>
+      removeBacklog({ homes: local.homes, name: 'solo', purge: true }),
+    );
+    expect(err).toMatchObject({
+      code: 'conflict',
+      message: `Der verwaltete Clone »${local.root}« hat keine Remote`,
+      hint: 'backe backlog remove solo --purge --force löscht trotzdem',
+    });
+    expect((await readUserConfig(local.homes.backeHome)).backlogs?.solo).toBeDefined();
+    const r = await removeBacklog({ homes: local.homes, name: 'solo', purge: true, force: true });
+    expect(r.purged).toBe(join(local.homes.backeHome, 'backlogs', 'solo'));
+  });
+
+  test('a stray directory or file that is no clone does not block the purge', async () => {
+    await mkdir(join(managed(), 'leftover'), { recursive: true });
+    await writeFile(join(managed(), 'note.txt'), 'x');
+    expect((await removeBacklog({ homes: b.homes, name: 'acme', purge: true })).purged).toBe(
+      managed(),
+    );
+  });
+
+  test('a repo without backlog config is checked on main', async () => {
+    const stray = join(managed(), 'stray');
+    await git(['clone', '-q', b.remote as string, stray], { cwd: managed() });
+    await rm(join(stray, BACKLOG_CONFIG));
+    await git(['-c', 'user.name=t', '-c', 'user.email=t@x', 'commit', '-qam', 'weg'], {
+      cwd: stray,
+    });
+    const err = await catchErrAsync(() =>
+      removeBacklog({ homes: b.homes, name: 'acme', purge: true }),
+    );
+    expect(err.message).toBe(
+      `Der verwaltete Clone »${await physicalPath(stray)}« enthält Commits, die auf keiner Remote liegen`,
+    );
+  });
 });
 
 test('remove without --purge deletes nothing', async () => {
