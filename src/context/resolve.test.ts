@@ -21,6 +21,7 @@ async function setup(extra: Record<string, string> = {}) {
   const t = await contextTree({ 'home/.backe/config.jsonc': CFG, 'work/.keep': '', ...extra });
   return {
     ...t,
+    home: t.at('home'),
     run: (flags: ContextFlags = {}, env: Env = {}, cwd = t.at('work')) =>
       resolveContext({ cwd, env: { ...t.env, ...env }, flags }),
   };
@@ -175,25 +176,25 @@ test('no user anywhere resolves to none and cannot write', async () => {
   const err = await catchErrAsync(async () => requireWriter(ctx));
   expect([err.code, err.hint]).toEqual([
     'usage',
-    `--as <handle>, BACKE_USER oder "user" in ${join(s.env.HOME!, '.backe/config.jsonc')}`,
+    `--as <handle>, BACKE_USER oder "user" in ${join(s.home, '.backe/config.jsonc')}`,
   ]);
 });
 
 test('identity maps to an expanded key, a handle without identity may only read', async () => {
   const s = await setup();
   const ctx = await s.run();
-  expect(ctx.user.key).toBe(join(s.env.HOME!, '.ssh/id.pub'));
+  expect(ctx.user.key).toBe(join(s.home, '.ssh/id.pub'));
   expect(requireWriter(ctx)).toEqual({
     handle: 'spw',
     key: ctx.user.key,
-    workingCopy: join(s.env.HOME!, '.backe/backlogs/acme/spw'),
+    workingCopy: join(s.home, '.backe/backlogs/acme/spw'),
   });
   const other = await s.run({ as: 'claude-1' });
   expect(other.user.key).toBeUndefined();
   const err = await catchErrAsync(async () => requireWriter(other));
   expect([err.code, err.hint]).toEqual([
     'usage',
-    `identities.acme.claude-1 in ${join(s.env.HOME!, '.backe/config.jsonc')} eintragen oder backe user create-agent`,
+    `identities.acme.claude-1 in ${join(s.home, '.backe/config.jsonc')} eintragen oder backe user create-agent`,
   ]);
 });
 
@@ -204,8 +205,8 @@ test('a bound path of the user wins over the managed clone', async () => {
   });
   const ctx = await s.run();
   expect([ctx.backlog.workingCopy, ctx.backlog.root]).toEqual([
-    join(s.env.HOME!, 'code/acme'),
-    join(s.env.HOME!, 'code/acme'),
+    join(s.home, 'code/acme'),
+    join(s.home, 'code/acme'),
   ]);
 });
 
@@ -215,8 +216,8 @@ test('read root falls back to another working copy of the same backlog', async (
   });
   const ctx = await s.run();
   expect([ctx.backlog.workingCopy, ctx.backlog.root]).toEqual([
-    join(s.env.HOME!, '.backe/backlogs/acme/spw'),
-    join(s.env.HOME!, '.backe/backlogs/acme/claude-1'),
+    join(s.home, '.backe/backlogs/acme/spw'),
+    join(s.home, '.backe/backlogs/acme/claude-1'),
   ]);
 });
 
@@ -226,7 +227,7 @@ test('read root falls back to another bound path before managed clones', async (
     'home/code/zed/.backe/backlog.jsonc': BACKLOG('acme'),
     'home/.backe/backlogs/acme/aaa/.backe/backlog.jsonc': BACKLOG('acme'),
   });
-  expect((await s.run()).backlog.root).toBe(join(s.env.HOME!, 'code/zed'));
+  expect((await s.run()).backlog.root).toBe(join(s.home, 'code/zed'));
 });
 
 test('read root is undefined without any working copy', async () => {

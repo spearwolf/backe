@@ -1,4 +1,4 @@
-import { cp, mkdtemp, rm } from 'node:fs/promises';
+import { cp, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,9 +15,12 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-/** Leeres Temp-Verzeichnis, das nach dem Test entfernt wird. */
+/**
+ * Leeres Temp-Verzeichnis (realpath), das nach dem Test entfernt wird. Physisch, weil backe
+ * Arbeitskopien über das Git-Toplevel auflöst; auf macOS ist `tmpdir()` ein Symlink-Pfad.
+ */
 export async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'backe-test-'));
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'backe-test-')));
   tempDirs.push(dir);
   return dir;
 }
