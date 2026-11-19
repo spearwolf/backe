@@ -293,7 +293,7 @@ function createEntity(kind: NamedKind, key: string, after: Side<object>): Operat
           handle: key,
           name: u.name,
           kind: u.kind,
-          keys: u.keys ?? [],
+          keys: u.keys ?? [], // nie leer: createEntity wird für User ohne Keys nicht erreicht
           operator: u.operator,
           ...body,
         }),

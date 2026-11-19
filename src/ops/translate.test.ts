@@ -752,6 +752,67 @@ describe('translateEdits', () => {
       expect(err.message).toMatch(/Widerrufen werden nur eigene Keys: SHA256:/);
     });
 
+    test('a new user without keys needs manual handling, with or without revoked keys', () => {
+      const old =
+        'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG9sZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA bob';
+      for (const text of [
+        '---\nname: Bob\nkind: human\n---\n',
+        `---\nname: Bob\nkind: human\nrevoked_keys:\n  - key: ${old}\n    revoked: 2026-11-01T00:00:00Z\n---\n`,
+      ]) {
+        const r = translateEdits(s, [added(userFile('bob'), text)], asSpw);
+        expect(r.ops).toEqual([]);
+        expect(r.manual).toEqual([userFile('bob')]);
+      }
+    });
+
+    test('a hand edit that drops the keys of a user translates to entity.edit and applies', () => {
+      // Das Entfernen ohne Eintrag in revoked_keys lehnt keine Regel ab (die Quarantäne-Umkehr
+      // entfernt Keys ebenso); das Ergebnis ist ein User ohne aktiven Key, der wieder lädt.
+      const withKeys = snap({ users: ['bob'] });
+      const bobKey = (withKeys.users.get('bob')?.data.keys ?? [])[0] as string;
+      const text = textAt(withKeys, userFile('bob'));
+      const keyless = text.replace(/^keys:.*\n/m, '');
+      expect(keyless).not.toBe(text);
+      const r = translateEdits(withKeys, [edit(userFile('bob'), () => keyless, withKeys)], asSpw);
+      expect(r.ops).toEqual([
+        {
+          op: 'entity.edit',
+          kind: 'user',
+          key: 'bob',
+          set: { keys: { from: [bobKey], to: null } },
+        },
+      ]);
+      const out = applyBatch(withKeys, r.ops, ctx());
+      expect(out.snapshot.users.get('bob')?.data.keys ?? []).toEqual([]);
+      const content = String(out.changes.find((c) => c.path === userFile('bob'))?.content);
+      expect(content).not.toContain('keys:');
+      expect(() =>
+        validateEntity('user', parseEntityFile(content, userFile('bob')).data, userFile('bob')),
+      ).not.toThrow();
+    });
+
+    test('a hand edit that moves the last key to revoked_keys leaves a keyless user that loads', () => {
+      const withKeys = snap({ users: ['bob'] });
+      const bobKey = (withKeys.users.get('bob')?.data.keys ?? [])[0] as string;
+      const text = textAt(withKeys, userFile('bob'));
+      const revoked = text
+        .replace(/^keys:.*\n/m, '')
+        .replace(
+          /---\n$/,
+          `revoked_keys:\n  - key: ${bobKey}\n    revoked: 2026-11-01T00:00:00Z\n---\n`,
+        );
+      const r = translateEdits(withKeys, [edit(userFile('bob'), () => revoked, withKeys)], asSpw);
+      const out = applyBatch(withKeys, r.ops, ctx());
+      const content = String(out.changes.find((c) => c.path === userFile('bob'))?.content);
+      const { data } = validateEntity(
+        'user',
+        parseEntityFile(content, userFile('bob')).data,
+        userFile('bob'),
+      );
+      expect((data as { keys?: string[] }).keys ?? []).toEqual([]);
+      expect(data).toMatchObject({ revoked_keys: [{ key: bobKey }] });
+    });
+
     test('changed and deleted entities', () => {
       const withBob = snap({
         users: ['bob', 'carl'],
