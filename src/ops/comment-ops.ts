@@ -5,7 +5,7 @@
 import { BackeError } from '../core/errors.ts';
 import type { Comment, Issue } from '../core/schemas.ts';
 import { canonicalBody, serializeEntityFile } from '../store/frontmatter.ts';
-import { attachmentsDir, commentsDir, LFS_RULE } from '../store/layout.ts';
+import { attachmentsDir, commentsDir, hasLfsRule, LFS_RULE } from '../store/layout.ts';
 import type { StoredEntity } from '../store/snapshot.ts';
 import type { Draft } from './draft.ts';
 import { violation } from './invariants.ts';
@@ -63,12 +63,12 @@ export function commentDelete(d: Draft, op: OpOf<'comment.delete'>): OpOf<'comme
 
 /**
  * Mit `attachments.lfs` gehört `LFS_RULE` in `.gitattributes` (backe.md §2.8): Fehlt eine Zeile,
- * die genau so lautet (ein CR am Zeilenende zählt nicht), kommt sie ans Ende, nach einem
- * fehlenden Schluss-Newline.
+ * die (ohne Leerraum am Rand) genau so lautet, kommt sie ans Ende, nach einem fehlenden
+ * Schluss-Newline. Die schon roh committeten Anhänge legt der Schreibpfad im selben Commit neu ab.
  */
 function ensureLfsRule(d: Draft): void {
   const current = d.snapshot.attributes ?? '';
-  if (current.split('\n').some((line) => line.replace(/\r$/, '') === LFS_RULE)) return;
+  if (hasLfsRule(current)) return;
   const head = current === '' || current.endsWith('\n') ? current : `${current}\n`;
   d.putAttributes(`${head}${LFS_RULE}\n`);
 }
@@ -96,7 +96,10 @@ export function attachAdd(d: Draft, op: OpOf<'attach.add'>): OpOf<'attach.add'> 
         'too_large',
         `Anhang »${op.file}« hat ${content.byteLength} Bytes, erlaubt sind ${max}`,
         {
-          hint: 'Grenze attachments.max_bytes anheben oder attachments.lfs aktivieren (backe.md §2.8).',
+          // Die Grenze gilt auch mit LFS; ohne LFS ist LFS der Weg für große Dateien.
+          hint: d.config.attachments.lfs
+            ? 'Grenze attachments.max_bytes anheben (backe.md §2.8).'
+            : 'Grenze attachments.max_bytes anheben; für große Dateien attachments.lfs aktivieren (backe.md §2.8).',
         },
       );
     }

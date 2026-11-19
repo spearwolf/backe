@@ -2,7 +2,7 @@ import { mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { git } from './exec.ts';
-import { changedPaths } from './status.ts';
+import { changedEntries, changedPaths } from './status.ts';
 
 const IDENT = ['-c', 'user.name=t', '-c', 'user.email=t@example.test'];
 
@@ -52,4 +52,17 @@ test('a path staged and changed back counts as unchanged once index and tree mat
   await put(wc, 'a.md', 'a.md\n');
   // Index weicht von HEAD ab, der Arbeitsbaum nicht: der Pfad gehört trotzdem dazu.
   expect(await changedPaths(wc)).toEqual(['a.md']);
+});
+
+test('changedEntries marks untracked paths', async () => {
+  const wc = await repo();
+  await put(wc, 'a.md', 'geändert\n');
+  await put(wc, 'neu.md', 'neu\n');
+  await put(wc, 'gestaged.md', 'neu\n');
+  await git(['add', 'gestaged.md'], { cwd: wc });
+  expect(await changedEntries(wc)).toEqual([
+    { path: 'a.md', untracked: false },
+    { path: 'gestaged.md', untracked: false },
+    { path: 'neu.md', untracked: true },
+  ]);
 });

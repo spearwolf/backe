@@ -258,6 +258,12 @@ describe('attach.add', () => {
       expect([attributesOf(r.changes), r.snapshot.attributes]).toEqual([[], before]);
     });
 
+    test('a rule line with blanks around it counts as present', () => {
+      const before = `* text=auto\n  ${LFS_RULE} \t\n`;
+      const r = applyOperation(lfs(before), file('a'), ctx());
+      expect([attributesOf(r.changes), r.snapshot.attributes]).toEqual([[], before]);
+    });
+
     test('a url attachment leaves .gitattributes alone', () => {
       const r = applyOperation(
         lfs(),
@@ -287,7 +293,25 @@ describe('attach.add', () => {
       ),
     );
     expect([err.exitCode, reasonOf(err)]).toEqual([2, 'too_large']);
-    expect(err.hint).toContain('attachments.lfs');
+    expect(err.hint).toBe(
+      'Grenze attachments.max_bytes anheben; für große Dateien attachments.lfs aktivieren (backe.md §2.8).',
+    );
+  });
+
+  test('with lfs the limit still holds and the hint only names max_bytes', () => {
+    const s = snap({
+      config: { attachments: { max_bytes: 2, lfs: true } },
+      issues: [{ id: I(1) }],
+    });
+    const err = catchErr(() =>
+      applyOperation(
+        s,
+        { op: 'attach.add', id: I(1), name: 'log', file: 'a.txt', content: bytes },
+        ctx(),
+      ),
+    );
+    expect([err.exitCode, reasonOf(err)]).toEqual([2, 'too_large']);
+    expect(err.hint).toBe('Grenze attachments.max_bytes anheben (backe.md §2.8).');
   });
 
   test('a null max_bytes allows any size', () => {

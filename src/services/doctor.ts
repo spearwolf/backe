@@ -14,7 +14,7 @@ import { git } from '../git/exec.ts';
 import { readLocalState, stateDir } from '../git/local-state.ts';
 import { headState } from '../git/repo.ts';
 import { readPublicKey } from '../git/ssh.ts';
-import { LFS_RULE, projectFile } from '../store/layout.ts';
+import { hasLfsRule, projectFile } from '../store/layout.ts';
 import { type BacklogSnapshot, loadSnapshot } from '../store/snapshot.ts';
 import { activeFingerprints } from './verify-state.ts';
 
@@ -270,8 +270,7 @@ async function checkIdentity(
 
 async function checkLfsRule(snapshot: BacklogSnapshot, root: string): Promise<DoctorCheck> {
   if (!snapshot.config.attachments.lfs) return check('lfs-rule', 'ok', 'attachments.lfs ist aus');
-  const rule = snapshot.attributes?.split(/\r?\n/).some((l) => l.trim() === LFS_RULE) ?? false;
-  if (!rule) {
+  if (!hasLfsRule(snapshot.attributes)) {
     return check(
       'lfs-rule',
       'warn',

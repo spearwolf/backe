@@ -12,6 +12,7 @@ import { writeLocalState } from '../git/local-state.ts';
 import { formatCommitMessage, TRAILER_ACTOR, TRAILER_OP } from '../git/message.ts';
 import { readPublicKey } from '../git/ssh.ts';
 import { serializeEntityFile } from '../store/frontmatter.ts';
+import { JUNK_PATTERNS } from '../store/layout.ts';
 import { authorOf } from './env.ts';
 
 export type InitInput = {
@@ -59,8 +60,8 @@ export function firstStderrLine(error: unknown): string {
 }
 
 /**
- * Legt einen Backlog mit signiertem Vertrauensanker an (backe.md §5): Config und Admin-User in
- * einem Commit, lokaler Anker- und Verified-Stand, Registrierung samt Identität.
+ * Legt einen Backlog mit signiertem Vertrauensanker an (backe.md §5): Config, Admin-User und eine
+ * `.gitignore` für Editor- und Systemdateien in einem Commit, lokaler Anker- und Verified-Stand, Registrierung samt Identität.
  */
 export async function initBacklog(input: InitInput): Promise<{ root: string; anchor: string }> {
   const { homes, env, name, prefix, remote, handle, key } = input;
@@ -121,9 +122,10 @@ export async function initBacklog(input: InitInput): Promise<{ root: string; anc
     await mkdir(join(root, 'users'), { recursive: true });
     await writeFile(join(root, '.backe/backlog.jsonc'), config);
     await writeFile(join(root, userPath), userFile);
+    await writeFile(join(root, '.gitignore'), `${JUNK_PATTERNS.join('\n')}\n`);
 
     const commit = await commitPaths(root, {
-      paths: ['.backe/backlog.jsonc', userPath],
+      paths: ['.backe/backlog.jsonc', userPath, '.gitignore'],
       message: formatCommitMessage({
         subject: `init ${name}`,
         trailers: [

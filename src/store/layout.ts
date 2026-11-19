@@ -10,6 +10,47 @@ export const QUARANTINE = '.backe/quarantine.jsonc';
 export const GITATTRIBUTES = '.gitattributes';
 /** Zeile in `.gitattributes`, die Datei-Anhänge an Git LFS gibt (backe.md §2.8). */
 export const LFS_RULE = 'issues/*/*/attachments/** filter=lfs diff=lfs merge=lfs -text';
+
+/** Ob `attributes` (Inhalt von `.gitattributes`) `LFS_RULE` trägt; Leerraum am Zeilenrand zählt nicht. */
+export function hasLfsRule(attributes: string | undefined): boolean {
+  return attributes?.split('\n').some((line) => line.trim() === LFS_RULE) ?? false;
+}
+
+/** Pfad, den `LFS_RULE` an Git LFS gibt: eine Datei im `attachments`-Verzeichnis eines Issues. */
+export function isLfsPath(path: string): boolean {
+  const [top, shard, id, dir, ...rest] = path.split('/');
+  return (
+    top === 'issues' &&
+    shard !== '' &&
+    id !== '' &&
+    dir === 'attachments' &&
+    rest.length > 0 &&
+    !rest.includes('')
+  );
+}
+/**
+ * Editor- und Systemdateien als `.gitignore`-Muster auf den Dateinamen: `backe init` schreibt sie
+ * in die `.gitignore` des Backlogs, `backe commit` lehnt neue, ungetrackte Dateien mit solchen
+ * Namen ab. `#` steht maskiert, weil es am Zeilenanfang sonst einen Kommentar beginnt.
+ */
+export const JUNK_PATTERNS = ['.*.swp', '.*.swo', '*~', '\\#*#', '.DS_Store'] as const;
+
+const JUNK_RES = JUNK_PATTERNS.map(
+  (pattern) =>
+    new RegExp(
+      `^${pattern
+        .replace(/^\\/, '')
+        .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+        .replaceAll('*', '.*')}$`,
+    ),
+);
+
+/** Ob der Dateiname von `path` auf eines der `JUNK_PATTERNS` passt. */
+export function isJunkFile(path: string): boolean {
+  const name = path.slice(path.lastIndexOf('/') + 1);
+  return JUNK_RES.some((re) => re.test(name));
+}
+
 /** Lokaler, nie eingecheckter Zustand (allowed_signers, Caches, Locks). */
 export const localStateDir = '.git/backe';
 

@@ -39,7 +39,7 @@ import {
   summarizeBatch,
   summarizeOp,
 } from '../ops/operation.ts';
-import { attachmentsDir, commentsDir, issueFile } from '../store/layout.ts';
+import { attachmentsDir, commentsDir, issueFile, LFS_RULE } from '../store/layout.ts';
 import { executeWrite, type WriteInput } from './write.ts';
 
 const NOW = new Date('2026-11-19T10:00:00Z');
@@ -1192,6 +1192,86 @@ describe('edits', () => {
     expect(await read(issueFile(z))).toContain(`[${y}, ${x}]`);
   });
 
+  test('edits: a hand edit that verify would reject is refused and stays', async () => {
+    const bob = await testKey('bob-edits');
+    await executeWrite(ctx, {
+      kind: 'op',
+      op: { op: 'user.add', handle: 'bob', name: 'Bob', kind: 'human', keys: [bob.line] },
+    });
+    await writeLocalState(b.root, 'identity', 'bob');
+    const asBob: ResolvedContext = {
+      ...ctx,
+      backlog: { ...ctx.backlog, boundTo: 'bob' },
+      user: { ...ctx.user, value: 'bob', key: bob.priv },
+    };
+    const before = await revParse(b.root, 'HEAD');
+    const config = await read('.backe/backlog.jsonc');
+    const changed = config.replace(
+      '"admins": [\n    "spw"\n  ]',
+      '"admins": [\n    "spw",\n    "bob"\n  ]',
+    );
+    expect(changed).not.toBe(config);
+    await write('.backe/backlog.jsonc', changed);
+    await write('users/xena.md', '---\nname: Xena\nkind: human\n---\n');
+
+    const err = await catchErrAsync(() => executeWrite(asBob, EDITS));
+    expect(err.code).toBe('validation');
+    expect(err.message).toBe(
+      'verify würde den Commit ablehnen: nur Admins ändern .backe/backlog.jsonc; bob darf den User xena nicht anlegen',
+    );
+    expect(err.details).toEqual({
+      reasons: ['nur Admins ändern .backe/backlog.jsonc', 'bob darf den User xena nicht anlegen'],
+    });
+    expect(await revParse(b.root, 'HEAD')).toBe(before);
+    expect(await read('.backe/backlog.jsonc')).toBe(changed);
+    expect(await statusShort(b.root)).toEqual([' M .backe/backlog.jsonc', '?? users/xena.md']);
+  });
+
+  test('edits: a hand-edited config that does not parse never lands', async () => {
+    const config = await read('.backe/backlog.jsonc');
+    await write('.backe/backlog.jsonc', config.replace(/\n}\n$/, ',\n  "attachments": 5\n}\n'));
+    const err = await catchErrAsync(() => executeWrite(ctx, EDITS));
+    expect(err.code).toBe('validation');
+    expect(err.message).toMatch(/^\.backe\/backlog\.jsonc: attachments: /);
+    expect(await revParse(b.root, 'HEAD')).toBe(head);
+  });
+
+  test('edits: new editor and system junk files are refused, even without .gitignore', async () => {
+    const [a] = (await issues('A')) as [string];
+    await rawCommit(b.root, { files: { '.gitignore': null }, key: b.key, actor: 'spw' });
+    const base = await revParse(b.root, 'HEAD');
+    await edit(issueFile(a), (s) => s.replace('title: A', 'title: A2'));
+    const dir = issueFile(a).replace(/\/issue\.md$/, '');
+    const junk = [`${dir}/.issue.md.swp`, `${dir}/issue.md~`, `${dir}/#issue.md#`, '.DS_Store'];
+    for (const path of junk) await write(path, 'x');
+    await write('notes.swp', 'kein Junk: der Name beginnt nicht mit einem Punkt');
+
+    const err = await catchErrAsync(() => executeWrite(ctx, EDITS));
+    expect(err.code).toBe('validation');
+    expect(err.message).toBe(`Editor- oder Systemdateien: ${[...junk].sort().join(', ')}`);
+    expect(err.hint).toBe('löschen oder in .gitignore aufnehmen');
+    expect(await revParse(b.root, 'HEAD')).toBe(base);
+    expect(await read(issueFile(a))).toContain('title: A2');
+
+    for (const path of junk) await rm(join(b.root, path));
+    const r = await executeWrite(ctx, EDITS);
+    expect(r.chain).toMatchObject([
+      { kind: 'manual', paths: ['notes.swp'] },
+      { kind: 'op', recorded: [{ op: 'issue.edit', id: a }] },
+    ]);
+  });
+
+  test('edits: a symlink among the changed paths is refused before writing', async () => {
+    const outside = join(await tempDir(), 'geheim.txt');
+    await writeFile(outside, 'außerhalb\n');
+    await symlink(outside, join(b.root, 'notes.md'));
+    const err = await catchErrAsync(() => executeWrite(ctx, EDITS));
+    expect(err.code).toBe('validation');
+    expect(err.message).toBe('notes.md ist keine reguläre Datei');
+    expect(await revParse(b.root, 'HEAD')).toBe(head);
+    expect(await statusShort(b.root)).toEqual(['?? notes.md']);
+  });
+
   test('edits: nothing changed writes nothing', async () => {
     const r = await executeWrite(ctx, EDITS);
     expect(r).toMatchObject({ commit: undefined, chain: [], rewritten: [], warnings: [] });
@@ -1266,6 +1346,48 @@ describe('lfs', () => {
     await expect(readFile(join(b.root, path))).rejects.toThrow();
     expect(await statusShort(b.root)).toEqual([]);
   });
+
+  test.runIf(hasLfs)('lfs: switching lfs on later renormalizes earlier attachments', async () => {
+    const id = await createdId();
+    const attach = (file: string): WriteInput => ({
+      kind: 'op',
+      op: { op: 'attach.add', id, name: file, file, content: Buffer.from(`${file}\n`) },
+    });
+    const old = `${attachmentsDir(id)}/old.txt`;
+    await executeWrite(ctx, attach('old.txt'));
+    await enableLfs();
+    const r = await executeWrite(ctx, attach('new.txt'));
+    expect(r.paths).toContain(old);
+    expect(await statusShort(b.root)).toEqual([]);
+    const pointer = await git(['cat-file', '-p', `HEAD:${old}`], { cwd: b.root });
+    expect(pointer.stdout).toMatch(/^version https:\/\/git-lfs\.github\.com\/spec\/v1\n/);
+    expect(await readFile(join(b.root, old), 'utf8')).toBe('old.txt\n');
+
+    await executeWrite(ctx, { kind: 'op', op: { op: 'attach.rm', id, name: 'old.txt' } });
+    expect(await statusShort(b.root)).toEqual([]);
+    expect((await git(['ls-tree', '--name-only', 'HEAD', '--', old], { cwd: b.root })).stdout).toBe(
+      '',
+    );
+  });
+
+  test.runIf(hasLfs)(
+    'lfs: a hand-added lfs rule renormalizes attachments in its commit',
+    async () => {
+      const id = await createdId();
+      const old = `${attachmentsDir(id)}/old.txt`;
+      await executeWrite(ctx, {
+        kind: 'op',
+        op: { op: 'attach.add', id, name: 'old', file: 'old.txt', content: Buffer.from('alt\n') },
+      });
+      await enableLfs();
+      await writeFile(join(b.root, '.gitattributes'), `${LFS_RULE}\n`);
+      const r = await executeWrite(ctx, { kind: 'edits' });
+      expect(r.chain).toMatchObject([{ kind: 'manual', paths: ['.gitattributes', old] }]);
+      expect(await statusShort(b.root)).toEqual([]);
+      const pointer = await git(['cat-file', '-p', `HEAD:${old}`], { cwd: b.root });
+      expect(pointer.stdout).toMatch(/^version https:\/\/git-lfs\.github\.com\/spec\/v1\n/);
+    },
+  );
 
   test.runIf(hasLfs)('lfs: a foreign hook stays and the filter is set up anyway', async () => {
     const hook = join(b.root, '.git/hooks/pre-push');

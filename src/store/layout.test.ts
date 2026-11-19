@@ -9,8 +9,12 @@ import {
   classifyPath,
   commentFileName,
   commentsDir,
+  hasLfsRule,
+  isJunkFile,
+  isLfsPath,
   issueDir,
   issueFile,
+  LFS_RULE,
   localStateDir,
   parseCommentFileName,
   projectFile,
@@ -146,4 +150,24 @@ describe('classifyPath', () => {
   ])('%s is other', (_, path) => {
     expect(classifyPath(path)).toEqual({ kind: 'other' });
   });
+});
+
+test('isJunkFile matches editor and system files by name only', () => {
+  for (const p of ['a/.issue.md.swp', '.x.swo', 'issue.md~', 'a/#issue.md#', 'x/.DS_Store']) {
+    expect([p, isJunkFile(p)]).toEqual([p, true]);
+  }
+  for (const p of ['notes.swp', 'a.swp/issue.md', '#a', 'a#', 'DS_Store', '.DS_Store.md']) {
+    expect([p, isJunkFile(p)]).toEqual([p, false]);
+  }
+});
+
+test('isLfsPath and hasLfsRule follow LFS_RULE', () => {
+  expect(isLfsPath('issues/01/bk-01234/attachments/a.txt')).toBe(true);
+  expect(isLfsPath('issues/01/bk-01234/attachments/sub/a.txt')).toBe(true);
+  expect(isLfsPath('issues/01/bk-01234/attachments')).toBe(false);
+  expect(isLfsPath('issues/01/bk-01234/issue.md')).toBe(false);
+  expect(isLfsPath('issues//bk-01234/attachments/a')).toBe(false);
+  expect(hasLfsRule(undefined)).toBe(false);
+  expect(hasLfsRule(`* text=auto\r\n ${LFS_RULE}\r\n`)).toBe(true);
+  expect(hasLfsRule(`#${LFS_RULE}\n`)).toBe(false);
 });

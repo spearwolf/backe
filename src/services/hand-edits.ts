@@ -3,16 +3,17 @@
  * Arbeitskopie gegen `HEAD`, übersetzt sie und trennt den `manual`-Anteil (kanonisch
  * serialisiert) von den Operationen. Geschrieben wird hier nichts; das tut `executeWrite`.
  */
-import { readFile } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { BackeError } from '../core/errors.ts';
 import { type Comment, type EntityKind, validateEntity } from '../core/schemas.ts';
 import { readBlobs } from '../git/history.ts';
-import { changedPaths } from '../git/status.ts';
+import { changedEntries } from '../git/status.ts';
 import type { Operation } from '../ops/operation.ts';
 import { type TranslateResult, translateEdits } from '../ops/translate.ts';
 import type { FileChange } from '../store/files.ts';
 import { entriesInFileOrder, parseEntityFile, serializeEntityFile } from '../store/frontmatter.ts';
-import { classifyPath } from '../store/layout.ts';
+import { classifyPath, isJunkFile } from '../store/layout.ts';
 import {
   type BacklogSnapshot,
   listComments,
@@ -22,7 +23,7 @@ import {
 } from '../store/snapshot.ts';
 
 export type HandEdits = {
-  /** Alle geänderten Pfade (`changedPaths`), sortiert. */
+  /** Alle geänderten Pfade (`changedEntries`), sortiert. */
   edited: string[];
   /** Inhalt in `HEAD` und in der Arbeitskopie je bearbeitetem Pfad; `null` = fehlt. */
   before: ReadonlyMap<string, Buffer | null>;
@@ -62,9 +63,20 @@ function sameBytes(a: string | Uint8Array | null, b: string | Uint8Array | null)
   return Buffer.from(a).equals(Buffer.from(b));
 }
 
+/**
+ * Inhalt eines bearbeiteten Pfads; `null`, wenn er fehlt. Ein Symlink oder sonst keine reguläre
+ * Datei ist `validation`, bevor etwas gelesen wird: Sonst ginge der Inhalt des Linkziels, auch
+ * außerhalb des Repos, als Hand-Edit durch.
+ */
 async function readWorktree(wc: string, path: string): Promise<Buffer | null> {
+  const abs = join(wc, path);
   try {
-    return await readFile(join(wc, path));
+    if (!(await lstat(abs)).isFile()) {
+      throw new BackeError('validation', `${path} ist keine reguläre Datei`, {
+        hint: 'Symlinks und Verzeichnisse fremder Repos gehören nicht ins Backlog; entfernen oder durch eine Datei ersetzen.',
+      });
+    }
+    return await readFile(abs);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT' || code === 'ENOTDIR') return null;
@@ -103,8 +115,17 @@ export async function readHandEdits(
   head: string,
   actor: string,
 ): Promise<HandEdits | undefined> {
-  const edited = await changedPaths(wc);
-  if (edited.length === 0) return undefined;
+  const entries = await changedEntries(wc);
+  if (entries.length === 0) return undefined;
+  // Swap-, Backup- und Systemdateien committet backe nicht still, auch ohne `.gitignore`.
+  const junk = entries.filter((e) => e.untracked && isJunkFile(e.path)).map((e) => e.path);
+  if (junk.length > 0) {
+    throw new BackeError('validation', `Editor- oder Systemdateien: ${junk.join(', ')}`, {
+      hint: 'löschen oder in .gitignore aufnehmen',
+      details: { paths: junk },
+    });
+  }
+  const edited = entries.map((e) => e.path);
   const editedSet = new Set(edited);
   const specs = edited.map((p) => `${head}:${p}`);
   const blobs = await readBlobs(wc, specs);

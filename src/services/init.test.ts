@@ -57,6 +57,17 @@ test('init writes config and admin user in one signed anchor commit', async () =
   expect(s.problems).toEqual([]);
 });
 
+test('init commits a .gitignore for editor and system junk files', async () => {
+  const b = await testBacklog({ handle: 'spw', name: 'acme' });
+  const ignore = '.*.swp\n.*.swo\n*~\n\\#*#\n.DS_Store\n';
+  expect(await readFile(join(b.root, '.gitignore'), 'utf8')).toBe(ignore);
+  expect((await git(['show', 'HEAD:.gitignore'], { cwd: b.root })).stdout).toBe(ignore);
+  for (const junk of ['.issue.md.swp', 'issue.md~', '#issue.md#', '.DS_Store']) {
+    await writeFile(join(b.root, junk), 'x');
+  }
+  expect((await git(['status', '--porcelain'], { cwd: b.root })).stdout).toBe('');
+});
+
 test('anchor, verified and identity are recorded', async () => {
   const b = await testBacklog();
   const head = await revParse(b.root, 'HEAD');

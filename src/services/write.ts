@@ -16,6 +16,7 @@ import {
   BacklogConfigSchema,
   type Comment,
   type User,
+  validateEntity,
 } from '../core/schemas.ts';
 import { sshFingerprint } from '../core/ssh.ts';
 import { commitPaths } from '../git/commit.ts';
@@ -45,14 +46,22 @@ import {
   summarizeBatch,
   summarizeOp,
 } from '../ops/operation.ts';
+import { checkCommitPolicy, type PolicyState, type TreeChange } from '../ops/verify-policy.ts';
 import {
   applyFileChanges,
   type FileChange,
   isIssueDirPath,
   writeFileAtomic,
 } from '../store/files.ts';
+import { parseEntityFile } from '../store/frontmatter.ts';
 import { readJsonc } from '../store/jsonc.ts';
-import { BACKLOG_CONFIG } from '../store/layout.ts';
+import {
+  BACKLOG_CONFIG,
+  classifyPath,
+  GITATTRIBUTES,
+  hasLfsRule,
+  isLfsPath,
+} from '../store/layout.ts';
 import {
   type BacklogSnapshot,
   listComments,
@@ -159,6 +168,8 @@ type Step = {
   recorded: Operation[];
   message: string;
   paths: string[];
+  /** Unveränderte Anhänge, die dieser Commit wegen der neuen LFS-Regel neu ablegt. */
+  renormalize?: string[];
 };
 
 type Planned = {
@@ -484,6 +495,96 @@ function applyEditOps(
   }
 }
 
+const POLICY_KINDS: ReadonlySet<string> = new Set(['user', 'issue', 'comment']);
+const policyRelevant = (path: string) =>
+  path === BACKLOG_CONFIG || POLICY_KINDS.has(classifyPath(path).kind);
+const utf8Text = (content: string | Uint8Array | null | undefined): string | null =>
+  content == null ? null : Buffer.from(content).toString('utf8');
+
+/**
+ * Users und Config nach `changes`, ausgehend von `state`. Eine Config, die sich nicht lesen lässt,
+ * scheitert schon beim Laden der Arbeitskopie; User-Dateien hat `readHandEdits` geprüft.
+ */
+function policyStateAfter(state: PolicyState, changes: readonly TreeChange[]): PolicyState {
+  const users = new Map(state.users);
+  let config: BacklogConfig = state.config;
+  for (const c of changes) {
+    const cls = classifyPath(c.path);
+    if (cls.kind === 'user') {
+      users.delete(cls.key);
+      if (c.after === null) continue;
+      const { data } = parseEntityFile(c.after, c.path);
+      users.set(cls.key, validateEntity('user', data, c.path).data as User);
+    } else if (c.path === BACKLOG_CONFIG && c.after !== null) {
+      config = BacklogConfigSchema.parse(readJsonc(c.after, BACKLOG_CONFIG));
+    }
+  }
+  return { config, users };
+}
+
+/**
+ * Prüft jeden Commit der Hand-Edit-Kette wie `verify` (backe.md §2.13 Punkt 4): gegen den Stand
+ * von HEAD bzw. nach dem vorigen Schritt. Ein Grund bricht vor dem Schreiben mit `validation` ab;
+ * die Hand-Edits bleiben liegen. Rekursiv gelöschte Issue-Verzeichnisse prüft `verify` frei
+ * (Issue und Kommentare darin), sie tragen hier nichts bei.
+ */
+async function checkEditsPolicy(
+  wc: string,
+  head: string,
+  edits: HandEdits,
+  steps: readonly Step[],
+  actor: string,
+): Promise<void> {
+  let state: PolicyState = {
+    config: edits.base.config,
+    users: new Map([...edits.base.users].map(([h, u]) => [h, u.data])),
+  };
+  const known = new Map<string, string | null>();
+  for (const [path, content] of edits.before) known.set(path, utf8Text(content));
+  let removed: ReadonlySet<string> | undefined;
+  const reasons: string[] = [];
+  for (const step of steps) {
+    const last = new Map<string, FileChange>();
+    for (const c of step.changes) if (c.recursive !== true) last.set(c.path, c);
+    const missing = [...last.keys()].filter((p) => policyRelevant(p) && !known.has(p));
+    const blobs = await readBlobs(
+      wc,
+      missing.map((p) => `${head}:${p}`),
+    );
+    for (const p of missing) known.set(p, utf8Text(blobs.get(`${head}:${p}`)));
+    const changes: TreeChange[] = [...last.values()].map((c) => {
+      const after = utf8Text(c.content);
+      const before = policyRelevant(c.path) ? (known.get(c.path) ?? null) : null;
+      return {
+        path: c.path,
+        status: after === null ? 'D' : before === null && policyRelevant(c.path) ? 'A' : 'M',
+        oldMode: before === null ? '000000' : '100644',
+        newMode: after === null ? '000000' : '100644',
+        before,
+        after,
+      };
+    });
+    const next = policyStateAfter(state, changes);
+    const addsUser = changes.some((c) => c.status === 'A' && classifyPath(c.path).kind === 'user');
+    if (addsUser) removed ??= await removedHandles(wc, head);
+    const found = checkCommitPolicy({
+      actor,
+      parent: state,
+      after: next,
+      changes,
+      removedHandles: removed ?? new Set(),
+    });
+    for (const reason of found) if (!reasons.includes(reason)) reasons.push(reason);
+    for (const c of changes) known.set(c.path, c.after);
+    state = next;
+  }
+  if (reasons.length > 0) {
+    throw new BackeError('validation', `verify würde den Commit ablehnen: ${reasons.join('; ')}`, {
+      details: { reasons },
+    });
+  }
+}
+
 /**
  * Plant die Commits: Operationen rein gegen den Snapshot, manuelle Änderungen direkt, Hand-Edits
  * als `manual`-Anteil vor den Operationen, die gegen den Stand danach laufen.
@@ -524,11 +625,15 @@ async function plan(
       const subject = input.subject ?? `manual: ${edits.manual.length} Dateien`;
       steps.push(manualStep(subject, edits.manual, handle));
     }
-    if (ops.length === 0) return { ...none, steps };
+    if (ops.length === 0) {
+      await checkEditsPolicy(wc, head, edits, steps, handle);
+      return { ...none, steps };
+    }
     const r = applyEditOps(edits.afterManual, ops, applyCtx);
     if (r.changes.length > 0) {
       steps.push(opStep(r.recorded.length === 1 ? 'op' : 'batch', r.changes, r.recorded, handle));
     }
+    await checkEditsPolicy(wc, head, edits, steps, handle);
     return { steps, recorded: r.recorded, refs: r.refs, notices: r.notices };
   }
   if (input.kind === 'batch') {
@@ -565,6 +670,49 @@ async function setUpLfs(wc: string): Promise<void> {
   await git(['lfs', 'install', '--local'], { cwd: wc }).catch(() =>
     git(['lfs', 'install', '--local', '--skip-repo'], { cwd: wc }),
   );
+}
+
+/** Ob `path` von `change` geschrieben oder (als Verzeichnis) mitgelöscht wird. */
+function touches(change: FileChange, path: string): boolean {
+  return change.path === path || path.startsWith(`${change.path}/`);
+}
+
+/**
+ * Führt ein Schritt `LFS_RULE` in `.gitattributes` ein (backe.md §2.8), nimmt sein Commit alle
+ * Anhänge auf, die schon roh im Baum liegen: Über den frischen Index des Commits legt `git add`
+ * sie mit der neuen Regel als Pointer ab. Sonst hielte `git status` jeden von ihnen dauerhaft für
+ * geändert, und Writes auf diese Pfade scheiterten an »ungesicherten Änderungen«. Die Bytes im
+ * Arbeitsbaum bleiben, wie sie sind.
+ */
+async function markRenormalization(
+  wc: string,
+  head: string,
+  attributes: string | undefined,
+  steps: readonly Step[],
+): Promise<void> {
+  let current = attributes;
+  for (const [i, step] of steps.entries()) {
+    const change = step.changes.findLast((c) => c.path === GITATTRIBUTES);
+    let next = current;
+    if (change !== undefined) {
+      next = change.content === null ? undefined : Buffer.from(change.content).toString('utf8');
+    }
+    if (!hasLfsRule(current) && hasLfsRule(next)) {
+      const { stdout } = await git(
+        ['ls-tree', '-r', '-z', '--name-only', '--end-of-options', head, '--', 'issues'],
+        { cwd: wc },
+      );
+      const inTree = new Set(stdout.split('\0').filter(isLfsPath));
+      // Was frühere Schritte der Kette an Anhängen schreiben oder löschen, liegt so im Baum.
+      for (const c of steps.slice(0, i).flatMap((s) => s.changes)) {
+        for (const p of inTree) if (touches(c, p)) inTree.delete(p);
+        if (c.content !== null && isLfsPath(c.path)) inTree.add(c.path);
+      }
+      const own = [...inTree].filter((p) => !step.changes.some((c) => touches(c, p))).sort();
+      if (own.length > 0) step.renormalize = own;
+    }
+    current = next;
+  }
 }
 
 /** Die Backlog-Config in `HEAD`; `undefined` ohne Commit oder Datei. */
@@ -663,7 +811,10 @@ export async function executeWrite(
     if (resolved === undefined) return empty;
     const planned = await plan(wc, snapshot, head, resolved, edits, handle, deps);
     const { steps } = planned;
+    await markRenormalization(wc, head, snapshot.attributes, steps);
     const allChanges = steps.flatMap((s) => s.changes);
+    const renormalized = steps.flatMap((s) => s.renormalize ?? []);
+    const committedPaths = (s: Step) => [...s.paths, ...(s.renormalize ?? [])].sort();
     const settled = edits === undefined ? undefined : settleEdits(edits, allChanges);
     const result = (commits: readonly string[]): WriteResult => ({
       ...empty,
@@ -671,12 +822,12 @@ export async function executeWrite(
       recorded: planned.recorded,
       refs: planned.refs,
       notices: planned.notices,
-      paths: changedPathsOf(allChanges),
+      paths: [...new Set([...changedPathsOf(allChanges), ...renormalized])].sort(),
       chain: steps.map((s, i) => ({
         commit: commits[i] as string,
         kind: s.kind,
         recorded: s.recorded,
-        paths: s.paths,
+        paths: committedPaths(s),
       })),
       rewritten: settled?.rewritten ?? [],
     });
@@ -684,7 +835,9 @@ export async function executeWrite(
     const settle = async (commits: readonly string[]): Promise<WriteResult> => {
       const r = result(commits);
       if (edits === undefined || settled === undefined) return r;
-      const paths = [...new Set([...edits.edited, ...changedPathsOf(allChanges)])].sort();
+      const paths = [
+        ...new Set([...edits.edited, ...changedPathsOf(allChanges), ...renormalized]),
+      ].sort();
       const unsettled = await settleWorkingCopy(wc, settled.reset, paths);
       return unsettled === undefined ? r : { ...r, unsettled };
     };
@@ -692,7 +845,9 @@ export async function executeWrite(
 
     const paths = changedPathsOf(allChanges);
     const editedSet = new Set(edits?.edited ?? []);
-    const dirty = (await dirtyPaths(wc, paths)).filter((p) => !editedSet.has(p));
+    const dirty = (await dirtyPaths(wc, [...paths, ...renormalized])).filter(
+      (p) => !editedSet.has(p),
+    );
     if (dirty.length > 0) {
       // Erst der Weg, der nichts verwirft; `restore` löscht die Hand-Edits.
       throw new BackeError('conflict', `Ungesicherte Änderungen an ${dirty.join(', ')}`, {
@@ -718,7 +873,7 @@ export async function executeWrite(
         if (last) await deps.hooks?.afterFiles?.();
         commits.push(
           await commitPaths(wc, {
-            paths: step.paths,
+            paths: committedPaths(step),
             message: step.message,
             key,
             author,
