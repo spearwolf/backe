@@ -60,22 +60,37 @@ export function shardOf(id: string): string {
   return id.slice(id.indexOf('-') + 1, id.indexOf('-') + 3);
 }
 
+const MAX_LISTED_CANDIDATES = 10;
+
+/**
+ * Löst eine Eingabe gegen die bekannten IDs auf, ohne Groß-/Kleinschreibung. Eine volle ID
+ * gilt exakt; sonst zählt die Eingabe (ein Präfix samt Bindestrich wird abgeschnitten) als
+ * Anfang des Zufallsteils. Ein Kandidat, dessen Zufallsteil genau der Eingabe entspricht,
+ * gewinnt vor jeder Mehrdeutigkeit.
+ */
 export function resolveShortId(input: string, ids: readonly string[]): string {
-  if (isIssueId(input)) {
-    if (ids.includes(input)) return input;
-    throw new BackeError('not_found', `Issue ${input} nicht gefunden`);
+  const wanted = input.toLowerCase();
+  if (isIssueId(wanted)) {
+    if (ids.includes(wanted)) return wanted;
+    throw new BackeError('not_found', `Issue »${wanted}« nicht gefunden`);
   }
-  if (input.length < MIN_SHORT_LENGTH) {
+  const short = wanted.replace(/^[a-z]{2,6}-/, '');
+  if (short.length < MIN_SHORT_LENGTH) {
     throw new BackeError(
-      'usage',
-      `ID-Kurzform braucht mindestens ${MIN_SHORT_LENGTH} Zeichen: ${input}`,
+      'validation',
+      `ID-Kurzform braucht mindestens ${MIN_SHORT_LENGTH} Zeichen: »${input}«`,
     );
   }
-  const candidates = ids.filter((id) => id.slice(id.indexOf('-') + 1).startsWith(input));
+  const randomPart = (id: string) => id.slice(id.indexOf('-') + 1);
+  const candidates = ids.filter((id) => randomPart(id).startsWith(short));
+  const exact = candidates.find((id) => randomPart(id) === short);
+  if (exact !== undefined) return exact;
   const [first] = candidates;
-  if (first === undefined) throw new BackeError('not_found', `Keine Issue-ID passt zu ${input}`);
+  if (first === undefined) throw new BackeError('not_found', `Keine Issue-ID passt zu »${input}«`);
   if (candidates.length > 1) {
-    throw new BackeError('ambiguous', `ID-Kurzform ${input} ist mehrdeutig`, {
+    const listed = candidates.slice(0, MAX_LISTED_CANDIDATES).join(', ');
+    const more = candidates.length > MAX_LISTED_CANDIDATES ? ', …' : '';
+    throw new BackeError('ambiguous', `ID-Kurzform »${input}« ist mehrdeutig: ${listed}${more}`, {
       details: { candidates },
     });
   }

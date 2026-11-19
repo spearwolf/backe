@@ -5,11 +5,18 @@
  * Config-Lock und verschiebt den fertigen Clone per `rename` an sein Ziel.
  */
 import { randomBytes } from 'node:crypto';
-import { access, mkdir, readdir, readFile, rename, rm } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, sep } from 'node:path';
 import { z } from 'zod';
 import { withFileLock } from '../context/lock.ts';
-import { type Env, expandPath, type Homes, physicalPath, samePath } from '../context/paths.ts';
+import {
+  type Env,
+  exists,
+  expandPath,
+  type Homes,
+  physicalPath,
+  samePath,
+} from '../context/paths.ts';
 import {
   type BacklogEntry,
   listBacklogs,
@@ -19,13 +26,8 @@ import {
   workingCopyPath,
 } from '../context/registry.ts';
 import { fallbackRoot, type ResolvedContext, readBacklogName } from '../context/resolve.ts';
-import {
-  configLockPath,
-  readUserConfig,
-  schemaError,
-  userConfigPath,
-} from '../context/user-config.ts';
-import { BackeError } from '../core/errors.ts';
+import { configLockPath, readUserConfig, userConfigPath } from '../context/user-config.ts';
+import { BackeError, schemaError } from '../core/errors.ts';
 import { isHandle } from '../core/names.ts';
 import { BacklogConfigSchema, type UserConfig } from '../core/schemas.ts';
 import { git, transportEnv } from '../git/exec.ts';
@@ -51,13 +53,6 @@ const CloneConfigSchema = z.object({
 type CloneConfig = z.infer<typeof CloneConfigSchema>;
 
 const short = (sha: string) => sha.slice(0, 7);
-
-async function exists(path: string): Promise<boolean> {
-  return access(path).then(
-    () => true,
-    () => false,
-  );
-}
 
 /** Führt `fn` mit einem frischen Temp-Pfad aus und räumt ihn danach immer weg. */
 async function withTempClone<T>(homes: Homes, fn: (temp: string) => Promise<T>): Promise<T> {
@@ -271,7 +266,7 @@ export async function cloneBacklog(
         if (input.name !== undefined && input.name !== actual) {
           throw new BackeError(
             'validation',
-            `Der Backlog heißt "${actual}", nicht "${input.name}"`,
+            `Der Backlog heißt »${actual}«, nicht »${input.name}«`,
             { hint: '--name weglassen; lokale Aliasnamen gibt es in v1 nicht.' },
           );
         }
@@ -335,7 +330,7 @@ export async function ensureWorkingCopy(
         if (actual !== name) {
           throw new BackeError(
             'validation',
-            `${source}: gehört zum Backlog "${actual}", erwartet wurde "${name}"`,
+            `${source}: gehört zum Backlog »${actual}«, erwartet wurde »${name}«`,
           );
         }
         return reference;
@@ -354,7 +349,7 @@ export function identityMismatch(
 ): BackeError {
   return new BackeError(
     'usage',
-    `Die Arbeitskopie ${wc} gehört "${identity}"; die Arbeitskopie von "${handle}" ist ${own}`,
+    `Die Arbeitskopie ${wc} gehört »${identity}«; die Arbeitskopie von »${handle}« ist ${own}`,
   );
 }
 
@@ -380,7 +375,7 @@ export async function addBacklog(input: {
   if (top !== wanted || actual !== name) {
     throw new BackeError(
       'validation',
-      `${input.path} ist keine Arbeitskopie des Backlogs "${name}" (Git-Toplevel: ${top ?? 'keines'}, Backlog: ${actual ?? 'keiner'}, erwartet: ${wanted})`,
+      `${input.path} ist keine Arbeitskopie des Backlogs »${name}« (Git-Toplevel: ${top ?? 'keines'}, Backlog: ${actual ?? 'keiner'}, erwartet: ${wanted})`,
     );
   }
   const cfg = await readUserConfig(homes.backeHome);
@@ -478,7 +473,7 @@ export async function showBacklog(
 ): Promise<{ entry: BacklogEntry; workingCopies: WorkingCopyInfo[] }> {
   const entry = listBacklogs(cfg).find((e) => e.name === name);
   if (entry === undefined) {
-    throw new BackeError('not_found', `Backlog "${name}" ist nicht registriert`, {
+    throw new BackeError('not_found', `Backlog »${name}« ist nicht registriert`, {
       hint: 'backe backlog list',
     });
   }

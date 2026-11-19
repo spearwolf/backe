@@ -174,7 +174,7 @@ export function checkIssueInvariants(d: Draft, before: Issue | undefined, after:
   for (const entry of added(before?.repos, after.repos)) {
     const { name } = parseRepoRef(entry);
     if (names.filter((n) => n === name).length > 1) {
-      throw violation('schema', `${after.id}: Repo "${name}" steht mehrfach in repos`, {
+      throw violation('schema', `${after.id}: Repo »${name}« steht mehrfach in repos`, {
         hint: 'Je Repo ist nur ein Eintrag erlaubt ("name" oder "name@ref").',
       });
     }

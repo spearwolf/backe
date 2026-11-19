@@ -24,7 +24,7 @@ export async function createAgent(
   const { handle: actor } = requireWriter(ctx);
   const backlog = ctx.backlog.value;
   if (ctx.userConfig.identities?.[backlog]?.[handle] !== undefined) {
-    throw new BackeError('conflict', `Für "${handle}" ist schon eine Identität eingetragen`, {
+    throw new BackeError('conflict', `Für »${handle}« ist schon eine Identität eingetragen`, {
       hint: `identities.${backlog}.${handle} in der User-Config prüfen`,
     });
   }
@@ -55,7 +55,7 @@ export async function createAgent(
     throw error;
   }
   if (commit === undefined) {
-    throw new BackeError('unexpected', `Der Write für "${handle}" hat keinen Commit erzeugt`);
+    throw new BackeError('unexpected', `Der Write für »${handle}« hat keinen Commit erzeugt`);
   }
   try {
     await setIdentity(ctx.homes, backlog, handle, keyPath);

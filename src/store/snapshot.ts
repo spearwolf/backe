@@ -194,7 +194,7 @@ async function loadNamed<T>(
     if (valid(name)) {
       candidates.push({ path, name });
     } else {
-      problems.push({ path, message: `${path}: ungültiger ${label} "${name}"`, kind });
+      problems.push({ path, message: `${path}: ungültiger ${label} »${name}«`, kind });
     }
   }
   const loaded = await mapPool(candidates, MAX_CONCURRENT_READS, async ({ path, name }) => {
@@ -226,7 +226,7 @@ async function loadProjects(
       const parent = name.slice(0, slash);
       problems.push({
         path: entity.path,
-        message: `${entity.path}: Elternprojekt "${parent}" fehlt`,
+        message: `${entity.path}: Elternprojekt »${parent}« fehlt`,
         kind: 'project',
         key: name,
       });
@@ -275,7 +275,7 @@ async function loadIssues(
       if (!isIssueId(id)) {
         problems.push({
           path,
-          message: `${path}: Verzeichnisname "${id}" ist keine Issue-ID`,
+          message: `${path}: Verzeichnisname »${id}« ist keine Issue-ID`,
           kind: 'issue',
         });
         return undefined;
@@ -283,7 +283,7 @@ async function loadIssues(
       if (shardOf(id) !== shard) {
         problems.push({
           path,
-          message: `${path}: Issue "${id}" gehört in den Shard "${shardOf(id)}", nicht "${shard}"`,
+          message: `${path}: Issue »${id}« gehört in den Shard »${shardOf(id)}«, nicht »${shard}«`,
           kind: 'issue',
           key: id,
         });
@@ -294,7 +294,7 @@ async function loadIssues(
       if (entity.data.id !== id) {
         problems.push({
           path,
-          message: `${path}: id "${entity.data.id}" passt nicht zum Verzeichnis "${id}"`,
+          message: `${path}: id »${entity.data.id}« passt nicht zum Verzeichnis »${id}«`,
           kind: 'issue',
           key: id,
         });

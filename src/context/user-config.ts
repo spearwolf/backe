@@ -1,8 +1,7 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { applyEdits, modify, type Node, parseTree } from 'jsonc-parser';
-import type { ZodError } from 'zod';
-import { BackeError } from '../core/errors.ts';
+import { BackeError, schemaError } from '../core/errors.ts';
 import { type UserConfig, UserConfigSchema } from '../core/schemas.ts';
 import { writeFileAtomic } from '../store/files.ts';
 import { readJsonc } from '../store/jsonc.ts';
@@ -26,14 +25,6 @@ async function readText(file: string): Promise<string | undefined> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw error;
   }
-}
-
-/** Schemafehler als `validation`: je Issue eine Zeile `<datei>: <key.pfad>: <meldung>`. */
-export function schemaError(file: string, error: ZodError, hint?: string): BackeError {
-  const lines = error.issues.map(
-    (issue) => `${file}: ${issue.path.join('.') || '(Wurzel)'}: ${issue.message}`,
-  );
-  return new BackeError('validation', lines.join('\n'), hint === undefined ? undefined : { hint });
 }
 
 /** Parst Text als User-Config; Syntaxfehler mit `datei:zeile`, Schemafehler je Issue eine Zeile. */
@@ -196,7 +187,7 @@ function applyConfigEdit(text: string, path: readonly (string | number)[], value
   } catch {
     throw new BackeError(
       'validation',
-      `Config-Pfad "${path.join('.')}" läuft durch einen Wert, der kein Objekt ist`,
+      `Config-Pfad »${path.join('.')}« läuft durch einen Wert, der kein Objekt ist`,
     );
   }
 }

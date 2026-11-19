@@ -41,7 +41,7 @@ function requireParent(d: Draft, path: string): void {
 
 export function projectCreate(d: Draft, op: OpOf<'project.create'>): OpOf<'project.create'> {
   if (!isProjectPath(op.path)) {
-    throw violation('schema', `Ungültiger Projekt-Pfad "${op.path}"`, {
+    throw violation('schema', `Ungültiger Projekt-Pfad »${op.path}«`, {
       hint: 'Segmente aus a-z, 0-9 und "-", höchstens fünf Ebenen.',
     });
   }
@@ -72,7 +72,7 @@ export function projectMv(d: Draft, op: OpOf<'project.mv'>): OpOf<'project.mv'> 
   const { from, to } = op;
   d.entity('project', from);
   if (!isProjectPath(to)) {
-    throw violation('schema', `Ungültiger Projekt-Pfad "${to}"`);
+    throw violation('schema', `Ungültiger Projekt-Pfad »${to}«`);
   }
   if (inSubtree(to, from)) {
     throw violation('schema', `${from} kann nicht nach ${to} verschoben werden`, {

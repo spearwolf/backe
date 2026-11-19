@@ -21,7 +21,7 @@ export function formatCommitMessage(m: CommitMessage): string {
   const lines: string[] = [];
   for (const [key, value] of m.trailers) {
     if (!/^[A-Za-z0-9-]+$/.test(key) || /[\r\n]/.test(value)) {
-      throw new BackeError('unexpected', `Ungültiger Commit-Trailer "${key}"`, {
+      throw new BackeError('unexpected', `Ungültiger Commit-Trailer »${key}«`, {
         details: { key, value },
       });
     }

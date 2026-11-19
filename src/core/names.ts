@@ -59,14 +59,14 @@ export function parseRepoRef(s: string): { name: string; ref?: string } {
   const at = s.indexOf('@');
   const name = at < 0 ? s : s.slice(0, at);
   if (!isRepoName(name)) {
-    throw new BackeError('validation', `Ungültiger Repo-Name: "${name}"`, {
+    throw new BackeError('validation', `Ungültiger Repo-Name: »${name}«`, {
       hint: 'Erlaubt sind a-z, 0-9, ".", "_" und "-", beginnend mit Buchstabe oder Ziffer (max. 64 Zeichen).',
     });
   }
   if (at < 0) return { name };
   const ref = s.slice(at + 1);
   if (!isGitArg(ref)) {
-    throw new BackeError('validation', `Ungültiger Ref in "${s}"`, {
+    throw new BackeError('validation', `Ungültiger Ref in »${s}«`, {
       hint: 'Form: <repo>@<ref>, z. B. webapp@main. Der Ref ist nicht leer, beginnt nicht mit "-" und enthält weder Leer- noch Steuerzeichen.',
     });
   }

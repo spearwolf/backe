@@ -77,8 +77,35 @@ describe('resolveShortId', () => {
     expect(err.code).toBe('ambiguous');
     expect(err.details).toEqual({ candidates: ['bk-7f3k2', 'bk-7f3m9'] });
   });
-  test('shorter than 3 chars is usage', () =>
-    expect(catchErr(() => resolveShortId('7f', ids)).code).toBe('usage'));
+  test('shorter than 3 chars is a validation error', () =>
+    expect(catchErr(() => resolveShortId('7f', ids)).code).toBe('validation'));
+  test('full id unknown names the id in guillemets', () =>
+    expect(catchErr(() => resolveShortId('bk-zzzzz', ids)).message).toBe(
+      'Issue »bk-zzzzz« nicht gefunden',
+    ));
+  describe('with overlapping ids', () => {
+    const many = ['bk-7f3k2', 'bk-7f3k2a', 'bk-7f3aa', 'bk-a91c0'];
+    test.each([
+      ['7f3k2', 'bk-7f3k2'],
+      ['7F3K2', 'bk-7f3k2'],
+      ['BK-A91C0', 'bk-a91c0'],
+      ['bk-a91', 'bk-a91c0'],
+    ])('resolveShortId(%s) -> %s', (input, id) => expect(resolveShortId(input, many)).toBe(id));
+    test('ambiguous short ids name their candidates', () => {
+      const err = catchErr(() => resolveShortId('7f3', many));
+      expect(err.code).toBe('ambiguous');
+      expect(err.message).toBe('ID-Kurzform »7f3« ist mehrdeutig: bk-7f3k2, bk-7f3k2a, bk-7f3aa');
+      expect(err.details).toEqual({ candidates: ['bk-7f3k2', 'bk-7f3k2a', 'bk-7f3aa'] });
+    });
+    test('the message lists at most ten candidates, details all of them', () => {
+      const lots = Array.from({ length: 12 }, (_, i) => `bk-abc${String.fromCharCode(97 + i)}${i}`);
+      const err = catchErr(() => resolveShortId('abc', lots));
+      expect(err.message).toBe(
+        `ID-Kurzform »abc« ist mehrdeutig: ${lots.slice(0, 10).join(', ')}, …`,
+      );
+      expect((err.details as { candidates: string[] }).candidates).toEqual(lots);
+    });
+  });
   test('unknown is not_found', () =>
     expect(catchErr(() => resolveShortId('zzz', ids)).code).toBe('not_found'));
 });

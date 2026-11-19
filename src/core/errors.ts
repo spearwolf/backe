@@ -1,3 +1,10 @@
+import type { ZodError } from 'zod';
+
+/**
+ * Fehlercodes. `usage` heißt: der Aufruf passt nicht (fehlende oder sich ausschließende
+ * Angaben, keine Identität). `validation` heißt: ein angegebener Wert oder Dateiinhalt verletzt
+ * eine Regel (Format, Schema, Bereich).
+ */
 export type ErrorCode =
   | 'usage'
   | 'validation'
@@ -35,4 +42,12 @@ export class BackeError extends Error {
   get exitCode(): number {
     return EXIT_CODES[this.code];
   }
+}
+
+/** Schemafehler als `validation`: je Issue eine Zeile `<datei>: <key.pfad>: <meldung>`. */
+export function schemaError(file: string, error: ZodError, hint?: string): BackeError {
+  const lines = error.issues.map(
+    (issue) => `${file}: ${issue.path.join('.') || '(Wurzel)'}: ${issue.message}`,
+  );
+  return new BackeError('validation', lines.join('\n'), hint === undefined ? undefined : { hint });
 }

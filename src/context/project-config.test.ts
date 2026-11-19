@@ -77,3 +77,14 @@ test('a directory named like the config file is not "no file"', async () => {
   const { at } = await contextTree({ 'p/.backlog.jsonc/x': '' });
   await expect(findProjectConfig(at('p'))).rejects.toMatchObject({ code: 'EISDIR' });
 });
+
+test('two broken project configs report .backlog.jsonc first', async () => {
+  const { at } = await contextTree({
+    'p/.backlog.jsonc': '{ "sprint": 5 }',
+    'p/.backlog.local.jsonc': '{ "sprint": 6 }',
+  });
+  for (let i = 0; i < 20; i++) {
+    const err = await catchErrAsync(() => findProjectConfig(at('p')));
+    expect(err.message.startsWith(at('p/.backlog.jsonc'))).toBe(true);
+  }
+});

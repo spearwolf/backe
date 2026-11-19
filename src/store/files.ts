@@ -43,14 +43,14 @@ function assertRelative(path: string): void {
     segments.includes('..') ||
     posix.normalize(path) !== path
   ) {
-    throw new BackeError('validation', `Ungültiger Pfad im Backlog: "${path}"`, {
+    throw new BackeError('validation', `Ungültiger Pfad im Backlog: »${path}«`, {
       hint: 'Erlaubt sind nur normalisierte, relative Pfade ohne "..", ".", "//" und Schrägstrich am Ende.',
     });
   }
   // Groß-/Kleinschreibung egal, weil APFS und NTFS `.GIT` auf `.git` abbilden. Die NTFS-Aliase
   // (`git~1`, `.git::$INDEX_ALLOCATION`) sind Aufgabe des Windows-Supports (backe.md §4.2).
   if (segments.some((s) => s.toLowerCase() === '.git')) {
-    throw new BackeError('validation', `Pfad unter .git im Backlog: "${path}"`, {
+    throw new BackeError('validation', `Pfad unter .git im Backlog: »${path}«`, {
       hint: 'Unter ".git" liegen Git-Interna; dorthin schreibt und löscht backe nie.',
     });
   }
@@ -71,7 +71,7 @@ export function isIssueDirPath(path: string): boolean {
 function assertRecursiveAllowed(change: FileChange): void {
   if (change.recursive !== true) return;
   if (change.content !== null || !isIssueDirPath(change.path)) {
-    throw new BackeError('validation', `Rekursives Löschen nicht erlaubt: "${change.path}"`, {
+    throw new BackeError('validation', `Rekursives Löschen nicht erlaubt: »${change.path}«`, {
       hint: 'Rekursiv gelöscht wird nur ein Issue-Verzeichnis "issues/<shard>/<id>" (content: null).',
     });
   }

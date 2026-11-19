@@ -43,12 +43,12 @@ function violationMessage(
   const decl = declarationOf(config, key);
   if (decl === undefined) {
     return config.props_strict
-      ? `Property "${key}" ist nicht deklariert (props_strict ist aktiv)`
+      ? `Property »${key}« ist nicht deklariert (props_strict ist aktiv)`
       : undefined;
   }
   return fitsDeclaration(decl, value)
     ? undefined
-    : `Property "${key}" erwartet ${describeDeclaration(decl)}, bekam ${JSON.stringify(value)}`;
+    : `Property »${key}« erwartet ${describeDeclaration(decl)}, bekam ${JSON.stringify(value)}`;
 }
 
 /** Prüft nur die übergebenen Keys; `null` heißt »entfernt« und ist immer erlaubt. */
@@ -93,10 +93,10 @@ function parseJsonValue(key: string, text: string): PropValue {
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new BackeError('usage', `Property "${key}": ungültiges JSON: ${text}`);
+    throw new BackeError('usage', `Property »${key}«: ungültiges JSON: ${text}`);
   }
   const problem = jsonProblem(parsed);
-  if (problem !== undefined) throw new BackeError('usage', `Property "${key}": ${problem}`);
+  if (problem !== undefined) throw new BackeError('usage', `Property »${key}«: ${problem}`);
   return parsed as PropValue;
 }
 
@@ -109,7 +109,7 @@ function splitExpr(expr: string): [key: string, op: string, rest: string] {
   if (m === null || !PROP_KEY_RE.test(m[1] ?? '')) {
     throw new BackeError(
       'usage',
-      `Ungültiger Property-Ausdruck "${expr}" (erwartet key=wert oder key:=<json>)`,
+      `Ungültiger Property-Ausdruck »${expr}« (erwartet key=wert oder key:=<json>)`,
     );
   }
   return [m[1] as string, m[2] as string, m[3] as string];
@@ -120,7 +120,7 @@ export function parsePropAssignment(expr: string): [key: string, value: PropValu
   const [key, op, rest] = splitExpr(expr);
   if (op === '=') return [key, rest];
   if (op === ':=') return [key, parseJsonValue(key, rest)];
-  throw new BackeError('usage', `Property "${key}": Zuweisung erwartet = oder :=, nicht ${op}`);
+  throw new BackeError('usage', `Property »${key}«: Zuweisung erwartet = oder :=, nicht ${op}`);
 }
 
 export type PropFilter =
@@ -154,7 +154,7 @@ export function checkPropFilter(f: PropFilter, config: BacklogConfig): void {
   } else if (decl.type === 'integer' || decl.type === 'number') {
     if (typeof f.value !== 'number') fail('der Vergleichswert muss eine Zahl sein');
   } else {
-    fail(`Bereichsvergleich geht nicht auf type "${decl.type}"`);
+    fail(`Bereichsvergleich geht nicht auf type »${decl.type}«`);
   }
 }
 

@@ -99,7 +99,7 @@ test('a clone with a wrong --name is refused and leaves nothing', async () => {
     }),
   );
   expect(err.code).toBe('validation');
-  expect(err.message).toBe('Der Backlog heißt "acme", nicht "other"');
+  expect(err.message).toBe('Der Backlog heißt »acme«, nicht »other«');
   expect(await readUserConfig(other.homes.backeHome)).toEqual({});
   expect(await exists(join(other.homes.backeHome, 'backlogs'))).toBe(false);
   expect(await tempEntries(other.homes)).toEqual([]);
@@ -357,7 +357,7 @@ test('a registered remote of another backlog is refused', async () => {
   };
   const err = await catchErrAsync(() => ensureWorkingCopy(wrong, 'claude-1'));
   expect(err.code).toBe('validation');
-  expect(err.message).toBe(`${beta.remote}: gehört zum Backlog "beta", erwartet wurde "acme"`);
+  expect(err.message).toBe(`${beta.remote}: gehört zum Backlog »beta«, erwartet wurde »acme«`);
   expect(await exists(managedClonePath(b.homes, 'acme', 'claude-1'))).toBe(false);
   expect(await tempEntries(b.homes)).toEqual([]);
 });
@@ -450,7 +450,7 @@ test('add refuses a clone that belongs to another identity', async () => {
     }),
   );
   expect(err.code).toBe('usage');
-  expect(err.message).toContain('gehört "spw"');
+  expect(err.message).toContain('gehört »spw«');
   expect(await readUserConfig(other.homes.backeHome)).toEqual({});
 });
 

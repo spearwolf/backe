@@ -247,10 +247,10 @@ export class Draft {
     } else {
       const parsed = parseCommentFileName(file);
       if (parsed === undefined) {
-        throw violation('schema', `Ungültiger Kommentar-Dateiname "${file}"`);
+        throw violation('schema', `Ungültiger Kommentar-Dateiname »${file}«`);
       }
       if (parsed.author !== this.ctx.actor) {
-        throw violation('policy', `Kommentar "${file}" gehört nicht zu ${this.ctx.actor}`);
+        throw violation('policy', `Kommentar »${file}« gehört nicht zu ${this.ctx.actor}`);
       }
       if (this.#commentTaken(issueId, file)) {
         throw violation('exists', `Kommentar ${dir}/${file} existiert bereits`, { ids: [issueId] });

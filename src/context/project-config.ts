@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { BackeError } from '../core/errors.ts';
+import { BackeError, schemaError } from '../core/errors.ts';
 import {
   type ProjectConfig,
   ProjectConfigSchema,
@@ -9,7 +9,6 @@ import {
 } from '../core/schemas.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { physicalPath } from './paths.ts';
-import { schemaError } from './user-config.ts';
 
 export type ProjectConfigLevel = {
   dir: string;
@@ -67,10 +66,9 @@ async function readLocal(file: string): Promise<ProjectConfigLevel['local']> {
 export async function findProjectConfig(cwd: string): Promise<ProjectConfigLevel | undefined> {
   let dir = await physicalPath(cwd);
   for (;;) {
-    const [shared, local] = await Promise.all([
-      readShared(join(dir, SHARED_NAME)),
-      readLocal(join(dir, LOCAL_NAME)),
-    ]);
+    // Nacheinander, damit bei zwei kaputten Dateien immer `.backlog.jsonc` zuerst gemeldet wird.
+    const shared = await readShared(join(dir, SHARED_NAME));
+    const local = await readLocal(join(dir, LOCAL_NAME));
     if (shared || local) {
       return { dir, ...(local ? { local } : {}), ...(shared ? { shared } : {}) };
     }

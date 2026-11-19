@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { BackeError } from '../core/errors.ts';
 import { BACKLOG_NAME_RE, isHandle, isProjectPath, isSprintSlug } from '../core/names.ts';
@@ -8,7 +8,17 @@ import { gitRemotes, gitToplevel } from '../git/query.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
 import { loadRepoRegistry } from '../store/snapshot.ts';
-import { type Env, envValue, expandPath, type Homes, physicalPath, resolveHomes } from './paths.ts';
+import {
+  type Env,
+  envValue,
+  exists,
+  expandPath,
+  fsFailure,
+  type Homes,
+  isMissing,
+  physicalPath,
+  resolveHomes,
+} from './paths.ts';
 import { findProjectConfig, type ProjectConfigLevel } from './project-config.ts';
 import { findBacklogByRemote, managedClonePath, workingCopyPath } from './registry.ts';
 import { readUserConfig, userConfigPath } from './user-config.ts';
@@ -65,8 +75,8 @@ export async function readBacklogName(root: string): Promise<string | undefined>
   try {
     text = await readFile(file, 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw error;
+    if (isMissing(error)) return undefined;
+    throw fsFailure(file, error);
   }
   const raw = readJsonc(text, file);
   const name =
@@ -77,15 +87,6 @@ export async function readBacklogName(root: string): Promise<string | undefined>
   return name;
 }
 
-async function exists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function describe(source: Source): string {
   return source.detail === undefined ? source.kind : `${source.kind} ${source.detail}`;
 }
@@ -94,7 +95,7 @@ function validHandle(handle: string, source: Source): string {
   if (!isHandle(handle)) {
     throw new BackeError(
       'usage',
-      `Ungültiger User-Handle "${handle}" (Quelle: ${describe(source)})`,
+      `Ungültiger User-Handle »${handle}« (Quelle: ${describe(source)})`,
     );
   }
   return handle;
@@ -137,7 +138,7 @@ async function bindPath(path: string, source: Source): Promise<Found> {
   if (top === undefined || name === undefined) {
     throw new BackeError(
       'not_found',
-      `Kein Backlog unter "${path}" (Quelle: ${describe(source)})`,
+      `Kein Backlog unter »${path}« (Quelle: ${describe(source)})`,
       { hint: 'backe backlog list' },
     );
   }
@@ -148,14 +149,17 @@ function byName(cfg: UserConfig, name: string, source: Source): Found {
   if (cfg.backlogs?.[name] === undefined) {
     throw new BackeError(
       'not_found',
-      `Backlog "${name}" ist nicht registriert (Quelle: ${describe(source)})`,
+      `Backlog »${name}« ist nicht registriert (Quelle: ${describe(source)})`,
       { hint: 'backe backlog list' },
     );
   }
   return { name, source };
 }
 
-type RefContext = { cfg: UserConfig; homes: Homes; cwd: string };
+/** Git-Toplevel von `cwd`; höchstens ein Aufruf je `resolveContext`, jeder weitere liest das Ergebnis. */
+type Toplevel = () => Promise<string | undefined>;
+
+type RefContext = { cfg: UserConfig; homes: Homes; cwd: string; cwdTop: Toplevel };
 
 async function resolveRef(
   value: string,
@@ -181,7 +185,7 @@ async function resolveRef(
   if (name === undefined) {
     throw new BackeError(
       'not_found',
-      `Backlog "${value}" ist nicht registriert (Quelle: ${describe(source)})`,
+      `Backlog »${value}« ist nicht registriert (Quelle: ${describe(source)})`,
       { hint: `backe backlog clone ${value}` },
     );
   }
@@ -189,13 +193,13 @@ async function resolveRef(
 }
 
 async function findBacklog(input: ContextInput, ctx: RefContext, level: Level): Promise<Found> {
-  const { flags, env, cwd } = input;
+  const { flags, env } = input;
   if (flags.backlog !== undefined) return resolveRef(flags.backlog, true, { kind: 'flag' }, ctx);
   const fromEnv = envValue(env, 'BACKE_BACKLOG');
   if (fromEnv !== undefined) {
     return resolveRef(fromEnv, true, { kind: 'env', detail: 'BACKE_BACKLOG' }, ctx);
   }
-  const top = await gitToplevel(cwd);
+  const top = await ctx.cwdTop();
   const repoName = top === undefined ? undefined : await readBacklogName(top);
   if (top !== undefined && repoName !== undefined) {
     return { name: repoName, source: { kind: 'backlog-repo' }, bound: top };
@@ -206,7 +210,7 @@ async function findBacklog(input: ContextInput, ctx: RefContext, level: Level): 
     return byName(ctx.cfg, ctx.cfg.current, { kind: 'user-current' });
   }
   throw new BackeError('usage', 'Kein Backlog angegeben', {
-    hint: '--backlog <name>, BACKE_BACKLOG, "backe backlog use <name>" oder "backlog" in einer .backlog.jsonc',
+    hint: '--backlog <name>, BACKE_BACKLOG, »backe backlog use <name>« oder »backlog« in einer .backlog.jsonc',
   });
 }
 
@@ -251,7 +255,7 @@ function findScoped(
   const { env: envName, valid, label } = SCOPED[key];
   const pick = (value: string, source: Source): Resolved<string> => {
     if (!valid(value)) {
-      throw new BackeError('usage', `Ungültiger ${label} "${value}" (Quelle: ${describe(source)})`);
+      throw new BackeError('usage', `Ungültiger ${label} »${value}« (Quelle: ${describe(source)})`);
     }
     return { value, source };
   };
@@ -298,6 +302,7 @@ function canonicalOrUndefined(raw: string): string | undefined {
 
 async function findRepo(
   cwd: string,
+  cwdTop: Toplevel,
   root: string | undefined,
   level: Level,
 ): Promise<Resolved<string | null | undefined>> {
@@ -308,14 +313,14 @@ async function findRepo(
     if (configured.value !== null && registry !== undefined && !registry.has(configured.value)) {
       throw new BackeError(
         'not_found',
-        `Repo "${configured.value}" steht nicht im Backlog (Quelle: ${describe(configured.source)})`,
+        `Repo »${configured.value}« steht nicht im Backlog (Quelle: ${describe(configured.source)})`,
         { hint: 'backe repo list' },
       );
     }
     return configured;
   }
   if (root === undefined || registry === undefined) return none;
-  const top = await gitToplevel(cwd);
+  const top = await cwdTop();
   if (top === undefined || top === (await physicalPath(root))) return none;
   const byUrl = new Map<string, string>();
   for (const [name, entry] of registry) {
@@ -353,7 +358,7 @@ export async function fallbackRoot(
       .sort(byCodeUnit)
       .map((h) => managedClonePath(homes, backlog, h));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if (!isMissing(error)) throw fsFailure(join(homes.backeHome, 'backlogs', backlog), error);
   }
   for (const dir of [...bound, ...managed]) {
     if (await exists(join(dir, BACKLOG_CONFIG))) return dir;
@@ -372,12 +377,19 @@ async function ownerOf(
   bound: string,
   handle: string | undefined,
 ): Promise<string | undefined> {
-  const target = await physicalPath(bound);
+  const physical = async (path: string): Promise<string> => {
+    try {
+      return await physicalPath(path);
+    } catch (error) {
+      throw fsFailure(path, error);
+    }
+  };
+  const target = await physical(bound);
   const owners: string[] = [];
   for (const h of Object.keys(cfg.backlogs?.[backlog]?.paths ?? {}).sort(byCodeUnit)) {
-    if ((await physicalPath(workingCopyPath(cfg, homes, backlog, h))) === target) owners.push(h);
+    if ((await physical(workingCopyPath(cfg, homes, backlog, h))) === target) owners.push(h);
   }
-  if (dirname(target) === (await physicalPath(join(homes.backeHome, 'backlogs', backlog)))) {
+  if (dirname(target) === (await physical(join(homes.backeHome, 'backlogs', backlog)))) {
     owners.push(basename(target));
   }
   return handle !== undefined && owners.includes(handle) ? handle : owners[0];
@@ -387,7 +399,12 @@ export async function resolveContext(input: ContextInput): Promise<ResolvedConte
   const homes = resolveHomes(input.env, input.cwd);
   const userConfig = await readUserConfig(homes.backeHome);
   const level = await findProjectConfig(input.cwd);
-  const found = await findBacklog(input, { cfg: userConfig, homes, cwd: input.cwd }, level);
+  let top: Promise<string | undefined> | undefined;
+  const cwdTop: Toplevel = () => {
+    top ??= gitToplevel(input.cwd);
+    return top;
+  };
+  const found = await findBacklog(input, { cfg: userConfig, homes, cwd: input.cwd, cwdTop }, level);
   const scoped = levelFor(level, userConfig, found.name);
   const user = findUser(input, userConfig, found.name, scoped);
   const handle = user.value;
@@ -410,7 +427,7 @@ export async function resolveContext(input: ContextInput): Promise<ResolvedConte
     if (actual !== undefined && actual !== found.name) {
       throw new BackeError(
         'validation',
-        `${root}: gehört zum Backlog "${actual}", erwartet wurde "${found.name}"`,
+        `${root}: gehört zum Backlog »${actual}«, erwartet wurde »${found.name}«`,
       );
     }
   }
@@ -435,7 +452,7 @@ export async function resolveContext(input: ContextInput): Promise<ResolvedConte
     user: { ...user, key },
     project: findScoped('project', input, userConfig, found.name, scoped),
     sprint: findScoped('sprint', input, userConfig, found.name, scoped),
-    repo: await findRepo(input.cwd, root, scoped),
+    repo: await findRepo(input.cwd, cwdTop, root, scoped),
   };
 }
 
@@ -452,7 +469,7 @@ export function requireWriter(ctx: ResolvedContext): {
   const file = userConfigPath(ctx.homes.backeHome);
   if (handle === undefined || ctx.backlog.workingCopy === undefined) {
     throw new BackeError('usage', 'Kein User aufgelöst, Schreiben braucht eine Identität', {
-      hint: `--as <handle>, BACKE_USER oder "user" in ${file}`,
+      hint: `--as <handle>, BACKE_USER oder »user« in ${file}`,
     });
   }
   const owner = ctx.backlog.boundTo;
@@ -460,11 +477,11 @@ export function requireWriter(ctx: ResolvedContext): {
     const own = workingCopyPath(ctx.userConfig, ctx.homes, ctx.backlog.value, handle);
     throw new BackeError(
       'usage',
-      `Die Arbeitskopie ${ctx.backlog.workingCopy} gehört "${owner}"; die Arbeitskopie von "${handle}" ist ${own}`,
+      `Die Arbeitskopie ${ctx.backlog.workingCopy} gehört »${owner}«; die Arbeitskopie von »${handle}« ist ${own}`,
     );
   }
   if (ctx.user.key === undefined) {
-    throw new BackeError('usage', `Für "${handle}" ist kein Signing-Key eingetragen`, {
+    throw new BackeError('usage', `Für »${handle}« ist kein Signing-Key eingetragen`, {
       hint: `identities.${ctx.backlog.value}.${handle} in ${file} eintragen oder backe user create-agent`,
     });
   }

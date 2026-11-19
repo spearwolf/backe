@@ -2,9 +2,10 @@
  * Users- und Config-Stände der Commits für `verify` (backe.md §2.13) und die Signaturprüfung
  * gegen einen solchen Stand.
  */
-import { access, mkdir } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { z } from 'zod';
+import { exists } from '../context/paths.ts';
 import { BackeError } from '../core/errors.ts';
 import {
   type BacklogConfig,
@@ -32,7 +33,7 @@ export type State = { usersTree: string; users: Map<string, User>; config: Backl
 
 export const REGULAR_FILE = /^100[0-7]{3}$/;
 
-export function schemaError(error: z.ZodError): string {
+export function zodMessage(error: z.ZodError): string {
   return error.issues
     .map((i) => `${i.path.length > 0 ? i.path.join('.') : '<root>'}: ${i.message}`)
     .join('; ');
@@ -42,7 +43,7 @@ export function schemaError(error: z.ZodError): string {
 export function parseJsoncAs<T>(schema: z.ZodType<T>, text: string, file: string): T | string {
   try {
     const result = schema.safeParse(readJsonc(text, file));
-    return result.success ? result.data : schemaError(result.error);
+    return result.success ? result.data : zodMessage(result.error);
   } catch (err) {
     if (err instanceof BackeError) return err.message;
     throw err;
@@ -108,11 +109,7 @@ export async function loadStates(wc: string, shas: readonly string[]): Promise<M
 async function allowedSigners(wc: string, state: State): Promise<string> {
   const dir = join(await stateDir(wc), 'allowed_signers');
   const file = join(dir, state.usersTree);
-  const exists = await access(file).then(
-    () => true,
-    () => false,
-  );
-  if (!exists) {
+  if (!(await exists(file))) {
     const lines: string[] = [];
     for (const [handle, user] of state.users) {
       const active = activeFingerprints(user);

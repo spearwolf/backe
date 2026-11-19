@@ -153,7 +153,7 @@ export function issueEdit(d: Draft, op: OpOf<'issue.edit'>): OpOf<'issue.edit'> 
     if (before.state !== 'blocked') {
       throw violation(
         'transition',
-        `${op.id}: blocked_by ist nur im State "blocked" änderbar, State ist "${before.state}"`,
+        `${op.id}: blocked_by ist nur im State »blocked« änderbar, State ist »${before.state}«`,
         {
           ids: [op.id],
         },

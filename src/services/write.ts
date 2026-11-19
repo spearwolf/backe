@@ -2,9 +2,10 @@
  * Der Schreibpfad (backe.md §2.16.1): jede Änderung am Backlog läuft hierüber, unter dem
  * Write-Lock der Arbeitskopie, mit Journal für Abstürze und genau einem signierten Commit.
  */
-import { access, readFile, rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { type LockOptions, withFileLock } from '../context/lock.ts';
+import { exists } from '../context/paths.ts';
 import { workingCopyPath } from '../context/registry.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
 import { userConfigPath } from '../context/user-config.ts';
@@ -111,13 +112,6 @@ function signalDeferral() {
 
 function raiseSignal(signal: NodeJS.Signals): void {
   process.kill(process.pid, signal);
-}
-
-async function exists(path: string): Promise<boolean> {
-  return access(path).then(
-    () => true,
-    () => false,
-  );
 }
 
 /** Erster Parent von HEAD; `undefined` beim Wurzel-Commit. */

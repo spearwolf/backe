@@ -52,7 +52,7 @@ export function workingCopyPath(
 }
 
 function unknownBacklog(name: string): BackeError {
-  return new BackeError('not_found', `Backlog "${name}" ist nicht registriert`, {
+  return new BackeError('not_found', `Backlog »${name}« ist nicht registriert`, {
     hint: 'backe backlog list',
   });
 }
@@ -74,14 +74,14 @@ export async function registerBacklog(
       if (existing?.remote !== undefined && normalizeRepoUrl(existing.remote) !== canonical) {
         throw new BackeError(
           'conflict',
-          `Backlog "${name}" ist bereits mit einer anderen Remote registriert: ${existing.remote}`,
+          `Backlog »${name}« ist bereits mit einer anderen Remote registriert: ${existing.remote}`,
         );
       }
       const other = findBacklogByRemote(cfg, remote);
       if (other !== undefined && other !== name) {
         throw new BackeError(
           'conflict',
-          `Die Remote ist bereits als Backlog "${other}" registriert`,
+          `Die Remote ist bereits als Backlog »${other}« registriert`,
         );
       }
       if (existing?.remote === undefined)
@@ -94,7 +94,7 @@ export async function registerBacklog(
         if (expand(bound) !== expand(path)) {
           throw new BackeError(
             'conflict',
-            `"${handle}" ist in ${name} schon an ${bound} gebunden`,
+            `»${handle}« ist in ${name} schon an ${bound} gebunden`,
             {
               hint: `paths.${handle} in ${userConfigPath(homes.backeHome)} ändern oder entfernen`,
             },

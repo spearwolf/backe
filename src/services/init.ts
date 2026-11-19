@@ -74,23 +74,23 @@ export function firstStderrLine(error: unknown): string {
 export async function initBacklog(input: InitInput): Promise<{ root: string; anchor: string }> {
   const { homes, env, name, prefix, remote, handle, key } = input;
   if (!BACKLOG_NAME_RE.test(name)) {
-    throw new BackeError('usage', `Ungültiger Backlog-Name »${name}«`, {
+    throw new BackeError('validation', `Ungültiger Backlog-Name »${name}«`, {
       hint: 'Erlaubt sind Kleinbuchstaben, Ziffern und Bindestriche (max. 64 Zeichen).',
     });
   }
   if (!PREFIX_RE.test(prefix)) {
-    throw new BackeError('usage', `Ungültiges ID-Präfix »${prefix}«`, {
+    throw new BackeError('validation', `Ungültiges ID-Präfix »${prefix}«`, {
       hint: 'Erlaubt sind 2 bis 6 Kleinbuchstaben.',
     });
   }
   if (!isHandle(handle)) {
-    throw new BackeError('usage', `Ungültiger Handle »${handle}«`, {
+    throw new BackeError('validation', `Ungültiger Handle »${handle}«`, {
       hint: 'Erlaubt sind Kleinbuchstaben, Ziffern und Bindestriche (2 bis 32 Zeichen); »me« ist reserviert.',
     });
   }
   const cfg = await readUserConfig(homes.backeHome);
   if (cfg.backlogs?.[name] !== undefined) {
-    throw new BackeError('conflict', `Backlog "${name}" ist bereits registriert`, {
+    throw new BackeError('conflict', `Backlog »${name}« ist bereits registriert`, {
       hint: 'backe backlog list',
     });
   }

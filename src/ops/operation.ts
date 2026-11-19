@@ -79,7 +79,7 @@ function present(o: object, keys: readonly string[]): string[] {
 }
 
 function quoted(keys: readonly string[]): string {
-  return keys.map((k) => `"${k}"`).join(', ');
+  return keys.map((k) => `»${k}«`).join(', ');
 }
 
 function exactlyOne(keys: readonly string[]) {

@@ -65,16 +65,16 @@ export function attachAdd(d: Draft, op: OpOf<'attach.add'>): OpOf<'attach.add'> 
   const issue = d.issue(op.id).data;
   const list = issue.attachments ?? [];
   if (list.some((a) => a.name === op.name)) {
-    throw violation('exists', `${op.id}: Anhang "${op.name}" existiert bereits`, { ids: [op.id] });
+    throw violation('exists', `${op.id}: Anhang »${op.name}« existiert bereits`, { ids: [op.id] });
   }
   let entry: NonNullable<Issue['attachments']>[number];
   if (op.file !== undefined) {
     const { content } = op;
     if (content === undefined) {
-      throw new BackeError('unexpected', `attach.add für "${op.file}" ohne Dateiinhalt`);
+      throw new BackeError('unexpected', `attach.add für »${op.file}« ohne Dateiinhalt`);
     }
     if (list.some((a) => a.file === op.file)) {
-      throw violation('exists', `${op.id}: Datei "${op.file}" gehört schon einem anderen Anhang`, {
+      throw violation('exists', `${op.id}: Datei »${op.file}« gehört schon einem anderen Anhang`, {
         ids: [op.id],
       });
     }
@@ -82,7 +82,7 @@ export function attachAdd(d: Draft, op: OpOf<'attach.add'>): OpOf<'attach.add'> 
     if (max !== null && content.byteLength > max) {
       throw violation(
         'too_large',
-        `Anhang "${op.file}" hat ${content.byteLength} Bytes, erlaubt sind ${max}`,
+        `Anhang »${op.file}« hat ${content.byteLength} Bytes, erlaubt sind ${max}`,
         {
           hint: 'Grenze attachments.max_bytes anheben oder attachments.lfs aktivieren (backe.md §2.8).',
         },
@@ -102,7 +102,7 @@ export function attachRm(d: Draft, op: OpOf<'attach.rm'>): OpOf<'attach.rm'> {
   const list = issue.attachments ?? [];
   const entry = list.find((a) => a.name === op.name);
   if (entry === undefined) {
-    throw violation('missing_ref', `${op.id}: Anhang "${op.name}" nicht gefunden`, {
+    throw violation('missing_ref', `${op.id}: Anhang »${op.name}« nicht gefunden`, {
       ids: [op.id],
     });
   }

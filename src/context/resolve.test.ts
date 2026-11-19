@@ -1,7 +1,9 @@
 import { symlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { vi } from 'vitest';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { contextTree, gitInit } from '../../test/helpers/context.ts';
+import * as query from '../git/query.ts';
 import type { Env } from './paths.ts';
 import {
   type ContextFlags,
@@ -176,7 +178,7 @@ test('no user anywhere resolves to none and cannot write', async () => {
   const err = await catchErrAsync(async () => requireWriter(ctx));
   expect([err.code, err.hint]).toEqual([
     'usage',
-    `--as <handle>, BACKE_USER oder "user" in ${join(s.home, '.backe/config.jsonc')}`,
+    `--as <handle>, BACKE_USER oder »user« in ${join(s.home, '.backe/config.jsonc')}`,
   ]);
 });
 
@@ -465,4 +467,26 @@ test('the resolved context carries its input env', async () => {
   const t = await setup();
   const env = { ...t.env };
   expect((await resolveContext({ cwd: t.at('work'), env, flags: {} })).env).toBe(env);
+});
+
+test('resolveContext asks git for the toplevel once', async () => {
+  const t = await setup({ 'repo/.backe/backlog.jsonc': BACKLOG('acme') });
+  await gitInit(t.at('repo'));
+  const spy = vi.spyOn(query, 'gitToplevel');
+  try {
+    const ctx = await t.run({}, {}, t.at('repo'));
+    expect(ctx.backlog.source.kind).toBe('backlog-repo');
+    expect(spy.mock.calls.filter(([dir]) => dir === t.at('repo'))).toHaveLength(1);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test('readBacklogName reports an unreadable config as unexpected with its path', async () => {
+  const { at } = await contextTree({ 'r/.backe/backlog.jsonc/x': '' });
+  const err = await catchErrAsync(() => readBacklogName(at('r')));
+  expect([err.code, err.message]).toEqual([
+    'unexpected',
+    `${at('r/.backe/backlog.jsonc')}: EISDIR`,
+  ]);
 });

@@ -34,7 +34,7 @@ import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG, classifyPath, QUARANTINE } from '../store/layout.ts';
 import { type BacklogSnapshot, loadSnapshot } from '../store/snapshot.ts';
 import { blobsAt, nextCommitBasis, treeChangesWithContent } from './verify.ts';
-import { activeFingerprints, schemaError } from './verify-state.ts';
+import { activeFingerprints, zodMessage } from './verify-state.ts';
 import { executeWrite, type WriteDeps, type WriteResult } from './write.ts';
 
 export type QuarantineInput = { sha: string; decision: 'accepted' | 'reverted'; reason: string };
@@ -69,7 +69,7 @@ function plannedState(snapshot: BacklogSnapshot, changes: readonly TreeChange[])
   } catch (err) {
     if (err instanceof BackeError) throw manual(err.message);
     // Nur das Config-Schema wirft hier einen ZodError.
-    if (err instanceof ZodError) throw manual(`${BACKLOG_CONFIG}: ${schemaError(err)}`);
+    if (err instanceof ZodError) throw manual(`${BACKLOG_CONFIG}: ${zodMessage(err)}`);
     throw err;
   }
   return { config, users };

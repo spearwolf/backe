@@ -90,11 +90,11 @@ test('an already registered name is a conflict', async () => {
   expect(err.code).toBe('conflict');
 });
 
-test('invalid name, prefix and handle are usage errors', async () => {
+test('an invalid name, prefix or handle is a validation error', async () => {
   const { input } = await inputFor();
   for (const over of [{ name: 'Bad Name' }, { prefix: 'B' }, { handle: 'me' }]) {
     const err = await catchErrAsync(() => initBacklog({ ...input, ...over }));
-    expect(err.code).toBe('usage');
+    expect(err.code).toBe('validation');
   }
 });
 

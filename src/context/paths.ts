@@ -1,4 +1,4 @@
-import { realpath } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { BackeError } from '../core/errors.ts';
@@ -40,12 +40,36 @@ export function resolveHomes(env: Env, cwd: string): Homes {
   }
 }
 
+/** Fehlt der Pfad (oder ist ein Vorfahr kein Verzeichnis)? Nur `ENOENT` und `ENOTDIR` zählen so. */
+export function isMissing(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
+/** Macht aus einem unerwarteten Dateisystemfehler eine `unexpected`-Meldung `<pfad>: <code>`. */
+export function fsFailure(path: string, error: unknown): BackeError {
+  if (error instanceof BackeError) return error;
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return new BackeError('unexpected', `${path}: ${code ?? String(error)}`, { details: { path } });
+}
+
+/** Gibt es `path`? `false` nur bei `ENOENT`/`ENOTDIR`; jeder andere Fehler ist `unexpected`. */
+export async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (isMissing(error)) return false;
+    throw fsFailure(path, error);
+  }
+}
+
 /** `realpath`; fehlt `p`, `realpath` des nächsten existierenden Vorfahren plus der Rest. */
 export async function physicalPath(p: string): Promise<string> {
   try {
     return await realpath(p);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if (!isMissing(error)) throw error;
     const parent = dirname(p);
     // Wurzel erreicht: kann nicht fehlen, aber die Rekursion muss terminieren.
     if (parent === p) throw error;

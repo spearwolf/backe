@@ -356,7 +356,7 @@ function assertDistinctExtra(
   const seen = new Set<string>();
   for (const [key] of extra) {
     if (KEY_ORDER[kind].includes(key) || Object.hasOwn(data, key) || seen.has(key)) {
-      throw new BackeError('unexpected', `extra-Key "${key}" kollidiert mit einem anderen Key`);
+      throw new BackeError('unexpected', `extra-Key »${key}« kollidiert mit einem anderen Key`);
     }
     seen.add(key);
   }

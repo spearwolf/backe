@@ -1,9 +1,9 @@
-import { symlink } from 'node:fs/promises';
+import { chmod, symlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { catchErr } from '../../test/helpers/catch.ts';
+import { catchErr, catchErrAsync } from '../../test/helpers/catch.ts';
 import { contextTree } from '../../test/helpers/context.ts';
-import { envValue, expandPath, physicalPath, resolveHomes, samePath } from './paths.ts';
+import { envValue, exists, expandPath, physicalPath, resolveHomes, samePath } from './paths.ts';
 
 const opts = { home: '/h', base: '/w' };
 
@@ -53,8 +53,41 @@ test('physicalPath resolves symlinks, also below a missing tail', async () => {
   expect(await samePath(at('link'), at('real/x'))).toBe(false);
 });
 
-test('physicalPath rethrows errors other than a missing path', async () => {
-  const { at } = await contextTree({ f: '' });
-  // Eine Datei als Verzeichnis-Vorfahr liefert ENOTDIR, nicht ENOENT.
-  await expect(physicalPath(at('f/below'))).rejects.toMatchObject({ code: 'ENOTDIR' });
+test.skipIf(process.getuid?.() === 0)(
+  'physicalPath rethrows errors other than a missing path',
+  async () => {
+    const { at } = await contextTree({ 'locked/sub/f': '' });
+    await chmod(at('locked'), 0o000);
+    try {
+      await expect(physicalPath(at('locked/sub/f'))).rejects.toMatchObject({ code: 'EACCES' });
+    } finally {
+      await chmod(at('locked'), 0o700);
+    }
+  },
+);
+
+test('exists reports false for a missing path and for a path below a file', async () => {
+  const { at } = await contextTree({ 'f.txt': 'x' });
+  expect(await exists(at('f.txt'))).toBe(true);
+  expect(await exists(at('missing'))).toBe(false);
+  expect(await exists(at('f.txt/x'))).toBe(false);
+});
+
+test.skipIf(process.getuid?.() === 0)(
+  'exists throws on EACCES instead of reporting false',
+  async () => {
+    const { at } = await contextTree({ 'locked/f.txt': 'x' });
+    await chmod(at('locked'), 0o000);
+    try {
+      const err = await catchErrAsync(() => exists(at('locked/f.txt')));
+      expect([err.code, err.message]).toEqual(['unexpected', `${at('locked/f.txt')}: EACCES`]);
+    } finally {
+      await chmod(at('locked'), 0o700);
+    }
+  },
+);
+
+test('physicalPath treats ENOTDIR like a missing path', async () => {
+  const { at } = await contextTree({ 'f.txt': 'x' });
+  expect(await physicalPath(at('f.txt/x'))).toBe(join(await physicalPath(at('f.txt')), 'x'));
 });

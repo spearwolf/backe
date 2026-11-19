@@ -117,7 +117,7 @@ function dispatch(d: Draft, op: Operation): Operation {
 /** Wer schreibt, muss ein User des Backlogs sein (backe.md §2.13); sonst `policy`. */
 export function assertActorIsUser(s: BacklogSnapshot, actor: string): void {
   if (!s.users.has(actor)) {
-    throw violation('policy', `Akteur "${actor}" ist kein User dieses Backlogs`);
+    throw violation('policy', `Akteur »${actor}« ist kein User dieses Backlogs`);
   }
 }
 
@@ -131,7 +131,7 @@ export function applyStep(d: Draft, op: Operation): Operation {
   const { ctx } = d;
   assertActorIsUser(d.snapshot, ctx.actor);
   if (!Timestamp.safeParse(ctx.now).success) {
-    throw new BackeError('unexpected', `Ungültiger Zeitstempel im ApplyContext: "${ctx.now}"`);
+    throw new BackeError('unexpected', `Ungültiger Zeitstempel im ApplyContext: »${ctx.now}«`);
   }
   const placeholders = referencedIds(op).filter((id) => PLACEHOLDER_RE.test(id));
   if (placeholders.length > 0) {

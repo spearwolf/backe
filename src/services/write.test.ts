@@ -384,7 +384,7 @@ test('a manual write by a handle that is no user is refused', async () => {
     }),
   );
   expect(err.code).toBe('validation');
-  expect(err.message).toBe('Akteur "bob" ist kein User dieses Backlogs');
+  expect(err.message).toBe('Akteur »bob« ist kein User dieses Backlogs');
   expect(await statusShort(b.root)).toEqual([]);
   expect(await revParse(b.root, 'HEAD')).toBe(head);
 });
@@ -430,7 +430,7 @@ test('a working copy of another identity is refused with the own path', async ()
   const own = workingCopyPath(ctx.userConfig, ctx.homes, 'acme', 'spw');
   expect(err.code).toBe('usage');
   expect(err.message).toBe(
-    `Die Arbeitskopie ${b.root} gehört "bob"; die Arbeitskopie von "spw" ist ${own}`,
+    `Die Arbeitskopie ${b.root} gehört »bob«; die Arbeitskopie von »spw« ist ${own}`,
   );
   expect(await revParse(b.root, 'HEAD')).toBe(head);
 });
