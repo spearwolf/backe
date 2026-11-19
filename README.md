@@ -51,9 +51,9 @@ itself apart through the **combination** of:
 
 An issue on disk:
 
+<!-- prettier-ignore -->
 ```markdown
 ---
-
 id: bk-7f3k2
 title: SSO login breaks after token refresh
 state: in_progress
@@ -64,7 +64,6 @@ sprints: [2026-w47]
 repos: [webapp@feat/sso]
 created: 2026-11-18T10:04:00Z
 ---
-
 After the access token refresh the user lands on `/login` again.
 ```
 
