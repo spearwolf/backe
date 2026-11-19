@@ -51,7 +51,6 @@ itself apart through the **combination** of:
 
 An issue on disk:
 
-<!-- prettier-ignore -->
 ```markdown
 ---
 id: bk-7f3k2
