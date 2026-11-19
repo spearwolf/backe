@@ -2,9 +2,12 @@
 import type { Command } from 'commander';
 import { BackeError } from '../../core/errors.ts';
 import { type NextQuery, nextIssue } from '../../services/next.ts';
-import { action, type Runtime, subcommand } from '../options.ts';
-import { headerLine, json, lines, pickFields, renderNotices } from '../output.ts';
-import { ISSUE_FIELDS, issueLines } from '../render-issue.ts';
+import { action, emitNotices, type Runtime, subcommand } from '../options.ts';
+import { headerLine, json, lines, pickFields } from '../output.ts';
+import { ISSUE_FIELDS, issueLines, issueListJson } from '../render-issue.ts';
+
+/** Erlaubte Felder für `next --fields`: Issue-Felder plus `open_deps`. */
+const NEXT_FIELDS: readonly string[] = [...ISSUE_FIELDS, 'open_deps'];
 
 type Opts = { project?: string; sprint?: string; repo?: string; level?: string; all?: boolean };
 
@@ -32,14 +35,14 @@ export function nextCommand(program: Command, rt: Runtime): void {
             ...(opts.repo === undefined ? {} : { repo: opts.repo }),
             ...(opts.all === true ? { all: true } : {}),
           });
+          const item = { issue: r.issue, openDeps: r.openDeps };
           if (env.format === 'json') {
+            const issue = issueListJson(item);
             env.out(
               json({
                 context: Object.keys(r.header).length === 0 ? undefined : r.header,
                 issue:
-                  env.fields === undefined
-                    ? r.issue
-                    : pickFields(r.issue, env.fields, ISSUE_FIELDS),
+                  env.fields === undefined ? issue : pickFields(issue, env.fields, NEXT_FIELDS),
                 resumed: r.resumed,
                 notices: r.notices.length === 0 ? undefined : r.notices,
               }),
@@ -47,17 +50,16 @@ export function nextCommand(program: Command, rt: Runtime): void {
             return;
           }
           const header = headerLine(r.header);
-          const [line] = issueLines([{ issue: r.issue, openDeps: false }], env.color);
+          const [line] = issueLines([item], env.color);
           env.out(
             lines([
               ...(header === undefined ? [] : [header]),
               `${line}${r.resumed ? '  (läuft schon)' : ''}`,
             ]),
           );
-          const notices = renderNotices(r.notices, []);
-          if (notices !== '') env.io.stderr(notices);
+          emitNotices(env, r.notices);
         },
-        { fields: ISSUE_FIELDS },
+        { fields: NEXT_FIELDS },
       ),
     );
 }

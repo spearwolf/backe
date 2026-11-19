@@ -10,6 +10,7 @@ import { type ContextFlags, type ResolvedContext, resolveContext } from '../cont
 import { readUserConfig, userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
 import type { UserConfig } from '../core/schemas.ts';
+import type { Notice } from '../ops/notice.ts';
 import type { WriteOutcome } from '../services/outcome.ts';
 import type { CliIo } from './io.ts';
 import {
@@ -281,14 +282,39 @@ export async function fileText(path: string, io: CliIo): Promise<string> {
 }
 
 /**
+ * Hinweise und Warnungen einer Operation: im Text-Modus als `Hinweis: …`/`Warnung: …` nach stderr,
+ * im JSON-Modus nichts, weil sie dort im Ergebnisobjekt stehen.
+ */
+export function emitNotices(
+  env: CommandEnv,
+  notices: readonly Notice[],
+  warnings: readonly string[] = [],
+): void {
+  if (env.format === 'json') return;
+  const out = renderNotices(notices, warnings);
+  if (out !== '') env.io.stderr(out);
+}
+
+/**
  * Gibt ein Write-Ergebnis aus. Text: Ergebnis nach stdout, Hinweise und Warnungen nach stderr.
  * JSON: alles in einem Objekt auf stdout (`notices`, `warnings`), stderr bleibt leer.
  */
 export function emitOutcome(env: CommandEnv, o: WriteOutcome, kind: 'create' | 'other'): void {
   env.out(renderOutcome(o, env.format, kind));
-  if (env.format === 'json') return;
-  const notices = renderNotices(o.notices, o.warnings);
-  if (notices !== '') env.io.stderr(notices);
+  emitNotices(env, o.notices, o.warnings);
+}
+
+/**
+ * Body aus stdin (`-d -`, `--body-file -`). Leeres stdin ist ein Fehler, damit ein abgebrochener
+ * Erzeuger in der Pipe die Beschreibung nicht still löscht; leeren geht ausdrücklich mit `-d ''`
+ * oder einer leeren Datei; `clear` nennt diesen Weg im Hinweis.
+ */
+export async function stdinBody(io: CliIo, stdin: StdinGuard, clear: string): Promise<string> {
+  const body = await text('-', io, stdin);
+  if (body.trim() === '') {
+    throw new BackeError('validation', 'Beschreibung ist leer', { hint: `Leeren mit ${clear}` });
+  }
+  return body;
 }
 
 /** JSON oder Text, je nach Format. */

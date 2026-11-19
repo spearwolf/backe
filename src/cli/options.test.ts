@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { tempDir } from '../../test/helpers/backlog.ts';
+import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { testBacklog } from '../../test/helpers/git.ts';
 import type { Env } from '../context/paths.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
@@ -13,7 +14,9 @@ import {
   globalKeysOf,
   globalOpts,
   type Runtime,
+  stdinBody,
   subcommand,
+  text,
 } from './options.ts';
 import { buildProgram } from './run.ts';
 
@@ -89,4 +92,31 @@ test('context resolves once per flag set, not once per call', async () => {
   expect(api?.project.value).toBe('api');
   expect(webAgain).toBe(web);
   expect(plain?.project.value).toBeUndefined();
+});
+
+test('stdin is handed out once per call', async () => {
+  let reads = 0;
+  const io = { ...fakeIo({}, '/'), readStdin: async () => `Eingabe ${++reads}` };
+  const guard = { taken: false };
+  expect(await text('wörtlich', io, guard)).toBe('wörtlich');
+  expect(guard.taken).toBe(false);
+  expect(await text('-', io, guard)).toBe('Eingabe 1');
+  const err = await catchErrAsync(() => text('-', io, guard));
+  expect([err.code, err.message]).toEqual(['usage', 'stdin ist schon vergeben']);
+  expect(reads).toBe(1);
+  // Ein wörtlicher Wert geht auch danach noch.
+  expect(await text('x', io, guard)).toBe('x');
+});
+
+test('a body from stdin must not be empty', async () => {
+  const io = (input: string) => ({ ...fakeIo({}, '/'), readStdin: async () => input });
+  expect(await stdinBody(io('Text\n'), { taken: false }, "-d ''")).toBe('Text\n');
+  for (const input of ['', ' \n\t\n']) {
+    const err = await catchErrAsync(() => stdinBody(io(input), { taken: false }, "-d ''"));
+    expect([err.code, err.message, err.hint]).toEqual([
+      'validation',
+      'Beschreibung ist leer',
+      "Leeren mit -d ''",
+    ]);
+  }
 });

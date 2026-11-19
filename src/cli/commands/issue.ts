@@ -4,7 +4,6 @@
  */
 import type { Command } from 'commander';
 import { BackeError } from '../../core/errors.ts';
-import type { Notice } from '../../ops/notice.ts';
 import { type IssueListQuery, listIssues } from '../../services/issue-list.ts';
 import { showIssue } from '../../services/issue-show.ts';
 import {
@@ -24,15 +23,17 @@ import {
   action,
   type CommandEnv,
   collect,
+  emitNotices,
   emitOutcome,
   fileText,
   GLOBAL_KEYS,
   limitArg,
   type Runtime,
+  stdinBody,
   subcommand,
   text,
 } from '../options.ts';
-import { headerLine, json, lines, pickFields, renderNotices } from '../output.ts';
+import { headerLine, json, lines, pickFields } from '../output.ts';
 import {
   issueDetailJson,
   issueDetailMd,
@@ -61,13 +62,6 @@ function reasonOptions(cmd: Command): Command {
     .option('--reason-file <pfad>', 'Begründung aus Datei');
 }
 
-/** Hinweise einer Operation (Text-Modus) nach stderr; im JSON-Modus stehen sie im Objekt. */
-function hintNotices(env: CommandEnv, notices: readonly Notice[]): void {
-  if (env.format === 'json') return;
-  const out = renderNotices(notices, []);
-  if (out !== '') env.io.stderr(out);
-}
-
 // --- create ------------------------------------------------------------------------------------
 
 type CreateOpts = {
@@ -87,8 +81,11 @@ type CreateOpts = {
 function defineCreate(parent: Command, name: string, rt: Runtime, description: string): void {
   subcommand(parent, name, description)
     .requiredOption('-t, --title <titel>', 'Titel')
-    .option('-d, --description <md|->', 'Beschreibung (»-« liest stdin)')
-    .option('-F, --file <pfad>', 'Beschreibung aus Datei')
+    .option(
+      '-d, --description <md|->',
+      "Beschreibung; »-« liest stdin, das nicht leer sein darf (ohne Text: -d '')",
+    )
+    .option('-F, --file <pfad>', 'Beschreibung aus Datei (darf leer sein)')
     .option('-p, --project <pfad>', 'Projekt (wiederholbar)', collect)
     .option('-s, --sprint <slug>', 'Sprint (wiederholbar)', collect)
     .option('-a, --assignee <user|me>', 'zuweisen')
@@ -103,11 +100,13 @@ function defineCreate(parent: Command, name: string, rt: Runtime, description: s
           throw new BackeError('usage', '-d und -F schließen sich aus');
         }
         const body =
-          opts.description !== undefined
-            ? await text(opts.description, env.io, env.stdin)
-            : opts.file !== undefined
-              ? await fileText(opts.file, env.io)
-              : undefined;
+          opts.description === '-'
+            ? await stdinBody(env.io, env.stdin, "-d ''")
+            : opts.description !== undefined
+              ? opts.description
+              : opts.file !== undefined
+                ? await fileText(opts.file, env.io)
+                : undefined;
         const r = await createIssue(await env.context(), {
           title: opts.title,
           ...(body === undefined ? {} : { body }),
@@ -276,7 +275,7 @@ function defineShow(parent: Command, name: string, rt: Runtime, description: str
             return;
           }
           env.out(env.format === 'md' ? issueDetailMd(d) : issueDetailText(d, env.color));
-          hintNotices(env, d.notices);
+          emitNotices(env, d.notices);
         },
         { formats: ['text', 'json', 'md'], fields: SHOW_FIELDS },
       ),
@@ -301,7 +300,12 @@ type EditOpts = {
 };
 
 function defineEdit(parent: Command, rt: Runtime): void {
+  // commander legt `--parent <id>` und `--no-parent` auf dasselbe Feld, die letzte Angabe gewönne
+  // still. Beide Events zu sehen heißt: widersprüchlicher Aufruf.
+  const parentFlags = new Set<string>();
   subcommand(parent, 'edit <id>', 'Felder eines Issues ändern')
+    .on('option:parent', () => parentFlags.add('--parent'))
+    .on('option:no-parent', () => parentFlags.add('--no-parent'))
     .option('--title <titel>', 'neuer Titel')
     .option('--add-project <pfad>', 'Projekt hinzufügen (wiederholbar)', collect)
     .option('--rm-project <pfad>', 'Projekt entfernen (wiederholbar)', collect)
@@ -313,9 +317,15 @@ function defineEdit(parent: Command, rt: Runtime): void {
     .option('--no-parent', 'vom Parent lösen')
     .option('--prop <key=wert|key:=json>', 'Property setzen (wiederholbar)', collect)
     .option('--unset-prop <key>', 'Property entfernen (wiederholbar)', collect)
-    .option('--body-file <pfad|->', 'neuer Body aus Datei (»-« liest stdin)')
+    .option(
+      '--body-file <pfad|->',
+      'neuer Body aus Datei, eine leere Datei leert ihn; »-« liest stdin, das nicht leer sein darf',
+    )
     .action(
       action(rt, async (env, ref: string, opts: EditOpts) => {
+        if (parentFlags.size > 1) {
+          throw new BackeError('usage', '--parent und --no-parent schließen sich aus');
+        }
         const given = Object.entries(opts).filter(
           ([key, v]) => v !== undefined && !(GLOBAL_KEYS as readonly string[]).includes(key),
         );
@@ -326,7 +336,7 @@ function defineEdit(parent: Command, rt: Runtime): void {
           opts.bodyFile === undefined
             ? undefined
             : opts.bodyFile === '-'
-              ? await text('-', env.io, env.stdin)
+              ? await stdinBody(env.io, env.stdin, '--body-file <leere datei>')
               : await fileText(opts.bodyFile, env.io);
         const r = await editIssue(await env.context(), ref, {
           ...(opts.title === undefined ? {} : { title: opts.title }),

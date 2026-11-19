@@ -7,12 +7,15 @@ import { BackeError } from '../core/errors.ts';
 import type { Issue } from '../core/schemas.ts';
 import { selectNext } from '../ops/next.ts';
 import type { Notice } from '../ops/notice.ts';
+import { hasOpenDeps } from './issue-list.ts';
 import { effectiveFilter, openSnapshot } from './read.ts';
 
 export type NextOutcome = {
   header: Record<string, string>;
   issue: Issue;
   resumed: boolean;
+  /** Hat das Issue offene `depends_on`? Möglich bei einem fortgesetzten `in_progress`-Issue. */
+  openDeps: boolean;
   notices: Notice[];
 };
 
@@ -52,7 +55,13 @@ export async function nextIssue(ctx: ResolvedContext, q: NextQuery): Promise<Nex
   });
   const chosen = result.id === undefined ? undefined : s.issues.get(result.id)?.data;
   if (chosen) {
-    return { header: f.header, issue: chosen, resumed: result.resumed, notices: result.notices };
+    return {
+      header: f.header,
+      issue: chosen,
+      resumed: result.resumed,
+      openDeps: hasOpenDeps(s, chosen),
+      notices: result.notices,
+    };
   }
   const reason = result.reason ?? 'nothing_open';
   const messages = {

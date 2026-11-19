@@ -11,7 +11,7 @@ import { addUser } from '../../src/services/users.ts';
 import { executeWrite, type WriteDeps } from '../../src/services/write.ts';
 import { issueFile } from '../../src/store/layout.ts';
 import { tempDir } from '../helpers/backlog.ts';
-import { type TestBacklog, testBacklog, testKey } from '../helpers/git.ts';
+import { revParse, type TestBacklog, testBacklog, testKey } from '../helpers/git.ts';
 import { seqBytes } from '../helpers/snapshot.ts';
 import { type CliResult, cli, normalize, transcript } from './cli.ts';
 
@@ -606,6 +606,88 @@ test('edit changes fields and needs at least one flag', async () => {
   expect(reset).not.toHaveProperty('parent');
   expect(reset).not.toHaveProperty('props');
   expect(reset).not.toHaveProperty('depends_on');
+
+  // --parent und --no-parent widersprechen sich, in jeder Reihenfolge.
+  for (const args of [
+    ['issue', 'edit', D, '--parent', E, '--no-parent'],
+    ['issue', 'edit', D, '--no-parent', '--parent', E],
+  ]) {
+    expect(await run(s, args)).toEqual({
+      stdout: '',
+      stderr: 'Fehler: --parent und --no-parent schließen sich aus\n',
+      code: 2,
+    });
+  }
+});
+
+test('an empty stdin body is refused, an empty file or -d "" clears it', async () => {
+  const s = await setup();
+  const { E } = s.id;
+  const head = await revParse(s.b.root, 'HEAD');
+  for (const [args, hint] of [
+    [['new', '-t', 'x', '-d', '-'], "-d ''"],
+    [['issue', 'edit', E, '--body-file', '-'], '--body-file <leere datei>'],
+  ] as const) {
+    for (const input of ['', ' \n\n']) {
+      expect(await run(s, [...args], { input })).toEqual({
+        stdout: '',
+        stderr: `Fehler: Beschreibung ist leer\nHinweis: Leeren mit ${hint}\n`,
+        code: 2,
+      });
+    }
+  }
+  const json = await run(s, ['issue', 'edit', E, '--body-file', '-', '--json'], { input: '' });
+  expect(errorOf(json)).toMatchObject({ code: 'validation', message: 'Beschreibung ist leer' });
+  // Nichts committet, der Body steht noch.
+  expect(await revParse(s.b.root, 'HEAD')).toBe(head);
+  expect((JSON.parse(ok(await run(s, ['show', E, '--json']))) as { body?: string }).body).toBe(
+    'Sammelt die Login-Arbeiten.\n',
+  );
+
+  // Der ausdrückliche Weg zum Leeren: eine leere Datei oder -d ''.
+  await writeFile(join(s.cwd, 'leer.md'), '');
+  expect(ok(await run(s, ['issue', 'edit', E, '--body-file', 'leer.md']))).toBe(
+    `issue edit ${E}\n`,
+  );
+  expect(JSON.parse(ok(await run(s, ['show', E, '--json'])))).not.toHaveProperty('body');
+  const blank = ok(await run(s, ['new', '-t', 'ohne Text', '-d', ''])).trim();
+  expect(JSON.parse(ok(await run(s, ['show', blank, '--json'])))).not.toHaveProperty('body');
+});
+
+test('list filters and create defaults from the context', async () => {
+  const s = await setup();
+  const { E, C1, C2, C3, D, B } = s.id;
+  const ids = async (args: string[], env: Env = {}) =>
+    (
+      JSON.parse(ok(await run(s, [...args, '--json', '--fields', 'id'], { env }))) as {
+        issues: { id: string }[];
+      }
+    ).issues.map((i) => i.id);
+
+  expect(await ids(['ls', '-a', 'none'])).toEqual([E, C2, D]);
+  expect(await ids(['ls', '--blocked'])).toEqual([B]);
+  expect(await ids(['ls', '--parent', E, '--state', 'all'])).toEqual([C1, C2, C3]);
+  expect(await ids(['ls', '--top-level'])).toEqual([E, D, B]);
+  expect(await ids(['ls', '--prop', 'area=api'])).toEqual([C2]);
+  expect(await ids(['ls', '--has-prop', 'estimate_h'])).toEqual([C2]);
+  expect(await ids(['ls', '--creator', 'me', '-p', 'web', '--exact'])).toEqual([D, B]);
+  expect(await ids(['ls', '--creator', 'claude-1'])).toEqual([]);
+  expect(await ids(['ls', '-s', '2026-w47'])).toEqual([E, C1, C2]);
+  expect(await ids(['ls', '--repo', 'webapp', '--state', 'done'])).toEqual([C3]);
+
+  // Ohne --parent belegt der Kontext Projekt und Sprint vor; ein Flag gewinnt.
+  const env = { BACKE_PROJECT: 'web/auth', BACKE_SPRINT: '2026-w47' };
+  const fromContext = ok(await run(s, ['new', '-t', 'Aus dem Kontext'], { env })).trim();
+  expect(JSON.parse(ok(await run(s, ['show', fromContext, '--json'])))).toMatchObject({
+    projects: ['web/auth'],
+    sprints: ['2026-w47'],
+  });
+  const flagged = ok(await run(s, ['new', '-t', 'Mit Flag', '-p', 'web'], { env })).trim();
+  expect(JSON.parse(ok(await run(s, ['show', flagged, '--json'])))).toMatchObject({
+    projects: ['web'],
+    sprints: ['2026-w47'],
+  });
+  expect(await ids(['ls'], env)).toContain(fromContext);
 });
 
 test('ambiguous short id lists candidates with exit 2', async () => {
@@ -684,6 +766,22 @@ test('next picks, resumes and explains an empty result with exit 3', async () =>
   // Ein Claim gehört nicht zu diesem Befehl.
   expect((await run(s, ['next', '--claim'])).code).toBe(2);
   expect((await run(s, ['issue', 'claim', s.id.D])).code).toBe(2);
+
+  // Ein fortgesetztes Issue kann offene Abhängigkeiten haben; die Zeile markiert sie.
+  expect(ok(await run(s, ['issue', 'edit', s.id.C1, '--add-dep', s.id.D]))).toBe(
+    `issue edit ${s.id.C1}\n`,
+  );
+  expect(ok(await run(s, ['next', '--as', 'claude-1']))).toBe(
+    `${s.id.C1}  in_progress  claude-1  ⧗ Token-Refresh reparieren  (läuft schon)\n`,
+  );
+  const marked = JSON.parse(ok(await run(s, ['next', '--as', 'claude-1', '--json']))) as {
+    issue: Record<string, unknown>;
+  };
+  expect(marked.issue).toMatchObject({ id: s.id.C1, open_deps: true });
+  expect(JSON.parse(ok(await run(s, ['next', '--json', '--fields', 'id,open_deps'])))).toEqual({
+    issue: { id: s.id.D },
+    resumed: false,
+  });
 });
 
 test('comment add, list, edit, delete', async () => {

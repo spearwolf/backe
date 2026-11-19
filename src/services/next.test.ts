@@ -47,6 +47,17 @@ test('next resumes own in_progress work first', async () => {
   expect(out.resumed).toBe(true);
 });
 
+test('next says whether the chosen issue has open dependencies', async () => {
+  const r = await create(
+    { ref: '$A', title: 'A', state: 'todo' },
+    { ref: '$B', title: 'B', state: 'in_progress', assignee: 'spw', depends_on: ['$A'] },
+  );
+  const resumed = await nextIssue(ctx, {});
+  expect([resumed.issue.id, resumed.resumed, resumed.openDeps]).toEqual([r.$B, true, true]);
+  const other = await nextIssue(await b.context({ as: 'bob' }), {});
+  expect([other.issue.id, other.resumed, other.openDeps]).toEqual([r.$A, false, false]);
+});
+
 test('next without candidate names the waiting ids and exits not_found', async () => {
   const r = await create(
     { ref: '$D', title: 'Offen', state: 'in_progress', assignee: 'bob' },

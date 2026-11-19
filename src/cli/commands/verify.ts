@@ -3,8 +3,16 @@ import type { Command } from 'commander';
 import { BackeError } from '../../core/errors.ts';
 import { quarantineCommit } from '../../services/quarantine.ts';
 import { assertVerified, type BacklogVerifyReport, verifyBacklog } from '../../services/verify.ts';
-import { action, type CommandEnv, emit, type Runtime, subcommand, text } from '../options.ts';
-import { json, lines, paint, renderHints, renderNotices } from '../output.ts';
+import {
+  action,
+  type CommandEnv,
+  emit,
+  emitNotices,
+  type Runtime,
+  subcommand,
+  text,
+} from '../options.ts';
+import { json, lines, paint, renderHints } from '../output.ts';
 
 type Opts = { since?: string; accept?: string; revert?: string; reason?: string };
 
@@ -52,10 +60,7 @@ async function quarantine(env: CommandEnv, opts: Opts): Promise<void> {
   emit(env, { commit: r.commit ?? null, sha, decision, reason, notices, warnings }, () =>
     lines([`${short(sha)} ${decision}: ${reason}`]),
   );
-  if (env.format !== 'json') {
-    const extra = renderNotices(r.notices, r.verifyNotices);
-    if (extra !== '') env.io.stderr(extra);
-  }
+  emitNotices(env, r.notices, r.verifyNotices);
 }
 
 export function verifyCommand(program: Command, rt: Runtime): void {
