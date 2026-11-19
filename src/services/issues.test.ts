@@ -407,6 +407,15 @@ describe('linkIssue and unlinkIssue', () => {
     expect(outcome.op).not.toHaveProperty('repo' in expected ? 'url' : 'repo');
   });
 
+  test('a ref with a colon never makes a registered repo named git', async () => {
+    await setup();
+    await fixtures([{ op: 'repo.add', url: 'https://example.com/git.git', name: 'git' }]);
+    const id = await newIssue('T');
+    const outcome = await linkIssue(ctx, id, 'git@github.com:acme/api.git');
+    expect(outcome.op).toMatchObject({ op: 'issue.link', id, url: 'git@github.com:acme/api.git' });
+    expect(outcome.op).not.toHaveProperty('repo');
+  });
+
   test('link with an unknown name that is no URL is a validation error', async () => {
     await setup();
     const id = await newIssue('T');

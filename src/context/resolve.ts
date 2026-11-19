@@ -138,8 +138,7 @@ async function bindPath(path: string, source: Source): Promise<Found> {
   if (top === undefined || name === undefined) {
     throw new BackeError(
       'not_found',
-      `Kein Backlog unter »${path}« (Quelle: ${describe(source)})`,
-      { hint: 'backe backlog list' },
+      `${path} ist keine Arbeitskopie eines Backlogs (Quelle: ${describe(source)})`,
     );
   }
   return { name, source, bound: top };
@@ -294,7 +293,7 @@ function levelRepo(level: Level): Resolved<string | null> | undefined {
   return undefined;
 }
 
-/** Kanonische URL oder `undefined`; `normalizeRepoUrl` ist nicht idempotent, daher nur Rohwerte übergeben. */
+/** Kanonische URL oder `undefined`; */
 function canonicalOrUndefined(raw: string): string | undefined {
   try {
     return normalizeRepoUrl(raw);
@@ -310,9 +309,11 @@ async function findRepo(
   level: Level,
 ): Promise<Resolved<string | null | undefined>> {
   const none = { value: undefined, source: NONE };
-  const registry = root === undefined ? undefined : await loadRepoRegistry(root);
+  // Die Registry wird erst geladen, wenn es einen Repo-Wert zu prüfen gibt.
+  const registryOf = async () => (root === undefined ? undefined : await loadRepoRegistry(root));
   const configured = levelRepo(level);
   if (configured !== undefined) {
+    const registry = configured.value === null ? undefined : await registryOf();
     if (configured.value !== null && registry !== undefined && !registry.has(configured.value)) {
       throw new BackeError(
         'not_found',
@@ -322,15 +323,19 @@ async function findRepo(
     }
     return configured;
   }
-  if (root === undefined || registry === undefined) return none;
+  if (root === undefined) return none;
   const top = await cwdTop();
   if (top === undefined || top === (await physicalPath(root))) return none;
+  const remotes = await gitRemotes(cwd);
+  if (remotes.length === 0) return none;
+  const registry = await registryOf();
+  if (registry === undefined) return none;
   const byUrl = new Map<string, string>();
   for (const [name, entry] of registry) {
     const canonical = canonicalOrUndefined(entry.data.url);
     if (canonical !== undefined && !byUrl.has(canonical)) byUrl.set(canonical, name);
   }
-  for (const remote of await gitRemotes(cwd)) {
+  for (const remote of remotes) {
     const canonical = canonicalOrUndefined(remote.url);
     const name = canonical === undefined ? undefined : byUrl.get(canonical);
     if (name !== undefined) return { value: name, source: { kind: 'remote', detail: remote.name } };

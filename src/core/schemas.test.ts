@@ -431,7 +431,7 @@ describe('names and refs that later become paths or git arguments', () => {
   const BAD_NAMES = ['../../.ssh', 'a b', '\u0001', '', 'Acme', '-acme', 'a'.repeat(65)];
   const GOOD_NAMES = ['acme', 'a', '0-backlog', 'a'.repeat(64)];
   const BAD_REFS = ['--upload-pack=x', '-x', 'a b', 'a\tb', '\u0001', '\u007f', '\u0085', ''];
-  const GOOD_REFS = ['origin', 'main', 'feat/sso', '4e1f9c2', 'git@github.com:acme/x.git'];
+  const GOOD_REFS = ['origin', 'main', 'feat/sso', '4e1f9c2'];
   const ok = (schema: z.ZodType, data: unknown) => schema.safeParse(data).success;
 
   test.each(BAD_NAMES)('backlog name %j is rejected', (name) => {
@@ -456,6 +456,14 @@ describe('names and refs that later become paths or git arguments', () => {
     expect(ok(RepoSchema, { url: 'gh:acme/webapp', default_ref: ref })).toBe(true);
     expect(ok(IssueSchema, { ...base, repos: [`webapp@${ref}`] })).toBe(true);
   });
+  test.each(['a:b', 'a..b', '.hidden', 'x.lock', 'a@{1}', 'git@github.com:acme/x.git'])(
+    'ref %j is no git ref for default_ref and issue repos, but fine as a remote',
+    (ref) => {
+      expect(ok(BacklogConfigSchema, { ...bcfg, sync: { remote: ref } })).toBe(true);
+      expect(ok(RepoSchema, { url: 'gh:acme/webapp', default_ref: ref })).toBe(false);
+      expect(ok(IssueSchema, { ...base, repos: [`webapp@${ref}`] })).toBe(false);
+    },
+  );
   test('the JSON schemas carry the patterns for editors', async () => {
     const backlog = JSON.parse(await readFile('schemas/backlog.schema.json', 'utf8'));
     expect(backlog.properties.name.pattern).toBeTypeOf('string');

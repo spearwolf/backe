@@ -342,3 +342,13 @@ test('loading stops reading after the first failure', async () => {
     readHook.fn = undefined;
   }
 });
+
+test('listIssueIds and listComments refuse malformed input', async () => {
+  const root = fixture('backlog-basic');
+  for (const shard of ['../x', 'a', 'abc', 'IL']) {
+    expect((await catchErrAsync(() => listIssueIds(root, shard))).code).toBe('validation');
+  }
+  for (const id of ['../x', 'bk-../../etc', '']) {
+    expect((await catchErrAsync(() => listComments(root, id))).code).toBe('validation');
+  }
+});

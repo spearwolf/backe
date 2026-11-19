@@ -1,5 +1,5 @@
 import fc from 'fast-check';
-import { isGitArg } from '../../src/core/names.ts';
+import { isGitArg, isGitRef } from '../../src/core/names.ts';
 import { type Issue, KEY_ORDER, type PropValue } from '../../src/core/schemas.ts';
 import type { State } from '../../src/core/state.ts';
 import type { Operation } from '../../src/ops/operation.ts';
@@ -112,8 +112,13 @@ const arbProject = fc
   .array(fc.stringMatching(/^[a-z0-9][a-z0-9-]{0,12}$/), { minLength: 1, maxLength: 5 })
   .map((segs) => segs.join('/'));
 const arbSprint = fc.stringMatching(/^[a-z0-9][a-z0-9-]{0,20}$/);
+/** Gültige Git-Refs: Branch- und Tag-artige Namen, dazu beliebige Strings, soweit sie `isGitRef` erfüllen. */
+const arbGitRef = fc.oneof(
+  fc.stringMatching(/^[A-Za-z0-9][A-Za-z0-9_-]{0,10}(\/[A-Za-z0-9_-]{1,8}){0,2}$/),
+  arbString().filter((s) => isGitArg(s) && isGitRef(s)),
+);
 const arbRepo = fc
-  .tuple(fc.stringMatching(/^[a-z0-9][a-z0-9._-]{0,20}$/), fc.option(arbString().filter(isGitArg)))
+  .tuple(fc.stringMatching(/^[a-z0-9][a-z0-9._-]{0,20}$/), fc.option(arbGitRef))
   .map(([name, ref]) => (ref === null ? name : `${name}@${ref}`));
 const arbTimestamp = fc
   .date({
@@ -262,7 +267,6 @@ const arbRepoUrl = fc
     fc.stringMatching(/^[a-z0-9][a-z0-9_-]{0,10}$/),
   )
   .map(([base, owner, repo]) => `${base}${owner}/${repo}`);
-const arbGitArg = arbString().filter(isGitArg);
 const arbSshKey = fc
   .tuple(
     // Ein gültiger ed25519-Blob: Typ-Feld plus 32 Byte Schlüsseldaten.
@@ -371,7 +375,7 @@ const ENTITY_FIELD_ARBS: Record<
     end: optional(arbDate),
     closed: optional(fc.boolean()),
   },
-  repo: { url: required(arbRepoUrl), default_ref: optional(arbGitArg) },
+  repo: { url: required(arbRepoUrl), default_ref: optional(arbGitRef) },
   user: {
     name: required(arbTitle),
     kind: required(fc.constantFrom('human', 'agent')),
@@ -474,7 +478,7 @@ export function arbOperation(): fc.Arbitrary<Operation> {
       fc.record({ value: fc.integer() }),
     ),
     withOneOf(
-      variant('issue.link', { id: arbIssueRef }, { ref: arbGitArg }),
+      variant('issue.link', { id: arbIssueRef }, { ref: arbGitRef }),
       fc.record({ repo: arbRepoName }),
       fc.record({ url: arbRepoUrl }),
     ),
@@ -529,7 +533,7 @@ export function arbOperation(): fc.Arbitrary<Operation> {
     variant(
       'repo.add',
       { url: arbRepoUrl },
-      { name: arbRepoName, default_ref: arbGitArg, body: arbString() },
+      { name: arbRepoName, default_ref: arbGitRef, body: arbString() },
     ),
     variant('repo.rm', { name: arbRepoName }),
     variant(
@@ -606,4 +610,31 @@ export function arbIssueEdit(): fc.Arbitrary<{ before: string; after: string }> 
       const after = serializeEntityFile('issue', next, change.body ?? body, extra);
       return { before, after };
     });
+}
+
+/** Repo-URLs in den Formen, die `normalizeRepoUrl` kennt (auch mit `.git`, Slashes und Großbuchstaben). */
+export function arbRawRepoUrl(): fc.Arbitrary<string> {
+  const host = fc.constantFrom(
+    'github.com',
+    'GitHub.com',
+    'gitlab.com',
+    'git.example.org',
+    'Host.Example',
+  );
+  const segment = fc.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._-]{0,8}$/);
+  const path = fc
+    .array(segment, { minLength: 1, maxLength: 3 })
+    .map((p) => p.join('/'))
+    .chain((p) => fc.constantFrom(p, `${p}.git`, `${p}/`, `${p}.git.git`));
+  return fc.oneof(
+    fc
+      .tuple(fc.constantFrom('https', 'http', 'ssh'), host, path)
+      .map(([s, h, p]) => `${s}://${h}/${p}`),
+    fc.tuple(host, path).map(([h, p]) => `git@${h}:${p}`),
+    fc.tuple(host, path).map(([h, p]) => `${h}/${p}`),
+    path.map((p) => `/srv/${p}`),
+    path.map((p) => `file:///srv/${p}`),
+    path.map((p) => `file:/srv/${p}`),
+    path.map((p) => `gh:${p}`),
+  );
 }

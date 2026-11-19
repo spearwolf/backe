@@ -210,6 +210,15 @@ export async function updateUserConfig(
     if (edits.length === 0) return current;
     let next = text;
     for (const { path, value } of edits) next = applyConfigEdit(next, path, value);
+    try {
+      readJsonc(next, file);
+    } catch {
+      // Der Edit selbst hat die Syntax zerstört, nicht der User: Datei bleibt unangetastet.
+      throw new BackeError(
+        'unexpected',
+        `Edit an ${file} konnte nicht angewendet werden; Datei unverändert`,
+      );
+    }
     const updated = parseUserConfig(next, file);
     await writeFileAtomic(file, next);
     return updated;

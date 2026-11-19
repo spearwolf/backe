@@ -4,6 +4,7 @@ import {
   HANDLE_PATTERN,
   isBacklogName,
   isGitArg,
+  isGitRef,
   isHandle,
   isProjectPath,
   isRepoName,
@@ -112,4 +113,36 @@ test('git arguments', () => {
     '',
   ])
     expect(isGitArg(s)).toBe(false);
+});
+
+test.each(['main', 'feat/sso', 'v1.2', '4e1f9c2'])('isGitRef(%s) is true', (r) =>
+  expect(isGitRef(r)).toBe(true),
+);
+test.each([
+  '',
+  'a:b',
+  'a..b',
+  '.hidden',
+  'x.lock',
+  'a/.b',
+  'a.lock/b',
+  'a b',
+  '@',
+  'a@{1}',
+  '/x',
+  'x/',
+  'a//b',
+  'x.',
+  'a~1',
+  'a^',
+  'a*',
+  'a?',
+  'a[b',
+  'a\\b',
+  'a\u0001b',
+])('isGitRef(%j) is false', (r) => expect(isGitRef(r)).toBe(false));
+
+test('parseRepoRef refuses an invalid ref by name', () => {
+  const err = catchErr(() => parseRepoRef('webapp@a..b'));
+  expect([err.code, err.message]).toEqual(['validation', 'Ungültiger Ref »a..b«']);
 });

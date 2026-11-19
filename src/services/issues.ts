@@ -7,7 +7,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
-import { isGitArg, parseRepoRef } from '../core/names.ts';
+import { isGitRef, parseRepoRef } from '../core/names.ts';
 import type { PropValue } from '../core/schemas.ts';
 import { normalizeStateInput } from '../core/state.ts';
 import { normalizeRepoUrl } from '../core/url.ts';
@@ -340,17 +340,18 @@ function parseLinkTarget(
   target: string,
 ): { repo: string; ref?: string } | { url: string; ref?: string } {
   const first = target.split('@', 1)[0] ?? '';
-  if (s.repos.has(first)) {
+  const at = target.lastIndexOf('@');
+  // Ein `:` hinter dem letzten `@` macht aus dem Ziel nie Repo plus Ref (`git@host:pfad`).
+  if (s.repos.has(first) && !target.slice(at + 1).includes(':')) {
     const { name, ref } = parseRepoRef(target);
     return ref === undefined ? { repo: name } : { repo: name, ref };
   }
-  const at = target.lastIndexOf('@');
   if (at > 0) {
     const head = target.slice(0, at);
     const tail = target.slice(at + 1);
     if (head !== 'git' && !tail.includes(':') && normalizable(head)) {
-      if (!isGitArg(tail)) {
-        throw new BackeError('validation', `Ungültiger Ref in »${target}«`);
+      if (!isGitRef(tail)) {
+        throw new BackeError('validation', `Ungültiger Ref »${tail}«`);
       }
       return { url: head, ref: tail };
     }

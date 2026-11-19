@@ -6,6 +6,7 @@ import {
   BACKLOG_NAME_RE,
   GIT_ARG_RE,
   HANDLE_PATTERN,
+  isGitRef,
   isProjectPath,
   isSprintSlug,
   PROJECT_PATH_RE,
@@ -322,7 +323,7 @@ export const RepoSchema = z.object({
       return false;
     }
   }, 'keine gültige Repo-URL'),
-  default_ref: GitArg.optional(),
+  default_ref: GitArg.refine(isGitRef, 'kein gültiger Git-Ref').optional(),
 });
 
 export type Issue = z.infer<typeof IssueSchema>;

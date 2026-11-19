@@ -357,6 +357,7 @@ export async function loadRepoRegistry(root: string): Promise<Map<string, Stored
 
 /** Kommentare eines Issues, chronologisch nach Dateiname; ein kaputter Kommentar wirft. */
 export async function listComments(root: string, id: string): Promise<StoredEntity<Comment>[]> {
+  if (!isIssueId(id)) throw new BackeError('validation', `Ungültige Issue-ID »${id}«`);
   const out: StoredEntity<Comment>[] = [];
   for (const path of await listMarkdown(root, commentsDir(id), false)) {
     out.push(await readEntity<Comment>(root, path, 'comment'));
@@ -364,8 +365,13 @@ export async function listComments(root: string, id: string): Promise<StoredEnti
   return out;
 }
 
+const SHARD_RE = /^[0-9a-hjkmnp-tv-z]{2}$/;
+
 /** Issue-IDs aus den Verzeichnisnamen, sortiert; mit `shard` nur dieser Shard. */
 export async function listIssueIds(root: string, shard?: string): Promise<string[]> {
+  if (shard !== undefined && !SHARD_RE.test(shard)) {
+    throw new BackeError('validation', `Ungültiger Shard »${shard}«`);
+  }
   const shards =
     shard !== undefined
       ? [shard]

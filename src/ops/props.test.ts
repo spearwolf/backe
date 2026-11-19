@@ -186,6 +186,17 @@ describe('ordered enums with number-like values', () => {
   });
 });
 
+describe('range filter messages', () => {
+  test('quote the raw value', () => {
+    const levels = cfg({
+      props: { level: { type: 'enum', values: ['03', '02'], ordered: false, description: 'x' } },
+    });
+    expect(catchErr(() => checkPropFilter(parsePropFilter('level>=01'), levels)).message).toContain(
+      'level>=01',
+    );
+  });
+});
+
 describe('propMatches', () => {
   test('ordered enum range filter', () => {
     const ge = parsePropFilter('severity>=medium');

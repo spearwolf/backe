@@ -54,6 +54,20 @@ export function isGitArg(s: string): boolean {
   return GIT_ARG_RE.test(s);
 }
 
+/**
+ * Gültiger Git-Ref nach `git check-ref-format --allow-onelevel`: kein Segment beginnt mit `.` oder
+ * endet auf `.lock`, kein `..`, `@{`, `@` allein, keine Steuerzeichen, Leerzeichen oder `~^:?*[\`,
+ * kein führender oder abschließender `/`, kein `//`, kein abschließender `.`.
+ */
+export function isGitRef(s: string): boolean {
+  if (s === '' || s === '@' || s.startsWith('/') || s.endsWith('/') || s.endsWith('.'))
+    return false;
+  if (s.includes('..') || s.includes('@{') || s.includes('//')) return false;
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: Steuerzeichen werden hier gerade ausgeschlossen
+  if (/[\u0000-\u0020\u007f~^:?*[\\]/.test(s)) return false;
+  return s.split('/').every((seg) => !seg.startsWith('.') && !seg.endsWith('.lock'));
+}
+
 /** Zerlegt `name` oder `name@ref` am ersten `@`; der Ref darf `/` und weitere `@` enthalten. */
 export function parseRepoRef(s: string): { name: string; ref?: string } {
   const at = s.indexOf('@');
@@ -65,9 +79,9 @@ export function parseRepoRef(s: string): { name: string; ref?: string } {
   }
   if (at < 0) return { name };
   const ref = s.slice(at + 1);
-  if (!isGitArg(ref)) {
-    throw new BackeError('validation', `Ungültiger Ref in »${s}«`, {
-      hint: 'Form: <repo>@<ref>, z. B. webapp@main. Der Ref ist nicht leer, beginnt nicht mit "-" und enthält weder Leer- noch Steuerzeichen.',
+  if (!isGitArg(ref) || !isGitRef(ref)) {
+    throw new BackeError('validation', `Ungültiger Ref »${ref}«`, {
+      hint: 'Form: <repo>@<ref>, z. B. webapp@main. Der Ref folgt git check-ref-format: nicht leer, ohne führendes "-", ohne Leer- und Steuerzeichen und ohne ~ ^ : ? * [ \\ sowie ".." und "@{".',
     });
   }
   return { name, ref };

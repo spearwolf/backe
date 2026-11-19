@@ -1,3 +1,5 @@
+import fc from 'fast-check';
+import { arbRawRepoUrl } from '../../test/helpers/arbitraries.ts';
 import { catchErr } from '../../test/helpers/catch.ts';
 import { isRepoName } from './names.ts';
 import { deriveRepoName, normalizeRepoUrl } from './url.ts';
@@ -12,6 +14,11 @@ test.each([
   ['/srv/git/backlog.git', 'file:/srv/git/backlog'],
   ['file:///srv/git/backlog.git', 'file:/srv/git/backlog'],
   ['http://Example.org:8080/a//b/C.git', 'example.org/a/b/C'],
+  ['https://github.com/Acme/WebApp', 'github.com/acme/webapp'],
+  ['git@gitlab.com:Group/Proj.git', 'gitlab.com/group/proj'],
+  ['https://git.example.org/Team/Repo', 'git.example.org/Team/Repo'],
+  ['github.com/acme/a.git', 'github.com/acme/a.git'],
+  ['file:/srv/git/a.git', 'file:/srv/git/a.git'],
   ['https://user@host.example/x/y', 'host.example/x/y'],
   ['host.example:x/y.git', 'host.example/x/y'],
   ['git@host.example:/x//y/', 'host.example/x/y'],
@@ -62,3 +69,17 @@ test('deriveRepoName always yields a valid repo name', () => {
   expect(isRepoName(deriveRepoName(`host/${'o'.repeat(70)}/r`, new Set(['r'])))).toBe(true);
   expect(isRepoName(deriveRepoName('host/x', new Set(['x'])))).toBe(true);
 });
+
+test('query and fragment are refused', () => {
+  for (const u of ['https://github.com/a/b?x=1', 'https://github.com/a/b#readme']) {
+    expect(catchErr(() => normalizeRepoUrl(u)).code).toBe('validation');
+  }
+});
+
+test('normalizeRepoUrl is idempotent', () =>
+  fc.assert(
+    fc.property(
+      arbRawRepoUrl(),
+      (u) => normalizeRepoUrl(normalizeRepoUrl(u)) === normalizeRepoUrl(u),
+    ),
+  ));

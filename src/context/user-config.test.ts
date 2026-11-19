@@ -246,3 +246,17 @@ test('a missing path with an array index is rejected by the schema', async () =>
   const err = await catchErrAsync(() => edited(HAND, [{ path: ['backlogs', 'zz', 0], value: 1 }]));
   expect(err.code).toBe('validation');
 });
+
+test('an edit that yields unparsable jsonc is unexpected and leaves the file', async () => {
+  const home = await tempDir();
+  const before = '{\n  "user": "spw"\n  , "current": "acme"\n}\n';
+  await writeFile(userConfigPath(home), before);
+  const err = await catchErrAsync(() =>
+    updateUserConfig(home, () => [{ path: ['user'], value: undefined }]),
+  );
+  expect([err.code, err.message]).toEqual([
+    'unexpected',
+    `Edit an ${userConfigPath(home)} konnte nicht angewendet werden; Datei unverändert`,
+  ]);
+  expect(await readFile(userConfigPath(home), 'utf8')).toBe(before);
+});

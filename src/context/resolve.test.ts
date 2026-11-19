@@ -4,6 +4,7 @@ import { vi } from 'vitest';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { contextTree, gitInit } from '../../test/helpers/context.ts';
 import * as query from '../git/query.ts';
+import * as snapshotModule from '../store/snapshot.ts';
 import type { Env } from './paths.ts';
 import {
   type ContextFlags,
@@ -489,4 +490,27 @@ test('readBacklogName reports an unreadable config as unexpected with its path',
     'unexpected',
     `${at('r/.backe/backlog.jsonc')}: EISDIR`,
   ]);
+});
+
+test('the repo registry is not loaded without a repo to match', async () => {
+  const s = await withBacklog();
+  const spy = vi.spyOn(snapshotModule, 'loadRepoRegistry');
+  try {
+    const ctx = await s.run();
+    expect(ctx.backlog.value).toBe('acme');
+    expect(spy).not.toHaveBeenCalled();
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test('a backlog path without backlog config names the path, not backlog list', async () => {
+  const s = await setup({ 'plain/.keep': '' });
+  await gitInit(s.at('plain'));
+  const err = await catchErrAsync(() => s.run({ backlog: s.at('plain') }));
+  expect([err.code, err.message]).toEqual([
+    'not_found',
+    expect.stringContaining(`${s.at('plain')} ist keine Arbeitskopie eines Backlogs`),
+  ]);
+  expect(err.hint).toBeUndefined();
 });
