@@ -6,7 +6,9 @@ import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setIdentity } from '../context/registry.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
+import { userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
+import { isHandle } from '../core/names.ts';
 import { generateKeypair } from '../git/ssh.ts';
 import { executeWrite, type WriteDeps } from './write.ts';
 
@@ -17,9 +19,10 @@ export async function createAgent(
   input: CreateAgentInput,
   deps?: WriteDeps,
 ): Promise<{ keyPath: string; commit: string }> {
+  const { handle } = input;
+  if (!isHandle(handle)) throw new BackeError('validation', `Ungültiger Handle: ${handle}`);
   const { handle: actor } = requireWriter(ctx);
   const backlog = ctx.backlog.value;
-  const { handle } = input;
   if (ctx.userConfig.identities?.[backlog]?.[handle] !== undefined) {
     throw new BackeError('conflict', `Für "${handle}" ist schon eine Identität eingetragen`, {
       hint: `identities.${backlog}.${handle} in der User-Config prüfen`,
@@ -54,6 +57,18 @@ export async function createAgent(
   if (commit === undefined) {
     throw new BackeError('unexpected', `Der Write für "${handle}" hat keinen Commit erzeugt`);
   }
-  await setIdentity(ctx.homes, backlog, handle, keyPath);
+  try {
+    await setIdentity(ctx.homes, backlog, handle, keyPath);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new BackeError(
+      'unexpected',
+      `Agent ${handle} ist angelegt (Commit ${commit.slice(0, 7)}), aber die Identität konnte nicht eingetragen werden: ${reason}`,
+      {
+        hint: `identities.${backlog}.${handle}.key = ${keyPath} in ${userConfigPath(ctx.homes.backeHome)} eintragen`,
+        details: error,
+      },
+    );
+  }
   return { keyPath, commit };
 }

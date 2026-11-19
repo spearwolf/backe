@@ -1,5 +1,5 @@
 import { access, readFile, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import {
   rawCommit,
@@ -10,6 +10,7 @@ import {
   testBacklog,
   testKey,
 } from '../../test/helpers/git.ts';
+import * as registry from '../context/registry.ts';
 import { setIdentity } from '../context/registry.ts';
 import { readUserConfig } from '../context/user-config.ts';
 import { git } from '../git/exec.ts';
@@ -18,6 +19,11 @@ import { loadSnapshot } from '../store/snapshot.ts';
 import { createAgent } from './agent.ts';
 import { verifyRange } from './verify.ts';
 import { executeWrite } from './write.ts';
+
+vi.mock('../context/registry.ts', async (orig) => {
+  const actual = await orig<typeof import('../context/registry.ts')>();
+  return { ...actual, setIdentity: vi.fn(actual.setIdentity) };
+});
 
 let b: TestBacklog;
 
@@ -35,6 +41,7 @@ test('create-agent writes a 0600 key, a user signed by the operator and the iden
   const r = await createAgent(await b.context(), { handle: 'claude-1' });
   expect(r.keyPath).toBe(join(b.homes.backeHome, 'keys/acme/claude-1'));
   expect((await stat(r.keyPath)).mode & 0o777).toBe(0o600);
+  expect((await stat(dirname(r.keyPath))).mode & 0o777).toBe(0o700);
   const s = await loadSnapshot(b.root);
   expect(s.users.get('claude-1')?.data).toMatchObject({ kind: 'agent', operator: 'spw' });
   expect(await sigOf(b.root, r.commit, { spw: b.key })).toEqual(['G', 'spw']);
@@ -115,4 +122,27 @@ test('the full history verifies after agent creation and agent writes', async ()
   });
   expect(r.commit).toMatch(/^[0-9a-f]{40}$/);
   expect((await verifyRange(b.root)).invalid).toEqual([]);
+});
+
+test('a failing identity registration keeps the key and reports how to finish', async () => {
+  vi.mocked(registry.setIdentity).mockRejectedValueOnce(new Error('disk voll'));
+  const err = await catchErrAsync(async () =>
+    createAgent(await b.context(), { handle: 'claude-1' }),
+  );
+  const keyPath = join(b.homes.backeHome, 'keys/acme/claude-1');
+  expect(err.code).toBe('unexpected');
+  expect(err.message).toContain('Agent claude-1 ist angelegt (Commit ');
+  expect(err.message).toContain('disk voll');
+  expect(err.hint).toContain(`identities.acme.claude-1.key = ${keyPath}`);
+  expect(await present(keyPath)).toBe(true);
+  expect(await present(`${keyPath}.pub`)).toBe(true);
+  expect((await loadSnapshot(b.root)).users.has('claude-1')).toBe(true);
+});
+
+test('an invalid handle is rejected before any file is written', async () => {
+  const err = await catchErrAsync(async () =>
+    createAgent(await b.context(), { handle: '../../x' }),
+  );
+  expect(err.code).toBe('validation');
+  expect(await present(join(b.homes.backeHome, 'keys'))).toBe(false);
 });
