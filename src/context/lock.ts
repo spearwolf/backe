@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { link, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { hostname, uptime } from 'node:os';
 import { dirname } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { BackeError } from '../core/errors.ts';
@@ -8,7 +9,39 @@ export type LockOptions = {
   timeoutMs?: number;
   retryMs?: number;
   isAlive?: (pid: number) => boolean;
+  /** Eigener Hostname (Default `os.hostname()`); nur Locks desselben Hosts werden übernommen. */
+  host?: string;
+  /** Boot-Zeitpunkt in ms seit Epoch (Default `Date.now() - os.uptime() * 1000`). */
+  bootTime?: number;
 };
+
+/** Toleranz zwischen Boot-Zeitpunkt und Lock-Zeit (Uhr-Ungenauigkeit von `uptime`). */
+const BOOT_TOLERANCE_MS = 5000;
+
+/** Fehlercodes von `link`, die auf ein Dateisystem ohne Hardlinks hindeuten. */
+const NO_HARDLINK_CODES = new Set(['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS']);
+
+type Identity = { host: string; bootTime: number; isAlive: (pid: number) => boolean };
+
+type Holder = { pid: number | undefined; time: number; host: string | undefined };
+
+function parseHolder(content: string): Holder {
+  const [first = '', time = '', host = ''] = content.split('\n');
+  const pid = Number.parseInt(first, 10);
+  return {
+    pid: Number.isInteger(pid) && pid > 0 ? pid : undefined,
+    time: Date.parse(time),
+    host: host === '' ? undefined : host,
+  };
+}
+
+/** Ein Lock ist übernehmbar: gleicher Host (fehlende Zeile = gleich) und von vor dem Boot oder Halter tot. */
+function takeable(holder: Holder, id: Identity): boolean {
+  if (holder.pid === undefined) return false;
+  if (holder.host !== undefined && holder.host !== id.host) return false;
+  if (holder.time < id.bootTime - BOOT_TOLERANCE_MS) return true;
+  return !id.isAlive(holder.pid);
+}
 
 function processAlive(pid: number): boolean {
   try {
@@ -38,11 +71,23 @@ const ORPHANED_REAP_MS = 10_000;
  * Veröffentlicht den Lock atomar: vollständiger Inhalt in eine Temp-Datei, dann `link`.
  * Die Zieldatei existiert so nie ohne ihren Inhalt; `EEXIST` heißt: gehalten.
  */
-async function publish(lockPath: string): Promise<boolean> {
+async function publish(lockPath: string, host: string): Promise<boolean> {
   const tmp = `${lockPath}.${process.pid}.${randomBytes(6).toString('hex')}`;
   try {
-    await writeFile(tmp, `${process.pid}\n${new Date().toISOString()}\n`, { flag: 'wx' });
-    await link(tmp, lockPath);
+    await writeFile(tmp, `${process.pid}\n${new Date().toISOString()}\n${host}\n`, {
+      flag: 'wx',
+    });
+    try {
+      await link(tmp, lockPath);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== undefined && NO_HARDLINK_CODES.has(code)) {
+        throw new BackeError('unexpected', `Dateisystem ohne Hardlinks: ${dirname(lockPath)}`, {
+          hint: 'BACKE_HOME und Arbeitskopien auf ein lokales Dateisystem legen.',
+        });
+      }
+      throw error;
+    }
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
@@ -54,16 +99,11 @@ async function publish(lockPath: string): Promise<boolean> {
 
 /**
  * Entfernt den veralteten Lock `stale` serialisiert über `<lock>.reap`. Gelöscht wird nur, wenn
- * die Datei noch genau diesen Inhalt hat und der Halter tot ist. Liefert, ob gelöscht wurde.
+ * die Datei noch genau diesen Inhalt hat und er weiterhin übernehmbar ist. Liefert, ob gelöscht wurde.
  */
-async function reap(
-  lockPath: string,
-  stale: string,
-  pid: number,
-  isAlive: (pid: number) => boolean,
-): Promise<boolean> {
+async function reap(lockPath: string, stale: string, id: Identity): Promise<boolean> {
   const reapPath = `${lockPath}.reap`;
-  if (!(await publish(reapPath))) {
+  if (!(await publish(reapPath, id.host))) {
     try {
       const { mtimeMs } = await stat(reapPath);
       if (Date.now() - mtimeMs > ORPHANED_REAP_MS) await rm(reapPath, { force: true });
@@ -73,7 +113,7 @@ async function reap(
     return false;
   }
   try {
-    if ((await readLock(lockPath)) !== stale || isAlive(pid)) return false;
+    if ((await readLock(lockPath)) !== stale || !takeable(parseHolder(stale), id)) return false;
     await rm(lockPath, { force: true });
     return true;
   } finally {
@@ -82,9 +122,15 @@ async function reap(
 }
 
 /**
- * Führt `fn` unter einem exklusiven Lock aus (PID-Datei, atomar veröffentlicht).
- * Die Datei eines toten Prozesses wird übernommen. Nicht reentrant: Steht die eigene PID
- * in der Datei, gilt der Lock als von einem lebenden Prozess gehalten.
+ * Führt `fn` unter einem exklusiven Lock aus (Datei mit PID, Zeit und Host, atomar veröffentlicht).
+ * Übernommen wird ein Lock nur auf demselben Host und nur, wenn er von vor dem Boot stammt
+ * oder sein Halter tot ist. Nicht reentrant: Steht die eigene PID in der Datei, gilt der Lock
+ * als von einem lebenden Prozess gehalten. Das Reaping läuft serialisiert über `<lock>.reap`.
+ *
+ * Restgrenzen: Ein Reaper, der länger als 10 s angehalten wird, kann einen frischen Lock
+ * entfernen; das `stat`-dann-`unlink` eines verwaisten Reap-Locks ist bei drei Konkurrenten
+ * nicht atomar; Temp-Dateien eines abgestürzten Prozesses bleiben liegen (räumt `doctor` in M5);
+ * Locks werden in der Reihenfolge `write.lock` vor `config.lock` genommen.
  */
 export async function withFileLock<T>(
   lockPath: string,
@@ -93,31 +139,40 @@ export async function withFileLock<T>(
 ): Promise<T> {
   const timeoutMs = opts.timeoutMs ?? 5000;
   const retryMs = opts.retryMs ?? 50;
-  const isAlive = opts.isAlive ?? processAlive;
+  const id: Identity = {
+    isAlive: opts.isAlive ?? processAlive,
+    host: opts.host ?? hostname(),
+    bootTime: opts.bootTime ?? Date.now() - uptime() * 1000,
+  };
   const deadline = Date.now() + timeoutMs;
 
   await mkdir(dirname(lockPath), { recursive: true });
-  while (!(await publish(lockPath))) {
+  while (!(await publish(lockPath, id.host))) {
     const content = await readLock(lockPath);
-    const pid = Number.parseInt((content ?? '').split('\n')[0] ?? '', 10);
-    const valid = Number.isInteger(pid) && pid > 0;
+    const holder = parseHolder(content ?? '');
     // Ein eigenes Reaping bringt Fortschritt und wird sofort neu versucht; jeder andere Pfad prüft die Frist.
-    if (
-      content !== undefined &&
-      valid &&
-      !isAlive(pid) &&
-      (await reap(lockPath, content, pid, isAlive))
-    ) {
+    if (content !== undefined && takeable(holder, id) && (await reap(lockPath, content, id))) {
       continue;
     }
     if (Date.now() >= deadline) {
-      throw new BackeError(
-        'conflict',
-        `Lock ${lockPath} gehalten von PID ${valid ? pid : 'unbekannt'}`,
-        {
-          hint: 'Läuft noch ein anderer backe-Prozess?',
-        },
-      );
+      const pid = holder.pid ?? 'unbekannt';
+      if (holder.pid === undefined) {
+        throw new BackeError('conflict', `Lock ${lockPath} gehalten von PID ${pid}`, {
+          hint: `Falls kein backe-Prozess läuft: ${lockPath} löschen.`,
+        });
+      }
+      if (holder.host !== undefined && holder.host !== id.host) {
+        throw new BackeError(
+          'conflict',
+          `Lock ${lockPath} gehalten von PID ${pid} auf ${holder.host}`,
+          {
+            hint: `Läuft dort kein backe-Prozess mehr: ${lockPath} löschen.`,
+          },
+        );
+      }
+      throw new BackeError('conflict', `Lock ${lockPath} gehalten von PID ${pid}`, {
+        hint: 'Läuft noch ein anderer backe-Prozess?',
+      });
     }
     await sleep(retryMs);
   }

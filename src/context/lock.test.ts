@@ -5,6 +5,16 @@ import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { withFileLock } from './lock.ts';
 
+let linkError: Error | undefined;
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    link: (...args: Parameters<typeof actual.link>) =>
+      linkError ? Promise.reject(linkError) : actual.link(...args),
+  };
+});
+
 test('a second holder waits until the first releases', async () => {
   const lock = join(await tempDir(), 'x.lock');
   const order: string[] = [];
@@ -30,6 +40,81 @@ test('a second holder waits until the first releases', async () => {
   expect(order).toEqual(['a', 'b']);
   expect(existsSync(lock)).toBe(false);
 });
+
+test('the lock file holds pid, time and host', async () => {
+  const lock = join(await tempDir(), 'x.lock');
+  const content = await withFileLock(lock, () => readFile(lock, 'utf8'), { host: 'host-a' });
+  expect(content).toMatch(/^\d+\n\d{4}-\d\d-\d\dT[^\n]+Z\nhost-a\n$/);
+});
+
+test('a lock of another host is never taken over', async () => {
+  const lock = join(await tempDir(), 'x.lock');
+  await writeFile(lock, `999999\n${new Date().toISOString()}\nhost-b\n`);
+  const err = await catchErrAsync(() =>
+    withFileLock(lock, async () => 1, { host: 'host-a', isAlive: () => false, timeoutMs: 0 }),
+  );
+  expect(err.code).toBe('conflict');
+  expect(err.message).toBe(`Lock ${lock} gehalten von PID 999999 auf host-b`);
+  expect(err.hint).toBe(`Läuft dort kein backe-Prozess mehr: ${lock} löschen.`);
+});
+
+test('a lock from before the boot is taken over even if its pid is alive', async () => {
+  const lock = join(await tempDir(), 'x.lock');
+  await writeFile(lock, `${process.pid}\n2026-01-01T00:00:00.000Z\nhost-a\n`);
+  expect(
+    await withFileLock(lock, async () => 'ok', {
+      host: 'host-a',
+      bootTime: Date.parse('2026-06-01T00:00:00Z'),
+      isAlive: () => true,
+      timeoutMs: 0,
+    }),
+  ).toBe('ok');
+});
+
+test('a lock from after the boot with a live pid is kept', async () => {
+  const lock = join(await tempDir(), 'x.lock');
+  await writeFile(lock, `${process.pid}\n2026-07-01T00:00:00.000Z\nhost-a\n`);
+  const err = await catchErrAsync(() =>
+    withFileLock(lock, async () => 1, {
+      host: 'host-a',
+      bootTime: Date.parse('2026-06-01T00:00:00Z'),
+      isAlive: () => true,
+      timeoutMs: 0,
+    }),
+  );
+  expect(err.code).toBe('conflict');
+  expect(err.hint).toBe('Läuft noch ein anderer backe-Prozess?');
+});
+
+test('a lock without host line from the previous format counts as the own host', async () => {
+  const lock = join(await tempDir(), 'x.lock');
+  await writeFile(lock, `999999\n${new Date().toISOString()}\n`);
+  expect(
+    await withFileLock(lock, async () => 'ok', {
+      host: 'host-a',
+      bootTime: 0,
+      isAlive: () => false,
+      timeoutMs: 0,
+    }),
+  ).toBe('ok');
+});
+
+test.each(['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS'])(
+  '%s from link means no hardlink support',
+  async (code) => {
+    const dir = await tempDir();
+    linkError = Object.assign(new Error('nope'), { code });
+    try {
+      const err = await catchErrAsync(() => withFileLock(join(dir, 'x.lock'), async () => 1));
+      expect(err.code).toBe('unexpected');
+      expect(err.message).toBe(`Dateisystem ohne Hardlinks: ${dir}`);
+      expect(err.hint).toBe('BACKE_HOME und Arbeitskopien auf ein lokales Dateisystem legen.');
+    } finally {
+      linkError = undefined;
+    }
+    expect(await readdir(dir)).toEqual([]);
+  },
+);
 
 test('the lock file holds pid and ISO time, parent directories are created', async () => {
   const lock = join(await tempDir(), 'sub', 'dir', 'x.lock');
@@ -104,7 +189,8 @@ test('a lock file without a readable pid is treated as held', async () => {
   await writeFile(lock, '');
   const err = await catchErrAsync(() => withFileLock(lock, async () => 1, { timeoutMs: 0 }));
   expect(err.code).toBe('conflict');
-  expect(err.message).toContain('unbekannt');
+  expect(err.message).toBe(`Lock ${lock} gehalten von PID unbekannt`);
+  expect(err.hint).toBe(`Falls kein backe-Prozess läuft: ${lock} löschen.`);
 });
 
 test('a stale lock whose content changed in between is not deleted', async () => {
@@ -195,7 +281,7 @@ test('the lock file is published complete and no temp file is left behind', asyn
     content: await readFile(lock, 'utf8'),
     files: await readdir(dir),
   }));
-  expect(seen.content).toMatch(/^\d+\n.+\n$/);
+  expect(seen.content).toMatch(/^\d+\n.+\n.+\n$/);
   expect(seen.files).toEqual(['x.lock']);
   expect(await readdir(dir)).toEqual([]);
 });
