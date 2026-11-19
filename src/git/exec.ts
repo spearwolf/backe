@@ -2,18 +2,22 @@ import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { BackeError } from '../core/errors.ts';
 
+export type GitEnv = Readonly<Record<string, string | undefined>>;
+
 export type GitOptions = {
   cwd: string;
-  env?: Readonly<Record<string, string | undefined>>;
+  env?: GitEnv;
   input?: string;
   okExitCodes?: readonly number[];
 };
 
 export type GitResult = { stdout: string; stderr: string; exitCode: number };
 
-function startFailure(args: readonly string[], error: unknown): BackeError {
+type Bin = 'git' | 'ssh-keygen';
+
+function startFailure(bin: Bin, args: readonly string[], error: unknown): BackeError {
   const cause = error instanceof Error ? error.message : String(error);
-  return new BackeError('unexpected', `git konnte nicht gestartet werden: ${cause}`, {
+  return new BackeError('unexpected', `${bin} konnte nicht gestartet werden: ${cause}`, {
     details: { args, cause },
   });
 }
@@ -53,8 +57,22 @@ function subcommand(args: readonly string[]): string {
   return 'git';
 }
 
+/** Name für Meldungen: bei git der Unterbefehl, sonst das Binary selbst. */
+function label(bin: Bin, args: readonly string[]): string {
+  return bin === 'git' ? subcommand(args) : bin;
+}
+
 /** Führt das System-git aus; Ausgabe wird vollständig gepuffert (UTF-8). */
 export function git(args: readonly string[], opts: GitOptions): Promise<GitResult> {
+  return run('git', args, opts);
+}
+
+/** Führt ssh-keygen aus; gleiche Fehlerformen wie `git`, Meldungen nennen `ssh-keygen`. */
+export function sshKeygen(args: readonly string[], opts: GitOptions): Promise<GitResult> {
+  return run('ssh-keygen', args, opts);
+}
+
+function run(bin: Bin, args: readonly string[], opts: GitOptions): Promise<GitResult> {
   const inherited: Record<string, string | undefined> = { ...process.env };
   for (const name of REPO_LOCAL_ENV) delete inherited[name];
   const merged: Record<string, string | undefined> = { ...inherited, ...opts.env };
@@ -68,10 +86,10 @@ export function git(args: readonly string[], opts: GitOptions): Promise<GitResul
   return new Promise<GitResult>((resolve, reject) => {
     let child: ChildProcessWithoutNullStreams;
     try {
-      child = spawn('git', [...args], { cwd: opts.cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+      child = spawn(bin, [...args], { cwd: opts.cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (error) {
       // spawn wirft manche Fehler (z. B. ENOTDIR) synchron statt per error-Event.
-      reject(startFailure(args, error));
+      reject(startFailure(bin, args, error));
       return;
     }
     const out: Buffer[] = [];
@@ -85,15 +103,15 @@ export function git(args: readonly string[], opts: GitOptions): Promise<GitResul
     const onSpawnError = (error: NodeJS.ErrnoException): void => {
       spawnFailed = true;
       if (error.code !== 'ENOENT') {
-        reject(startFailure(args, error));
+        reject(startFailure(bin, args, error));
         return;
       }
       // ENOENT meldet spawn sowohl für fehlendes Binary als auch für fehlendes cwd.
       stat(opts.cwd).then(
         () =>
           reject(
-            new BackeError('unexpected', 'git nicht gefunden', {
-              hint: 'git installieren; backe doctor prüft die Voraussetzungen.',
+            new BackeError('unexpected', `${bin} nicht gefunden`, {
+              hint: `${bin === 'git' ? 'git' : 'openssh'} installieren; backe doctor prüft die Voraussetzungen.`,
             }),
           ),
         () =>
@@ -116,7 +134,7 @@ export function git(args: readonly string[], opts: GitOptions): Promise<GitResul
         reject(
           new BackeError(
             'unexpected',
-            `${subcommand(args)} durch Signal beendet (${signal ?? 'unbekannt'})`,
+            `${label(bin, args)} durch Signal beendet (${signal ?? 'unbekannt'})`,
             {
               details: { args, signal, stderr },
             },
@@ -130,7 +148,7 @@ export function git(args: readonly string[], opts: GitOptions): Promise<GitResul
         reject(
           new BackeError(
             'unexpected',
-            `${subcommand(args)} fehlgeschlagen (Exit ${exitCode}): ${firstLine}`,
+            `${label(bin, args)} fehlgeschlagen (Exit ${exitCode}): ${firstLine}`,
             {
               details: { args, exitCode, stderr },
             },

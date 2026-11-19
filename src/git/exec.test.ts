@@ -1,8 +1,9 @@
 import { writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { git } from './exec.ts';
+import { git, sshKeygen } from './exec.ts';
 
 describe('git', () => {
   test('runs git and returns its output', async () => {
@@ -117,5 +118,12 @@ describe('git', () => {
     expect((await git(show('LC_ALL'), { cwd, env: { LC_ALL: 'de_DE.UTF-8' } })).stdout).toBe('C');
     expect((await git(show('GIT_TERMINAL_PROMPT'), { cwd })).stdout).toBe('0');
     expect((await git(show('HOME'), { cwd, env: { HOME: undefined } })).stdout).toBe('unset');
+  });
+});
+
+describe('sshKeygen', () => {
+  test('sshKeygen failures name ssh-keygen', async () => {
+    const err = await catchErrAsync(() => sshKeygen(['-lf', '/nonexistent'], { cwd: tmpdir() }));
+    expect(err.message).toMatch(/^ssh-keygen fehlgeschlagen \(Exit \d+\)/);
   });
 });
