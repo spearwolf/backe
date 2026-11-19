@@ -1,5 +1,5 @@
 ---
 name: Wolfger
 kind: human
-keys: [ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDwolfgerxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx spw@host]
+keys: [ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHNwdwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA spw@host]
 ---

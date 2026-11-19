@@ -14,6 +14,7 @@ import {
   REPO_NAME_RE,
   SPRINT_SLUG_RE,
 } from './names.ts';
+import { parseSshPublicKey } from './ssh.ts';
 import type { State } from './state.ts';
 import { normalizeRepoUrl } from './url.ts';
 
@@ -100,9 +101,19 @@ function uniqueList<T extends z.ZodType<string>>(item: T) {
 }
 
 const SSH_KEY_RE = /^ssh-ed25519 [A-Za-z0-9+/]+={0,2}( [^\r\n]*)?$/;
+/** Form per Regex, Inhalt per `parseSshPublicKey`: ein Key im Schema ist für `sameKey` und `sshFingerprint` lesbar. */
 const SshKey = z
   .string()
-  .refine((s) => SSH_KEY_RE.test(s), 'erwartet "ssh-ed25519 <base64> [kommentar]"');
+  .refine((s) => SSH_KEY_RE.test(s), 'erwartet "ssh-ed25519 <base64> [kommentar]"')
+  .superRefine((s, ctx) => {
+    if (!SSH_KEY_RE.test(s)) return;
+    try {
+      parseSshPublicKey(s);
+    } catch (err) {
+      if (!(err instanceof BackeError)) throw err;
+      ctx.addIssue({ code: 'custom', message: err.message });
+    }
+  });
 
 // --- Custom Properties (backe.md §2.24) ----------------------------------------
 

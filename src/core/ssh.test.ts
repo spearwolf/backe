@@ -21,6 +21,10 @@ describe('ssh public keys', () => {
     expect(sshFingerprint(k.line)).toBe(stdout.split(' ')[1]);
   });
 
+  test('a comment may contain Unicode line separators', () => {
+    expect(parseSshPublicKey(`ssh-ed25519 ${B64} a\u2028b`).comment).toBe('a\u2028b');
+  });
+
   test('sameKey ignores the comment', () => {
     expect(sameKey(`ssh-ed25519 ${B64} a@x`, `ssh-ed25519 ${B64}`)).toBe(true);
   });

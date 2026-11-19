@@ -15,7 +15,7 @@ function invalid(line: string, reason: string): BackeError {
 
 /** Liest eine Public-Key-Zeile (`ssh-ed25519 <base64> [Kommentar]`); andere Typen werden abgelehnt. */
 export function parseSshPublicKey(line: string): SshPublicKey {
-  const match = /^\s*(\S+)\s+(\S+)(?:\s+(.*?))?\s*$/.exec(line);
+  const match = /^\s*(\S+)\s+(\S+)(?:\s+([^\r\n]*?))?\s*$/.exec(line);
   if (!match) throw invalid(line, 'erwartet "<Typ> <Base64> [Kommentar]"');
   const [, type, b64, comment] = match as unknown as [string, string, string, string | undefined];
   if (type !== TYPE) throw invalid(line, `Typ ${type} nicht unterstützt`);

@@ -265,7 +265,17 @@ const arbRepoUrl = fc
 const arbGitArg = arbString().filter(isGitArg);
 const arbSshKey = fc
   .tuple(
-    fc.stringMatching(/^[A-Za-z0-9+/]{4,40}={0,2}$/),
+    // Ein gültiger ed25519-Blob: Typ-Feld plus 32 Byte Schlüsseldaten.
+    fc
+      .uint8Array({ minLength: 32, maxLength: 32 })
+      .map((material) =>
+        Buffer.concat([
+          Buffer.from([0, 0, 0, 11]),
+          Buffer.from('ssh-ed25519'),
+          Buffer.from([0, 0, 0, 32]),
+          material,
+        ]).toString('base64'),
+      ),
     fc.option(arbString().filter((s) => !/[\r\n]/.test(s))),
   )
   .map(([b64, comment]) => `ssh-ed25519 ${b64}${comment === null ? '' : ` ${comment}`}`);

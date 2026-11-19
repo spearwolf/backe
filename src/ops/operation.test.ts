@@ -348,7 +348,7 @@ describe('field rules', () => {
         handle: 'bob',
         name: 'Bob',
         kind: 'robot',
-        keys: ['ssh-ed25519 AAAA'],
+        keys: ['ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGFhYWEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'],
       }),
     ).toBe('validation');
     expect(invalidOp({ op: 'user.revoke_key', handle: 'bob', key: 'ssh-rsa AAAA' })).toBe(
@@ -358,7 +358,7 @@ describe('field rules', () => {
       invalidOp({
         op: 'user.revoke_key',
         handle: 'bob',
-        key: 'ssh-ed25519 AAAA',
+        key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGFhYWEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
         revoked: 'gestern',
       }),
     ).toBe('validation');
@@ -409,7 +409,9 @@ describe('field rules', () => {
       edit('project', 'web', 'title', 'Web', null),
       edit('project', 'web', 'title', null, 'Web'),
       edit('repo', 'webapp', 'url', 'kein url', 'gh:acme/webapp'),
-      edit('user', 'bob', 'revoked_keys', null, [{ key: 'ssh-ed25519 AAAA' }]),
+      edit('user', 'bob', 'revoked_keys', null, [
+        { key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGFhYWEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
+      ]),
     ]) {
       expect(invalidOp(op)).toBe('validation');
       expect(catchErr(() => encodeOp(op as Operation)).code).toBe('validation');
@@ -422,9 +424,18 @@ describe('field rules', () => {
       edit('sprint', 's1', 'closed', null, true),
       edit('repo', 'webapp', 'default_ref', null, 'main'),
       edit('user', 'bob', 'revoked_keys', null, [
-        { key: 'ssh-ed25519 AAAA', revoked: '2026-11-18T10:04:00Z' },
+        {
+          key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGFhYWEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+          revoked: '2026-11-18T10:04:00Z',
+        },
       ]),
-      edit('user', 'bob', 'keys', ['ssh-ed25519 AAAA'], []),
+      edit(
+        'user',
+        'bob',
+        'keys',
+        ['ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGFhYWEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'],
+        [],
+      ),
     ]) {
       expect(decodeOp(JSON.stringify(op))).toEqual(op);
     }
@@ -547,7 +558,14 @@ describe('summaries', () => {
     [{ op: 'repo.add', url: 'gh:acme/webapp' }, 'repo add gh:acme/webapp'],
     [{ op: 'repo.rm', name: 'webapp' }, 'repo rm webapp'],
     [{ op: 'user.rm', handle: 'bob' }, 'user rm bob'],
-    [{ op: 'user.revoke_key', handle: 'bob', key: 'ssh-ed25519 AAAA' }, 'user revoke_key bob'],
+    [
+      {
+        op: 'user.revoke_key',
+        handle: 'bob',
+        key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGFhYWEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      },
+      'user revoke_key bob',
+    ],
     [
       { op: 'entity.edit', kind: 'sprint', key: 's1', set: { title: { from: 'a', to: 'b' } } },
       'entity edit sprint s1',

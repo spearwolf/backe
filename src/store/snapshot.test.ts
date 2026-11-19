@@ -110,6 +110,20 @@ test('schema violations become problems', async () => {
   expect(s.problems[0]?.message).toContain('users/bad.md: operator');
 });
 
+test('a user with an unparseable key is a problem of that user, not an error', async () => {
+  const root = await copyFixture('backlog-basic');
+  await put(
+    root,
+    'users/bob.md',
+    '---\nname: Bob\nkind: human\nkeys: [ssh-ed25519 AAAAbob bob]\n---\n',
+  );
+  const s = await loadSnapshot(root);
+  expect(s.users.has('bob')).toBe(false);
+  expect(s.problems).toHaveLength(1);
+  expect(s.problems[0]).toMatchObject({ path: 'users/bob.md', kind: 'user', key: 'bob' });
+  expect(s.problems[0]?.message).toContain('keys');
+});
+
 test('issue id must match its directory', async () => {
   const root = await copyFixture('backlog-basic');
   const text = `---\nid: bk-zzzzz\ntitle: Falsch\nstate: todo\ncreator: spw\ncreated: 2026-11-18T10:04:00Z\n---\n`;

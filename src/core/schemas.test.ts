@@ -27,7 +27,8 @@ const base = {
 const err = (kind: Parameters<typeof validateEntity>[0], data: unknown) =>
   catchErr(() => validateEntity(kind, data, 'f.md')).message;
 const bcfg = { version: 1, name: 'acme', id_prefix: 'bk', admins: ['spw'] };
-const key = 'ssh-ed25519 AAAAC3Nza spw@host';
+const key =
+  'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHNwdwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA spw@host';
 
 describe('issue', () => {
   test('minimal issue is valid', () =>
@@ -181,9 +182,28 @@ describe('user', () => {
     ));
   test('only ssh-ed25519 keys', () =>
     expect(err('user', { name: 'S', kind: 'human', keys: ['ssh-rsa AAAA x'] })).toContain('keys'));
+  test('a key that matches the shape but cannot be parsed is refused', () => {
+    const rsaBlob = Buffer.concat([
+      Buffer.from([0, 0, 0, 7]),
+      Buffer.from('ssh-rsa'),
+      Buffer.alloc(8),
+    ]);
+    for (const bad of ['ssh-ed25519 AAAAbob bob', `ssh-ed25519 ${rsaBlob.toString('base64')} x`]) {
+      expect(err('user', { name: 'S', kind: 'human', keys: [bad] })).toContain('keys.0');
+      expect(
+        err('user', {
+          name: 'S',
+          kind: 'human',
+          keys: [],
+          revoked_keys: [{ key: bad, revoked: '2026-11-18T10:04:00Z' }],
+        }),
+      ).toContain('revoked_keys.0.key');
+    }
+  });
+
   test('valid users', () => {
     expect(() =>
-      validateEntity('user', { name: 'S', kind: 'human', keys: [key, 'ssh-ed25519 AAAA'] }, 'f'),
+      validateEntity('user', { name: 'S', kind: 'human', keys: [key, `${key} second`] }, 'f'),
     ).not.toThrow();
     expect(() =>
       validateEntity(
