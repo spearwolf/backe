@@ -78,8 +78,19 @@ function checkKeysUnique(
   }
 }
 
-/** Ein widerrufener Key bleibt widerrufen: nicht gelöscht, nicht wieder aktiv. */
+/**
+ * Ein widerrufener Key bleibt widerrufen: nicht gelöscht, nicht wieder aktiv. Neu widerrufen wird
+ * nur ein Key, den der User vorher hatte; sonst sperrte der Widerruf fremde Keys für alle.
+ */
 function checkRevocations(before: User | undefined, after: User): void {
+  for (const { key } of after.revoked_keys ?? []) {
+    if ((before?.revoked_keys ?? []).some((r) => sameKey(r.key, key))) continue;
+    if (!(before?.keys ?? []).some((k) => sameKey(k, key))) {
+      throw violation('policy', `Widerrufen werden nur eigene Keys: ${sshFingerprint(key)}`, {
+        hint: 'Einen Key widerruft der User, dem er gehört, oder ein Admin für ihn.',
+      });
+    }
+  }
   for (const { key } of before?.revoked_keys ?? []) {
     const stays = (after.revoked_keys ?? []).some((r) => sameKey(r.key, key));
     const active = after.keys.some((k) => sameKey(k, key));

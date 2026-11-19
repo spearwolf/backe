@@ -696,31 +696,12 @@ describe('translateEdits', () => {
             '---\ntitle: W48\nstart: 2026-11-23\nend: 2026-11-29\nclosed: true\n---\n',
           ),
           added(repoFile('api'), '---\nurl: https://github.com/acme/api\ndefault_ref: main\n---\n'),
-          added(
-            userFile('bob'),
-            `---\nname: Bob\nkind: human\nkeys:\n  - ${key}\nrevoked_keys:\n  - key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG9sZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA bob\n    revoked: 2026-11-01T00:00:00Z\n---\n`,
-          ),
+          added(userFile('bob'), `---\nname: Bob\nkind: human\nkeys:\n  - ${key}\n---\n`),
         ],
         asSpw,
       );
       expect(r.ops).toEqual([
         { op: 'user.add', handle: 'bob', name: 'Bob', kind: 'human', keys: [key] },
-        {
-          op: 'entity.edit',
-          kind: 'user',
-          key: 'bob',
-          set: {
-            revoked_keys: {
-              from: null,
-              to: [
-                {
-                  key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG9sZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA bob',
-                  revoked: '2026-11-01T00:00:00Z',
-                },
-              ],
-            },
-          },
-        },
         { op: 'project.create', path: 'data', title: 'Data' },
         { op: 'project.create', path: 'web/auth', title: 'Auth', lead: 'alice', body: 'Text\n' },
         { op: 'sprint.create', slug: 'w48', title: 'W48', start: '2026-11-23', end: '2026-11-29' },
@@ -740,6 +721,35 @@ describe('translateEdits', () => {
         sprintFile('w48'),
         userFile('bob'),
       ]);
+    });
+
+    test('a new user file with revoked keys translates, but a key it never had is not revocable', () => {
+      const old =
+        'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG9sZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA bob';
+      const r = translateEdits(
+        s,
+        [
+          added(
+            userFile('bob'),
+            `---\nname: Bob\nkind: human\nkeys:\n  - ${key}\nrevoked_keys:\n  - key: ${old}\n    revoked: 2026-11-01T00:00:00Z\n---\n`,
+          ),
+        ],
+        asSpw,
+      );
+      expect(r.ops).toEqual([
+        { op: 'user.add', handle: 'bob', name: 'Bob', kind: 'human', keys: [key] },
+        {
+          op: 'entity.edit',
+          kind: 'user',
+          key: 'bob',
+          set: {
+            revoked_keys: { from: null, to: [{ key: old, revoked: '2026-11-01T00:00:00Z' }] },
+          },
+        },
+      ]);
+      const err = catchErr(() => applyBatch(s, r.ops, ctx()));
+      expect(err.details).toMatchObject({ reason: 'policy' });
+      expect(err.message).toMatch(/Widerrufen werden nur eigene Keys: SHA256:/);
     });
 
     test('changed and deleted entities', () => {

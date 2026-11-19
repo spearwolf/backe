@@ -451,24 +451,34 @@ test('a quarantined commit passes as a notice; a quarantine entry by a non-admin
   expect(await readLocalState(b.root, 'verified')).toBe(await revParse(b.root, 'HEAD'));
 });
 
-test('the quarantine at since governs when the range does not change it', async () => {
+test('a commit quarantined before since stays out of the range', async () => {
   const bad = await rawCommit(b.root, { files: { x: '1' }, actor: 'spw', op: 'manual' });
-  // `since` liegt auf einem Seitenzweig ab dem Anker; der Bereich `since..bad` ist nur `bad`.
-  const since = await rawCommit(b.root, {
-    files: { [QUARANTINE]: quarantine(bad, 'harmlos') },
+  const since = await signed('spw', { [QUARANTINE]: quarantine(bad, 'harmlos') });
+  await signed('spw', { x: '2' });
+
+  const r = await verifyRange(b.root, { since });
+
+  expect(r).toMatchObject({ checked: 1, invalid: [], quarantined: [] });
+  expect((await verifyRange(b.root, { since: anchor })).quarantined.map((f) => f.sha)).toEqual([
+    bad,
+  ]);
+});
+
+test('since must be an ancestor of to', async () => {
+  const main = await signed('spw', { x: '1' });
+  const side = await rawCommit(b.root, {
+    files: { x: '2' },
     key: KEYS.spw,
     actor: 'spw',
     op: 'manual',
     parents: [anchor],
   });
 
-  const r = await verifyRange(b.root, { since, to: bad });
+  const err = await catchErrAsync(() => verifyRange(b.root, { since: side, to: main }));
 
-  expect(r.invalid).toEqual([]);
-  expect(r.quarantined.map((f) => [f.sha, f.note])).toEqual([[bad, 'harmlos']]);
-  expect((await verifyRange(b.root, { since: anchor, to: bad })).invalid.map((f) => f.sha)).toEqual(
-    [bad],
-  );
+  expect(err.code).toBe('usage');
+  expect(err.message).toBe(`since ${short(side)} ist kein Vorfahre von ${short(main)}`);
+  expect((await verifyRange(b.root, { since: main, to: main })).checked).toBe(0);
 });
 
 describe('after an invalid commit', () => {

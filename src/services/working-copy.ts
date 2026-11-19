@@ -6,7 +6,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import { access, mkdir, readdir, readFile, rename, rm } from 'node:fs/promises';
-import { dirname, isAbsolute, join, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, sep } from 'node:path';
 import { z } from 'zod';
 import { withFileLock } from '../context/lock.ts';
 import { type Env, expandPath, type Homes, physicalPath, samePath } from '../context/paths.ts';
@@ -140,14 +140,23 @@ async function descendsFrom(wc: string, sha: string): Promise<boolean> {
   return isAncestor(wc, sha, 'HEAD');
 }
 
+/**
+ * Referenz für einen Clone: `path` leiht Objekte; `dissociate` kopiert sie nach dem Transfer, damit
+ * der neue Clone nicht an einem Verzeichnis hängt, das der Nutzer jederzeit löschen kann.
+ */
+type Reference = { path: string; dissociate: boolean };
+
 /** Klont per git; scheitert git selbst (Netz, Auth, fehlende Quelle), ist das ein `sync`-Fehler. */
 async function gitClone(
   env: Env,
   source: string,
-  reference: string | undefined,
+  reference: Reference | undefined,
   temp: string,
 ): Promise<void> {
-  const ref = reference === undefined ? [] : ['--reference', reference];
+  const ref =
+    reference === undefined
+      ? []
+      : ['--reference', reference.path, ...(reference.dissociate ? ['--dissociate'] : [])];
   try {
     await git(['clone', '-q', ...ref, '--', source, temp], {
       cwd: dirname(temp),
@@ -172,7 +181,7 @@ async function gitClone(
 async function cloneInto(input: {
   env: Env;
   source: string;
-  reference?: string;
+  reference?: Reference;
   temp: string;
   handle: string;
   trust: (name: string) => Promise<string | undefined>;
@@ -283,7 +292,8 @@ export async function cloneBacklog(
 /**
  * Die Arbeitskopie des Handles; fehlt eine verwaltete, wird sie geklont (backe.md §2.16.1):
  * aus der registrierten Remote, ohne Remote aus der gelesenen Arbeitskopie. Die gelesene
- * Arbeitskopie dient als `--reference` und als Quelle für Anker und verifizierten Stand.
+ * Arbeitskopie dient als `--reference` (ein gebundener Clone nur mit `--dissociate`) und als
+ * Quelle für Anker und verifizierten Stand.
  * Eine vorhandene Arbeitskopie kommt ohne Netzzugriff zurück; `notices` hat nur ein Clone im
  * Modus `warn`.
  */
@@ -309,11 +319,16 @@ export async function ensureWorkingCopy(
       hint: 'backe backlog clone <url>',
     });
   }
+  // Dauerhaft Objekte leihen darf der neue Clone nur von einem verwalteten Clone; ein gebundener
+  // gehört dem Nutzer, der ihn jederzeit löschen kann.
+  const managed =
+    reference !== undefined &&
+    (await samePath(reference, managedClonePath(ctx.homes, name, basename(reference))));
   return withTempClone(ctx.homes, async (temp) => {
     const { notices } = await cloneInto({
       env: ctx.env,
       source,
-      ...(reference === undefined ? {} : { reference }),
+      ...(reference === undefined ? {} : { reference: { path: reference, dissociate: !managed } }),
       temp,
       handle,
       trust: async (actual) => {

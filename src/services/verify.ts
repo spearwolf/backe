@@ -73,6 +73,9 @@ async function resolveRange(wc: string, opts: VerifyOptions) {
     );
   }
   const since = opts.since === undefined ? undefined : await resolveCommit(wc, opts.since);
+  if (since !== undefined && !(await isAncestor(wc, since, to))) {
+    throw new BackeError('usage', `since ${short(since)} ist kein Vorfahre von ${short(to)}`);
+  }
   if (opts.record && since !== undefined) {
     const covered = verified !== undefined && (await isAncestor(wc, since, verified));
     if (!covered) {
@@ -269,7 +272,8 @@ type Walk = {
  * beurteilt, sonst gegen den seines Parents (der Anker gegen sich selbst). Der erste ungültige
  * Commit friert den Stand ein, gegen den er beurteilt wurde; eine gültige Quarantäne, die alle bis
  * dahin ungültigen Commits deckt, taut ihn wieder auf. Maßgeblich ist die Quarantäne des letzten
- * gültigen Commits, der sie ändert; ohne einen solchen die bei `since`, sonst keine.
+ * gültigen Commits im Bereich, der sie ändert, sonst keine. Die Datei bei `since` kann keinen
+ * Commit danach nennen: Er stammt von `since` ab, sein Hash hinge an ihrem Inhalt.
  */
 async function walk(wc: string, opts: VerifyOptions): Promise<Walk> {
   const { anchor, to, since } = await resolveRange(wc, opts);
@@ -281,11 +285,7 @@ async function walk(wc: string, opts: VerifyOptions): Promise<Walk> {
   const sigs = signatureCache(wc);
   await sigs.prefetch(commits.map((commit) => ({ commit, state: own(commit) })));
 
-  const atSince = since === undefined ? undefined : await quarantineAt(wc, since);
-  let governing: Walk['governing'] = {
-    sha: undefined,
-    entries: typeof atSince === 'object' ? atSince.entries : [],
-  };
+  let governing: Walk['governing'] = { sha: undefined, entries: [] };
   let frozen: State | undefined;
   let open: string[] = [];
   const checked: Checked[] = [];

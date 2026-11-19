@@ -17,6 +17,7 @@ import { seqBytes } from '../../test/helpers/snapshot.ts';
 import { withFileLock } from '../context/lock.ts';
 import { managedClonePath, setIdentity, workingCopyPath } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
+import { userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
 import { git } from '../git/exec.ts';
 import { readLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
@@ -197,6 +198,57 @@ test('a committed .gitignore does not keep a write from committing its file', as
   expect(
     (await git(['ls-tree', '--name-only', 'HEAD', '--', path as string], { cwd: b.root })).stdout,
   ).toBe(`${path}\n`);
+});
+
+describe('the signing key', () => {
+  test('a revoked key of the writer is a usage error and writes nothing', async () => {
+    const bob = await testKey('bob');
+    const spare = await testKey('bob-spare');
+    await executeWrite(ctx, {
+      kind: 'op',
+      op: {
+        op: 'user.add',
+        handle: 'bob',
+        name: 'Bob',
+        kind: 'human',
+        keys: [bob.line, spare.line],
+      },
+    });
+    await executeWrite(ctx, {
+      kind: 'op',
+      op: { op: 'user.revoke_key', handle: 'bob', key: bob.line },
+    });
+    await writeLocalState(b.root, 'identity', 'bob');
+    const before = await revParse(b.root, 'HEAD');
+    const asBob: ResolvedContext = {
+      ...ctx,
+      backlog: { ...ctx.backlog, boundTo: 'bob' },
+      user: { ...ctx.user, value: 'bob', key: bob.priv },
+    };
+    const err = await catchErrAsync(() => executeWrite(asBob, CREATE));
+    expect(err).toMatchObject({
+      code: 'usage',
+      message: `Der Key ${bob.priv} ist kein aktiver Key von bob`,
+      hint: `identities.acme.bob.key in ${userConfigPath(b.homes.backeHome)} prüfen`,
+    });
+    expect(await revParse(b.root, 'HEAD')).toBe(before);
+    expect(await statusShort(b.root)).toEqual([]);
+  });
+
+  test('a key of another user is a usage error', async () => {
+    const bob = await testKey('bob');
+    await executeWrite(ctx, {
+      kind: 'op',
+      op: { op: 'user.add', handle: 'bob', name: 'Bob', kind: 'human', keys: [bob.line] },
+    });
+    const err = await catchErrAsync(() =>
+      executeWrite({ ...ctx, user: { ...ctx.user, key: bob.priv } }, CREATE),
+    );
+    expect(err).toMatchObject({
+      code: 'usage',
+      message: `Der Key ${bob.priv} ist kein aktiver Key von spw`,
+    });
+  });
 });
 
 test('SIGINT is deferred until the write finished', async () => {

@@ -295,12 +295,35 @@ describe('identity rules', () => {
       expect(err.details).toMatchObject({ reason: 'policy' });
       expect(err.message).toBe(`Der Widerruf von ${sshFingerprint(KEY_C)} ist endgültig`);
     }
+    const owning = keyed('bob', [KEY], { revoked_keys: revoked });
     const kept = keyed('bob', [], {
-      revoked_keys: [...revoked, { key: KEY_A, revoked: '2026-11-02T00:00:00Z' }],
+      revoked_keys: [...revoked, { key: KEY, revoked: '2026-11-02T00:00:00Z' }],
     });
     expect(() =>
-      checkUserChange(withUsers(state, { bob: kept }), 'spw', 'bob', before, kept),
+      checkUserChange(withUsers(state, { bob: kept }), 'spw', 'bob', owning, kept),
     ).not.toThrow();
+  });
+
+  test('only own keys are revoked, even by admins', () => {
+    const before = keyed('bob', [KEY]);
+    const foreign = keyed('bob', [KEY], {
+      revoked_keys: [{ key: testKey('a', 'other-comment'), revoked: '2026-11-02T00:00:00Z' }],
+    });
+    for (const actor of ['bob', 'spw']) {
+      const err = catchErr(() =>
+        checkUserChange(withUsers(own, { bob: foreign }), actor, 'bob', before, foreign),
+      );
+      expect(err.details).toMatchObject({ reason: 'policy' });
+      expect(err.message).toBe(`Widerrufen werden nur eigene Keys: ${sshFingerprint(KEY_A)}`);
+    }
+    const created = keyed('carol', [], {
+      revoked_keys: [{ key: KEY_C, revoked: '2026-11-02T00:00:00Z' }],
+    });
+    expect(
+      reason(() =>
+        checkUserChange(withUsers(own, { carol: created }), 'spw', 'carol', undefined, created),
+      ),
+    ).toBe('policy');
   });
 
   test('the previous operator can no longer hand over an agent', () => {

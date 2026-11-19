@@ -7,14 +7,17 @@ import { join } from 'node:path';
 import { type LockOptions, withFileLock } from '../context/lock.ts';
 import { workingCopyPath } from '../context/registry.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
+import { userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
 import { BACKLOG_FORMAT_VERSION, type Comment, type User } from '../core/schemas.ts';
+import { sshFingerprint } from '../core/ssh.ts';
 import { commitPaths } from '../git/commit.ts';
 import { git } from '../git/exec.ts';
 import { objectInfo, readBlobs, removedHandles } from '../git/history.ts';
 import { readLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
 import { formatCommitMessage, TRAILER_ACTOR, TRAILER_OP } from '../git/message.ts';
 import { assertOnBranch, dirtyPaths, headState, rollbackPaths } from '../git/repo.ts';
+import { readPublicKey } from '../git/ssh.ts';
 import {
   type ApplyContext,
   applyOperation,
@@ -40,12 +43,22 @@ import {
   type StoredEntity,
 } from '../store/snapshot.ts';
 import { authorOf, isoNow } from './env.ts';
+import { activeFingerprints } from './verify-state.ts';
 import { ensureWorkingCopy, identityMismatch } from './working-copy.ts';
 
 export type WriteInput =
   | { kind: 'op'; op: Operation }
   | { kind: 'batch'; ops: readonly Operation[] }
-  | { kind: 'manual'; subject: string; changes: readonly FileChange[] };
+  | {
+      kind: 'manual';
+      subject: string;
+      changes: readonly FileChange[];
+      /**
+       * Users-Stand, gegen den `verify` diesen Commit beurteilt und in dem der Signier-Key aktiv
+       * sein muss; ohne: der Stand von HEAD.
+       */
+      signers?: ReadonlyMap<string, User>;
+    };
 
 export type WriteResult = {
   commit: string | undefined;
@@ -181,6 +194,21 @@ async function checkIdentity(ctx: ResolvedContext, wc: string, handle: string): 
   }
 }
 
+/** Der Signier-Key ist ein aktiver Key des Schreibenden; sonst verwürfe `verify` den Commit. */
+async function checkSigningKey(
+  ctx: ResolvedContext,
+  key: string,
+  handle: string,
+  users: ReadonlyMap<string, User>,
+): Promise<void> {
+  const fingerprint = sshFingerprint(await readPublicKey(key));
+  if (!activeFingerprints(users.get(handle)).has(fingerprint)) {
+    throw new BackeError('usage', `Der Key ${key} ist kein aktiver Key von ${handle}`, {
+      hint: `identities.${ctx.backlog.value}.${handle}.key in ${userConfigPath(ctx.homes.backeHome)} prüfen`,
+    });
+  }
+}
+
 /** Liest `version` roh, bevor das Schema greift: ein neueres Format schreibt dieses backe nicht. */
 async function checkFormatVersion(wc: string): Promise<void> {
   const raw = readJsonc(await readFile(join(wc, BACKLOG_CONFIG), 'utf8'), BACKLOG_CONFIG);
@@ -284,6 +312,10 @@ export async function executeWrite(
     await checkFormatVersion(wc);
     const snapshot = await loadSnapshot(wc);
     assertActorIsUser(snapshot, handle);
+    const signers =
+      (input.kind === 'manual' ? input.signers : undefined) ??
+      new Map([...snapshot.users].map(([h, u]) => [h, u.data]));
+    await checkSigningKey(ctx, key, handle, signers);
     const head = await assertOnBranch(wc, snapshot.config.sync.branch);
 
     const { changes, ...planned } = await plan(wc, snapshot, head, input, handle, deps);

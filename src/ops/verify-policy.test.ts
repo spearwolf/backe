@@ -1,5 +1,6 @@
 import { cfg, I, testKey } from '../../test/helpers/snapshot.ts';
 import type { User } from '../core/schemas.ts';
+import { sshFingerprint } from '../core/ssh.ts';
 import { serializeEntityFile } from '../store/frontmatter.ts';
 import { commentFileName, commentsDir, issueFile, userFile } from '../store/layout.ts';
 import { checkCommitPolicy, type PolicyState, type TreeChange } from './verify-policy.ts';
@@ -294,6 +295,18 @@ describe('checkCommitPolicy', () => {
       'alice darf den User spw nicht ändern',
     ]);
     expect(check({ actor: 'alice', admins: ['spw', 'alice'], changes })).toEqual([]);
+  });
+
+  test('revoking a key of another user is reported', () => {
+    const alice = human('alice');
+    const revoking: User = {
+      ...alice,
+      revoked_keys: [{ key: testKey('spw'), revoked: '2026-11-02T00:00:00Z' }],
+    };
+    const after = state(['spw'], [revoking]);
+    expect(
+      check({ actor: 'alice', after, changes: [userChange('alice', 'M', alice, revoking)] }),
+    ).toEqual([`Widerrufen werden nur eigene Keys: ${sshFingerprint(testKey('spw'))}`]);
   });
 
   test('a removed handle re-created by a non-admin is reported', () => {

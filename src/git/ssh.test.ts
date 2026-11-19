@@ -1,12 +1,38 @@
-import { copyFile, stat } from 'node:fs/promises';
+import { copyFile, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { testKey } from '../../test/helpers/git.ts';
 import { sameKey } from '../core/ssh.ts';
+import { sshKeygen } from './exec.ts';
 import { generateKeypair, readPublicKey } from './ssh.ts';
 
+vi.mock('./exec.ts', async (orig) => {
+  const actual = await orig<typeof import('./exec.ts')>();
+  return { ...actual, sshKeygen: vi.fn(actual.sshKeygen) };
+});
+
 describe('ssh keys', () => {
+  test('deriving a public key never prompts for a passphrase', async () => {
+    const k = await testKey('a');
+    const lonely = join(await tempDir(), 'copy');
+    await copyFile(k.priv, lonely);
+    vi.mocked(sshKeygen).mockClear();
+    await readPublicKey(lonely);
+    expect(vi.mocked(sshKeygen).mock.calls.map(([args]) => args)).toEqual([
+      ['-y', '-P', '', '-f', lonely],
+    ]);
+  });
+
+  test('a key with a passphrase and no .pub fails instead of prompting', async () => {
+    const dir = await tempDir();
+    const locked = join(dir, 'locked');
+    await sshKeygen(['-q', '-t', 'ed25519', '-N', 'geheim', '-f', locked], { cwd: dir });
+    await rm(`${locked}.pub`);
+    const err = await catchErrAsync(() => readPublicKey(locked));
+    expect(err.code).toBe('unexpected');
+  });
+
   test('readPublicKey reads a public key, the .pub next to a private key, or derives it', async () => {
     const k = await testKey('a');
     expect(await readPublicKey(k.pub)).toBe(k.line);

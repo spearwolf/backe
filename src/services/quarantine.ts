@@ -184,7 +184,12 @@ export async function quarantineCommit(
   const verb = input.decision === 'accepted' ? 'accept' : 'revert';
   return executeWrite(
     ctx,
-    { kind: 'manual', subject: `verify ${verb} ${sha.slice(0, 7)}`, changes },
+    {
+      kind: 'manual',
+      subject: `verify ${verb} ${sha.slice(0, 7)}`,
+      changes,
+      signers: state.users,
+    },
     deps,
   );
 }

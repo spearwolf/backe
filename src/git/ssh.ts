@@ -36,7 +36,10 @@ export async function readPublicKey(keyPath: string): Promise<string> {
     line =
       pub !== undefined && firstLine(pub).startsWith('ssh-')
         ? firstLine(pub)
-        : firstLine((await sshKeygen(['-y', '-f', keyPath], { cwd: dirname(keyPath) })).stdout);
+        : // `-P ''`: Ein Key mit Passphrase scheitert sofort, statt am Terminal nachzufragen.
+          firstLine(
+            (await sshKeygen(['-y', '-P', '', '-f', keyPath], { cwd: dirname(keyPath) })).stdout,
+          );
   }
   parseSshPublicKey(line);
   return line;

@@ -369,6 +369,32 @@ async function ownClone(): Promise<string> {
   return dir;
 }
 
+describe('the reference of a new clone', () => {
+  const alternates = (root: string) => exists(join(root, '.git', 'objects', 'info', 'alternates'));
+
+  test('a managed clone stays the reference', async () => {
+    const ctx = await resolveContext({ cwd: b.root, env: b.env, flags: { as: 'claude-1' } });
+    const { root } = await ensureWorkingCopy(ctx, 'claude-1');
+    expect(await alternates(root)).toBe(true);
+  });
+
+  test('a bound clone of the user lends its objects only for the transfer', async () => {
+    await push();
+    const dir = await ownClone();
+    await addBacklog({
+      homes: other.homes,
+      env: other.env,
+      name: 'acme',
+      path: dir,
+      handle: 'spw',
+    });
+    const ctx = await resolveContext({ cwd: dir, env: other.env, flags: { as: 'claude-1' } });
+    const { root } = await ensureWorkingCopy(ctx, 'claude-1');
+    expect(root).toBe(managedClonePath(other.homes, 'acme', 'claude-1'));
+    expect(await alternates(root)).toBe(false);
+  });
+});
+
 test('add binds an existing clone, sets identity and anchor', async () => {
   const dir = await ownClone();
   const r = await addBacklog({
