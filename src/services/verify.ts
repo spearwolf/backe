@@ -373,12 +373,15 @@ export async function verifyBacklog(
   return { ...report, propNotices };
 }
 
-/** Wirft `verify` mit dem Bericht als Details, wenn ungültige Commits übrig sind. */
-export function assertVerified(report: VerifyReport): void {
+/**
+ * Wirft `verify`, wenn ungültige Commits übrig sind; die Details sind der Bericht oder, für eine
+ * Ausgabe mit anderen Feldnamen, `details`.
+ */
+export function assertVerified(report: VerifyReport, details: unknown = report): void {
   if (report.invalid.length === 0) return;
   throw new BackeError(
     'verify',
     `${report.invalid.length} ungültige Commits seit ${shortSha(report.anchor)}`,
-    { details: report },
+    { details },
   );
 }

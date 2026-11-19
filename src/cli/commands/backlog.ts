@@ -2,6 +2,7 @@
 import type { Command } from 'commander';
 import { listBacklogs, useBacklog } from '../../context/registry.ts';
 import { BackeError } from '../../core/errors.ts';
+import { shortSha } from '../../core/ids.ts';
 import {
   addBacklog,
   cloneBacklog,
@@ -10,9 +11,7 @@ import {
   type WorkingCopyInfo,
 } from '../../services/working-copy.ts';
 import { absPath, action, type CommandEnv, emit, type Runtime, subcommand } from '../options.ts';
-import { columns, lines, paint, renderHints } from '../output.ts';
-
-const short = (sha: string) => sha.slice(0, 7);
+import { columns, lines, paint, renderHints, safeText } from '../output.ts';
 
 /** Lokale Pfade (`./…`, `../…`, `~/…`) werden wie bei `add` expandiert; URLs bleiben, wie sie sind. */
 const PATH_LIKE = /^(?:\.\.?(?:\/|$)|~(?:\/|$))/;
@@ -27,7 +26,7 @@ function workingCopyRow(wc: WorkingCopyInfo): string[] {
   if (!wc.exists) return [wc.handle, wc.path, kind, 'fehlt'];
   const parts = [
     `Identität ${wc.identity ?? '-'}`,
-    `Anker ${wc.anchor === undefined ? '-' : short(wc.anchor)}`,
+    `Anker ${wc.anchor === undefined ? '-' : shortSha(wc.anchor)}`,
   ];
   return [wc.handle, wc.path, kind, parts.join(', ')];
 }
@@ -56,7 +55,7 @@ export function backlogCommands(program: Command, rt: Runtime): void {
   subcommand(backlog, 'use <name>', 'aktuellen Backlog setzen').action(
     action(rt, async (env, name: string) => {
       await useBacklog(env.homes, name);
-      emit(env, { current: name }, () => `aktuell: ${name}\n`);
+      emit(env, { current: name }, () => safeText(`aktuell: ${name}\n`));
     }),
   );
 
@@ -71,7 +70,7 @@ export function backlogCommands(program: Command, rt: Runtime): void {
           handle: env.handle(),
           ...(opts.name === undefined ? {} : { name: opts.name }),
         });
-        emit(env, r, () => `${r.root}\n`);
+        emit(env, r, () => safeText(`${r.root}\n`));
         hints(env, r.notices);
       }),
     );
@@ -85,7 +84,7 @@ export function backlogCommands(program: Command, rt: Runtime): void {
         path: absPath(path, env.io),
         handle: env.handle(),
       });
-      emit(env, r, () => `${r.root}\n`);
+      emit(env, r, () => safeText(`${r.root}\n`));
       hints(env, r.notices);
     }),
   );
@@ -105,7 +104,9 @@ export function backlogCommands(program: Command, rt: Runtime): void {
           force: opts.force === true,
         });
         emit(env, { removed: name, purged }, () =>
-          lines([`entfernt: ${name}`, ...(purged === undefined ? [] : [`gelöscht: ${purged}`])]),
+          safeText(
+            lines([`entfernt: ${name}`, ...(purged === undefined ? [] : [`gelöscht: ${purged}`])]),
+          ),
         );
       }),
     );
@@ -118,7 +119,8 @@ export function backlogCommands(program: Command, rt: Runtime): void {
     action(rt, async (env, given: string | undefined) => {
       const name = given ?? (await env.context()).backlog.value;
       const r = await showBacklog(env.homes, env.userConfig, name);
-      emit(env, r, () => {
+      // JSON mit snake_case-Keys (`working_copies`).
+      emit(env, { entry: r.entry, working_copies: r.workingCopies }, () => {
         const { entry, workingCopies } = r;
         const out = [`name: ${entry.name}`];
         if (entry.remote !== undefined) out.push(`remote: ${entry.remote}`);
@@ -130,7 +132,7 @@ export function backlogCommands(program: Command, rt: Runtime): void {
             'arbeitskopien:',
             ...columns(workingCopies.map(workingCopyRow)).map((l) => `  ${l}`),
           );
-        return lines(out);
+        return safeText(lines(out));
       });
     }),
   );

@@ -9,7 +9,7 @@ import {
 } from '../../services/projects.ts';
 import { STATE_ORDER } from '../../services/sprints.ts';
 import { action, bodyArg, emit, emitOutcome, type Runtime, subcommand } from '../options.ts';
-import { bodyBlock, columns, fieldRows, lines, paint } from '../output.ts';
+import { bodyBlock, columns, fieldRows, lines, paint, safeText } from '../output.ts';
 
 type CreateOpts = { title: string; lead?: string; description?: string; file?: string };
 
@@ -67,7 +67,7 @@ export function projectCommands(program: Command, rt: Runtime): void {
         },
         () =>
           lines([
-            `${r.path}  ${paint(env.color, 'bold', r.project.title)}`,
+            `${safeText(r.path)}  ${paint(env.color, 'bold', r.project.title)}`,
             ...fieldRows([
               ['lead', r.project.lead],
               ['subprojects', r.subprojects.join(', ')],

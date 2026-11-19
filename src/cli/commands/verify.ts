@@ -1,6 +1,7 @@
 /** `backe verify [--since rev] [--accept sha | --revert sha] [--reason text]` (backe.md §2.13, §2.24). */
 import type { Command } from 'commander';
 import { BackeError } from '../../core/errors.ts';
+import { shortSha } from '../../core/ids.ts';
 import { quarantineCommit } from '../../services/quarantine.ts';
 import { assertVerified, type BacklogVerifyReport, verifyBacklog } from '../../services/verify.ts';
 import {
@@ -12,12 +13,9 @@ import {
   subcommand,
   text,
 } from '../options.ts';
-import { json, lines, paint, renderHints } from '../output.ts';
+import { json, lines, paint, renderHints, safeText } from '../output.ts';
 
 type Opts = { since?: string; accept?: string; revert?: string; reason?: string };
-
-const short = (sha: string) =>
-  /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(sha) ? sha.slice(0, 7) : sha;
 
 /**
  * `geprüft: <n> Commits seit <anker kurz | --since>`, je ungültigem Commit
@@ -25,14 +23,20 @@ const short = (sha: string) =>
  */
 function render(report: BacklogVerifyReport, since: string | undefined, color: boolean): string {
   return lines([
-    `geprüft: ${report.checked} Commits seit ${since ?? short(report.anchor)}`,
+    safeText(`geprüft: ${report.checked} Commits seit ${since ?? shortSha(report.anchor)}`),
     ...report.invalid.map((f) =>
-      paint(color, 'red', `${short(f.sha)} ${f.subject}: ${f.reasons.join('; ')}`),
+      paint(color, 'red', `${shortSha(f.sha)} ${f.subject}: ${f.reasons.join('; ')}`),
     ),
     ...report.quarantined.map((q) =>
-      paint(color, 'yellow', `${short(q.sha)} ${q.decision}: ${q.note}`),
+      paint(color, 'yellow', `${shortSha(q.sha)} ${q.decision}: ${q.note}`),
     ),
   ]);
+}
+
+/** Bericht als JSON mit snake_case-Keys (`prop_notices`). */
+function verifyJson(report: BacklogVerifyReport): Record<string, unknown> {
+  const { propNotices, ...rest } = report;
+  return { ...rest, prop_notices: propNotices };
 }
 
 async function quarantine(env: CommandEnv, opts: Opts): Promise<void> {
@@ -58,7 +62,7 @@ async function quarantine(env: CommandEnv, opts: Opts): Promise<void> {
   const notices = r.notices.length === 0 ? undefined : r.notices;
   const warnings = r.verifyNotices.length === 0 ? undefined : r.verifyNotices;
   emit(env, { commit: r.commit ?? null, sha, decision, reason, notices, warnings }, () =>
-    lines([`${short(sha)} ${decision}: ${reason}`]),
+    lines([safeText(`${shortSha(sha)} ${decision}: ${reason}`)]),
   );
   emitNotices(env, r.notices, r.verifyNotices);
 }
@@ -79,14 +83,15 @@ export function verifyCommand(program: Command, rt: Runtime): void {
           ...(opts.since === undefined ? { record: true } : { since: opts.since }),
         });
         // Im JSON-Modus bleibt stdout bei einem Fehler leer; der Bericht steht in dessen Details.
+        const reportJson = verifyJson(report);
         if (env.format === 'json') {
-          if (report.invalid.length === 0) env.out(json(report));
+          if (report.invalid.length === 0) env.out(json(reportJson));
         } else {
           env.out(render(report, opts.since, env.color));
           const hints = [...report.notices, ...report.propNotices];
           if (hints.length > 0) env.io.stderr(renderHints(hints));
         }
-        assertVerified(report);
+        assertVerified(report, reportJson);
       }),
     );
 }

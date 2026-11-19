@@ -5,8 +5,13 @@
 import { KEY_ORDER } from '../core/schemas.ts';
 import type { State } from '../core/state.ts';
 import type { IssueListItem } from '../services/issue-list.ts';
-import type { CommentView, IssueDetail, IssueRefView } from '../services/issue-show.ts';
-import { lines, paint, type Style, width } from './output.ts';
+import type {
+  CommentView,
+  IssueDetail,
+  IssueRefView,
+  MissingRefView,
+} from '../services/issue-show.ts';
+import { lines, paint, type Style, safeText, width } from './output.ts';
 
 /** Felder eines Issues, wie sie in der Datei stehen; Grundlage für `--fields`. */
 export const ISSUE_FIELDS: readonly string[] = KEY_ORDER.issue;
@@ -58,54 +63,66 @@ const maxWidth = (cells: readonly string[]): number => Math.max(0, ...cells.map(
 /**
  * Eine Zeile je Issue: `<id>  <state>  <assignee oder ->  <titel>`. IDs und Assignees auf die
  * breiteste Zeile gepolstert, der State auf 11 Zeichen; `⧗ ` vor dem Titel bei offenen
- * `depends_on`, in der Baumansicht zwei Leerzeichen Einzug je Ebene.
+ * `depends_on`, in der Baumansicht zwei Leerzeichen Einzug je Ebene. Text aus den Dateien geht
+ * durch `safeText`.
  */
 export function issueLines(items: readonly IssueListItem[], color: boolean): string[] {
-  const idWidth = maxWidth(items.map((i) => i.issue.id));
-  const assigneeWidth = maxWidth(items.map((i) => i.issue.assignee ?? '-'));
-  return items.map(({ issue, depth, openDeps }) =>
+  const ids = items.map((i) => safeText(i.issue.id));
+  const assignees = items.map((i) => safeText(i.issue.assignee ?? '-'));
+  const idWidth = maxWidth(ids);
+  const assigneeWidth = maxWidth(assignees);
+  return items.map(({ issue, depth, openDeps }, n) =>
     [
-      pad(issue.id, idWidth),
+      pad(ids[n] as string, idWidth),
       stateText(issue.state, color, true),
-      pad(issue.assignee ?? '-', assigneeWidth),
-      `${'  '.repeat(depth ?? 0)}${openDeps ? '⧗ ' : ''}${issue.title}`,
+      pad(assignees[n] as string, assigneeWidth),
+      `${'  '.repeat(depth ?? 0)}${openDeps ? '⧗ ' : ''}${safeText(issue.title)}`,
     ].join('  '),
   );
 }
 
 /** Zeilen für Sub-Issues: `<id>  <state>  <titel>`; eine Referenz trägt keinen Assignee. */
 function refLines(refs: readonly IssueRefView[], color: boolean): string[] {
-  const idWidth = maxWidth(refs.map((r) => r.id));
-  return refs.map((r) => [pad(r.id, idWidth), stateText(r.state, color, true), r.title].join('  '));
+  const idWidth = maxWidth(refs.map((r) => safeText(r.id)));
+  return refs.map((r) =>
+    [pad(safeText(r.id), idWidth), stateText(r.state, color, true), safeText(r.title)].join('  '),
+  );
 }
 
-const refWithState = (r: IssueRefView, color: boolean): string =>
-  `${r.id} [${stateText(r.state, color, false)}]`;
+/** `<id> [<state>]`, eine fehlende Referenz als `<id> [fehlt]`. */
+const refWithState = (r: IssueRefView | MissingRefView, color: boolean): string =>
+  'missing' in r
+    ? `${safeText(r.id)} [${paint(color, 'red', 'fehlt')}]`
+    : `${safeText(r.id)} [${stateText(r.state, color, false)}]`;
 
 const firstLine = (body: string): string => body.split('\n', 1)[0] ?? '';
 
 /** Body ohne abschließende Zeilenumbrüche, als Zeilen; ein leerer Body ergibt keine. */
 const bodyLines = (body: string): string[] => {
-  const trimmed = body.replace(/\n+$/, '');
+  const trimmed = safeText(body).replace(/\n+$/, '');
   return trimmed === '' ? [] : trimmed.split('\n');
 };
 
 /** `--- <file> (<author>, <created>[, <from> → <to>])` */
 function commentHeading(c: CommentView): string {
   const transition = c.from !== undefined && c.to !== undefined ? `, ${c.from} → ${c.to}` : '';
-  return `--- ${c.file} (${c.author}, ${c.created}${transition})`;
+  return safeText(`--- ${c.file} (${c.author}, ${c.created}${transition})`);
 }
 
 /**
  * Detailansicht als Text: Kopf `<id>  <titel>`, dann gesetzte Felder mit Labels auf 12 Zeichen,
  * eine Leerzeile, der Body und je angefordertem Kommentar eine Leerzeile, Überschrift und Text.
+ * Text aus den Dateien geht durch `safeText`; nur die States tragen Farbe.
  */
 export function issueDetailText(d: IssueDetail, color: boolean): string {
   const i = d.issue;
-  const out: string[] = [`${i.id}  ${paint(color, 'bold', i.title)}`];
+  const out: string[] = [`${safeText(i.id)}  ${paint(color, 'bold', i.title)}`];
+  /** `value` ist schon sicher (gefärbte States, bereinigte Teile). */
   const field = (label: string, value: string | undefined): void => {
     if (value !== undefined && value !== '') out.push(`${pad(label, LABEL_WIDTH)}${value}`);
   };
+  const plain = (label: string, value: string | undefined): void =>
+    field(label, value === undefined ? undefined : safeText(value));
   const more = (value: string): void => {
     out.push(`${' '.repeat(LABEL_WIDTH)}${value}`);
   };
@@ -113,24 +130,24 @@ export function issueDetailText(d: IssueDetail, color: boolean): string {
     list === undefined || list.length === 0 ? undefined : list.join(', ');
 
   let state = stateText(i.state, color, false);
-  if (i.paused_from !== undefined) state += ` (aus ${i.paused_from})`;
+  if (i.paused_from !== undefined) state += ` (aus ${safeText(i.paused_from)})`;
   if (i.blocked_by !== undefined && i.blocked_by.length > 0) {
     const blockers = i.blocked_by.map((id) => {
       const ref = d.blockedBy.find((b) => b.id === id);
-      return ref === undefined ? id : refWithState(ref, color);
+      return ref === undefined ? safeText(id) : refWithState(ref, color);
     });
     state += `, blockiert von ${blockers.join(', ')}`;
   }
   field('state', state);
   if (d.lastReason !== undefined) {
     const r = d.lastReason;
-    field('reason', `${firstLine(r.body)} — ${r.author}, ${r.created}`);
+    plain('reason', `${firstLine(r.body)} — ${r.author}, ${r.created}`);
   }
-  field('assignee', i.assignee);
-  field('creator', i.creator);
-  field('created', i.created);
+  plain('assignee', i.assignee);
+  plain('creator', i.creator);
+  plain('created', i.created);
   // Vom direkten Parent bis zur Wurzel, in der Reihenfolge von `parents`.
-  field('parent', d.parents.map((p) => p.id).join(' › '));
+  plain('parent', d.parents.map((p) => p.id).join(' › '));
   field('depends_on', joined(d.dependsOn.map((r) => refWithState(r, color))));
   field('dependents', joined(d.dependents.map((r) => refWithState(r, color))));
   if (d.progress !== undefined) {
@@ -138,11 +155,13 @@ export function issueDetailText(d: IssueDetail, color: boolean): string {
     for (const line of refLines(d.children, color)) more(line);
   }
   field('rank', i.rank === undefined ? undefined : String(i.rank));
-  field('projects', joined(i.projects));
-  field('sprints', joined(i.sprints));
-  field('repos', joined(i.repos));
-  field('attachments', joined(i.attachments?.map((a) => `${a.name} (${a.file ?? a.url})`)));
-  const props = Object.entries(i.props ?? {}).map(([k, v]) => `${k}: ${JSON.stringify(v)}`);
+  plain('projects', joined(i.projects));
+  plain('sprints', joined(i.sprints));
+  plain('repos', joined(i.repos));
+  plain('attachments', joined(i.attachments?.map((a) => `${a.name} (${a.file ?? a.url})`)));
+  const props = Object.entries(i.props ?? {}).map(([k, v]) =>
+    safeText(`${k}: ${JSON.stringify(v)}`),
+  );
   if (props.length > 0) {
     field('props', props[0]);
     for (const line of props.slice(1)) more(line);

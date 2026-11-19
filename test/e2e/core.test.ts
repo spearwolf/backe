@@ -261,6 +261,8 @@ test('backlog list, use, show', async () => {
 
   const json = await cli(['--json', 'backlog', 'list'], { env: s.env, cwd: s.cwd });
   await expect(normalize(json.stdout, s.names)).toMatchFileSnapshot('golden/backlog-list.json');
+  const shown = await cli(['--json', 'backlog', 'show', 'acme'], { env: s.env, cwd: s.cwd });
+  await expect(normalize(shown.stdout, s.names)).toMatchFileSnapshot('golden/backlog-show.json');
 
   // beta hat keine Remote: --purge allein löscht die einzige Kopie nicht.
   const refused = await cli(['backlog', 'remove', 'beta', '--purge'], { env: s.env, cwd: s.cwd });
@@ -310,8 +312,9 @@ test('verify reports a clean history', async () => {
   expect(JSON.parse(json.stdout)).toMatchObject({
     checked: 3,
     invalid: [],
-    propNotices: [expect.stringMatching(/ sev: /)],
+    prop_notices: [expect.stringMatching(/ sev: /)],
   });
+  await expect(normalize(json.stdout, s.names)).toMatchFileSnapshot('golden/verify.json');
 });
 
 test('verify fails with exit 5 until the commit is quarantined', async () => {
@@ -331,6 +334,16 @@ test('verify fails with exit 5 until the commit is quarantined', async () => {
       ['verify'],
     ]),
   ).toMatchFileSnapshot('golden/verify-invalid.txt');
+  // Im JSON-Modus steht der Bericht mit snake_case-Keys in den Details des Fehlers.
+  const unaccepted = await rawCommit(s.b.root, {
+    files: { 'y.txt': '1' },
+    actor: 'spw',
+    op: 'manual',
+  });
+  s.names[unaccepted] = '<bad2>';
+  const json = await cli(['--json', 'verify'], { env: s.env, cwd: s.cwd });
+  expect([json.code, json.stdout]).toEqual([5, '']);
+  await expect(normalize(json.stderr, s.names)).toMatchFileSnapshot('golden/verify-invalid.json');
 });
 
 test('verify --accept without reason is a usage error, with an empty reason a validation error', async () => {

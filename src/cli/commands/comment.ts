@@ -59,7 +59,9 @@ export function commentCommands(program: Command, rt: Runtime): void {
         const all = await listIssueComments(await env.context(), ref);
         const from = limit === undefined ? 0 : Math.max(0, all.length - limit);
         const shown = all.slice(from);
-        emit(env, shown, () =>
+        // JSON trägt dieselbe Nummer `n`, die `comment edit|delete` annehmen.
+        const numbered = shown.map((c, i) => ({ n: from + i + 1, ...c }));
+        emit(env, numbered, () =>
           lines(
             columns(
               shown.map((c, i) => [

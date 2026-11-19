@@ -5,6 +5,7 @@ import { exists } from '../../context/paths.ts';
 import { BackeError } from '../../core/errors.ts';
 import { initBacklog } from '../../services/init.ts';
 import { absPath, action, type CommandEnv, emit, type Runtime, subcommand } from '../options.ts';
+import { safeText } from '../output.ts';
 
 type Opts = { name: string; prefix: string; remote?: string; key?: string; userName?: string };
 
@@ -40,7 +41,7 @@ export function initCommand(program: Command, rt: Runtime): void {
           key,
           ...(opts.userName === undefined ? {} : { userName: opts.userName }),
         });
-        emit(env, r, () => `${r.root}\n`);
+        emit(env, r, () => safeText(`${r.root}\n`));
       }),
     );
 }

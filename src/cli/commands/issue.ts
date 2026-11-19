@@ -34,7 +34,7 @@ import {
   subcommand,
   text,
 } from '../options.ts';
-import { headerLine, json, lines, pickFields } from '../output.ts';
+import { headerLine, json, lines, pickFields, safeText } from '../output.ts';
 import {
   issueDetailJson,
   issueDetailMd,
@@ -228,7 +228,7 @@ function defineList(parent: Command, name: string, rt: Runtime, description: str
           );
           env.io.stderr(
             lines([
-              ...r.problems.map((p) => `Warnung: ${p.path}: ${p.message}`),
+              ...r.problems.map((p) => safeText(`Warnung: ${p.path}: ${p.message}`)),
               ...(r.truncated ? [`Hinweis: Liste gekürzt (--limit ${r.items.length})`] : []),
             ]),
           );

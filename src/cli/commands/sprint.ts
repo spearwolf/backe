@@ -10,7 +10,7 @@ import {
   type Runtime,
   subcommand,
 } from '../options.ts';
-import { bodyBlock, columns, headerLine, json, lines, paint } from '../output.ts';
+import { bodyBlock, columns, headerLine, json, lines, paint, safeText } from '../output.ts';
 import { issueLines, issueListJson } from '../render-issue.ts';
 import { listSort } from './issue.ts';
 
@@ -109,9 +109,9 @@ export function sprintCommands(program: Command, rt: Runtime): void {
         const { title, start, end, closed } = r.sprint;
         const when = range(start, end);
         const head = [
-          slug,
+          safeText(slug),
           paint(env.color, 'bold', title),
-          ...(when === '-' ? [] : [when]),
+          ...(when === '-' ? [] : [safeText(when)]),
           ...(closed === true ? [CLOSED] : []),
         ].join('  ');
         const header = headerLine(r.header);

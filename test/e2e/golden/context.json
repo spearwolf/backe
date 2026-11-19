@@ -1,1 +1,1 @@
-{"backlog":{"value":"acme","source":{"kind":"user-current"},"root":"<root>"},"user":{"value":"spw","source":{"kind":"env","detail":"BACKE_USER"},"key":"<key>","canWrite":true},"project":{"source":{"kind":"none"}},"sprint":{"source":{"kind":"none"}},"repo":{"source":{"kind":"none"}}}
+{"backlog":{"value":"acme","source":{"kind":"user-current"},"root":"<root>"},"user":{"value":"spw","source":{"kind":"env","detail":"BACKE_USER"},"key":"<key>","can_write":true},"project":{"source":{"kind":"none"}},"sprint":{"source":{"kind":"none"}},"repo":{"source":{"kind":"none"}}}

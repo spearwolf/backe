@@ -17,6 +17,9 @@ import { openSnapshot, resolveIssueRef } from './read.ts';
 
 export type IssueRefView = { id: string; state: State; title: string };
 
+/** Eine Referenz, deren Issue es im Backlog nicht (mehr) gibt. */
+export type MissingRefView = { id: string; missing: true };
+
 export type CommentView = {
   file: string;
   author: string;
@@ -34,7 +37,8 @@ export type IssueDetail = {
   parents: IssueRefView[];
   /** Blocker aus `blocked_by` mit ihrem State, in der Reihenfolge der Datei. */
   blockedBy: IssueRefView[];
-  dependsOn: IssueRefView[];
+  /** `depends_on` in der Reihenfolge der Datei; eine ID ohne Issue bleibt als `missing` stehen. */
+  dependsOn: (IssueRefView | MissingRefView)[];
   dependents: IssueRefView[];
   children: IssueRefView[];
   progress?: { settled: number; total: number };
@@ -105,7 +109,7 @@ export async function showIssue(
     raw: await readFile(join(root, stored.path), 'utf8'),
     parents: ancestors(s, id).flatMap(view),
     blockedBy: (issue.blocked_by ?? []).flatMap(view),
-    dependsOn: (issue.depends_on ?? []).flatMap(view),
+    dependsOn: (issue.depends_on ?? []).map((dep) => view(dep)[0] ?? { id: dep, missing: true }),
     dependents: sorted(graph.dependents.get(id)),
     children: sorted(childIds),
     ...(childIds.length > 0 ? { progress: { settled, total: childIds.length } } : {}),

@@ -11,7 +11,7 @@ import { addUser } from '../../src/services/users.ts';
 import { executeWrite, type WriteDeps } from '../../src/services/write.ts';
 import { issueFile } from '../../src/store/layout.ts';
 import { tempDir } from '../helpers/backlog.ts';
-import { revParse, type TestBacklog, testBacklog, testKey } from '../helpers/git.ts';
+import { rawCommit, revParse, type TestBacklog, testBacklog, testKey } from '../helpers/git.ts';
 import { seqBytes } from '../helpers/snapshot.ts';
 import { type CliResult, cli, normalize, transcript } from './cli.ts';
 
@@ -784,6 +784,50 @@ test('next picks, resumes and explains an empty result with exit 3', async () =>
   });
 });
 
+test('text output shows control characters from the data instead of passing them through', async () => {
+  const s = await setup();
+  const title = `Rot ${ESC}[31mgefärbt${ESC}[0m`;
+  const osc = `Link ${ESC}]8;;https://evil.example${ESC}\\klick${ESC}]8;;${ESC}\\ und Glocke \x07\n`;
+  const id = ok(await run(s, ['new', '-t', title, '-d', `Body ${ESC}[2J\n`])).trim();
+  expect(ok(await run(s, ['comment', 'add', id, '-m', osc]))).toBe(`comment add ${id}\n`);
+
+  for (const args of [
+    ['ls', '--state', 'all'],
+    ['show', id, '--comments', 'all'],
+    ['comment', 'list', id],
+    ['issue', 'edit', id, '--title', `${title}!`],
+  ]) {
+    const out = ok(await run(s, args));
+    expect({ args, esc: out.includes(ESC), bell: out.includes('\x07') }).toEqual({
+      args,
+      esc: false,
+      bell: false,
+    });
+  }
+  const shown = ok(await run(s, ['show', id, '--comments', 'all']));
+  expect(shown).toContain(`${id}  Rot ␛[31mgefärbt␛[0m!`);
+  expect(shown).toContain('Body ␛[2J');
+  expect(shown).toContain('Link ␛]8;;https://evil.example␛\\klick␛]8;;␛\\ und Glocke \\u{07}');
+
+  // JSON und --format md geben die Daten unverändert weiter.
+  const json = JSON.parse(ok(await run(s, ['show', id, '--json', '--comments', 'all']))) as {
+    title: string;
+    comments: { body: string }[];
+  };
+  expect([json.title, json.comments[0]?.body]).toEqual([`${title}!`, osc]);
+  // Die Markdown-Ausgabe ist die Datei wie auf der Platte: Der Kommentar-Body steht dort roh.
+  expect(ok(await run(s, ['show', id, '--format', 'md', '--comments', 'all']))).toContain(osc);
+});
+
+test('show lists a dependency whose issue is gone as missing', async () => {
+  const s = await setup();
+  await rawCommit(s.b.root, { files: { [issueFile(s.id.C1)]: null }, key: s.b.key, actor: 'spw' });
+  const text = ok(await run(s, ['show', s.id.C2]));
+  expect(text).toMatch(new RegExp(`^depends_on  ${s.id.C1} \\[fehlt\\]$`, 'm'));
+  const json = JSON.parse(ok(await run(s, ['show', s.id.C2, '--json']))) as Record<string, unknown>;
+  expect(json.depends_on).toEqual([{ id: s.id.C1, missing: true }]);
+});
+
 test('comment add, list, edit, delete', async () => {
   const s = await setup();
   const { C2, D } = s.id;
@@ -824,14 +868,18 @@ test('comment add, list, edit, delete', async () => {
   ).toMatchFileSnapshot('golden/comment-list.txt');
 
   const json = JSON.parse(ok(await run(s, ['comment', 'list', C2, '--json']))) as {
+    n: number;
     file: string;
     author: string;
     body: string;
   }[];
-  expect(json.map((c) => [c.author, c.body])).toEqual([
-    ['spw', 'Erster Kommentar, korrigiert\n'],
-    ['spw', 'Von stdin\n'],
+  expect(json.map((c) => [c.n, c.author, c.body])).toEqual([
+    [1, 'spw', 'Erster Kommentar, korrigiert\n'],
+    [2, 'spw', 'Von stdin\n'],
   ]);
+  // Die Nummer zählt auch nach --limit in der ganzen Liste, wie in der Text-Ausgabe.
+  const last = JSON.parse(ok(await run(s, ['comment', 'list', C2, '--json', '--limit', '1'])));
+  expect(last).toMatchObject([{ n: 2, body: 'Von stdin\n' }]);
 
   for (const [args, message] of [
     [['comment', 'add', C2], /^Fehler: -m oder -F angeben/],

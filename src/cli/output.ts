@@ -17,7 +17,7 @@ const isFormat = (value: string): value is Format => (FORMATS as readonly string
 
 function checked(value: string, source: string): Format {
   if (isFormat(value)) return value;
-  throw new BackeError('usage', `Unbekanntes Ausgabeformat »${value}« (Quelle: ${source})`, {
+  throw new BackeError('validation', `Unbekanntes Ausgabeformat »${value}« (Quelle: ${source})`, {
     hint: 'text, json oder md',
   });
 }
@@ -46,12 +46,33 @@ export function useColor(io: CliIo, cfg: UserConfig): boolean {
   return io.isTTY && envValue(io.env, 'NO_COLOR') === undefined;
 }
 
+/** Steuerzeichen (`\p{Cc}`: C0, DEL, C1) außer Zeilenumbruch und Tab. */
+const CONTROL = /(?![\n\t])\p{Cc}/gu;
+
+/**
+ * Text aus Issues, Kommentaren, Configs oder Git für ein Terminal: Steuerzeichen außer `\n` und
+ * `\t` werden sichtbar (`ESC` als `␛`, alle anderen als `\u{XX}`), damit ein Titel keine
+ * Escape-Sequenzen (Farben, Cursor, OSC-Links, Fenstertitel) ins Terminal schreibt. Gilt für jede
+ * Text-Ausgabe; JSON und `--format md` bleiben unverändert.
+ */
+export function safeText(s: string): string {
+  return s.replace(CONTROL, (c) =>
+    c === '\x1b'
+      ? '␛'
+      : `\\u{${(c.codePointAt(0) as number).toString(16).toUpperCase().padStart(2, '0')}}`,
+  );
+}
+
 const STYLES = { bold: 1, dim: 2, red: 31, green: 32, yellow: 33, cyan: 36 } as const;
 export type Style = keyof typeof STYLES;
 
-/** `s` in ANSI-Farbe, wenn `on`; sonst unverändert. */
+/**
+ * `s` in ANSI-Farbe, wenn `on`; sonst unverändert. `s` geht durch `safeText`: Die einzigen
+ * Escape-Sequenzen der Ausgabe stammen von hier, darum bekommt `paint` nie schon gefärbten Text.
+ */
 export function paint(on: boolean, style: Style, s: string): string {
-  return on ? `\x1b[${STYLES[style]}m${s}\x1b[0m` : s;
+  const safe = safeText(s);
+  return on ? `\x1b[${STYLES[style]}m${safe}\x1b[0m` : safe;
 }
 
 /** Kompaktes JSON in einer Zeile; `undefined`-Felder fallen weg. */
@@ -64,9 +85,11 @@ export const width = (s: string): number => [...s].length;
 
 /**
  * Zeilen mit festen Spalten, getrennt durch zwei Leerzeichen: jede Spalte außer der letzten auf die
- * breiteste Zelle gepolstert, ohne Leerzeichen am Zeilenende.
+ * breiteste Zelle gepolstert, ohne Leerzeichen am Zeilenende. Zellen gehen durch `safeText`, sind
+ * also nie gefärbt; Farbe kommt erst auf die fertige Zeile.
  */
-export function columns(rows: readonly (readonly string[])[]): string[] {
+export function columns(unsafe: readonly (readonly string[])[]): string[] {
+  const rows = unsafe.map((row) => row.map(safeText));
   const widths: number[] = [];
   for (const row of rows) {
     row.forEach((cell, i) => {
@@ -85,7 +108,7 @@ export function columns(rows: readonly (readonly string[])[]): string[] {
 
 /** Body ohne abschließende Zeilenumbrüche als Zeilen, mit Leerzeile davor; leer ergibt nichts. */
 export function bodyBlock(body: string): string[] {
-  const trimmed = body.replace(/\n+$/, '');
+  const trimmed = safeText(body).replace(/\n+$/, '');
   return trimmed === '' ? [] : ['', ...trimmed.split('\n')];
 }
 
@@ -130,8 +153,20 @@ export function headerLine(header: Readonly<Record<string, string>>): string | u
   const filters = HEADER_KEYS.filter((k) => k !== 'backlog' && header[k] !== undefined);
   if (filters.length === 0) return undefined;
   return HEADER_KEYS.filter((k) => header[k] !== undefined)
-    .map((k) => `${k}=${header[k]}`)
+    .map((k) => `${k}=${safeText(header[k] as string)}`)
     .join(' ');
+}
+
+const snake = (key: string): string => key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+
+/**
+ * Fehler-Details mit snake_case-Keys, rekursiv; Werte bleiben. Details sind ungetypt und kommen aus
+ * allen Schichten (etwa `exitCode` eines git-Aufrufs), die ihre TS-Namen behalten.
+ */
+function snakeKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(snakeKeys);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [snake(k), snakeKeys(v)]));
 }
 
 /** Exit-Code eines Fehlers: der eines `BackeError`, sonst `1`. */
@@ -153,9 +188,10 @@ export function renderError(err: unknown, format: Format): string {
           `Unerwarteter Fehler: ${err instanceof Error ? err.message : String(err)}`,
         );
   if (format === 'json') {
-    return json({ error: { code: e.code, message: e.message, hint: e.hint, details: e.details } });
+    const details = e.details === undefined ? undefined : snakeKeys(e.details);
+    return json({ error: { code: e.code, message: e.message, hint: e.hint, details } });
   }
-  return `Fehler: ${e.message}\n${e.hint === undefined ? '' : `Hinweis: ${e.hint}\n`}`;
+  return safeText(`Fehler: ${e.message}\n${e.hint === undefined ? '' : `Hinweis: ${e.hint}\n`}`);
 }
 
 /**
@@ -173,19 +209,19 @@ export function renderOutcome(o: WriteOutcome, format: Format, kind: 'create' | 
       warnings: o.warnings.length === 0 ? undefined : o.warnings,
     });
   }
-  if (o.commit === undefined) return `unverändert: ${summarizeOp(o.op)}\n`;
+  if (o.commit === undefined) return `unverändert: ${safeText(summarizeOp(o.op))}\n`;
   if (kind === 'create' && o.id !== undefined) return `${o.id}\n`;
-  return `${summarizeOp(o.op)}\n`;
+  return `${safeText(summarizeOp(o.op))}\n`;
 }
 
 /** Hinweise und Warnungen für stderr: `Hinweis: …` je Notice, dann `Warnung: …`. */
 export function renderNotices(notices: readonly Notice[], warnings: readonly string[]): string {
   return lines([
-    ...notices.map((n) => `Hinweis: ${n.message}`),
-    ...warnings.map((w) => `Warnung: ${w}`),
+    ...notices.map((n) => `Hinweis: ${safeText(n.message)}`),
+    ...warnings.map((w) => `Warnung: ${safeText(w)}`),
   ]);
 }
 
 /** Hinweise als Text-Zeilen für stderr. */
 export const renderHints = (hints: readonly string[]): string =>
-  lines(hints.map((h) => `Hinweis: ${h}`));
+  lines(hints.map((h) => `Hinweis: ${safeText(h)}`));

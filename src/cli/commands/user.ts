@@ -3,7 +3,7 @@ import type { Command } from 'commander';
 import { createAgent } from '../../services/agent.ts';
 import { addUser, listUsers, removeUser, revokeKey, showUser } from '../../services/users.ts';
 import { absPath, action, emit, emitOutcome, type Runtime, subcommand } from '../options.ts';
-import { bodyBlock, columns, fieldRows, lines, paint } from '../output.ts';
+import { bodyBlock, columns, fieldRows, lines, paint, safeText } from '../output.ts';
 
 type AddOpts = { key: string; name?: string; agent?: boolean; operator?: string };
 
@@ -46,7 +46,9 @@ export function userCommands(program: Command, rt: Runtime): void {
           handle,
           ...(opts.name === undefined ? {} : { name: opts.name }),
         });
-        emit(env, { handle, key_path: r.keyPath, commit: r.commit }, () => `${r.keyPath}\n`);
+        emit(env, { handle, key_path: r.keyPath, commit: r.commit }, () =>
+          safeText(`${r.keyPath}\n`),
+        );
       }),
     );
 
@@ -89,7 +91,7 @@ export function userCommands(program: Command, rt: Runtime): void {
         },
         () =>
           lines([
-            `${r.handle}  ${paint(env.color, 'bold', r.user.name)}`,
+            `${safeText(r.handle)}  ${paint(env.color, 'bold', r.user.name)}`,
             ...fieldRows([
               ['kind', r.user.kind],
               ['operator', r.user.operator],

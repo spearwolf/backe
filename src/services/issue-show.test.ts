@@ -1,9 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
+import { rawCommit, type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import type { Operation } from '../ops/operation.ts';
+import { issueFile } from '../store/layout.ts';
 import { showIssue } from './issue-show.ts';
 import { executeWrite } from './write.ts';
 
@@ -87,6 +88,15 @@ test('show lists parents to the root, dependencies with state, dependents and ch
   expect(d.children.map((c) => c.id)).toEqual([id.C5, id.C4, id.C3, id.C2, id.C1]);
   expect(d.notices.map((n) => n.code)).toEqual(['settled_dependency']);
   expect(d.notices[0]?.ids).toEqual([id.B]);
+});
+
+test('a dependency whose issue is gone is listed as missing, not dropped', async () => {
+  await rawCommit(b.root, { files: { [issueFile(id.A)]: null }, key: b.key, actor: 'spw' });
+  const d = await showIssue(ctx, id.X);
+  expect(d.dependsOn).toEqual([
+    { id: id.A, missing: true },
+    { id: id.B, state: 'cancelled', title: 'Abgebrochene Abhängigkeit' },
+  ]);
 });
 
 test('show accepts a short id', async () => {

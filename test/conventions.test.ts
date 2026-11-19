@@ -32,3 +32,29 @@ test('messages quote values with »…«, not "…"', async () => {
   }
   expect(hits).toEqual([]);
 });
+
+const GOLDEN = join(import.meta.dirname, 'e2e', 'golden');
+const CAMEL_CASE = /[a-z][A-Z]/;
+
+/** Pfade aller Objekt-Keys in `value`, die camelCase sind (`user.canWrite`). */
+function camelKeys(value: unknown, at: string): string[] {
+  if (Array.isArray(value)) return value.flatMap((v, i) => camelKeys(v, `${at}[${i}]`));
+  if (value === null || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([k, v]) => [
+    ...(CAMEL_CASE.test(k) ? [`${at}.${k}`] : []),
+    ...camelKeys(v, `${at}.${k}`),
+  ]);
+}
+
+test('CLI JSON keys are snake_case in every golden file', async () => {
+  const files = (await readdir(GOLDEN)).filter((f) => f.endsWith('.json'));
+  expect(files.length).toBeGreaterThan(0);
+  const hits: string[] = [];
+  for (const file of files) {
+    const text = await readFile(join(GOLDEN, file), 'utf8');
+    for (const line of text.split('\n').filter((l) => l.trim() !== '')) {
+      hits.push(...camelKeys(JSON.parse(line), file));
+    }
+  }
+  expect(hits).toEqual([]);
+});

@@ -4,7 +4,7 @@ import type { Source } from '../../context/resolve.ts';
 import type { BacklogConfig } from '../../core/schemas.ts';
 import { type ContextInfo, contextInfo } from '../../services/context-info.ts';
 import { action, emit, type Runtime, subcommand } from '../options.ts';
-import { columns, lines, paint, width } from '../output.ts';
+import { columns, lines, paint, safeText, width } from '../output.ts';
 
 type Opts = { project?: string; sprint?: string; props?: boolean };
 
@@ -34,12 +34,15 @@ function render(info: ContextInfo, color: boolean): string {
     ['sprint', info.sprint.value ?? '-', info.sprint.source],
     ['repo', info.repo.value ?? '-', info.repo.source],
   ];
-  // Die Quelle ist die letzte Spalte und wird nicht gepolstert; Farbe stört die Breiten nicht.
-  const [backlog, user, ...scoped] = columns(
-    rows.map(([name, value, source]) => [name, value, paint(color, 'dim', sourceText(source))]),
-  );
+  // Name und Wert gepolstert, die Quelle zuletzt und gefärbt; Werte gehen durch `safeText`.
+  const pad = (s: string, w: number) => s + ' '.repeat(w - width(s));
   const nameWidth = Math.max(...rows.map(([name]) => width(name)));
-  const plain = (name: string, value: string) => `${name.padEnd(nameWidth)}  ${value}`;
+  const valueWidth = Math.max(...rows.map(([, value]) => width(safeText(value))));
+  const [backlog, user, ...scoped] = rows.map(
+    ([name, value, source]) =>
+      `${pad(name, nameWidth)}  ${pad(safeText(value), valueWidth)}  ${paint(color, 'dim', sourceText(source))}`,
+  );
+  const plain = (name: string, value: string) => `${pad(name, nameWidth)}  ${safeText(value)}`;
   const out = [
     backlog as string,
     plain('root', info.backlog.root ?? '-'),
@@ -52,6 +55,12 @@ function render(info: ContextInfo, color: boolean): string {
   return lines(out);
 }
 
+/** JSON mit snake_case-Keys: `user.can_write` statt des Service-Namens `canWrite`. */
+function contextJson(info: ContextInfo): Record<string, unknown> {
+  const { canWrite, ...user } = info.user;
+  return { ...info, user: { ...user, can_write: canWrite } };
+}
+
 export function contextCommand(program: Command, rt: Runtime): void {
   subcommand(program, 'context', 'aufgelösten Kontext mit Herkunft jedes Werts zeigen')
     .option('--project <pfad>', 'Projekt für diesen Aufruf')
@@ -61,7 +70,7 @@ export function contextCommand(program: Command, rt: Runtime): void {
       action(rt, async (env, opts: Opts) => {
         const ctx = await env.context({ project: opts.project, sprint: opts.sprint });
         const info = await contextInfo(ctx, { props: opts.props === true });
-        emit(env, info, () => render(info, env.color));
+        emit(env, contextJson(info), () => render(info, env.color));
       }),
     );
 }
