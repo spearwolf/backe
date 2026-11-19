@@ -1,9 +1,9 @@
-import { mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { git } from './exec.ts';
-import { assertOnBranch, dirtyPaths, headState } from './repo.ts';
+import { assertOnBranch, dirtyPaths, headState, rollbackPaths } from './repo.ts';
 
 const IDENT = ['-c', 'user.name=t', '-c', 'user.email=t@example.test'];
 
@@ -83,6 +83,40 @@ describe('assertOnBranch', () => {
     const err = await catchErrAsync(() => assertOnBranch(wc, 'main'));
     expect(err.code).toBe('conflict');
     expect(err.message).toBe(`${wc} hat noch keinen Commit`);
+  });
+});
+
+describe('rollbackPaths', () => {
+  test('rollbackPaths restores changed and deleted files and removes new ones', async () => {
+    const wc = await repo();
+    await writeFile(join(wc, 'a'), 'A1\n');
+    await writeFile(join(wc, 'b'), 'B1\n');
+    await git(['add', '.'], { cwd: wc });
+    await commit(wc);
+
+    await writeFile(join(wc, 'a'), 'A2\n');
+    await rm(join(wc, 'b'));
+    await mkdir(join(wc, 'issues/7f/bk-7f3k2'), { recursive: true });
+    await writeFile(join(wc, 'issues/7f/bk-7f3k2/issue.md'), 'n\n');
+    await writeFile(join(wc, 'fresh'), 'f\n');
+    await git(['add', 'fresh'], { cwd: wc });
+
+    await rollbackPaths(wc, ['a', 'b', 'issues/7f/bk-7f3k2', 'fresh']);
+
+    expect(await dirtyPaths(wc, ['a', 'b', 'issues', 'fresh'])).toEqual([]);
+    expect(await readFile(join(wc, 'b'), 'utf8')).toBe('B1\n');
+    expect(await readFile(join(wc, 'a'), 'utf8')).toBe('A1\n');
+    expect(await stat(join(wc, 'issues/7f/bk-7f3k2')).catch(() => null)).toBeNull();
+    expect(await stat(join(wc, 'fresh')).catch(() => null)).toBeNull();
+  });
+
+  test('without HEAD everything is removed', async () => {
+    const wc = await repo();
+    await writeFile(join(wc, 'a'), 'A\n');
+    await git(['add', 'a'], { cwd: wc });
+    await rollbackPaths(wc, ['a']);
+    expect(await stat(join(wc, 'a')).catch(() => null)).toBeNull();
+    expect((await git(['status', '--short'], { cwd: wc })).stdout).toBe('');
   });
 });
 

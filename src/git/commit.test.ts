@@ -1,0 +1,151 @@
+import { mkdir, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { tempDir } from '../../test/helpers/backlog.ts';
+import { catchErrAsync } from '../../test/helpers/catch.ts';
+import { revParse, sigOf, statusShort, testKey } from '../../test/helpers/git.ts';
+import { type CommitInput, commitPaths } from './commit.ts';
+import { git } from './exec.ts';
+import { stateDir } from './local-state.ts';
+
+const AUTHOR = { name: 'Alice Author', email: 'alice@example.test' };
+const IDENT = ['-c', 'user.name=t', '-c', 'user.email=t@example.test'];
+
+async function put(wc: string, path: string, content: string): Promise<void> {
+  await mkdir(dirname(join(wc, path)), { recursive: true });
+  await writeFile(join(wc, path), content);
+}
+
+async function show(wc: string, spec: string): Promise<string> {
+  return (await git(['show', spec], { cwd: wc })).stdout;
+}
+
+async function lsTree(wc: string, rev: string): Promise<string[]> {
+  const { stdout } = await git(['ls-tree', '-r', '--name-only', rev], { cwd: wc });
+  return stdout.split('\n').filter((l) => l !== '');
+}
+
+async function setup(): Promise<{ wc: string; head: string; older: string; input: CommitInput }> {
+  const wc = await realpath(await tempDir());
+  await git(['init', '-q', '-b', 'main'], { cwd: wc });
+  await put(wc, 'a', 'A1');
+  await put(wc, 'b', 'B1');
+  await git(['add', '.'], { cwd: wc });
+  await git([...IDENT, 'commit', '-q', '-m', 'one'], { cwd: wc });
+  const older = await revParse(wc, 'HEAD');
+  await put(wc, 'x', 'X');
+  await git(['add', 'x'], { cwd: wc });
+  await git([...IDENT, 'commit', '-q', '-m', 'two'], { cwd: wc });
+  const head = await revParse(wc, 'HEAD');
+  await put(wc, 'a', 'A2');
+  await put(wc, 'b', 'B2');
+  await put(wc, 'c', 'C');
+  await git(['add', 'c'], { cwd: wc });
+  const k = await testKey('spw');
+  return {
+    wc,
+    head,
+    older,
+    input: { paths: ['a'], message: 'm\n', key: k.priv, author: AUTHOR, env: {}, parent: head },
+  };
+}
+
+describe('commitPaths', () => {
+  test('commit takes exactly the given paths and signs them', async () => {
+    const { wc, input } = await setup();
+    const k = await testKey('spw');
+    const sha = await commitPaths(wc, input);
+    expect(await show(wc, `${sha}:a`)).toBe('A2');
+    expect(await lsTree(wc, sha)).not.toContain('c');
+    expect(await show(wc, `${sha}:b`)).toBe('B1');
+    expect(await statusShort(wc)).toEqual([' M b', 'A  c']);
+    expect(await sigOf(wc, sha, { spw: k })).toEqual(['G', 'spw']);
+    expect(await revParse(wc, 'HEAD')).toBe(sha);
+    expect(await revParse(wc, `${sha}^`)).toBe(input.parent);
+  });
+
+  test('a root commit without parent', async () => {
+    const wc = await realpath(await tempDir());
+    await git(['init', '-q', '-b', 'main'], { cwd: wc });
+    await put(wc, 'a', 'A');
+    const k = await testKey('spw');
+    const sha = await commitPaths(wc, {
+      paths: ['a'],
+      message: 'root\n',
+      key: k.priv,
+      author: AUTHOR,
+      env: {},
+      parent: undefined,
+    });
+    expect(await revParse(wc, 'HEAD')).toBe(sha);
+    expect((await git(['rev-list', '--parents', '-n1', sha], { cwd: wc })).stdout.trim()).toBe(sha);
+    expect(await statusShort(wc)).toEqual([]);
+  });
+
+  test('deleting a path and a whole issue directory', async () => {
+    const wc = await realpath(await tempDir());
+    await git(['init', '-q', '-b', 'main'], { cwd: wc });
+    await put(wc, 'a', 'A');
+    await put(wc, 'issues/7f/bk-7f3k2/issue.md', 'I');
+    await put(wc, 'issues/7f/bk-7f3k2/notes.md', 'N');
+    await git(['add', '.'], { cwd: wc });
+    await git([...IDENT, 'commit', '-q', '-m', 'one'], { cwd: wc });
+    const head = await revParse(wc, 'HEAD');
+    await rm(join(wc, 'a'));
+    await rm(join(wc, 'issues'), { recursive: true });
+    const k = await testKey('spw');
+    const sha = await commitPaths(wc, {
+      paths: ['a', 'issues/7f/bk-7f3k2'],
+      message: 'del\n',
+      key: k.priv,
+      author: AUTHOR,
+      env: {},
+      parent: head,
+    });
+    expect(await lsTree(wc, sha)).toEqual([]);
+    expect(await statusShort(wc)).toEqual([]);
+  });
+
+  test('author and committer come from the input, not from git config', async () => {
+    const { wc, input } = await setup();
+    await git(['config', 'user.name', 'Config Name'], { cwd: wc });
+    await git(['config', 'user.email', 'config@example.test'], { cwd: wc });
+    const sha = await commitPaths(wc, input);
+    const { stdout } = await git(['log', '-1', '--format=%an|%ae|%cn|%ce', sha], { cwd: wc });
+    expect(stdout.trim()).toBe('Alice Author|alice@example.test|Alice Author|alice@example.test');
+  });
+
+  test('an unchanged tree is an unexpected error', async () => {
+    const { wc, input } = await setup();
+    const err = await catchErrAsync(() => commitPaths(wc, { ...input, paths: ['x'] }));
+    expect(err.code).toBe('unexpected');
+    expect(err.message).toBe('Write ohne Änderung am Baum');
+  });
+
+  test('a stale parent is a conflict and leaves HEAD alone', async () => {
+    const { wc, head, older, input } = await setup();
+    const err = await catchErrAsync(() => commitPaths(wc, { ...input, parent: older }));
+    expect(err.code).toBe('conflict');
+    expect(err.message).toBe('HEAD hat sich während des Writes bewegt');
+    expect(await revParse(wc, 'HEAD')).toBe(head);
+  });
+
+  test('a missing key is a usage error naming the key', async () => {
+    const { wc, input } = await setup();
+    const key = join(wc, 'no-such-key');
+    const err = await catchErrAsync(() => commitPaths(wc, { ...input, key }));
+    expect(err.code).toBe('usage');
+    expect(err.message).toContain(`Signieren mit ${key} fehlgeschlagen:`);
+    expect(err.hint).toBe(
+      'Key-Pfad in identities prüfen; ein Public Key braucht einen laufenden ssh-agent.',
+    );
+    expect(await revParse(wc, 'HEAD')).toBe(input.parent);
+  });
+
+  test('no temp index is left behind', async () => {
+    const { wc, input } = await setup();
+    await commitPaths(wc, input);
+    await catchErrAsync(() => commitPaths(wc, { ...input, key: join(wc, 'nope') }));
+    const files = await readdir(await stateDir(wc));
+    expect(files.filter((f) => f.startsWith('index-'))).toEqual([]);
+  });
+});

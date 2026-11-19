@@ -62,6 +62,15 @@ function label(bin: Bin, args: readonly string[]): string {
   return bin === 'git' ? subcommand(args) : bin;
 }
 
+/** Variablen, die ein Git-Aufruf für Signieren und SSH-Transport braucht. */
+export function transportEnv(env: GitEnv): Record<string, string | undefined> {
+  return {
+    HOME: env.HOME,
+    SSH_AUTH_SOCK: env.SSH_AUTH_SOCK,
+    GIT_SSH_COMMAND: env.GIT_SSH_COMMAND,
+  };
+}
+
 /** Führt das System-git aus; Ausgabe wird vollständig gepuffert (UTF-8). */
 export function git(args: readonly string[], opts: GitOptions): Promise<GitResult> {
   return run('git', args, opts);

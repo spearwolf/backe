@@ -1,5 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { BackeError } from '../core/errors.ts';
+import { applyFileChanges, type FileChange } from '../store/files.ts';
 import { git } from './exec.ts';
 
 export type Operation = 'rebase' | 'merge' | 'cherry-pick' | 'revert';
@@ -71,6 +72,38 @@ export async function assertOnBranch(wc: string, branch: string): Promise<string
     throw new BackeError('conflict', `${wc} hat noch keinen Commit`);
   }
   return state.head;
+}
+
+const ISSUE_DIR = /^issues\/[^/]+\/[^/]+$/;
+
+/**
+ * Setzt `paths` auf den Stand von HEAD zurück: Pfade, die in HEAD existieren, werden ausgecheckt,
+ * alle übrigen aus dem Arbeitsbaum entfernt; danach wird der Index für diese Pfade angeglichen.
+ */
+export async function rollbackPaths(wc: string, paths: readonly string[]): Promise<void> {
+  if (paths.length === 0) return;
+  const env = { GIT_LITERAL_PATHSPECS: '1' };
+  const { head } = await headState(wc);
+  let inHead: string[] = [];
+  if (head !== undefined) {
+    const { stdout } = await git(['ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', ...paths], {
+      cwd: wc,
+      env,
+    });
+    inHead = stdout.split('\0').filter((f) => f !== '');
+    if (inHead.length > 0) {
+      await git(['checkout', '-q', 'HEAD', '--', ...inHead], { cwd: wc, env });
+    }
+  }
+  const removals = paths
+    .filter((p) => !inHead.some((f) => f === p || f.startsWith(`${p}/`)))
+    .map((path): FileChange => {
+      return ISSUE_DIR.test(path)
+        ? { path, content: null, recursive: true }
+        : { path, content: null };
+    });
+  await applyFileChanges(wc, removals);
+  await git(['reset', '-q', '--', ...paths], { cwd: wc, env });
 }
 
 /** Pfade unter `paths` mit Änderungen in Index oder Arbeitsbaum gegenüber HEAD, sortiert. */
