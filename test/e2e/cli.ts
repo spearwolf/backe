@@ -1,0 +1,57 @@
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import type { Env } from '../../src/context/paths.ts';
+
+const CLI = fileURLToPath(new URL('../../dist/cli.js', import.meta.url));
+
+/** Git-Isolation des Testlaufs, die jeder CLI-Aufruf erbt; `NO_COLOR` setzen die Tests selbst. */
+const INHERITED = ['PATH', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'XDG_CONFIG_HOME'] as const;
+
+export type CliResult = { stdout: string; stderr: string; code: number };
+
+/** Führt `node dist/cli.js` mit genau `opts.env` (plus Git-Isolation) in `opts.cwd` aus. */
+export function cli(
+  args: string[],
+  opts: { env: Env; cwd: string; input?: string },
+): Promise<CliResult> {
+  const env: Record<string, string> = {};
+  for (const name of INHERITED) {
+    const value = process.env[name];
+    if (value !== undefined) env[name] = value;
+  }
+  for (const [name, value] of Object.entries(opts.env)) {
+    if (value !== undefined) env[name] = value;
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI, ...args], { cwd: opts.cwd, env });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ stdout, stderr, code: code ?? -1 }));
+    child.stdin.end(opts.input ?? '');
+  });
+}
+
+/**
+ * Ersetzt jede Zeichenkette aus `names` (Schlüssel) durch ihren Platzhalter (Wert), längste zuerst,
+ * damit ein Pfad vor seinem Präfix ersetzt wird; danach Zeitstempel → `<ts>`, 40-Hex → `<sha>`.
+ */
+export function normalize(text: string, names: Record<string, string>): string {
+  let out = text;
+  const keys = Object.keys(names).sort((a, b) => b.length - a.length);
+  for (const key of keys) out = out.split(key).join(names[key] as string);
+  return out
+    .replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ/g, '<ts>')
+    .replace(/\b[0-9a-f]{40}\b/g, '<sha>');
+}
+
+/** Ein Aufruf als Golden-Text: Exit-Code, stdout und stderr, normalisiert. */
+export function transcript(r: CliResult, names: Record<string, string>): string {
+  return normalize(`[exit ${r.code}]\n[stdout]\n${r.stdout}[stderr]\n${r.stderr}`, names);
+}

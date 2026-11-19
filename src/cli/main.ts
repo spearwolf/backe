@@ -1,6 +1,4 @@
-import { Command } from 'commander';
-import pkg from '../../package.json' with { type: 'json' };
+import { nodeIo } from './io.ts';
+import { run } from './run.ts';
 
-const program = new Command('backe').version(pkg.version);
-
-await program.parseAsync(process.argv);
+process.exitCode = await run(nodeIo());

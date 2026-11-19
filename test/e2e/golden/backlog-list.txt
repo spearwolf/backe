@@ -1,0 +1,45 @@
+$ backe backlog list
+[exit 0]
+[stdout]
+* acme  <remote>
+  beta
+[stderr]
+
+$ backe backlog use beta
+[exit 0]
+[stdout]
+aktuell: beta
+[stderr]
+
+$ backe backlog list
+[exit 0]
+[stdout]
+  acme  <remote>
+* beta
+[stderr]
+
+$ backe backlog show acme
+[exit 0]
+[stdout]
+name: acme
+remote: <remote>
+aktuell: nein
+arbeitskopien:
+  spw  <root>  verwaltet  Identität spw, Anker <anchor7>
+[stderr]
+
+$ backe backlog show
+[exit 0]
+[stdout]
+name: beta
+aktuell: ja
+arbeitskopien:
+  spw  <beta>  verwaltet  Identität spw, Anker <beta-anchor7>
+[stderr]
+
+$ backe backlog use nope
+[exit 3]
+[stdout]
+[stderr]
+Fehler: Backlog »nope« ist nicht registriert
+Hinweis: backe backlog list

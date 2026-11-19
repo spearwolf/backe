@@ -20,7 +20,8 @@ import { readLocalState, stateDir, writeLocalState } from '../git/local-state.ts
 import { encodeOp, type Operation } from '../ops/operation.ts';
 import { serializeEntityFile } from '../store/frontmatter.ts';
 import { BACKLOG_CONFIG, issueFile, QUARANTINE, userFile } from '../store/layout.ts';
-import { assertVerified, verifyRange } from './verify.ts';
+import { listIssueIds } from '../store/snapshot.ts';
+import { assertVerified, verifyBacklog, verifyRange } from './verify.ts';
 import { signatureReasons } from './verify-state.ts';
 import { executeWrite } from './write.ts';
 
@@ -633,4 +634,44 @@ test('assertVerified throws verify with the report', async () => {
   expect(err.code).toBe('verify');
   expect(err.message).toBe(`1 ungültige Commits seit ${short(anchor)}`);
   expect(err.details).toBe(report);
+});
+
+describe('verifyBacklog', () => {
+  test('verifyBacklog reports values that no longer fit a tightened declaration', async () => {
+    await executeWrite(ctx, {
+      kind: 'op',
+      op: { op: 'issue.create', title: 'A', props: { sev: 'hoch', note: 'frei' } },
+    });
+    const file = join(b.root, BACKLOG_CONFIG);
+    const config = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    config.props = { sev: { type: 'integer', description: 'Schwere' } };
+    await signed('spw', { [BACKLOG_CONFIG]: `${JSON.stringify(config, null, 2)}\n` });
+
+    const r = await verifyBacklog(ctx, { record: true });
+
+    expect(r.invalid).toEqual([]);
+    expect(r.checked).toBe(3);
+    const [id] = await listIssueIds(b.root);
+    expect(r.propNotices).toHaveLength(1);
+    expect(r.propNotices[0]).toMatch(new RegExp(`^${id} sev: \\S`));
+    expect(await readLocalState(b.root, 'verified')).toBe(await revParse(b.root, 'HEAD'));
+  });
+
+  test('a clean backlog has no prop notices; invalid commits stay in the report', async () => {
+    await rawCommit(b.root, { files: { x: '1' }, actor: 'spw', op: 'manual' });
+
+    const r = await verifyBacklog(ctx, {});
+
+    expect(r.propNotices).toEqual([]);
+    expect(r.invalid).toHaveLength(1);
+  });
+
+  test('without a working copy it is not_found', async () => {
+    const bare: ResolvedContext = {
+      ...ctx,
+      backlog: { ...ctx.backlog, root: undefined, workingCopy: undefined },
+    };
+    const err = await catchErrAsync(() => verifyBacklog(bare, {}));
+    expect(err.code).toBe('not_found');
+  });
 });

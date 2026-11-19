@@ -1,0 +1,13 @@
+$ backe verify
+[exit 0]
+[stdout]
+geprüft: 3 Commits seit <anchor7>
+[stderr]
+Hinweis: <A> sev: Property »sev« erwartet integer, bekam "kritisch"
+
+$ backe verify --since HEAD~1
+[exit 0]
+[stdout]
+geprüft: 1 Commits seit HEAD~1
+[stderr]
+Hinweis: <A> sev: Property »sev« erwartet integer, bekam "kritisch"

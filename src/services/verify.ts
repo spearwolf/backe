@@ -7,6 +7,7 @@
  * folgenden der Stand vor ihm (eingefroren), bis eine gültige Quarantäne alle bis dahin ungültigen
  * Commits deckt; danach zählt wieder der Stand des jeweiligen Parents.
  */
+import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
 import { type Quarantine, QuarantineSchema } from '../core/schemas.ts';
 import {
@@ -24,8 +25,11 @@ import {
 import { readLocalState, writeLocalState } from '../git/local-state.ts';
 import { parseCommitMessage, TRAILER_ACTOR, TRAILER_OP } from '../git/message.ts';
 import { parseOpTrailer } from '../ops/operation.ts';
+import { propViolations } from '../ops/props.ts';
 import { checkCommitPolicy, type TreeChange } from '../ops/verify-policy.ts';
 import { BACKLOG_CONFIG, classifyPath, QUARANTINE } from '../store/layout.ts';
+import { loadSnapshot } from '../store/snapshot.ts';
+import { requireRoot } from './read.ts';
 import {
   loadStates,
   parseJsoncAs,
@@ -346,6 +350,25 @@ export async function verifyRange(wc: string, opts: VerifyOptions = {}): Promise
   }
   if (opts.record && report.invalid.length === 0) await writeLocalState(wc, 'verified', to);
   return report;
+}
+
+export type BacklogVerifyReport = VerifyReport & { propNotices: string[] };
+
+/**
+ * `backe verify` für die Arbeitskopie des Kontexts: der Bericht von `verifyRange`, dazu je
+ * Property, deren Wert eine (inzwischen verschärfte) Deklaration verletzt, ein Hinweis
+ * `<id> <key>: <meldung>` — ein Hinweis, kein Fehler (backe.md §2.24).
+ */
+export async function verifyBacklog(
+  ctx: ResolvedContext,
+  opts: VerifyOptions = {},
+): Promise<BacklogVerifyReport> {
+  const root = requireRoot(ctx);
+  const report = await verifyRange(root, opts);
+  const propNotices = propViolations(await loadSnapshot(root)).map(
+    (v) => `${v.id} ${v.key}: ${v.message}`,
+  );
+  return { ...report, propNotices };
 }
 
 /** Wirft `verify` mit dem Bericht als Details, wenn ungültige Commits übrig sind. */

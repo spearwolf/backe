@@ -9,10 +9,8 @@ import { isHandle } from '../core/names.ts';
 import { normalizeStateInput, type State } from '../core/state.ts';
 import { type BacklogSnapshot, loadSnapshot } from '../store/snapshot.ts';
 
-/** Lädt den Snapshot der Arbeitskopie des Kontexts; ohne Arbeitskopie `not_found` mit Clone-/Add-Hinweis. */
-export async function openSnapshot(
-  ctx: ResolvedContext,
-): Promise<{ root: string; snapshot: BacklogSnapshot }> {
+/** Arbeitskopie des Kontexts; ohne eine `not_found` mit Clone-/Add-Hinweis. */
+export function requireRoot(ctx: ResolvedContext): string {
   const root = ctx.backlog.root;
   const name = ctx.backlog.value;
   if (root === undefined) {
@@ -22,6 +20,14 @@ export async function openSnapshot(
         remote === undefined ? `backe backlog add ${name} <pfad>` : `backe backlog clone ${remote}`,
     });
   }
+  return root;
+}
+
+/** Lädt den Snapshot der Arbeitskopie des Kontexts (siehe `requireRoot`). */
+export async function openSnapshot(
+  ctx: ResolvedContext,
+): Promise<{ root: string; snapshot: BacklogSnapshot }> {
+  const root = requireRoot(ctx);
   return { root, snapshot: await loadSnapshot(root) };
 }
 

@@ -1,0 +1,29 @@
+$ backe context --props --project web/auth
+[exit 0]
+[stdout]
+backlog  acme      (user-current)
+root     <root>
+user     spw       (env: BACKE_USER)
+key      <key>
+project  web/auth  (flag)
+sprint   -         (none)
+repo     -         (none)
+schreiben: ja
+
+area        enum (api, ui)           Bereich
+estimate_h  number                   Schätzung in Stunden
+sev         enum (high > mid > low)  Schwere
+[stderr]
+
+$ backe context --as bob
+[exit 0]
+[stdout]
+backlog  acme  (user-current)
+root     <root>
+user     bob   (flag)
+key      -
+project  -     (none)
+sprint   -     (none)
+repo     -     (none)
+schreiben: nein
+[stderr]

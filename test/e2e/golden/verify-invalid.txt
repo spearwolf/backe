@@ -1,0 +1,20 @@
+$ backe verify
+[exit 5]
+[stdout]
+geprüft: 2 Commits seit <anchor7>
+<bad7> manipuliert: unsigniert
+[stderr]
+Fehler: 1 ungültige Commits seit <anchor7>
+
+$ backe verify --accept <bad> --reason 'bekannt und harmlos'
+[exit 0]
+[stdout]
+<bad7> accepted: bekannt und harmlos
+[stderr]
+
+$ backe verify
+[exit 0]
+[stdout]
+geprüft: 3 Commits seit <anchor7>
+<bad7> accepted: bekannt und harmlos
+[stderr]

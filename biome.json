@@ -2,7 +2,15 @@
   "$schema": "https://biomejs.dev/schemas/2.6.8/schema.json",
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
-    "includes": ["**", "!pnpm-lock.yaml", "!docs", "!.superpowers", "!schemas", "!test/fixtures"]
+    "includes": [
+      "**",
+      "!pnpm-lock.yaml",
+      "!docs",
+      "!.superpowers",
+      "!schemas",
+      "!test/fixtures",
+      "!test/e2e/golden"
+    ]
   },
   "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 100, "lineEnding": "lf" },
   "javascript": { "formatter": { "quoteStyle": "single" } },
