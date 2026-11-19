@@ -1,6 +1,12 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { vi } from 'vitest';
 import type { Env } from '../../src/context/paths.ts';
+
+// Ein E2E-Test startet nacheinander viele CLI-Prozesse samt Git-Aufrufen; auf CI-Runnern
+// reichen dafür die 5 s des Vitest-Standards nicht. Gilt für jede Testdatei, die diesen
+// Helfer importiert.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 const CLI = fileURLToPath(new URL('../../dist/cli.js', import.meta.url));
 
