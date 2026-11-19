@@ -56,17 +56,21 @@ function assertRelative(path: string): void {
   }
 }
 
+/** `issues/<shard>/<id>` mit gültiger ID im passenden Shard: das einzige rekursiv löschbare Ziel. */
+export function isIssueDirPath(path: string): boolean {
+  const [dir, shard, id, ...rest] = path.split('/');
+  return (
+    dir === 'issues' &&
+    rest.length === 0 &&
+    id !== undefined &&
+    isIssueId(id) &&
+    shardOf(id) === shard
+  );
+}
+
 function assertRecursiveAllowed(change: FileChange): void {
   if (change.recursive !== true) return;
-  const [dir, shard, id, ...rest] = change.path.split('/');
-  if (
-    change.content !== null ||
-    dir !== 'issues' ||
-    rest.length > 0 ||
-    id === undefined ||
-    !isIssueId(id) ||
-    shardOf(id) !== shard
-  ) {
+  if (change.content !== null || !isIssueDirPath(change.path)) {
     throw new BackeError('validation', `Rekursives Löschen nicht erlaubt: "${change.path}"`, {
       hint: 'Rekursiv gelöscht wird nur ein Issue-Verzeichnis "issues/<shard>/<id>" (content: null).',
     });

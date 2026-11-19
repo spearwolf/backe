@@ -305,6 +305,34 @@ describe('two invalid commits, the first one touching quarantine.jsonc', () => {
   );
 });
 
+test.each(['', ' '])(
+  'an empty reason is a validation error and writes nothing: %j',
+  async (reason) => {
+    const bad = await badCommit();
+    const err = await catchErrAsync(async () =>
+      quarantineCommit(await b.context(), { sha: bad, decision: 'accepted', reason }),
+    );
+    expect(err).toMatchObject({ code: 'validation', message: 'Grund darf nicht leer sein' });
+    expect(await revParse(b.root, 'HEAD')).toBe(bad);
+  },
+);
+
+test('a revert that would restore a config failing the schema names the problem', async () => {
+  await rawCommit(b.root, {
+    files: { [BACKLOG_CONFIG]: '{ "version": 1 }\n' },
+    key: b.key,
+    actor: 'spw',
+  });
+  const bad = await badCommit({
+    [BACKLOG_CONFIG]: `${JSON.stringify({ version: 1, name: 'acme', id_prefix: 'bk', admins: ['spw'] })}\n`,
+  });
+  const err = await catchErrAsync(async () =>
+    quarantineCommit(await b.context(), { sha: bad, decision: 'reverted', reason: 'x' }),
+  );
+  expect(err.code).toBe('conflict');
+  expect(err.message).toMatch(/^Umkehr von Hand nötig: \.backe\/backlog\.jsonc: \S+: /);
+});
+
 test('a revert that would restore an unreadable user file is a conflict', async () => {
   await rawCommit(b.root, { files: { 'users/broken.md': 'kaputt\n' }, key: b.key, actor: 'spw' });
   const bad = await badCommit({ 'users/broken.md': null });

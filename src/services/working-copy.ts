@@ -419,7 +419,7 @@ async function assertNoBoundInManaged(homes: Homes, name: string): Promise<void>
   for (const [handle, bound] of Object.entries(cfg.backlogs?.[name]?.paths ?? {})) {
     const path = await physicalPath(expandPath(bound, { home: homes.home, base: homes.backeHome }));
     if (path === (await physicalPath(managedClonePath(homes, name, handle)))) continue;
-    if (path.startsWith(managedDir + sep)) {
+    if (path === managedDir || path.startsWith(managedDir + sep)) {
       throw new BackeError(
         'conflict',
         `${path} ist gebunden und liegt im verwalteten Verzeichnis`,

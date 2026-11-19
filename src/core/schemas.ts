@@ -481,7 +481,7 @@ export const BacklogConfigSchema = z.strictObject({
 /** Formatversion, die `backe` in `.backe/backlog.jsonc` schreibt und lesen kann. */
 export const BACKLOG_FORMAT_VERSION = 1;
 
-/** Entscheidungen zu quarantänierten Commits (`.backe/quarantine.json`). */
+/** Entscheidungen zu quarantänierten Commits (`.backe/quarantine.jsonc`). */
 export const QuarantineSchema = z.strictObject({
   $schema: SchemaRef,
   entries: z.array(

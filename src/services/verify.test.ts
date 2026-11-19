@@ -225,6 +225,16 @@ describe('signatureReasons', () => {
       'Signatur ungültig',
     ]);
   });
+
+  test.each([
+    ['status E', 'E', true],
+    ['no fingerprint', 'U', false],
+  ])('a signature that cannot be checked says so: %s', (_, status, withFingerprint) => {
+    const fingerprint = withFingerprint ? sshFingerprint(KEYS.spw.line) : '';
+    expect(signatureReasons({ status, fingerprint, principal: '' }, SSH, users)).toEqual([
+      'Signatur nicht prüfbar (ssh-keygen?)',
+    ]);
+  });
 });
 
 test('a merge commit is invalid', async () => {

@@ -203,6 +203,7 @@ export function signatureReasons(
       ? []
       : [`Key ${sig.fingerprint} gehört nicht zu ${sig.principal}`];
   }
+  if (sig.status === 'E' || sig.fingerprint === '') return ['Signatur nicht prüfbar (ssh-keygen?)'];
   for (const [handle, user] of users) {
     if ((user.revoked_keys ?? []).some((r) => sshFingerprint(r.key) === sig.fingerprint)) {
       return [`Key ${sig.fingerprint} von ${handle} ist widerrufen`];

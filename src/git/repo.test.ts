@@ -110,6 +110,19 @@ describe('rollbackPaths', () => {
     expect(await stat(join(wc, 'fresh')).catch(() => null)).toBeNull();
   });
 
+  test('a new file directly in a shard is removed as a file, not as an issue directory', async () => {
+    const wc = await repo();
+    await writeFile(join(wc, 'a'), 'A\n');
+    await git(['add', 'a'], { cwd: wc });
+    await commit(wc);
+    await mkdir(join(wc, 'issues/7f'), { recursive: true });
+    await writeFile(join(wc, 'issues/7f/notes.txt'), 'n\n');
+
+    await rollbackPaths(wc, ['issues/7f/notes.txt']);
+
+    expect(await stat(join(wc, 'issues/7f/notes.txt')).catch(() => null)).toBeNull();
+  });
+
   test('without HEAD everything is removed', async () => {
     const wc = await repo();
     await writeFile(join(wc, 'a'), 'A\n');

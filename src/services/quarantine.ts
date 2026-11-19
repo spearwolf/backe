@@ -4,6 +4,7 @@
  * signierten Commit.
  */
 import { applyEdits, modify } from 'jsonc-parser';
+import { ZodError } from 'zod';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
 import {
@@ -33,7 +34,7 @@ import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG, classifyPath, QUARANTINE } from '../store/layout.ts';
 import { type BacklogSnapshot, loadSnapshot } from '../store/snapshot.ts';
 import { blobsAt, nextCommitBasis, treeChangesWithContent } from './verify.ts';
-import { activeFingerprints } from './verify-state.ts';
+import { activeFingerprints, schemaError } from './verify-state.ts';
 import { executeWrite, type WriteDeps, type WriteResult } from './write.ts';
 
 export type QuarantineInput = { sha: string; decision: 'accepted' | 'reverted'; reason: string };
@@ -66,7 +67,10 @@ function plannedState(snapshot: BacklogSnapshot, changes: readonly TreeChange[])
       }
     }
   } catch (err) {
-    throw manual(err instanceof Error ? err.message : String(err));
+    if (err instanceof BackeError) throw manual(err.message);
+    // Nur das Config-Schema wirft hier einen ZodError.
+    if (err instanceof ZodError) throw manual(`${BACKLOG_CONFIG}: ${schemaError(err)}`);
+    throw err;
   }
   return { config, users };
 }
@@ -135,6 +139,7 @@ export async function quarantineCommit(
   input: QuarantineInput,
   deps: WriteDeps = {},
 ): Promise<WriteResult> {
+  if (input.reason.trim() === '') throw new BackeError('validation', 'Grund darf nicht leer sein');
   const { handle, key, workingCopy: wc } = requireWriter(ctx);
   const snapshot = await loadSnapshot(wc);
   // `verify` beurteilt den Quarantäne-Commit gegen diesen Stand, nicht gegen HEAD: Solange

@@ -640,3 +640,16 @@ test('purge refuses a bound clone inside the managed directory', async () => {
   expect(await exists(join(dir, BACKLOG_CONFIG))).toBe(true);
   expect(await exists(join(b.root, BACKLOG_CONFIG))).toBe(true);
 });
+
+test('purge refuses a bound clone that is the managed directory itself', async () => {
+  await push();
+  const dir = join(other.homes.backeHome, 'backlogs', 'acme');
+  await mkdir(dirname(dir), { recursive: true });
+  await git(['clone', '-q', b.remote as string, dir], { cwd: dirname(dir) });
+  await addBacklog({ homes: other.homes, env: other.env, name: 'acme', path: dir, handle: 'spw' });
+  const err = await catchErrAsync(() =>
+    removeBacklog({ homes: other.homes, name: 'acme', purge: true }),
+  );
+  expect(err.code).toBe('conflict');
+  expect(await exists(join(dir, BACKLOG_CONFIG))).toBe(true);
+});

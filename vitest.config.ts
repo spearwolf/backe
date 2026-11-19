@@ -3,7 +3,14 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     globals: true,
-    env: { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', NO_COLOR: '1' },
+    env: {
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_NOSYSTEM: '1',
+      // git liest `$XDG_CONFIG_HOME/git/{config,ignore,attributes}` auch neben GIT_CONFIG_GLOBAL;
+      // ein Pfad unter /dev/null existiert nie.
+      XDG_CONFIG_HOME: '/dev/null/xdg',
+      NO_COLOR: '1',
+    },
     coverage: {
       provider: 'v8',
       include: ['src/**'],
