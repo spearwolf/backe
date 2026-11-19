@@ -167,9 +167,11 @@ export async function logTrailers(
 }
 
 export type RawCommitSpec = {
-  /** Pfad → Inhalt; `null` löscht den Pfad. */
-  files: Record<string, string | null>;
+  /** Pfad → Inhalt; `null` löscht den Pfad, `{ symlink }` legt einen Symlink (Modus 120000) an. */
+  files: Record<string, string | null | { symlink: string }>;
   key?: TestKey;
+  /** Author- und Committer-Datum (sonst jetzt). */
+  date?: string;
   actor?: string;
   op?: string;
   subject?: string;
@@ -196,6 +198,20 @@ export async function rawCommit(wc: string, spec: RawCommitSpec): Promise<string
     for (const [path, content] of Object.entries(spec.files)) {
       if (content === null) {
         await git(['update-index', '--force-remove', '--', path], { cwd: wc, env });
+        continue;
+      }
+      if (typeof content === 'object') {
+        const link = await git(['hash-object', '-w', '--stdin'], {
+          cwd: wc,
+          input: content.symlink,
+        });
+        await git(
+          ['update-index', '--add', '--cacheinfo', `120000,${link.stdout.trim()},${path}`],
+          {
+            cwd: wc,
+            env,
+          },
+        );
         continue;
       }
       const abs = join(wc, path);
@@ -232,6 +248,9 @@ export async function rawCommit(wc: string, spec: RawCommitSpec): Promise<string
           GIT_AUTHOR_EMAIL: 'raw@backe.invalid',
           GIT_COMMITTER_NAME: 'Raw',
           GIT_COMMITTER_EMAIL: 'raw@backe.invalid',
+          ...(spec.date === undefined
+            ? {}
+            : { GIT_AUTHOR_DATE: spec.date, GIT_COMMITTER_DATE: spec.date }),
         },
         input: formatCommitMessage({ subject, trailers }),
       },

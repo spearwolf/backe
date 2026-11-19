@@ -12,6 +12,7 @@ export type GitOptions = {
 };
 
 export type GitResult = { stdout: string; stderr: string; exitCode: number };
+export type GitBytesResult = { stdout: Buffer; stderr: string; exitCode: number };
 
 type Bin = 'git' | 'ssh-keygen';
 
@@ -72,16 +73,25 @@ export function transportEnv(env: GitEnv): Record<string, string | undefined> {
 }
 
 /** Führt das System-git aus; Ausgabe wird vollständig gepuffert (UTF-8). */
-export function git(args: readonly string[], opts: GitOptions): Promise<GitResult> {
+export async function git(args: readonly string[], opts: GitOptions): Promise<GitResult> {
+  return decoded(await run('git', args, opts));
+}
+
+/** Wie `git`, aber stdout bleibt Bytes (z. B. Blob-Inhalte aus `cat-file`). */
+export function gitBytes(args: readonly string[], opts: GitOptions): Promise<GitBytesResult> {
   return run('git', args, opts);
 }
 
 /** Führt ssh-keygen aus; gleiche Fehlerformen wie `git`, Meldungen nennen `ssh-keygen`. */
-export function sshKeygen(args: readonly string[], opts: GitOptions): Promise<GitResult> {
-  return run('ssh-keygen', args, opts);
+export async function sshKeygen(args: readonly string[], opts: GitOptions): Promise<GitResult> {
+  return decoded(await run('ssh-keygen', args, opts));
 }
 
-function run(bin: Bin, args: readonly string[], opts: GitOptions): Promise<GitResult> {
+function decoded(r: GitBytesResult): GitResult {
+  return { stdout: r.stdout.toString('utf8'), stderr: r.stderr, exitCode: r.exitCode };
+}
+
+function run(bin: Bin, args: readonly string[], opts: GitOptions): Promise<GitBytesResult> {
   const inherited: Record<string, string | undefined> = { ...process.env };
   for (const name of REPO_LOCAL_ENV) delete inherited[name];
   const merged: Record<string, string | undefined> = { ...inherited, ...opts.env };
@@ -92,7 +102,7 @@ function run(bin: Bin, args: readonly string[], opts: GitOptions): Promise<GitRe
   env.LC_ALL = 'C';
   env.GIT_TERMINAL_PROMPT = '0';
 
-  return new Promise<GitResult>((resolve, reject) => {
+  return new Promise<GitBytesResult>((resolve, reject) => {
     let child: ChildProcessWithoutNullStreams;
     try {
       child = spawn(bin, [...args], { cwd: opts.cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -137,7 +147,7 @@ function run(bin: Bin, args: readonly string[], opts: GitOptions): Promise<GitRe
     child.on('close', (code, signal) => {
       // Nach einem Startfehler folgt close mit negativem Code; der Fehler gehört dem error-Handler.
       if (spawnFailed) return;
-      const stdout = Buffer.concat(out).toString('utf8');
+      const stdout = Buffer.concat(out);
       const stderr = Buffer.concat(err).toString('utf8');
       if (code === null) {
         reject(
