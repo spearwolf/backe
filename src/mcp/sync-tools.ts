@@ -32,7 +32,7 @@ export function registerSyncTools(server: McpServer, env: ToolEnv): void {
     {
       description:
         'Issue übernehmen, synchron mit dem Remote (wie backe issue claim); hat es inzwischen jemand anderes → conflict',
-      input: z.object({ id: z.string() }),
+      input: z.strictObject({ id: z.string() }),
       kind: 'sync',
     },
     async (ctx, a) => outcomeJson(await claimIssue(ctx, a.id, env.opts.deps?.claim)),
@@ -44,7 +44,7 @@ export function registerSyncTools(server: McpServer, env: ToolEnv): void {
     'sync_now',
     {
       description: 'Eine Sync-Runde mit dem Remote jetzt, blockierend (wie backe sync)',
-      input: z.object({}),
+      input: z.strictObject({}),
       kind: 'sync',
     },
     async (ctx) => syncResult(await syncNow(ctx, env.opts.deps?.sync)),

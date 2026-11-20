@@ -61,7 +61,7 @@ function registerTools(server: McpServer, env: ToolEnv): void {
     {
       description:
         'Aufgelösten Kontext mit Herkunft jedes Werts zeigen (wie backe context); mit props die Property-Deklarationen des Backlogs',
-      input: z.object({ props: z.boolean().optional() }),
+      input: z.strictObject({ props: z.boolean().optional() }),
       kind: 'read',
     },
     async (ctx, args) => contextJson(await contextInfo(ctx, { props: args.props === true })),

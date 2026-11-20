@@ -127,6 +127,20 @@ test('a schema violation is rejected by the SDK with its own message', () =>
     );
   }));
 
+test('an unknown parameter is rejected by the SDK and names the key', () =>
+  withMcp(async (m, b) => {
+    const head = await revParse(b.root, 'HEAD');
+    const r = await m.call('issue_create', { title: 'X', project: ['p'] });
+    expect(r).toMatchObject({ error: { code: 'protocol' } });
+    const { message } = (r as { error: { message: string } }).error;
+    expect(message).toContain('Invalid arguments for tool issue_create');
+    expect(message).toContain('Unrecognized key: "project"');
+    expect(await revParse(b.root, 'HEAD')).toBe(head);
+    expect(await m.call('context_get', { prop: true })).toMatchObject({
+      error: { code: 'protocol' },
+    });
+  }));
+
 test('concurrent writes from one client all land', () =>
   withMcp(async (m, b) => {
     const id = await create(m);

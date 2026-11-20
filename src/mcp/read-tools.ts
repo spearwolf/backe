@@ -102,7 +102,7 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
     {
       description:
         'Issues listen und filtern (wie backe issue list); Standard: alle offenen im Kontextfilter',
-      input: z.object({
+      input: z.strictObject({
         state: strings.optional(),
         project: strings.optional(),
         exact: z.boolean().optional(),
@@ -136,7 +136,7 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
     'issue_get',
     {
       description: 'Issue mit Beziehungen zeigen (wie backe issue show); Kurz-IDs sind erlaubt',
-      input: z.object({
+      input: z.strictObject({
         id: z.string(),
         comments: z.enum(['none', 'last', 'all']).optional(),
         fields: strings.optional(),
@@ -159,7 +159,7 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
     {
       description:
         'Nächstes Issue für mich zeigen (wie backe next); mit claim gleich übernehmen, synchron mit dem Remote',
-      input: z.object({
+      input: z.strictObject({
         level: z.enum(['leaf', 'top']).optional(),
         project: z.string().optional(),
         sprint: z.string().optional(),
@@ -204,7 +204,7 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
     'project_list',
     {
       description: 'Projekte mit der Zahl offener Issues (wie backe project list)',
-      input: z.object({}),
+      input: z.strictObject({}),
       kind: 'read',
     },
     (ctx) => listProjects(ctx),
@@ -216,7 +216,7 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
     'sprint_list',
     {
       description: 'Sprints, offene zuerst, mit der Zahl offener Issues (wie backe sprint list)',
-      input: z.object({}),
+      input: z.strictObject({}),
       kind: 'read',
     },
     (ctx) => listSprints(ctx),
@@ -228,7 +228,7 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
     'sprint_get',
     {
       description: 'Issues eines Sprints, gruppiert nach State (wie backe sprint show)',
-      input: z.object({
+      input: z.strictObject({
         slug: z.string(),
         project: strings.optional(),
         repo: strings.optional(),
@@ -255,7 +255,7 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
     'repo_locate',
     {
       description: 'Lokaler Pfad eines Repos aus der User-Config (wie backe repo where)',
-      input: z.object({ name: z.string() }),
+      input: z.strictObject({ name: z.string() }),
       kind: 'read',
     },
     async (ctx, a) => repoLocateJson(await locateRepo(ctx, a.name)),
@@ -268,7 +268,7 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
     {
       description:
         'Anhang eines Issues holen (wie backe attach get); kleine UTF-8-Dateien kommen als text mit',
-      input: z.object({ id: z.string(), name: z.string() }),
+      input: z.strictObject({ id: z.string(), name: z.string() }),
       kind: 'read',
     },
     async (ctx, a) => {

@@ -159,7 +159,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     'issue_create',
     {
       description: 'Issue anlegen (wie backe issue create); props ist ein Objekt',
-      input: z.object({
+      input: z.strictObject({
         title: z.string(),
         body: z.string().optional(),
         state: z.string().optional(),
@@ -195,7 +195,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     {
       description:
         'Issue ändern (wie backe issue edit / assign); parent und assignee: null entfernt, props: null entfernt den Key',
-      input: z.object({
+      input: z.strictObject({
         id: z.string(),
         title: z.string().optional(),
         body: z.string().optional(),
@@ -238,7 +238,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     'issue_move',
     {
       description: 'Issue in einen State verschieben (wie backe issue move)',
-      input: z.object({
+      input: z.strictObject({
         id: z.string(),
         to: z.string(),
         reason: z.string().optional(),
@@ -262,7 +262,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     'issue_resume',
     {
       description: 'Blockiertes Issue fortsetzen (wie backe issue resume)',
-      input: z.object({ id: z.string(), reason: z.string().optional() }),
+      input: z.strictObject({ id: z.string(), reason: z.string().optional() }),
       kind: 'write',
     },
     async (ctx, a) =>
@@ -282,7 +282,11 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     'issue_reopen',
     {
       description: 'Abgeschlossenes Issue wieder öffnen (wie backe issue reopen)',
-      input: z.object({ id: z.string(), to: z.string().optional(), reason: z.string().optional() }),
+      input: z.strictObject({
+        id: z.string(),
+        to: z.string().optional(),
+        reason: z.string().optional(),
+      }),
       kind: 'write',
     },
     async (ctx, a) => {
@@ -300,7 +304,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     {
       description:
         'Issue neu einreihen (wie backe issue rank); genau eins von top, bottom, before, after, value',
-      input: z.object({
+      input: z.strictObject({
         id: z.string(),
         top: z.boolean().optional(),
         bottom: z.boolean().optional(),
@@ -321,7 +325,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
       'issue_delete',
       {
         description: 'Issue endgültig löschen (wie backe issue delete); nur mit --allow-delete',
-        input: z.object({
+        input: z.strictObject({
           id: z.string(),
           force: z.boolean().optional(),
           children: z.enum(['orphan', 'recursive']).optional(),
@@ -343,7 +347,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     'comment_add',
     {
       description: 'Kommentar an ein Issue schreiben (wie backe comment add)',
-      input: z.object({ id: z.string(), body: z.string() }),
+      input: z.strictObject({ id: z.string(), body: z.string() }),
       kind: 'write',
     },
     async (ctx, a) => outcomeJson(await addComment(ctx, a.id, a.body, env.opts.deps?.write)),
@@ -356,7 +360,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     {
       description:
         'Anhang hinzufügen (wie backe attach add); genau eins von path (relativ zum Arbeitsverzeichnis des Servers), url, json, text',
-      input: z.object({
+      input: z.strictObject({
         id: z.string(),
         name: z.string(),
         path: z.string().optional(),
@@ -381,7 +385,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     {
       description:
         'Mehrere Operationen in einem Commit (wie backe batch); ops sind Objekte im Format von backe.md §2.16.6, Platzhalter wie $a verbinden sie; erlaubt sind issue.create, issue.edit, issue.move, issue.resume, issue.reopen, issue.rank, comment.add, attach.add mit url und mit --allow-delete issue.delete',
-      input: z.object({ ops: z.array(z.record(z.string(), z.unknown())) }),
+      input: z.strictObject({ ops: z.array(z.record(z.string(), z.unknown())) }),
       kind: 'write',
     },
     async (ctx, a) => {
