@@ -3,10 +3,10 @@
 > [!WARNING]
 > **Experimental — work in progress.** backe works locally but is not released.
 > The CLI covers issues, comments, projects, sprints, repos, users and backlogs,
-> `next` (without claim), `context`, `init` and `verify`, plus attachments,
-> hand-edit commits, `batch`, `doctor` and `config`, with text, JSON and
-> Markdown output. Sync, claim and the MCP server are not built yet. Formats,
-> commands and everything else may change without notice.
+> `next`, `context`, `init` and `verify`, plus attachments, hand-edit commits,
+> `batch`, `doctor` and `config`, with text, JSON and Markdown output. Sync,
+> claim, background sync and conflict handling work; the MCP server is not
+> built yet. Formats, commands and everything else may change without notice.
 
 **A git-based backlog for 🧑🏻‍🦰 humans and 🤖 agents.** Issues live as plain Markdown files
 in their own Git repository. Every change is a signed commit, attributable to
@@ -106,8 +106,8 @@ It is also a working experiment in how far that combination carries.
 | M4        | Git layer, signed write path, verify, quarantine                       | done    |
 | M5a       | services and CLI core — issues, comments, projects, output formats     | done    |
 | M5b       | attachments, repo checks, hand-edit commits, batch, doctor, config     | done    |
-| M6        | sync, replay, claim                                                    | next    |
-| M7        | MCP server                                                             | planned |
+| M6        | sync, replay, claim                                                    | done    |
+| M7        | MCP server                                                             | next    |
 | M8        | release                                                                | planned |
 
 ## For agents (and curious humans)
