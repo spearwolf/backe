@@ -58,7 +58,7 @@ Eingaben, die der Spec impliziert, aber keine seiner Testlisten (§5) abdeckt. J
 | M5b | `attach *` samt Größenlimit und LFS, `repo check\|where\|scan`, `commit` und `issue edit` per `$EDITOR`, `batch`, `doctor`, `config get\|set\|edit` | §2.8, §2.11, §2.13 (Hand-Edits), §2.15.1, §2.16.6 | [`2026-11-19-backe-m5b-werkzeuge.md`](./2026-11-19-backe-m5b-werkzeuge.md) |
 | M6 | Sync, Replay, Claim | §2.16.2–2.16.5 | [`2026-11-19-backe-m6-sync.md`](./2026-11-19-backe-m6-sync.md) |
 | M7 | MCP-Modus (`mcp`) | §2.19 | [`2026-11-20-backe-m7-mcp.md`](./2026-11-20-backe-m7-mcp.md) |
-| M8 | Release | §2.21, README | entsteht nach M7 |
+| M8 | Release | §2.21, README | nächster Detailplan (M7 abgenommen) |
 
 ### M1 — Gerüst, `core`, `store`
 
@@ -124,6 +124,8 @@ Eingaben, die der Spec impliziert, aber keine seiner Testlisten (§5) abdeckt. J
 **Liefert:** `backe mcp` über stdio mit den Tools und der Resource aus §2.19, `--allow-delete`, periodischen Sync, Start nur mit auflösbarer Identität.
 
 **Abnahme:** SDK-Client über In-Memory-Transport; Snapshot der Tool-Schemas; Flow create → next → claim → comment → move → review (§5).
+
+**Abgenommen** am 2026-11-20: Abschluss-Review über den ganzen Meilenstein, seine Befunde (ein kritischer, vier wichtige) in einer Fix-Welle behoben und nachgeprüft; 2620 Tests grün, Coverage 98,99 % Lines / 93,38 % Branches; CI grün auf `ubuntu-latest` und `macos-latest`. Offene Kleinbefunde stehen unter »Übernommen aus M7«.
 
 ### M8 — Release
 
