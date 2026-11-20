@@ -17,3 +17,12 @@ run = "pnpm run build"
 [tasks.check]
 description = "lint, build, test"
 run = [{ task = "lint" }, { task = "build" }, { task = "test" }]
+
+[tasks.smoke]
+description = "Tarball packen und per Pack-Smoke-Test prüfen"
+run = '''
+d=$(mktemp -d)
+trap 'rm -rf "$d"' EXIT
+pnpm pack --pack-destination "$d" >/dev/null
+bash scripts/pack-smoke.sh "$d"/backe-*.tgz
+'''
