@@ -177,7 +177,8 @@ describe('commitEdits', () => {
       const out = await commitEdits(ctx, {}, { hooks: { afterCommit: () => writeFile(lock, '') } });
       expect(out.commits).toHaveLength(1);
       const unsettled = out.warnings.find((n) => n.startsWith('Arbeitskopie nicht angeglichen'));
-      expect(unsettled).toContain(issueFile(a));
+      // Nur der Pfad, der noch von HEAD abweicht; A ist committet und angeglichen.
+      expect(unsettled).not.toContain(issueFile(a));
       expect(unsettled).toContain(issueFile(z.id));
       expect(unsettled).toContain('index.lock');
     } finally {

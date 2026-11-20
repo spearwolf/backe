@@ -101,12 +101,29 @@ export async function judgeReport(
   report: VerifyReport,
   to?: string,
 ): Promise<string[]> {
-  if (report.invalid.length === 0) return report.notices;
+  return (await judgeReportOnce(wc, report, to, new Set())).notices;
+}
+
+/**
+ * Wie `judgeReport`, aber im Modus `warn` nur mit den Gründen der ungültigen Commits, die nicht in
+ * `warned` stehen; `warned` im Ergebnis sind dann alle ungültigen Commits des Berichts — gemeldet
+ * sind sie ja jetzt. Gemerkt wird also nie mehr, als der Bericht an ungültigen Commits trägt.
+ * `strict` wirft wie dort, gleich was in `warned` steht; `off` meldet und merkt nichts.
+ */
+export async function judgeReportOnce(
+  wc: string,
+  report: VerifyReport,
+  to: string | undefined,
+  warned: ReadonlySet<string>,
+): Promise<{ notices: string[]; warned: string[] }> {
+  if (report.invalid.length === 0) return { notices: report.notices, warned: [] };
   const mode = await trustedVerifyMode(wc, to);
   if (mode === 'strict') assertVerified(report);
-  if (mode === 'off') return [];
-  const reasons = report.invalid.flatMap((f) => f.reasons.map((r) => `${shortSha(f.sha)}: ${r}`));
-  return [...reasons, ...report.notices];
+  if (mode === 'off') return { notices: [], warned: [] };
+  const reasons = report.invalid
+    .filter((f) => !warned.has(f.sha))
+    .flatMap((f) => f.reasons.map((r) => `${shortSha(f.sha)}: ${r}`));
+  return { notices: [...reasons, ...report.notices], warned: report.invalid.map((f) => f.sha) };
 }
 
 /** Prüft `HEAD` des Clones, zeichnet den verifizierten Stand auf und urteilt (`judgeReport`). */

@@ -216,6 +216,24 @@ test('a batch is replayed as one unit and shelved as one', async () => {
   expect([s.issues.get(x)?.data.title, s.issues.get(y)?.data.title]).toEqual(['B', 'Y1']);
 });
 
+test('taint over created ids shelves a follower of an issue a shelved unit created', async () => {
+  const x = await sharedIssue('A');
+  await remote(op(setTitle(x, 'A', 'B')));
+  const shelved = await local({
+    kind: 'batch',
+    ops: [setTitle(x, 'A', 'C'), { op: 'issue.create', title: 'Neu' }],
+  });
+  const created = (shelved.recorded[1] as { id: string }).id;
+  await local(op({ op: 'comment.add', id: created, body: 'Folgt.\n' }));
+  const other = idOf(await local(op({ op: 'issue.create', title: 'Unabhängig' })));
+  const r = await replay();
+  expect(r.conflicts).toHaveLength(1);
+  expect(r.conflicts[0]?.units.map((u) => u.ops[0]?.op)).toEqual(['issue.edit', 'comment.add']);
+  expect(r.replayed).toBe(1);
+  const s = await snapshotAt(r.head);
+  expect([s.issues.has(created), s.issues.has(other)]).toEqual([false, true]);
+});
+
 test('an id collision rewrites the issue and every later reference', async () => {
   const theirs = idOf(
     await remote(op({ op: 'issue.create', title: 'remote' }), { randomBytes: seqBytes() }),

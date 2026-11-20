@@ -529,6 +529,20 @@ export async function listCommentsFrom(
   return out;
 }
 
+/**
+ * Wie `listComments`, aber ein Kommentar, der sich nicht lesen oder prüfen lässt, fehlt nur, statt
+ * zu werfen — für Prüfungen über den ganzen Backlog (`verify`).
+ */
+export async function readableComments(root: string, id: string): Promise<StoredEntity<Comment>[]> {
+  const src = fsSource(root);
+  const out: StoredEntity<Comment>[] = [];
+  for (const path of await listMarkdown(src, commentsDir(id), false)) {
+    const comment = tryParse<Comment>(await readText(src, path), path, 'comment', path, []);
+    if (comment !== undefined) out.push(comment);
+  }
+  return out;
+}
+
 const SHARD_RE = /^[0-9a-hjkmnp-tv-z]{2}$/;
 
 /** Issue-IDs aus den Verzeichnisnamen, sortiert; mit `shard` nur dieser Shard. */

@@ -197,9 +197,16 @@ type SavedFile = { path: string; content: string | null };
 
 /**
  * Inhalt von `write.journal`: die Pfade, die ein abgebrochener Write zurücksetzen muss, die Zahl
- * seiner Commits und bei Hand-Edits deren Inhalt vor dem Schreiben.
+ * seiner Commits und bei Hand-Edits deren Inhalt vor dem Schreiben sowie die Hand-Edits ohne
+ * Wirkung (`reset`), die nach gelandeten Commits wie nach einem gelungenen Write auf HEAD gehen.
  */
-type Journal = { head: string; paths: string[]; commits?: number; saved?: SavedFile[] };
+type Journal = {
+  head: string;
+  paths: string[];
+  commits?: number;
+  saved?: SavedFile[];
+  reset?: string[];
+};
 
 /** Erster Parent von `rev`; `undefined` beim Wurzel-Commit. */
 async function firstParent(wc: string, rev: string): Promise<string | undefined> {
@@ -337,7 +344,8 @@ async function restoreSaved(wc: string, saved: readonly SavedFile[]): Promise<vo
  * Branch ausgecheckt ist, keine Operation läuft und HEAD noch der Stand des Journals ist oder die
  * Commits des Writes direkt darauf. Ist nichts gelandet und hat das Journal den Inhalt vor dem
  * Write (Hand-Edits), kommt dieser zurück; sonst gleicht der Rollback Arbeitsbaum und Index an
- * HEAD an. Andernfalls bleibt das Journal liegen und der Write bricht ab, bevor etwas angefasst wird.
+ * HEAD an — sind die Commits gelandet, auch für die Hand-Edits ohne Wirkung. Andernfalls bleibt
+ * das Journal liegen und der Write bricht ab, bevor etwas angefasst wird.
  * Läuft unter dem Write-Lock als Erstes in jedem Abschnitt, der HEAD oder den Arbeitsbaum bewegt
  * (Write, Sync, `commit --resign`, LFS-Checkout): Danach passte HEAD nicht mehr zum Journal.
  */
@@ -350,7 +358,7 @@ export async function recoverJournal(wc: string): Promise<void> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw error;
   }
-  const { head, paths, commits = 1, saved } = JSON.parse(text) as Journal;
+  const { head, paths, commits = 1, saved, reset = [] } = JSON.parse(text) as Journal;
   const state = await headState(wc);
   const below = async () =>
     (
@@ -369,7 +377,8 @@ export async function recoverJournal(wc: string): Promise<void> {
       },
     );
   }
-  if (state.head === head && saved !== undefined) await restoreSaved(wc, saved);
+  if (state.head !== head) await rollbackPaths(wc, [...paths, ...reset]);
+  else if (saved !== undefined) await restoreSaved(wc, saved);
   else await rollbackPaths(wc, paths);
   await rm(journal, { force: true });
 }
@@ -856,7 +865,9 @@ export async function requireHeadConfig(wc: string): Promise<BacklogConfig> {
 /**
  * Bringt die bearbeiteten Pfade auf den Stand nach den Commits: Pfade ohne wirksame Änderung
  * zurück auf HEAD, der Index aller bearbeiteten und committeten Pfade auf HEAD. Scheitert das,
- * bleiben Hand-Edits bzw. Index eben liegen — verloren geht nichts —, und das Ergebnis sagt es.
+ * bleiben Hand-Edits bzw. Index eben liegen — verloren geht nichts —, und das Ergebnis nennt die
+ * Pfade, die in Index oder Arbeitsbaum noch von HEAD abweichen (ein Verzeichnis, wenn eine Datei
+ * darunter abweicht). Lässt sich nicht einmal das feststellen, nennt es alle.
  */
 async function settleWorkingCopy(
   wc: string,
@@ -873,7 +884,11 @@ async function settleWorkingCopy(
     });
     return undefined;
   } catch (err) {
-    return { paths: [...paths], reason: err instanceof Error ? err.message : String(err) };
+    const reason = err instanceof Error ? err.message : String(err);
+    const dirty = await dirtyPaths(wc, paths).catch(() => undefined);
+    const differs = (p: string) =>
+      dirty === undefined || dirty.some((d) => d === p || d.startsWith(`${p}/`));
+    return { paths: paths.filter(differs), reason };
   }
 }
 
@@ -1026,6 +1041,7 @@ export async function executeWrite(
         paths: [...new Set([...paths, ...renormalized])].sort(),
         ...(steps.length > 1 ? { commits: steps.length } : {}),
         ...(saved === undefined ? {} : { saved }),
+        ...(settled === undefined || settled.reset.length === 0 ? {} : { reset: settled.reset }),
       };
       await writeFileAtomic(journal, `${JSON.stringify(entry)}\n`);
       const commits: string[] = [];

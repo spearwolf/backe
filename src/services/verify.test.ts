@@ -969,6 +969,24 @@ describe('unknown keys', () => {
     expect(r.unknownKeys).toEqual([{ path: issueFile('bk-7f3k2'), keys: ['legacy', '2'] }]);
   });
 
+  test('verifyBacklog lists comments with unknown keys from a hand edit', async () => {
+    const created = await executeWrite(ctx, { kind: 'op', op: { op: 'issue.create', title: 'A' } });
+    const id = (created.recorded[0] as { id: string }).id;
+    await executeWrite(ctx, { kind: 'op', op: { op: 'comment.add', id, body: 'Eins.\n' } });
+    await executeWrite(ctx, { kind: 'op', op: { op: 'comment.add', id, body: 'Zwei.\n' } });
+    const dir = join(b.root, issueFile(id), '..', 'comments');
+    const [first, second] = (await readdir(dir)).sort() as [string, string];
+    const text = await readFile(join(dir, first), 'utf8');
+    await writeFile(join(dir, first), text.replace(/^---\n/, '---\nlegacy: 1\n'));
+    // Ein kaputter Kommentar daneben bricht die Prüfung nicht ab.
+    await writeFile(join(dir, second), '---\nnicht: [yaml\n---\n');
+
+    const r = await verifyBacklog(ctx);
+
+    const path = `${issueFile(id).replace(/issue\.md$/, '')}comments/${first}`;
+    expect(r.unknownKeys).toEqual([{ path, keys: ['legacy'] }]);
+  });
+
   test('a clean backlog has no unknown keys', async () => {
     expect((await verifyBacklog(ctx)).unknownKeys).toEqual([]);
   });

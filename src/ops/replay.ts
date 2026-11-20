@@ -6,6 +6,7 @@
 import { BackeError } from '../core/errors.ts';
 import { defaultRandomBytes, generateIssueId } from '../core/ids.ts';
 import type { Comment } from '../core/schemas.ts';
+import { deriveRepoName, normalizeRepoUrl } from '../core/url.ts';
 import { commentsDir } from '../store/layout.ts';
 import type { BacklogSnapshot, StoredEntity } from '../store/snapshot.ts';
 import type { ApplyContext } from './apply.ts';
@@ -51,44 +52,51 @@ export function rewriteCollisions(
   return { ops: out, notices };
 }
 
-/** `<kind>:<subjekt>` einer Operation, die keine Issue-Operation ist. */
-function entityKeyOf(op: Operation): string | undefined {
+/**
+ * `<kind>:<subjekt>` je Subjekt einer Operation, die keine Issue-Operation ist: `project.mv` nennt
+ * beide Pfade, `project.rm` mit `reassign` auch das Ziel. `repo.add` ohne Namen nennt den Namen,
+ * den die Ableitung aus der URL ohne Kollision vergibt; aufgezeichnet trägt die Operation ihn ja.
+ */
+function entityKeysOf(op: Operation): string[] {
   switch (op.op) {
     case 'project.create':
+      return [`project:${op.path}`];
     case 'project.rm':
-      return `project:${op.path}`;
+      return [
+        `project:${op.path}`,
+        ...(op.reassign === undefined ? [] : [`project:${op.reassign}`]),
+      ];
     case 'project.mv':
-      return `project:${op.from}`;
+      return [`project:${op.from}`, `project:${op.to}`];
     case 'sprint.create':
     case 'sprint.close':
-      return `sprint:${op.slug}`;
+      return [`sprint:${op.slug}`];
     case 'repo.add':
-      return `repo:${op.name ?? op.url}`;
+      return [`repo:${op.name ?? deriveRepoName(normalizeRepoUrl(op.url), new Set())}`];
     case 'repo.rm':
-      return `repo:${op.name}`;
+      return [`repo:${op.name}`];
     case 'user.add':
     case 'user.revoke_key':
     case 'user.rm':
-      return `user:${op.handle}`;
+      return [`user:${op.handle}`];
     case 'entity.edit':
-      return `${op.kind}:${op.key}`;
+      return [`${op.kind}:${op.key}`];
     default:
-      return undefined;
+      return [];
   }
 }
 
 /**
  * Schlüssel, die eine abgelegte Einheit belastet: alle Issue-IDs ihrer Operationen, die IDs, die
- * ihre `issue.create`s vergeben haben (`created`), und je Nicht-Issue-Operation
- * `<kind>:<subjekt>`. Ohne Duplikate, in Reihenfolge des ersten Auftretens.
+ * ihre `issue.create`s vergeben haben (`created`), und je Subjekt einer Nicht-Issue-Operation
+ * `<kind>:<subjekt>` (`entityKeysOf`). Ohne Duplikate, in Reihenfolge des ersten Auftretens.
  */
 export function taintKeys(ops: readonly Operation[], created: readonly string[]): string[] {
   const keys = new Set<string>();
   const entityKeys: string[] = [];
   for (const op of ops) {
     for (const id of referencedIds(op)) keys.add(id);
-    const entityKey = entityKeyOf(op);
-    if (entityKey !== undefined) entityKeys.push(entityKey);
+    entityKeys.push(...entityKeysOf(op));
   }
   for (const id of created) keys.add(id);
   for (const key of entityKeys) keys.add(key);

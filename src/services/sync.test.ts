@@ -26,7 +26,8 @@ import type { Operation } from '../ops/operation.ts';
 import { exists } from '../store/files.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { attachmentsDir, BACKLOG_CONFIG, issueFile } from '../store/layout.ts';
-import { effectiveMode, type SyncDeps, syncNow, syncRemote } from './sync.ts';
+import { quarantineCommit } from './quarantine.ts';
+import { effectiveMode, type SyncDeps, syncHeld, syncNow, syncRemote } from './sync.ts';
 import { listConflicts, readSyncState, syncFile } from './sync-state.ts';
 import { removeUser, revokeKey } from './users.ts';
 import { verifyRange } from './verify.ts';
@@ -191,6 +192,29 @@ test('a hand edit on an incoming path stops the round untouched', async () => {
     clean: await readLocalState(agentWc(), 'clean'),
   }).toEqual(recorded);
   expect((await verifyRange(agentWc())).invalid).toEqual([]);
+});
+
+test('aborted local phase keeps upstream', async () => {
+  const x = await sharedIssue('X');
+  const upstream = await readLocalState(agentWc(), 'upstream');
+  await write(spw(), setTitle(x, 'X', 'X2'));
+  await pushSpw();
+  const tip = await remoteHead();
+  const path = join(agentWc(), issueFile(x));
+  const edited = `${await readFile(path, 'utf8')}\nvon Hand\n`;
+  // Nach dem Fetch, vor dem lokalen Abschnitt: ein Hand-Edit auf dem eingehenden Pfad.
+  const hooks = { afterFetch: () => writeFile(path, edited) };
+
+  const err = await catchErrAsync(() => syncNow(agent(), deps({ hooks })));
+
+  expect(err.code).toBe('conflict');
+  expect(await readLocalState(agentWc(), 'upstream')).toBe(upstream);
+  expect(upstream).not.toBe(tip);
+
+  await git(['checkout', '-q', '--', issueFile(x)], { cwd: agentWc() });
+  await syncNow(agent(), deps());
+
+  expect(await readLocalState(agentWc(), 'upstream')).toBe(tip);
 });
 
 test('a hand edit on an incoming path stops a replaying round untouched', async () => {
@@ -385,6 +409,58 @@ describe('invalid incoming commits', () => {
     expect(await revParse(agentWc(), 'HEAD')).toBe(bad);
     expect(await readLocalState(agentWc(), 'upstream')).toBe(bad);
     expect(await readLocalState(agentWc(), 'clean')).toBe(clean);
+  });
+
+  test('warn mode reports an invalid incoming commit once', async () => {
+    await setVerify('warn');
+    await pushSpw();
+    await syncNow(agent(), deps());
+    const bad = await rawCommit(t.spw.root, {
+      files: { 'notes.md': 'x\n' },
+      actor: 'spw',
+      op: 'manual',
+    });
+    await pushSpw();
+
+    const first = await syncNow(agent(), deps());
+    await create(spw(), 'Danach');
+    await pushSpw();
+    const second = await syncNow(agent(), deps());
+    const third = await syncNow(agent(), deps());
+
+    expect(first.notices).toEqual([`${bad.slice(0, 7)}: unsigniert`]);
+    expect(second).toMatchObject({ fetched: 1, notices: [] });
+    expect(third.notices).toEqual([]);
+    expect(await revParse(agentWc(), 'HEAD')).toBe(await remoteHead());
+    // Gemerkt sind nur die ungültigen Commits, die noch im geprüften Bereich liegen.
+    expect(await readLocalState(agentWc(), 'warned')).toBe(bad);
+
+    await quarantineCommit(spw(), { sha: bad, decision: 'accepted', reason: 'harmlos' });
+    await pushSpw();
+    await syncNow(agent(), deps());
+    expect(await readLocalState(agentWc(), 'warned')).toBeUndefined();
+  });
+
+  test('a warning is remembered only after the round succeeded', async () => {
+    await setVerify('warn');
+    await pushSpw();
+    await syncNow(agent(), deps());
+    const bad = await rawCommit(t.spw.root, {
+      files: { 'notes.md': 'x\n' },
+      actor: 'spw',
+      op: 'manual',
+    });
+    await pushSpw();
+    const path = join(agentWc(), 'notes.md');
+    const hooks = { afterFetch: () => writeFile(path, 'von Hand\n') };
+
+    const err = await catchErrAsync(() => syncNow(agent(), deps({ hooks })));
+    expect(err.code).toBe('conflict');
+    expect(await readLocalState(agentWc(), 'warned')).toBeUndefined();
+
+    await rm(path);
+    const r = await syncNow(agent(), deps());
+    expect(r.notices).toEqual([`${bad.slice(0, 7)}: unsigniert`]);
   });
 
   test('in off mode an invalid incoming commit is taken silently', async () => {
@@ -709,6 +785,11 @@ test('a working copy without remote skips', async () => {
     rounds: 0,
   });
   expect(await readSyncState(solo.root)).toEqual({});
+  // Ohne Runde bleibt ein Claim-Commit, wo er war.
+  expect(await syncHeld(await solo.context(), deps(), { claimSha: 'c'.repeat(40) })).toMatchObject({
+    skipped: 'no_remote',
+    claimSha: 'c'.repeat(40),
+  });
 });
 
 test('hooks see each round', async () => {

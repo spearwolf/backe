@@ -1180,6 +1180,38 @@ describe('edits', () => {
     expect(await read('notes.md')).toBe('Notiz\n');
   });
 
+  test('edits: recovering a landed chain resets the paths without effect too', async () => {
+    const [x, y, a] = (await issues('X', 'Y', 'A')) as [string, string, string];
+    const z = await createdId({
+      kind: 'op',
+      op: { op: 'issue.create', title: 'Z', depends_on: [x, y] },
+    });
+    await edit(issueFile(z), (s) => s.replace(`[${x}, ${y}]`, `[${y}, ${x}]`));
+    const reordered = await read(issueFile(z));
+    await edit(issueFile(a), (s) => s.replace('title: A', 'title: A2'));
+    await write('notes.md', 'Notiz\n');
+    const journal = join(await stateDir(b.root), 'write.journal');
+    let left = '';
+    const r = await executeWrite(ctx, EDITS, {
+      hooks: {
+        afterCommit: async () => {
+          left = await readFile(journal, 'utf8');
+        },
+      },
+    });
+    expect(r.chain).toHaveLength(2);
+    expect(r.rewritten).toEqual([{ path: issueFile(z), reason: 'no_effect' }]);
+    // Zustand wie nach einem SIGKILL nach dem Ref-Update, bevor die Arbeitskopie angeglichen war.
+    await write(issueFile(z), reordered);
+    await writeFile(journal, left);
+
+    await executeWrite(ctx, CREATE_B);
+
+    expect(await statusShort(b.root)).toEqual([]);
+    expect(await read(issueFile(z))).toContain(`[${x}, ${y}]`);
+    expect(await readdir(await stateDir(b.root))).not.toContain('write.journal');
+  });
+
   test('edits: a list reordered by hand is reset with a notice', async () => {
     const [x, y] = (await issues('X', 'Y')) as [string, string];
     const z = await createdId({
@@ -1317,7 +1349,7 @@ describe('edits', () => {
     expect(await show('HEAD:.backe/backlog.jsonc')).toContain('"branch": "trunk"');
   });
 
-  test('edits: a failing reset after the commits is reported, not hidden', async () => {
+  test('edits: a failing reset after the commits reports only the paths that still differ', async () => {
     const [x, y, a] = (await issues('X', 'Y', 'A')) as [string, string, string];
     const z = await createdId({
       kind: 'op',
@@ -1332,10 +1364,12 @@ describe('edits', () => {
       });
       expect(r.commit).toBe(await revParse(b.root, 'HEAD'));
       expect(r.rewritten).toEqual([{ path: issueFile(z), reason: 'no_effect' }]);
+      // A steht nach dem Commit in Index und Arbeitsbaum wie in HEAD; nur Z weicht noch ab.
       expect(r.unsettled).toEqual({
-        paths: [issueFile(a), issueFile(z)].sort(),
+        paths: [issueFile(z)],
         reason: expect.stringContaining('index.lock'),
       });
+      expect(await statusShort(b.root)).toEqual([` M ${issueFile(z)}`]);
     } finally {
       await rm(lock, { force: true });
     }

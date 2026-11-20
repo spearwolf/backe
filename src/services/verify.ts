@@ -33,7 +33,7 @@ import { parseOpTrailer } from '../ops/operation.ts';
 import { propViolations } from '../ops/props.ts';
 import { checkCommitPolicy, type TreeChange } from '../ops/verify-policy.ts';
 import { BACKLOG_CONFIG, classifyPath, QUARANTINE } from '../store/layout.ts';
-import { loadSnapshot, type StoredEntity } from '../store/snapshot.ts';
+import { loadSnapshot, readableComments, type StoredEntity } from '../store/snapshot.ts';
 import { requireRoot } from './read.ts';
 import {
   loadStates,
@@ -583,7 +583,8 @@ export type BacklogVerifyReport = VerifyReport & {
  * `backe verify` für die Arbeitskopie des Kontexts: der Bericht von `verifyRange`, dazu je
  * Property, deren Wert eine (inzwischen verschärfte) Deklaration verletzt, ein Hinweis
  * `<id> <key>: <meldung>` — ein Hinweis, kein Fehler (backe.md §2.24) — und je Datei mit unbekannten
- * Keys ein Eintrag in `unknownKeys` (backe.md §2.3), nach Pfad sortiert.
+ * Keys ein Eintrag in `unknownKeys` (backe.md §2.3), nach Pfad sortiert. Kommentare zählen wie
+ * jede andere Entität; ein unlesbarer Kommentar fehlt dort nur.
  */
 export async function verifyBacklog(
   ctx: ResolvedContext,
@@ -593,6 +594,8 @@ export async function verifyBacklog(
   const report = await verifyRange(root, opts);
   const snapshot = await loadSnapshot(root);
   const propNotices = propViolations(snapshot).map((v) => `${v.id} ${v.key}: ${v.message}`);
+  const comments: StoredEntity<unknown>[] = [];
+  for (const id of snapshot.issues.keys()) comments.push(...(await readableComments(root, id)));
   const unknownKeys = [
     snapshot.users,
     snapshot.projects,
@@ -601,6 +604,7 @@ export async function verifyBacklog(
     snapshot.issues,
   ]
     .flatMap((entities) => [...entities.values()] as StoredEntity<unknown>[])
+    .concat(comments)
     .filter((e) => e.extra.length > 0)
     .map((e) => ({ path: e.path, keys: e.extra.map(([k]) => k) }))
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));

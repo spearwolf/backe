@@ -7,9 +7,11 @@ import { git } from './exec.ts';
  * `upstream` ist der zuletzt verifizierte Stand des Remotes; anders als `verified` zeigt er nie auf
  * einen ungepushten lokalen Commit. `clean` ist der letzte Stand, den `verify` selbst ohne
  * ungültigen Commit aufgezeichnet hat (oder der Init-Commit); anders als `verified`, das ein Clone
- * mit seiner Abstammungsbasis vorbelegt, ist der Stand dort nie eingefroren.
+ * mit seiner Abstammungsbasis vorbelegt, ist der Stand dort nie eingefroren. `warned` nennt,
+ * durch Leerzeichen getrennt, die ungültigen eingehenden Commits, deren Warnung der Sync im Modus
+ * `warn` schon gemeldet hat — nur die, die der letzte Bericht noch als ungültig trug.
  */
-export type LocalStateName = 'anchor' | 'verified' | 'clean' | 'identity' | 'upstream';
+export type LocalStateName = 'anchor' | 'verified' | 'clean' | 'identity' | 'upstream' | 'warned';
 
 /**
  * Zustandsverzeichnis unter dem Git-Dir (auch hinter einer `.git`-Datei). `create: true` (Default)

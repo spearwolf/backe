@@ -14,7 +14,7 @@ import type { BacklogConfig } from '../core/schemas.ts';
 import { sshFingerprint } from '../core/ssh.ts';
 import { git, transportEnv } from '../git/exec.ts';
 import { isAncestor, readBlobs, resolveCommit } from '../git/history.ts';
-import { readLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
+import { clearLocalState, readLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
 import { assertOnBranch, dirtyPaths } from '../git/repo.ts';
 import { readPublicKey } from '../git/ssh.ts';
 import { exists } from '../store/files.ts';
@@ -35,7 +35,7 @@ import {
 } from './sync-state.ts';
 import { builtCommitReasons, verifyRange, writeCommitBasis } from './verify.ts';
 import { activeFingerprints } from './verify-state.ts';
-import { descentBase, ensureWorkingCopy, judgeReport } from './working-copy.ts';
+import { descentBase, ensureWorkingCopy, judgeReportOnce } from './working-copy.ts';
 import { headConfig, recoverJournal, requireHeadConfig } from './write.ts';
 
 /** Nur für Tests: Reihenfolge und Pausen zwischen den Schritten einer Runde. */
@@ -135,13 +135,16 @@ type Passed = { tip: string; since: string | undefined };
  * Prüft Eingehendes bis `tip` (backe.md §2.13), ohne aufzuzeichnen: Abstammung von `descent`
  * (`descentBase` vor dem Fetch: `upstream`, sonst wie beim Clone; ohne beides genügt der Anker),
  * dann die Commits — ab `clean`, wenn das ein Vorfahre von `tip` ist, sonst ab dem Anker.
- * Ungültige Commits beurteilt der Modus (`judgeReport`); nur ohne sie gibt es `passed`.
+ * Ungültige Commits beurteilt der Modus (`judgeReportOnce`): Im Modus `warn` warnt er nur zu
+ * Commits, die nicht in `warned` stehen, und `warned` im Ergebnis ist das neue Gedächtnis. Nur ohne
+ * ungültige Commits gibt es `passed`.
  */
 async function verifyIncoming(
   wc: string,
   tip: string,
   descent: string | undefined,
-): Promise<{ notices: string[]; passed?: Passed }> {
+  warned: ReadonlySet<string>,
+): Promise<{ notices: string[]; warned: string[]; passed?: Passed }> {
   const ancestor = descent ?? (await readLocalState(wc, 'anchor'));
   const clean = await readLocalState(wc, 'clean');
   const since =
@@ -153,8 +156,19 @@ async function verifyIncoming(
     ...(ancestor === undefined ? {} : { ancestor }),
     ...(since === undefined ? {} : { since }),
   });
-  const notices = await judgeReport(wc, report, tip);
-  return report.invalid.length === 0 ? { notices, passed: { tip, since } } : { notices };
+  const judged = await judgeReportOnce(wc, report, tip, warned);
+  return report.invalid.length === 0 ? { ...judged, passed: { tip, since } } : judged;
+}
+
+/** Die schon gemeldeten ungültigen Commits (`warned` in `.git/backe`). */
+async function readWarned(wc: string): Promise<Set<string>> {
+  const value = await readLocalState(wc, 'warned');
+  return new Set(value === undefined ? [] : value.split(' ').filter((s) => s !== ''));
+}
+
+async function writeWarned(wc: string, warned: ReadonlySet<string>): Promise<void> {
+  if (warned.size === 0) await clearLocalState(wc, 'warned');
+  else await writeLocalState(wc, 'warned', [...warned].join(' '));
 }
 
 /**
@@ -420,9 +434,18 @@ async function pushSha(
  * Die Durchgänge bis zum gelungenen Push, höchstens `MAX_ROUNDS`, mit Backoff dazwischen.
  * `replayed` zählt nur den letzten Durchgang (ein abgelehnter wird ja neu gebaut); der Claim wird
  * über seinen jeweils neuen SHA durch die Durchgänge gereicht. `attachments.lfs` gilt aus der
- * Config, die HEAD nach dem lokalen Abschnitt trägt.
+ * Config, die HEAD nach dem lokalen Abschnitt trägt. `upstream` wird erst nach dem gelungenen
+ * lokalen Abschnitt gesetzt: Bricht dieser ab, prüft die nächste Runde denselben Stand erneut.
+ * `warned` (die schon gemeldeten ungültigen Commits) schreibt die Funktion fort; aufzeichnen
+ * darf es der Aufrufer erst, wenn die Runde samt ihrer Hinweise gelungen ist.
  */
-async function runRounds(r: Round, remote: string, branch: string, claimSha?: string) {
+async function runRounds(
+  r: Round,
+  remote: string,
+  branch: string,
+  warned: Set<string>,
+  claimSha?: string,
+) {
   const { wc, ctx, deps } = r;
   const sleep = deps.sleep ?? ((ms: number) => delay(ms));
   const out: Omit<SyncOutcome, 'skipped'> = {
@@ -443,13 +466,15 @@ async function runRounds(r: Round, remote: string, branch: string, claimSha?: st
     const upstream = await readLocalState(wc, 'upstream');
     let passed: Passed | undefined;
     if (tip !== undefined && (tip !== upstream || (await readLocalState(wc, 'verified')) !== tip)) {
-      const incoming = await verifyIncoming(wc, tip, descent);
+      const incoming = await verifyIncoming(wc, tip, descent, warned);
       out.notices.push(...incoming.notices);
       passed = incoming.passed;
-      await writeLocalState(wc, 'upstream', tip);
+      warned.clear();
+      for (const sha of incoming.warned) warned.add(sha);
     }
     const section: Section = { branch, tip, upstream, passed, claimSha: claim };
     const local = await underWriteLock(wc, () => localSection(r, section), deps.lock);
+    if (tip !== undefined && tip !== upstream) await writeLocalState(wc, 'upstream', tip);
     claim = local.claimSha;
     out.fetched += local.fetched;
     out.replayed = local.replayed;
@@ -529,7 +554,9 @@ async function heldRound(p: Prepared, opts: { claimSha?: string }): Promise<Sync
   const before = await readSyncState(wc);
   const attempt = isoNow(now());
   try {
-    const out = await runRounds(p, config.sync.remote, config.sync.branch, opts.claimSha);
+    const warned = await readWarned(wc);
+    const out = await runRounds(p, config.sync.remote, config.sync.branch, warned, opts.claimSha);
+    await writeWarned(wc, warned);
     await writeSyncState(wc, { last_attempt: attempt, last_success: isoNow(now()) });
     return { ...out, notices: [...p.notices, ...out.notices] };
   } catch (err) {
@@ -579,5 +606,8 @@ export async function syncHeld(
   opts: { claimSha?: string } = {},
 ): Promise<SyncOutcome> {
   const p = await prepare(ctx, deps);
-  return p.remote ? heldRound(p, opts) : skipped(p.notices);
+  if (p.remote) return heldRound(p, opts);
+  // Ohne Runde bleibt der Claim-Commit, wo er ist.
+  const { claimSha } = opts;
+  return claimSha === undefined ? skipped(p.notices) : { ...skipped(p.notices), claimSha };
 }

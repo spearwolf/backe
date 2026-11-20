@@ -171,10 +171,11 @@ async function claimHeld(
       if (round.pushed === undefined || round.claimSha === undefined) {
         await assertClaimed(setup.wc, setup.handle, id);
       }
-      // Nach einem Replay trägt der Claim einen neuen SHA.
+      // Nach einem Replay trägt der Claim einen neuen SHA; fiel er ohne Wirkung weg, gibt es
+      // keinen Commit von ihm in HEAD.
       return {
         ...out,
-        commit: round.claimSha ?? written.commit,
+        commit: round.claimSha,
         ...(round.pushed === undefined ? {} : { pushed: round.pushed }),
       };
     },

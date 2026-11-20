@@ -212,15 +212,13 @@ describe('rewriteCollisions', () => {
 
 describe('taintKeys', () => {
   test('names issue ids, created ids and entity subjects', () => {
-    expect(taintKeys([{ op: 'project.mv', from: 'web/auth', to: 'platform/auth' }], [])).toEqual([
-      'project:web/auth',
-    ]);
     expect(
       taintKeys(
         [
           { op: 'comment.add', id: I(1), body: 'x' },
           { op: 'issue.edit', id: I(2), set: { parent: { from: null, to: I(1) } } },
           { op: 'sprint.close', slug: '2026-w47' },
+          { op: 'project.create', path: 'api', title: 'API' },
           { op: 'repo.rm', name: 'api' },
           { op: 'user.rm', handle: 'claude-1' },
           {
@@ -229,7 +227,7 @@ describe('taintKeys', () => {
             key: 'web',
             set: { title: { from: 'a', to: 'b' } },
           },
-          { op: 'repo.add', url: 'https://example.com/x.git' },
+          { op: 'repo.add', url: 'https://github.com/acme/webapp.git' },
         ],
         [I(9)],
       ),
@@ -238,11 +236,50 @@ describe('taintKeys', () => {
       I(2),
       I(9),
       'sprint:2026-w47',
+      'project:api',
       'repo:api',
       'user:claude-1',
       'project:web',
-      'repo:https://example.com/x.git',
+      'repo:webapp',
     ]);
+  });
+
+  test('project.mv taints both the old and the new path', () => {
+    expect(taintKeys([{ op: 'project.mv', from: 'web/auth', to: 'platform/auth' }], [])).toEqual([
+      'project:web/auth',
+      'project:platform/auth',
+    ]);
+  });
+
+  test('project.rm with reassign taints the target too', () => {
+    expect(taintKeys([{ op: 'project.rm', path: 'web', reassign: 'platform' }], [])).toEqual([
+      'project:web',
+      'project:platform',
+    ]);
+    expect(taintKeys([{ op: 'project.rm', path: 'web', detach: true }], [])).toEqual([
+      'project:web',
+    ]);
+  });
+
+  test('repo.add without a name taints the derived name', () => {
+    expect(taintKeys([{ op: 'repo.add', url: 'https://github.com/acme/WebApp.git' }], [])).toEqual([
+      'repo:webapp',
+    ]);
+    expect(
+      taintKeys([{ op: 'repo.add', url: 'https://github.com/acme/webapp', name: 'web' }], []),
+    ).toEqual(['repo:web']);
+  });
+
+  test('taint over created ids reaches ids the operations do not name', () => {
+    expect(
+      taintKeys(
+        [
+          { op: 'issue.create', title: 'Neu' },
+          { op: 'comment.add', id: I(3), body: 'x' },
+        ],
+        [I(4)],
+      ),
+    ).toEqual([I(3), I(4)]);
   });
 });
 

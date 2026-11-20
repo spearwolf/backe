@@ -33,12 +33,12 @@ function render(report: BacklogVerifyReport, since: string | undefined, color: b
   ]);
 }
 
-/** Bericht als JSON mit snake_case-Keys (`prop_notices`, `unknown_keys`). */
+/** Bericht als JSON mit snake_case-Keys; `prop_notices` und `unknown_keys` fehlen, wenn leer. */
 function verifyJson(report: BacklogVerifyReport): Record<string, unknown> {
   const { propNotices, unknownKeys, ...rest } = report;
   return {
     ...rest,
-    prop_notices: propNotices,
+    ...(propNotices.length === 0 ? {} : { prop_notices: propNotices }),
     ...(unknownKeys.length === 0 ? {} : { unknown_keys: unknownKeys }),
   };
 }

@@ -181,7 +181,42 @@ describe('claimIssue', () => {
     const r = await claimIssue(agent(), x, deps);
 
     expect(r.pushed).toBe(await revParse(t.remote, 'refs/heads/main'));
+    expect(r.commit).toBeUndefined();
     expect(await claims(t.remote, 'refs/heads/main')).toEqual([]);
+    expect(await issueOf(t.agent.wc, x)).toMatchObject({
+      state: 'in_progress',
+      assignee: 'claude-1',
+    });
+  });
+
+  test('a claim dropped in the replay reports no commit outside HEAD', async () => {
+    const [x] = (await shared('X')) as [string];
+    let raced = false;
+    const deps: SyncDeps = {
+      ...noSleep,
+      hooks: {
+        beforePush: async () => {
+          if (raced) return;
+          raced = true;
+          // Ein paralleler, gleich wirkender Claim gewinnt: X steht in_progress mit claude-1.
+          await executeWrite(spw(), {
+            kind: 'batch',
+            ops: [
+              { op: 'issue.edit', id: x, set: { assignee: { from: null, to: 'claude-1' } } },
+              { op: 'issue.move', id: x, from: 'backlog', to: 'in_progress' },
+            ],
+          });
+          await syncNow(spw(), noSleep);
+        },
+      },
+    };
+
+    const r = await claimIssue(agent(), x, deps);
+
+    const head = await revParse(t.agent.wc, 'HEAD');
+    expect(head).toBe(await revParse(t.remote, 'refs/heads/main'));
+    expect(r.pushed).toBeUndefined();
+    expect(r.commit).toBeUndefined();
     expect(await issueOf(t.agent.wc, x)).toMatchObject({
       state: 'in_progress',
       assignee: 'claude-1',
