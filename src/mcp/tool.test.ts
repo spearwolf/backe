@@ -5,7 +5,14 @@ import { connectServer } from '../../test/helpers/mcp.ts';
 import { BackeError } from '../core/errors.ts';
 import { scheduleSync } from '../services/background.ts';
 import type { SyncDeps } from '../services/sync.ts';
-import { defineTool, type ToolEnv, toolError, toolResult, writeQueue } from './tool.ts';
+import {
+  defineTool,
+  pendingStarts,
+  type ToolEnv,
+  toolError,
+  toolResult,
+  writeQueue,
+} from './tool.ts';
 
 vi.mock('../services/background.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../services/background.ts')>()),
@@ -29,7 +36,12 @@ async function harness(define: (server: McpServer, env: ToolEnv) => void) {
     allowDelete: false,
     deps: { sync: SYNC },
   };
-  const env: ToolEnv = { context: () => b.context(), opts, queue: writeQueue() };
+  const env: ToolEnv = {
+    context: () => b.context(),
+    opts,
+    queue: writeQueue(),
+    pending: pendingStarts(),
+  };
   const server = new McpServer({ name: 'test', version: '0' });
   define(server, env);
   return connectServer(server);
@@ -174,6 +186,7 @@ test('a context that fails to resolve becomes an error result', async () => {
     context: () => Promise.reject(new BackeError('not_found', 'Backlog »x« nicht gefunden')),
     opts,
     queue: writeQueue(),
+    pending: pendingStarts(),
   };
   const server = new McpServer({ name: 'test', version: '0' });
   defineTool(server, env, 'any', { description: 'x', input: EMPTY, kind: 'read' }, () =>
@@ -227,4 +240,25 @@ test('toolResult and toolError carry compact JSON', () => {
     content: [{ type: 'text', text: '{"error":{"code":"conflict","message":"besetzt"}}' }],
     isError: true,
   });
+});
+
+test('pending starts are settled, including one added while waiting', async () => {
+  const p = pendingStarts();
+  await p.settled();
+  // Ein abgelehnter Start hält `settled` nicht auf und wird nicht zur unbehandelten Ablehnung.
+  p.add(Promise.reject(new Error('abgelehnt')));
+  const order: string[] = [];
+  let finishFirst!: () => void;
+  p.add(
+    new Promise<void>((r) => {
+      finishFirst = r;
+    }).then(() => {
+      order.push('first');
+      p.add(Promise.reject(new Error('second')).catch(() => order.push('second')));
+    }),
+  );
+  const settled = p.settled().then(() => order.push('settled'));
+  finishFirst();
+  await settled;
+  expect(order).toEqual(['first', 'second', 'settled']);
 });

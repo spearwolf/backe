@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { revParse, statusShort, testBacklog } from '../../test/helpers/git.ts';
+import { revParse, setPullInterval, statusShort, testBacklog } from '../../test/helpers/git.ts';
 import { connectMcp } from '../../test/helpers/mcp.ts';
 import { updateUserConfig, userConfigPath } from '../context/user-config.ts';
 import { contextInfo } from '../services/context-info.ts';
@@ -51,6 +51,7 @@ test('the server reports its identity and the instructions', async () => {
         'context_get',
         'issue_create',
         'issue_get',
+        'issue_claim',
         'issue_list',
         'issue_move',
         'issue_next',
@@ -62,6 +63,7 @@ test('the server reports its identity and the instructions', async () => {
         'repo_locate',
         'sprint_get',
         'sprint_list',
+        'sync_now',
       ].sort(),
     );
   } finally {
@@ -122,15 +124,27 @@ test('prepareMcp rejects a foreign working copy', async () => {
   expect(err.message).toContain('gehört »spw«');
 });
 
-test('build is side-effect free', async () => {
+test.each([
+  { pullInterval: undefined, timers: 1 },
+  { pullInterval: 0, timers: 0 },
+])('build is side-effect free (pull_interval $pullInterval)', async ({ pullInterval, timers }) => {
   const b = await testBacklog();
+  if (pullInterval !== undefined) await setPullInterval(b, pullInterval);
   const opts = { cwd: b.root, env: b.env, flags: { as: b.handle }, allowDelete: false };
   const head = await revParse(b.root, 'HEAD');
   const config = await readFile(userConfigPath(b.homes.backeHome), 'utf8');
-  const mcp = createBackeMcp(opts, await prepareMcp(opts));
-  mcp.build();
-  mcp.build();
-  await mcp.close();
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  try {
+    const mcp = await createBackeMcp(opts, await prepareMcp(opts));
+    mcp.build();
+    mcp.build();
+    // Der Timer lebt je Prozess in `createBackeMcp`, nicht je `build`.
+    expect(vi.getTimerCount()).toBe(timers);
+    await mcp.close();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
   expect(await revParse(b.root, 'HEAD')).toBe(head);
   expect(await statusShort(b.root)).toEqual([]);
   expect(await readFile(userConfigPath(b.homes.backeHome), 'utf8')).toBe(config);

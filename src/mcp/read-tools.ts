@@ -7,6 +7,7 @@ import { type McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { getAttachment } from '../services/attachments.ts';
 import { scheduleSync } from '../services/background.ts';
+import { nextClaim } from '../services/claim.ts';
 import { type IssueListQuery, listIssues } from '../services/issue-list.ts';
 import { showIssue } from '../services/issue-show.ts';
 import { readIssueFile } from '../services/issues.ts';
@@ -141,15 +142,19 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
     env,
     'issue_next',
     {
-      description: 'Nächstes Issue für mich zeigen (wie backe next)',
+      description:
+        'Nächstes Issue für mich zeigen (wie backe next); mit claim gleich übernehmen, synchron mit dem Remote',
       input: z.object({
         level: z.enum(['leaf', 'top']).optional(),
         project: z.string().optional(),
         sprint: z.string().optional(),
         repo: z.string().optional(),
         all: z.boolean().optional(),
+        claim: z.boolean().optional(),
         fields: strings.optional(),
       }),
+      // Auch mit `claim` lesend: Der Frische-Anstoß davor schadet nicht, der Claim läuft neben
+      // der Warteschlange und synct selbst.
       kind: 'read',
     },
     async (ctx, a) => {
@@ -160,11 +165,18 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
         ...(a.repo === undefined ? {} : { repo: a.repo }),
         ...(a.all === true ? { all: true } : {}),
       };
-      const r = await nextIssue(ctx, q);
+      const fields = a.fields === undefined ? {} : { fields: a.fields };
+      if (a.claim !== true) {
+        const r = await nextIssue(ctx, q);
+        return nextJson(r, { notices: r.notices, warnings: [], ...fields });
+      }
+      // Wie `next --claim`: Commit, Versuche, Hinweise und Warnungen des Claims.
+      const r = await nextClaim(ctx, q, env.opts.deps?.claim);
       return nextJson(r, {
-        notices: r.notices,
-        warnings: [],
-        ...(a.fields === undefined ? {} : { fields: a.fields }),
+        claimed: { commit: r.claim.commit, attempts: r.attempts },
+        notices: [...r.notices, ...r.claim.notices],
+        warnings: r.claim.warnings,
+        ...fields,
       });
     },
   );

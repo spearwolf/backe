@@ -21,6 +21,7 @@ import {
 import { initBacklog } from '../../src/services/init.ts';
 import { ensureWorkingCopy } from '../../src/services/working-copy.ts';
 import { executeWrite } from '../../src/services/write.ts';
+import { BACKLOG_CONFIG } from '../../src/store/layout.ts';
 import { tempDir } from './backlog.ts';
 
 // Tests auf echten Git-Repos (Klone, Sync-Runden, Replay) starten viele Git-Prozesse; mit
@@ -347,4 +348,19 @@ export async function twoClones(): Promise<{
   const agentCtx = await spw.context({ as: 'claude-1', backlog: 'acme' });
   const { root: wc } = await ensureWorkingCopy(agentCtx, 'claude-1');
   return { remote: spw.remote as string, spw: { ...spw, ctx }, agent: { ctx: agentCtx, wc } };
+}
+
+/**
+ * Ein gültiger Admin-Commit von `b.handle` setzt `sync.pull_interval` in der Backlog-Config; die
+ * Config darf noch keinen `sync`-Block haben.
+ */
+export async function setPullInterval(b: TestBacklog, seconds: number): Promise<void> {
+  const config = await readFile(join(b.root, BACKLOG_CONFIG), 'utf8');
+  const changed = config.replace(/\n}\n$/, `,\n  "sync": { "pull_interval": ${seconds} }\n}\n`);
+  if (changed === config) throw new Error('Config ohne erwartetes Ende');
+  await executeWrite(await b.context(), {
+    kind: 'manual',
+    subject: `pull_interval: ${seconds}`,
+    changes: [{ path: BACKLOG_CONFIG, content: changed }],
+  });
 }

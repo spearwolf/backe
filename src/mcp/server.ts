@@ -14,7 +14,8 @@ import type { SyncDeps } from '../services/sync.ts';
 import { contextJson } from '../services/views.ts';
 import type { WriteDeps } from '../services/write.ts';
 import { registerIssueResource, registerReadTools } from './read-tools.ts';
-import { defineTool, type ToolEnv, writeQueue } from './tool.ts';
+import { registerSyncTools, startPeriodicSync } from './sync-tools.ts';
+import { defineTool, pendingStarts, type ToolEnv, writeQueue } from './tool.ts';
 import { registerWriteTools } from './write-tools.ts';
 
 export type McpDeps = { sync?: SyncDeps; write?: WriteDeps; claim?: ClaimDeps };
@@ -45,7 +46,9 @@ export async function prepareMcp(opts: McpOptions): Promise<ResolvedContext> {
 
 /**
  * Zustand je Prozess (Warteschlange, Timer) plus `build`, die Factory für `serveStdio`:
- * baut bei jedem Aufruf ein frisches `McpServer` mit allen Tools, ohne Nebenwirkung.
+ * baut bei jedem Aufruf ein frisches `McpServer` mit allen Tools, ohne Nebenwirkung. `close`
+ * baut den Timer ab und wartet, bis die laufenden Writes und die von ihnen angestoßenen
+ * Hintergrund-Starts durch sind.
  */
 export type BackeMcp = { build(): McpServer; close(): Promise<void> };
 
@@ -64,11 +67,23 @@ function registerTools(server: McpServer, env: ToolEnv): void {
   );
   registerReadTools(server, env);
   registerWriteTools(server, env);
+  registerSyncTools(server, env);
   registerIssueResource(server, env);
 }
 
-export function createBackeMcp(opts: McpOptions, _start: ResolvedContext): BackeMcp {
-  const env: ToolEnv = { context: () => resolve(opts), opts, queue: writeQueue() };
+/**
+ * Zustand je Prozess aufbauen: Warteschlange und den periodischen Hintergrund-Sync mit
+ * `pull_interval` aus der Arbeitskopie von `start`. Asynchron, weil das Intervall aus `HEAD` kommt;
+ * steht das Objekt, läuft der Timer.
+ */
+export async function createBackeMcp(opts: McpOptions, start: ResolvedContext): Promise<BackeMcp> {
+  const env: ToolEnv = {
+    context: () => resolve(opts),
+    opts,
+    queue: writeQueue(),
+    pending: pendingStarts(),
+  };
+  const stopTimer = await startPeriodicSync(start, opts.deps?.sync);
   return {
     build() {
       const server = new McpServer(
@@ -78,6 +93,10 @@ export function createBackeMcp(opts: McpOptions, _start: ResolvedContext): Backe
       registerTools(server, env);
       return server;
     },
-    async close() {},
+    async close() {
+      stopTimer();
+      await env.queue.run(async () => {});
+      await env.pending.settled();
+    },
   };
 }

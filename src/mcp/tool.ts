@@ -25,8 +25,19 @@ export type ToolKind = 'read' | 'write' | 'sync';
 /** Lokale Writes eines Prozesses nacheinander; ein gescheiterter hält die folgenden nicht auf. */
 export type WriteQueue = { run<T>(fn: () => Promise<T>): Promise<T> };
 
+/**
+ * Hintergrund-Starts, die ein Tool angestoßen, aber nicht abgewartet hat. `settled` wartet, bis
+ * keiner mehr läuft — auch auf solche, die währenddessen dazukommen.
+ */
+export type Pending = { add(p: Promise<unknown>): void; settled(): Promise<void> };
+
 /** Geteilt von allen `McpServer`-Instanzen eines Prozesses. */
-export type ToolEnv = { context(): Promise<ResolvedContext>; opts: McpOptions; queue: WriteQueue };
+export type ToolEnv = {
+  context(): Promise<ResolvedContext>;
+  opts: McpOptions;
+  queue: WriteQueue;
+  pending: Pending;
+};
 
 export function writeQueue(): WriteQueue {
   let tail: Promise<unknown> = Promise.resolve();
@@ -35,6 +46,22 @@ export function writeQueue(): WriteQueue {
       const result = tail.then(fn);
       tail = result.catch(() => undefined);
       return result;
+    },
+  };
+}
+
+export function pendingStarts(): Pending {
+  const running = new Set<Promise<unknown>>();
+  return {
+    add(p) {
+      const done = () => {
+        running.delete(p);
+      };
+      running.add(p);
+      p.then(done, done);
+    },
+    async settled() {
+      while (running.size > 0) await Promise.allSettled([...running]);
     },
   };
 }
@@ -70,10 +97,14 @@ async function execute(
     return run();
   }
   if (kind === 'sync') return run();
-  const value = await env.queue.run(run);
-  // Nicht abgewartet: Das Ergebnis des Writes steht fest; `scheduleSync` wirft nie.
-  if (committed(value)) void scheduleSync(ctx, 'write', sync);
-  return value;
+  return env.queue.run(async () => {
+    const value = await run();
+    // Nicht abgewartet: Das Ergebnis des Writes steht fest; `scheduleSync` wirft nie. Gemerkt
+    // noch im Job, damit `close()` nach dem Leeren der Warteschlange auch darauf wartet — sonst
+    // ginge der Push des letzten Writes mit dem Prozess verloren.
+    if (committed(value)) env.pending.add(scheduleSync(ctx, 'write', sync));
+    return value;
+  });
 }
 
 /** Registriert ein Tool mit Fehlergrenze; `run` bekommt den frisch aufgelösten Kontext. */

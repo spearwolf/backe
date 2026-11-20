@@ -67,7 +67,7 @@ export async function connectMcp(
     allowDelete: opts.allowDelete ?? false,
     ...(opts.deps === undefined ? {} : { deps: opts.deps }),
   };
-  const mcp = createBackeMcp(options, await prepareMcp(options));
+  const mcp = await createBackeMcp(options, await prepareMcp(options));
   const conn = await connectServer(mcp.build());
   return {
     ...conn,
