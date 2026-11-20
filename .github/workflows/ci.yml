@@ -21,4 +21,4 @@ jobs:
       - run: pnpm exec biome ci .
       - run: mise run check
       - run: pnpm pack --pack-destination "$RUNNER_TEMP/pack"
-      - run: bash scripts/pack-smoke.sh "$RUNNER_TEMP"/pack/backe-*.tgz
+      - run: bash scripts/pack-smoke.sh "$RUNNER_TEMP"/pack/*.tgz

@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v5
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+      - uses: jdx/mise-action@v5
+      - run: pnpm install --frozen-lockfile
+      - run: mise run check
+
+      - name: Tarball packen
+        run: |
+          mkdir -p "$RUNNER_TEMP/pack"
+          pnpm pack --pack-destination "$RUNNER_TEMP/pack"
+          shopt -s nullglob
+          tarballs=("$RUNNER_TEMP"/pack/*.tgz)
+          if [ "${#tarballs[@]}" -ne 1 ]; then
+            echo "::error::Erwartet genau einen Tarball, gefunden ${#tarballs[@]}"
+            exit 1
+          fi
+          echo "TARBALL=${tarballs[0]}" >> "$GITHUB_ENV"
+
+      - name: Pack-Smoke-Test
+        run: bash scripts/pack-smoke.sh "$TARBALL"
+
+      - name: npm-Version prüfen
+        run: |
+          v="$(npm --version)"
+          if ! node -e '
+            const [a, b, c] = process.argv[1].split(".").map((n) => Number.parseInt(n, 10));
+            process.exit(a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1))) ? 0 : 1);
+          ' "$v"; then
+            echo "::error::npm $v ist zu alt für Trusted Publishing, gebraucht wird npm ≥ 11.5.1"
+            exit 1
+          fi
+          echo "npm $v"
+
+      - name: Publish idempotent
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_VERSION: ${{ needs.release-please.outputs.version }}
+        run: |
+          NAME="$(node -p 'require("./package.json").name')"
+          VERSION="$(node -p 'require("./package.json").version')"
+          if [ "$VERSION" != "$RELEASE_VERSION" ]; then
+            echo "::error::package.json hat $VERSION, release-please meldet $RELEASE_VERSION"
+            exit 1
+          fi
+          # Nur für die erste Veröffentlichung: danach läuft der Publish über OIDC,
+          # das Secret ist gelöscht und dieser Zweig bleibt stumm.
+          if [ -n "$NPM_TOKEN" ]; then
+            printf '%s\n' '//registry.npmjs.org/:_authToken=${NPM_TOKEN}' > ~/.npmrc
+            echo "NPM_TOKEN gesetzt, Publish mit Token"
+          fi
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$NAME@$VERSION liegt schon auf npm, Publish übersprungen"
+          else
+            echo "$NAME@$VERSION fehlt auf npm, wird publisht"
+            npm publish "$TARBALL" --provenance --access public
+          fi
+
+      - name: Tarball ans GitHub-Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: gh release upload "$TAG" "$TARBALL" --clobber --repo "$GITHUB_REPOSITORY"
