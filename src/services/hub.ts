@@ -56,6 +56,7 @@ async function connect(source: string, hub: string, remote: string): Promise<boo
  * gilt dessen Hub. Danach zeigt der Git-Remote `config.remote` der Quelle auf den Hub (siehe
  * `connect`) und wird einmal geholt. Steht der geholte Branch im `HEAD` der Quelle, ist er ihr
  * `upstream`, sofern sie noch keinen hat: Der Hub enthält dann nur ihre eigene Historie.
+ * `linked`: Der Remote der Quelle zeigt danach auf den Hub (nicht bei einem bleibenden fremden).
  */
 export async function ensureHub(
   homes: Homes,
@@ -63,7 +64,7 @@ export async function ensureHub(
   source: string,
   config: { remote: string; branch: string },
   hooks: HubHooks = {},
-): Promise<{ hub: string; created: boolean }> {
+): Promise<{ hub: string; created: boolean; linked: boolean }> {
   const hub = hubPath(homes, name);
   let created = false;
   if (!(await exists(hub))) {
@@ -86,7 +87,7 @@ export async function ensureHub(
   const linked = await withFileLock(configLockPath(homes.backeHome), () =>
     connect(source, hub, config.remote),
   );
-  if (!linked) return { hub, created };
+  if (!linked) return { hub, created, linked };
   const tracking = `refs/remotes/${config.remote}/${config.branch}`;
   await git(
     [
@@ -103,5 +104,5 @@ export async function ensureHub(
     const tip = await resolveCommit(source, tracking);
     if (await isAncestor(source, tip, 'HEAD')) await writeLocalState(source, 'upstream', tip);
   }
-  return { hub, created };
+  return { hub, created, linked };
 }

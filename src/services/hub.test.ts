@@ -81,8 +81,8 @@ test('two concurrent first clones share one hub', async () => {
   release();
   const late = await slow;
 
-  expect(fast).toEqual({ hub: hubPath(), created: true });
-  expect(late).toEqual({ hub: hubPath(), created: false });
+  expect(fast).toEqual({ hub: hubPath(), created: true, linked: true });
+  expect(late).toEqual({ hub: hubPath(), created: false, linked: true });
   expect(await readdir(join(solo.homes.backeHome, 'tmp'))).toEqual([]);
   expect(await revParse(hubPath(), 'refs/heads/main')).toBe(await revParse(solo.root, 'HEAD'));
 });
@@ -107,6 +107,32 @@ test('a source remote pointing to a bare repository stays', async () => {
 
   const r = await ensureHub(solo.homes, 'acme', solo.root, config);
 
-  expect(r.created).toBe(true);
+  expect(r).toMatchObject({ created: true, linked: false });
   expect(await syncRemote(solo.root, 'origin')).toBe(bare);
+});
+
+test('a hub the source is not linked to brings no notice', async () => {
+  const bare = join(await tempDir(), 'elsewhere.git');
+  await git(['init', '--bare', '-q', bare], { cwd: dirname(bare) });
+  await git(['remote', 'add', 'origin', bare], { cwd: solo.root });
+  const agent = await addAgent();
+
+  const { root, notices } = await ensureWorkingCopy(agent, 'claude-1');
+
+  expect(notices).toEqual([]);
+  expect(await syncRemote(root, 'origin')).toBe(hubPath());
+  expect(await syncRemote(solo.root, 'origin')).toBe(bare);
+});
+
+test('an agent cloned through an existing hub needs its user pushed', async () => {
+  await ensureWorkingCopy(await addAgent(), 'claude-1');
+  await addAgent('claude-2');
+  // Quelle ist die Arbeitskopie von spw, die den User schon trägt.
+  const third = await solo.context({ as: 'claude-2' });
+
+  await expect(ensureWorkingCopy(third, 'claude-2')).rejects.toMatchObject({
+    code: 'sync',
+    message: 'User claude-2 ist noch nicht gepusht',
+    hint: 'backe sync --as spw',
+  });
 });

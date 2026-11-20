@@ -79,6 +79,7 @@ import {
   readHandEdits,
   settleEdits,
 } from './hand-edits.ts';
+import { setUpLfs } from './lfs.ts';
 import { raiseSignal, withDeferredSignals } from './signals.ts';
 import { coversOpen, type FrozenBasis, pathTaintReasons, writeCommitBasis } from './verify.ts';
 import { activeFingerprints, parseJsoncAs, type State } from './verify-state.ts';
@@ -781,31 +782,6 @@ async function plan(
   const recorded = r.noop ? [] : [r.recorded];
   const steps = r.changes.length === 0 ? [] : [opStep('op', r.changes, recorded, handle)];
   return { steps, recorded, refs: {}, notices: r.notices };
-}
-
-/**
- * Mit `attachments.lfs` (backe.md §2.8) muss `git lfs` laufen, und die Arbeitskopie braucht den
- * LFS-Filter in ihrer eigenen `.git/config` (`git lfs install --local`): Sonst landeten Anhänge roh
- * im Commit, `git status` hielte jeden Anhang für geändert und ein Checkout schriebe den Pointer
- * statt der Bytes. Die globale Git-Config bleibt unberührt. Liegt schon ein fremder Hook, den
- * git-lfs nicht überschreibt, kommt nur der Filter dazu.
- */
-async function setUpLfs(wc: string): Promise<void> {
-  try {
-    await git(['lfs', 'version'], { cwd: wc });
-  } catch {
-    throw new BackeError('validation', 'attachments.lfs verlangt git-lfs', {
-      hint: 'backe doctor',
-    });
-  }
-  const filter = await git(['config', '--local', '--get', 'filter.lfs.process'], {
-    cwd: wc,
-    okExitCodes: [1],
-  });
-  if (filter.exitCode === 0) return;
-  await git(['lfs', 'install', '--local'], { cwd: wc }).catch(() =>
-    git(['lfs', 'install', '--local', '--skip-repo'], { cwd: wc }),
-  );
 }
 
 /** Ob `path` von `change` geschrieben oder (als Verzeichnis) mitgelöscht wird. */

@@ -41,7 +41,7 @@ import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG, userFile } from '../store/layout.ts';
 import { ensureHub, hubPath } from './hub.ts';
 import { firstStderrLine } from './init.ts';
-import { assertVerified, trustedVerifyMode, type VerifyOptions, verifyRange } from './verify.ts';
+import { assertVerified, trustedVerifyMode, type VerifyReport, verifyRange } from './verify.ts';
 import { parseJsoncAs } from './verify-state.ts';
 
 /** Nur für Tests: läuft zwischen Clone und Abschluss. */
@@ -95,19 +95,26 @@ async function singleRoot(wc: string, source: string): Promise<string> {
 }
 
 /**
- * Prüft bis `opts.to` (Default `HEAD`) und zeichnet den verifizierten Stand auf. Gibt es ungültige
- * Commits, entscheidet der Modus des letzten vertrauenswürdigen Stands (`trustedVerifyMode`):
- * `strict` wirft, `warn` meldet die Gründe, `off` behält still. Clone, `backlog add` und Sync
- * teilen sich das.
+ * Urteil über einen Bericht von `verifyRange` bis `to` (Default `HEAD`): Gibt es ungültige Commits,
+ * entscheidet der Modus des letzten vertrauenswürdigen Stands (`trustedVerifyMode`): `strict`
+ * wirft, `warn` meldet die Gründe, `off` behält still. Clone, `backlog add` und Sync teilen sich das.
  */
-export async function verifyAndJudge(wc: string, opts: VerifyOptions = {}): Promise<string[]> {
-  const report = await verifyRange(wc, { ...opts, record: true });
+export async function judgeReport(
+  wc: string,
+  report: VerifyReport,
+  to?: string,
+): Promise<string[]> {
   if (report.invalid.length === 0) return report.notices;
-  const mode = await trustedVerifyMode(wc, opts.to);
+  const mode = await trustedVerifyMode(wc, to);
   if (mode === 'strict') assertVerified(report);
   if (mode === 'off') return [];
   const reasons = report.invalid.flatMap((f) => f.reasons.map((r) => `${shortSha(f.sha)}: ${r}`));
   return [...reasons, ...report.notices];
+}
+
+/** Prüft `HEAD` des Clones, zeichnet den verifizierten Stand auf und urteilt (`judgeReport`). */
+async function verifyClone(wc: string): Promise<string[]> {
+  return judgeReport(wc, await verifyRange(wc, { record: true }));
 }
 
 /** `sync` der Config in `rev` von `wc`; fehlt sie oder ist sie unlesbar, `undefined`. */
@@ -230,7 +237,7 @@ async function cloneInto(input: {
     await writeLocalState(temp, 'verified', base);
   }
   await writeLocalState(temp, 'identity', handle);
-  const notices = await verifyAndJudge(temp);
+  const notices = await verifyClone(temp);
   if (input.fromRemote) await writeLocalState(temp, 'upstream', await resolveCommit(temp, 'HEAD'));
   if (version > BACKLOG_FORMAT_VERSION) {
     notices.unshift(
@@ -325,6 +332,30 @@ export async function cloneBacklog(
 }
 
 /**
+ * Hängt den frischen Clone an den Hub und holt dessen Sync-Branch. `upstream` ist der Teil von
+ * `HEAD`, den der Hub trägt — ein Clone direkt aus der Quelle kann ihm voraus sein, wenn ein
+ * anderer Prozess den Hub inzwischen aus einem älteren Stand angelegt hat.
+ */
+async function linkToHub(temp: string, hub: string, sync: CloneConfig['sync']): Promise<void> {
+  await git(['remote', 'set-url', '--', sync.remote, hub], { cwd: temp });
+  const tracking = `refs/remotes/${sync.remote}/${sync.branch}`;
+  await git(
+    [
+      'fetch',
+      '-q',
+      '--no-tags',
+      '--end-of-options',
+      sync.remote,
+      `+refs/heads/${sync.branch}:${tracking}`,
+    ],
+    { cwd: temp },
+  );
+  const upstream = await mergeBase(temp, 'HEAD', tracking);
+  if (upstream === undefined) await clearLocalState(temp, 'upstream');
+  else await writeLocalState(temp, 'upstream', upstream);
+}
+
+/**
  * Fehlt `users/<handle>.md` im frischen Clone, steht aber im `HEAD` der Quell-Arbeitskopie, hat
  * deren Identität den User angelegt und noch nicht gepusht: Ohne ihn könnte der Clone nie schreiben.
  */
@@ -340,8 +371,8 @@ async function assertUserPushed(temp: string, reference: string, handle: string)
 
 /**
  * Die Arbeitskopie des Handles; fehlt eine verwaltete, wird sie geklont (backe.md §2.16.1):
- * aus der registrierten Remote, ohne Remote aus dem lokalen Hub (`ensureHub`), den die erste
- * zweite Arbeitskopie aus der gelesenen anlegt. Die gelesene Arbeitskopie dient als `--reference`
+ * aus der registrierten Remote, ohne Remote aus dem lokalen Hub — fehlt er noch, aus der gelesenen
+ * Arbeitskopie, und erst der geprüfte Clone legt den Hub an (`ensureHub`) und hängt sich daran. Die gelesene Arbeitskopie dient als `--reference`
  * (ein gebundener Clone nur mit `--dissociate`) und als Quelle für Anker und verifizierten Stand.
  * Eine vorhandene Arbeitskopie kommt ohne Netzzugriff zurück; `notices` hat nur ein Clone: der
  * Hinweis auf einen neuen Hub und im Modus `warn` die Gründe ungültiger Commits.
@@ -367,18 +398,17 @@ export async function ensureWorkingCopy(
       hint: 'backe backlog clone <url>',
     });
   }
-  const notices: string[] = [];
   let source = entry?.remote;
-  let origin: string | undefined;
+  let viaHub: { from: string; sync: CloneConfig['sync'] } | undefined;
   if (source === undefined) {
     const from = reference as string;
-    const { sync } = await readCloneConfig(from, from);
-    const hub = await ensureHub(ctx.homes, name, from, sync);
-    if (hub.created) notices.push(`Lokaler Hub ${hub.hub} angelegt; ${from} synct jetzt darüber`);
-    source = hub.hub;
-    origin = sync.remote;
+    viaHub = { from, sync: (await readCloneConfig(from, from)).sync };
+    // Einen fehlenden Hub legt erst der geprüfte Clone an; bis dahin hat die Quelle denselben Stand.
+    const hub = hubPath(ctx.homes, name);
+    source = (await exists(hub)) ? hub : from;
   }
   const url = source;
+  const origin = viaHub?.sync.remote;
   // Dauerhaft Objekte leihen darf der neue Clone nur von einem verwalteten Clone; ein gebundener
   // gehört dem Nutzer, der ihn jederzeit löschen kann.
   const managed =
@@ -404,6 +434,15 @@ export async function ensureWorkingCopy(
       },
     });
     if (reference !== undefined) await assertUserPushed(temp, reference, handle);
+    const notices: string[] = [];
+    if (viaHub !== undefined) {
+      const { from, sync } = viaHub;
+      const hub = await ensureHub(ctx.homes, name, from, sync);
+      if (hub.created && hub.linked) {
+        notices.push(`Lokaler Hub ${hub.hub} angelegt; ${from} synct jetzt darüber`);
+      }
+      await linkToHub(temp, hub.hub, sync);
+    }
     return {
       root: await finish(ctx.homes, name, temp, wc),
       notices: [...notices, ...cloned.notices],
@@ -476,7 +515,7 @@ export async function addBacklog(input: {
   };
   let notices: string[];
   try {
-    notices = await verifyAndJudge(wanted);
+    notices = await verifyClone(wanted);
     // `upstream` ist der geprüfte Teil des Remote-Tracking-Branches: sein gemeinsamer Vorfahre mit
     // `HEAD`. Was der Branch darüber hinaus trägt, hat das Verify nicht gesehen; ein schon
     // vorhandenes `upstream` bleibt.

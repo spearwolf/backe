@@ -421,7 +421,7 @@ test('a lost claim unit is reported as claimLost, not shelved', async () => {
   const z = idOf(await local(op({ op: 'issue.create', title: 'Z' })));
   const claim = await local(op({ op: 'issue.claim', id }));
   const r = await replay({ claimSha: claim.commit as string });
-  expect([r.replayed, r.conflicts]).toEqual([1, []]);
+  expect([r.replayed, r.conflicts, r.claimSha]).toEqual([1, [], undefined]);
   expect(r.claimLost?.id).toBe(id);
   expect(r.claimLost?.error).toBeInstanceOf(BackeError);
   expect(r.claimLost?.error.code).toBe('conflict');
@@ -446,6 +446,9 @@ test('a claim unit that still applies is replayed normally', async () => {
   const r = await replay({ claimSha: claim.commit as string });
   expect([r.replayed, r.claimLost]).toEqual([1, undefined]);
   expect((await snapshotAt(r.head)).issues.get(id)?.data.assignee).toBe('claude-1');
+  // Der Claim ist neu signiert; nur dieser SHA erkennt ihn in einer weiteren Runde wieder.
+  expect(r.claimSha).toBe(r.head);
+  expect(r.claimSha).not.toBe(claim.commit);
 });
 
 test('readUnits refuses a foreign local commit with a resign hint', async () => {

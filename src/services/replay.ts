@@ -63,6 +63,11 @@ export type ReplayResult = {
   conflicts: ConflictEntry[];
   /** Die Claim-Einheit scheiterte an einer Verletzung; sie geht nicht in die Konfliktablage. */
   claimLost?: { id: string; error: BackeError };
+  /**
+   * Der neu signierte Commit der Claim-Einheit; ohne Claim, ohne Wirkung oder bei `claimLost`
+   * `undefined`. Eine weitere Runde erkennt den Claim nur an diesem SHA.
+   */
+  claimSha?: string;
   notices: Notice[];
 };
 
@@ -310,6 +315,7 @@ export async function replayOnto(wc: string, input: ReplayInput): Promise<Replay
   const notices: Notice[] = [];
   let replayed = 0;
   let claimLost: ReplayResult['claimLost'];
+  let claimSha: string | undefined;
 
   const commit = async (changes: readonly FileChange[], message: string) => {
     const { key, author, env } = input;
@@ -403,6 +409,7 @@ export async function replayOnto(wc: string, input: ReplayInput): Promise<Replay
     const extra = await renormalized(wc, unit, head, snapshot, applied.changes);
     const changes = [...applied.changes, ...extra];
     await commit(changes, opMessage(unit.kind, applied.recorded, input.actor));
+    if (isClaim) claimSha = head;
     pending = [...pending, ...changes];
     snapshot = applied.snapshot;
   }
@@ -411,6 +418,7 @@ export async function replayOnto(wc: string, input: ReplayInput): Promise<Replay
     replayed,
     conflicts,
     ...(claimLost === undefined ? {} : { claimLost }),
+    ...(claimSha === undefined ? {} : { claimSha }),
     notices,
   };
 }

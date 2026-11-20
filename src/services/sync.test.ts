@@ -23,9 +23,10 @@ import { git } from '../git/exec.ts';
 import { clearLocalState, readLocalState } from '../git/local-state.ts';
 import type { Operation } from '../ops/operation.ts';
 import { readJsonc } from '../store/jsonc.ts';
-import { BACKLOG_CONFIG, issueFile } from '../store/layout.ts';
+import { attachmentsDir, BACKLOG_CONFIG, issueFile } from '../store/layout.ts';
 import { effectiveMode, type SyncDeps, syncNow, syncRemote } from './sync.ts';
 import { listConflicts, readSyncState } from './sync-state.ts';
+import { verifyRange } from './verify.ts';
 import { executeWrite } from './write.ts';
 
 let t: Awaited<ReturnType<typeof twoClones>>;
@@ -165,6 +166,10 @@ test('a hand edit on an incoming path stops the round untouched', async () => {
   await write(spw(), setTitle(x, 'X', 'X2'));
   await pushSpw();
   const headBefore = await revParse(agentWc(), 'HEAD');
+  const recorded = {
+    verified: await readLocalState(agentWc(), 'verified'),
+    clean: await readLocalState(agentWc(), 'clean'),
+  };
 
   const err = await catchErrAsync(() => syncNow(agent(), deps()));
 
@@ -177,6 +182,35 @@ test('a hand edit on an incoming path stops the round untouched', async () => {
   expect(state.last_error?.paths).toEqual([path]);
   expect(state.last_error).toMatchObject({ code: 'conflict', at: '2026-11-20T08:00:00Z' });
   expect(state.last_success).toBeDefined(); // vom Sync in sharedIssue
+  // Aufgezeichnet wird erst, wenn HEAD den geprüften Stand enthält; `backe verify` läuft weiter.
+  expect({
+    verified: await readLocalState(agentWc(), 'verified'),
+    clean: await readLocalState(agentWc(), 'clean'),
+  }).toEqual(recorded);
+  expect((await verifyRange(agentWc())).invalid).toEqual([]);
+});
+
+test('a hand edit on an incoming path stops a replaying round untouched', async () => {
+  const x = await sharedIssue('X');
+  const path = issueFile(x);
+  const edited = `${await readFile(join(agentWc(), path), 'utf8')}\nvon Hand\n`;
+  await writeFile(join(agentWc(), path), edited);
+  await create(agent(), 'Z');
+  await write(spw(), setTitle(x, 'X', 'X2'));
+  await pushSpw();
+  const headBefore = await revParse(agentWc(), 'HEAD');
+
+  const err = await catchErrAsync(() => syncNow(agent(), deps()));
+
+  expect(err).toMatchObject({
+    code: 'conflict',
+    message: `Ungesicherte Änderungen an ${path} verhindern den Sync`,
+  });
+  expect(await revParse(agentWc(), 'HEAD')).toBe(headBefore);
+  expect(await readFile(join(agentWc(), path), 'utf8')).toBe(edited);
+  expect(await statusShort(agentWc())).toEqual([` M ${path}`]);
+  expect(await listConflicts(agentWc())).toEqual([]);
+  expect((await readSyncState(agentWc())).last_error?.paths).toEqual([path]);
 });
 
 test('a push rejected by a faster client retries after replay', async () => {
@@ -440,6 +474,49 @@ test('the claim unit lost in replay comes back as claimLost', async () => {
   expect(await revParse(agentWc(), 'HEAD')).toBe(await remoteHead());
 });
 
+test('a claim re-signed in rejected rounds is still recognised when it is lost', async () => {
+  const x = await sharedIssue('X');
+  await create(spw(), 'Y');
+  await pushSpw();
+  await write(agent(), { op: 'issue.claim', id: x });
+  const claimSha = await revParse(agentWc(), 'HEAD');
+
+  const r = await syncNow(
+    agent(),
+    deps({
+      hooks: {
+        beforePush: async (round) => {
+          if (round === 1) await create(spw(), 'Y2');
+          if (round === 2) await write(spw(), { op: 'issue.claim', id: x });
+          if (round <= 2) await pushSpw();
+        },
+      },
+    }),
+    { claimSha },
+  );
+
+  expect(r).toMatchObject({ rounds: 3, conflicts: [], pushed: undefined, replayed: 0 });
+  expect(r.claimLost?.id).toBe(x);
+  expect(sleeps).toEqual([200, 400]);
+  expect(await listConflicts(agentWc())).toEqual([]);
+  expect(await revParse(agentWc(), 'HEAD')).toBe(await remoteHead());
+});
+
+test('an empty remote takes a history of several identities', async () => {
+  await create(agent(), 'B');
+  await syncNow(agent(), deps());
+  await syncNow(spw(), deps());
+  await create(spw(), 'A');
+  const fresh = join(t.remote, '..', 'fresh.git');
+  await git(['init', '--bare', '-q', '-b', 'main', fresh], { cwd: t.remote });
+  await git(['remote', 'set-url', 'origin', fresh], { cwd: t.spw.root });
+
+  const r = await syncNow(spw(), deps());
+
+  expect(r.pushed).toBe(await revParse(t.spw.root, 'HEAD'));
+  expect(await revParse(fresh, 'refs/heads/main')).toBe(r.pushed);
+});
+
 test('an empty remote branch gets HEAD pushed', async () => {
   const fresh = join(t.remote, '..', 'fresh.git');
   await git(['init', '--bare', '-q', '-b', 'main', fresh], { cwd: t.remote });
@@ -590,7 +667,7 @@ const lfs = (await git(['lfs', 'version'], { cwd: '/' }).then(
 )) as boolean;
 
 describe('with attachments.lfs', () => {
-  test.skipIf(!lfs)('a round pulls after moving and pushes LFS objects first', async () => {
+  test.skipIf(!lfs)('a round that brings lfs pulls the attachment content', async () => {
     const config = await readFile(join(t.spw.root, BACKLOG_CONFIG), 'utf8');
     await executeWrite(spw(), {
       kind: 'manual',
@@ -602,12 +679,26 @@ describe('with attachments.lfs', () => {
         },
       ],
     });
-    await pushSpw();
+    const id = await create(spw(), 'mit Anhang');
+    const bytes = 'viele Bytes\n';
+    await write(spw(), {
+      op: 'attach.add',
+      id,
+      name: 'log',
+      file: 'log.txt',
+      content: Buffer.from(bytes),
+    });
+    expect((await syncNow(spw(), deps())).pushed).toBe(await remoteHead());
 
-    expect((await syncNow(agent(), deps())).notices).toEqual([]);
-    await create(agent(), 'B');
+    // Die Config der Arbeitskopie hat lfs noch aus; erst der Stand dieser Runde schaltet es an.
     const r = await syncNow(agent(), deps());
 
-    expect(r.pushed).toBe(await remoteHead());
+    expect(r.notices).toEqual([]);
+    const path = `${attachmentsDir(id)}/log.txt`;
+    expect(await readFile(join(agentWc(), path), 'utf8')).toBe(bytes);
+    expect(await statusShort(agentWc())).toEqual([]);
+
+    await create(agent(), 'B');
+    expect((await syncNow(agent(), deps())).pushed).toBe(await remoteHead());
   });
 });
