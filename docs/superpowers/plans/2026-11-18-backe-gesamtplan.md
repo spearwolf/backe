@@ -296,6 +296,21 @@ Offene Punkte aus den Reviews von M6, die ein späterer Detailplan einlösen mus
   - `ClaimOutcome.commit` kann auf einen weggefallenen Commit zeigen, wenn ein Claim im Replay ohne Wirkung entfällt.
   - Testlücken: Push-Timeout, LFS-Fehlerpfade, Signal-Aufschub im Sync, `scheduleDeferred`-Guard, LFS-Pull-Fehler nach Clone, Pointer-Präfix-Test mit `lfs: on`, Taint über erzeugte IDs, Widerruf im Parent-Stand bei `readUnits`.
 
+## Übernommen aus M7
+
+Offene Punkte aus den Reviews von M7, die ein späterer Detailplan einlösen muss. Abgehakt wird hier, sobald der jeweilige Detailplan sie aufgenommen hat.
+
+- **M8 — Doku:**
+  - `backe.md` §2.19 »Ende« und die Planentscheidung dazu nennen nur das Ende von stdin; der Server endet auch, wenn der Transport sich selbst schließt (etwa nach einem stdout-Fehler).
+- **M8 — Aufräumen, Tests, Robustheit:**
+  - Lesende Tools planen den Hintergrund-Sync vor der Prüfung von `fields`; die CLI prüft `--fields` vorher. Harmlos (kein Write), aber uneinheitlich.
+  - `attachment_add`: kleines TOCTOU-Fenster zwischen Pfadprüfung und `readFile`; `EACCES`/`ELOOP` aus `physicalPath` enden als `unexpected` statt mit Meldung. `attachSource` dupliziert etwa 15 Zeilen von `sourceOf` der CLI — beide in einen gemeinsamen Lader in `services/attachments.ts` ziehen, samt Pfadbegrenzung.
+  - Resource `backe://issue/{id}` plant den Read-Sync selbst statt über `defineTool`; `issue show` ruft `pickFields(…, SHOW_FIELDS)` inline statt einer Ansicht `issueShowJson`.
+  - `DEFAULT_PULL_INTERVAL` in `src/mcp/sync-tools.ts` dupliziert den Schema-Default; `toolResult(undefined)` ergäbe einen Content-Block ohne `text` (kein Tool liefert `undefined`).
+  - Fehler aus `handle.close()`/`mcp.close()` nach dem Ende von stdin sind weder getestet noch dokumentiert.
+  - Testlücken und -härte: der stdout-E2E fährt keinen Pfad mit Kindprozess (Backlog ohne Remote); der E2E liest das private Feld `_process` von `StdioClientTransport` ohne Guard; der `onerror`-Test hängt am Wortlaut einer SDK-Meldung; die Gegenproben für den Zwei-Takt-Sync und das stdio-Ende scheitern nur per Timeout; die Spawn-Zählung nach einem wirkungslosen `issue_move` ist nur einen Microtask stark; der Test »sync neben der Warteschlange« zählt nur Enqueues; der `build`-Test zeigt nicht, dass zwei Instanzen unabhängig arbeiten; der Sortier-Test prüft nur das erste Issue; `issue_rank` mit `top: false` allein ist ungetestet; `as never` in `read-tools.test.ts`; überflüssiger `&&`-Guard im `nextJson`-Test.
+  - Der Konventionstest für stdout fängt `import { stdout } from 'node:process'` und `console.dir`/`console.table` nicht; `stdio.test.ts` liegt unter `src/mcp/` statt unter `test/`.
+
 ## Planentscheidungen
 
 Stellen, die der Spec offenlässt und die dieser Plan festlegt. Nach Abnahme des jeweiligen Meilensteins wandern sie als Präzisierung in `backe.md`.
