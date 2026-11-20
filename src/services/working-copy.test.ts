@@ -529,6 +529,52 @@ test('add binds an existing clone, sets identity and anchor', async () => {
   expect(entry?.paths).toEqual({ 'claude-1': await physicalPath(dir) });
 });
 
+describe('the upstream of a bound clone', () => {
+  const addSpw = (dir: string) =>
+    addBacklog({ homes: other.homes, env: other.env, name: 'acme', path: dir, handle: 'spw' });
+
+  test('add writes upstream from the remote-tracking branch, not from unpushed work', async () => {
+    await push();
+    const dir = await ownClone();
+    await rawCommit(dir, {
+      files: { 'notes.md': 'lokal\n' },
+      key: b.key,
+      actor: 'spw',
+      op: 'manual',
+    });
+
+    await addSpw(dir);
+
+    expect(await readLocalState(dir, 'upstream')).toBe(await revParse(b.root, 'HEAD'));
+    expect(await readLocalState(dir, 'verified')).toBe(await revParse(dir, 'HEAD'));
+  });
+
+  test('a tracking branch ahead of the unverified HEAD only counts up to HEAD', async () => {
+    await push();
+    const dir = await ownClone();
+    const head = await revParse(dir, 'HEAD');
+    await executeWrite(await b.context(), { kind: 'op', op: { op: 'issue.create', title: 'B' } });
+    await push();
+    await git(['fetch', '-q', 'origin'], { cwd: dir });
+
+    await addSpw(dir);
+
+    expect(await revParse(dir, 'refs/remotes/origin/main')).not.toBe(head);
+    expect(await readLocalState(dir, 'upstream')).toBe(head);
+  });
+
+  test('an upstream written before is kept', async () => {
+    await push();
+    const dir = await ownClone();
+    const anchor = (await readLocalState(b.root, 'anchor')) as string;
+    await writeLocalState(dir, 'upstream', anchor);
+
+    await addSpw(dir);
+
+    expect(await readLocalState(dir, 'upstream')).toBe(anchor);
+  });
+});
+
 test('add of a directory holding another backlog is a validation error', async () => {
   const beta = await testBacklog({ name: 'beta' });
   const err = await catchErrAsync(() =>
@@ -809,6 +855,7 @@ test('add of a clone without the sync remote registers no remote', async () => {
     handle: 'claude-1',
   });
   expect((await readUserConfig(other.homes.backeHome)).backlogs?.acme?.remote).toBeUndefined();
+  expect(await readLocalState(dir, 'upstream')).toBeUndefined();
 });
 
 test('purge and show of a backlog without managed clones', async () => {
@@ -947,6 +994,7 @@ test('addBacklog writes nothing when verify fails', async () => {
   expect(await readUserConfig(other.homes.backeHome)).toEqual({});
   expect(await readLocalState(dir, 'identity')).toBeUndefined();
   expect(await readLocalState(dir, 'anchor')).toBeUndefined();
+  expect(await readLocalState(dir, 'upstream')).toBeUndefined();
 });
 
 describe('a failing identity write takes back what add registered', () => {
@@ -967,6 +1015,7 @@ describe('a failing identity write takes back what add registered', () => {
     expect(err.message).toBe('identity kaputt');
     expect((await readUserConfig(other.homes.backeHome)).backlogs?.acme).toBeUndefined();
     expect(await readLocalState(dir, 'anchor')).toBeUndefined();
+    expect(await readLocalState(dir, 'upstream')).toBeUndefined();
   });
 
   test('an already registered backlog loses only the new binding and remote', async () => {

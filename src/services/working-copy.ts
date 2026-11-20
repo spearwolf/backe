@@ -383,8 +383,8 @@ export function identityMismatch(
 
 /**
  * `backe backlog add` (backe.md §2.14): bindet einen vorhandenen Clone an eine Identität. Der
- * Clone gehört dem Nutzer und wird nie angefasst außer um Identität, Anker und verifizierten
- * Stand in seinem lokalen Zustand.
+ * Clone gehört dem Nutzer und wird nie angefasst außer um Identität, Anker, verifizierten Stand
+ * und `upstream` in seinem lokalen Zustand.
  */
 export async function addBacklog(input: {
   homes: Homes;
@@ -426,14 +426,27 @@ export async function addBacklog(input: {
     await writeLocalState(wanted, 'anchor', known ?? (await singleRoot(wanted, wanted)));
     wroteAnchor = true;
   }
-  const undoAnchor = async () => {
+  let wroteUpstream = false;
+  const undoLocalState = async () => {
     if (wroteAnchor) await clearLocalState(wanted, 'anchor').catch(() => undefined);
+    if (wroteUpstream) await clearLocalState(wanted, 'upstream').catch(() => undefined);
   };
   let notices: string[];
   try {
     notices = await verifyClone(wanted);
+    // `upstream` ist der geprüfte Teil des Remote-Tracking-Branches: sein gemeinsamer Vorfahre mit
+    // `HEAD`. Was der Branch darüber hinaus trägt, hat das Verify nicht gesehen; ein schon
+    // vorhandenes `upstream` bleibt.
+    if ((await readLocalState(wanted, 'upstream')) === undefined) {
+      const tracking = `refs/remotes/${sync.remote}/${sync.branch}`;
+      const upstream = await mergeBase(wanted, 'HEAD', tracking);
+      if (upstream !== undefined) {
+        await writeLocalState(wanted, 'upstream', upstream);
+        wroteUpstream = true;
+      }
+    }
   } catch (error) {
-    await undoAnchor();
+    await undoLocalState();
     throw error;
   }
   const remote = (await gitRemotes(wanted)).find((r) => r.name === sync.remote)?.url;
@@ -457,7 +470,7 @@ export async function addBacklog(input: {
         current: priorConfig.current === undefined,
       }).catch(() => undefined);
     }
-    await undoAnchor();
+    await undoLocalState();
     throw error;
   }
   return { root: wanted, notices };

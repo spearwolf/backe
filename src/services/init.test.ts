@@ -74,6 +74,7 @@ test('anchor, verified and identity are recorded', async () => {
   expect(await readLocalState(b.root, 'anchor')).toBe(head);
   expect(await readLocalState(b.root, 'verified')).toBe(head);
   expect(await readLocalState(b.root, 'identity')).toBe('spw');
+  expect(await readLocalState(b.root, 'upstream')).toBeUndefined();
 });
 
 test('the backlog is registered with identity; a managed init needs no paths entry', async () => {
@@ -124,6 +125,7 @@ test('init with remote pushes the anchor to the bare remote', async () => {
   expect(await revParse(remote, 'main')).toBe(await revParse(b.root, 'HEAD'));
   const cfg = await readUserConfig(b.homes.backeHome);
   expect(cfg.backlogs?.acme?.remote).toBe(remote);
+  expect(await readLocalState(b.root, 'upstream')).toBe(await revParse(b.root, 'HEAD'));
 });
 
 test('a failed push keeps the local backlog and reports a sync error with hint', async () => {
@@ -138,6 +140,7 @@ test('a failed push keeps the local backlog and reports a sync error with hint',
   const cfg = await readUserConfig(input.homes.backeHome);
   expect(cfg.backlogs?.acme?.remote).toBe(remote);
   expect(cfg.identities?.acme?.spw?.key).toBe(input.key);
+  expect(await readLocalState(root, 'upstream')).toBeUndefined();
 });
 
 test('an rsa key is refused before anything is written', async () => {

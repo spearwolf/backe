@@ -21,7 +21,13 @@ import { encodeOp, type Operation } from '../ops/operation.ts';
 import { serializeEntityFile } from '../store/frontmatter.ts';
 import { BACKLOG_CONFIG, issueFile, QUARANTINE, userFile } from '../store/layout.ts';
 import { listIssueIds } from '../store/snapshot.ts';
-import { assertVerified, trustedVerifyMode, verifyBacklog, verifyRange } from './verify.ts';
+import {
+  assertVerified,
+  nextCommitBasis,
+  trustedVerifyMode,
+  verifyBacklog,
+  verifyRange,
+} from './verify.ts';
 import { signatureReasons } from './verify-state.ts';
 import { executeWrite } from './write.ts';
 
@@ -612,6 +618,15 @@ describe('paths changed by an open invalid commit', () => {
     expect(r.invalid[1]?.reasons).toEqual([`baut auf ungültigem Commit ${short(B)} auf`]);
   });
 
+  test('nextCommitBasis names the frozen commit and the first open invalid commit', async () => {
+    expect((await nextCommitBasis(b.root)).frozen).toBeUndefined();
+    const frozen = await revParse(b.root, 'HEAD');
+    const B = await takeOver();
+    await addKey();
+
+    expect((await nextCommitBasis(b.root)).frozen).toEqual({ at: frozen, firstOpen: B });
+  });
+
   test('a commit on untouched paths after an invalid one stays valid', async () => {
     const B = await takeOver();
     await executeWrite(ctx, { kind: 'op', op: { op: 'issue.create', title: 'C' } });
@@ -646,6 +661,38 @@ describe('paths changed by an open invalid commit', () => {
     const r = await verifyRange(b.root);
 
     expect(r.invalid).toEqual([]);
+    expect(r.quarantined.map((f) => f.sha)).toEqual([B]);
+  });
+
+  test('a quarantine commit that does not thaw stays bound by changes on tainted paths', async () => {
+    const B = await takeOver();
+    const Q = await signed('spw', {
+      [QUARANTINE]: quarantine(anchor, 'nebenbei'),
+      [userFile('claude-1')]: agentFile('mallory', [agentKey, eveKey]),
+    });
+    const entries = [{ sha: B, decision: 'reverted', reason: 'angeblich umgekehrt' }];
+    await signed('spw', { [QUARANTINE]: JSON.stringify({ entries }) });
+
+    const r = await verifyRange(b.root);
+
+    expect(r.invalid.map((f) => [f.sha, f.reasons])).toEqual([
+      [Q, [`baut auf ungültigem Commit ${short(B)} auf`]],
+    ]);
+    expect(r.quarantined.map((f) => f.sha)).toEqual([B]);
+  });
+
+  test('a quarantine commit that does not thaw may set paths back to the frozen state', async () => {
+    const B = await takeOver();
+    const C = await rawCommit(b.root, { files: { x: '1' }, actor: 'spw', op: 'manual' });
+    const entries = [{ sha: B, decision: 'reverted', reason: 'zurück' }];
+    await signed('spw', {
+      [QUARANTINE]: JSON.stringify({ entries }),
+      [userFile('claude-1')]: agentFile('spw', [agentKey]),
+    });
+
+    const r = await verifyRange(b.root);
+
+    expect(r.invalid.map((f) => f.sha)).toEqual([C]);
     expect(r.quarantined.map((f) => f.sha)).toEqual([B]);
   });
 

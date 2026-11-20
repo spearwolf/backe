@@ -156,6 +156,8 @@ export async function initBacklog(input: InitInput): Promise<{ root: string; anc
         { hint: `git -C ${root} push -u origin main` },
       );
     }
+    // Erst ein gelungener Push macht den Anker zum verifizierten Stand des Remotes.
+    if (pushFailure === undefined) await writeLocalState(root, 'upstream', anchor);
   }
 
   await registerBacklog(homes, {
