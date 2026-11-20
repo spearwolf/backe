@@ -461,6 +461,25 @@ describe('freshen', () => {
     expect(await scheduleSync(manual(agent()), 'read', deps())).toBe(false);
   });
 
+  test('the periodic tick spawns even right after the last attempt', async () => {
+    await writeSyncState(agentWc(), { last_attempt: '2026-11-20T08:00:00Z' });
+    expect(await scheduleSync(agent(), 'read', deps())).toBe(false);
+    expect(await scheduleSync(agent(), 'periodic', deps())).toBe(true);
+    expect(spawned).toHaveLength(1);
+  });
+
+  test('the periodic tick needs auto mode and a remote', async () => {
+    expect(await scheduleSync(manual(agent()), 'periodic', deps())).toBe(false);
+    const solo = await testBacklog();
+    expect(await scheduleSync(await solo.context(), 'periodic', deps())).toBe(false);
+    const none: ResolvedContext = {
+      ...agent(),
+      backlog: { ...agent().backlog, workingCopy: undefined },
+    };
+    expect(await scheduleSync(none, 'periodic', deps())).toBe(false);
+    expect(spawned).toEqual([]);
+  });
+
   test('freshen with force runs a blocking round', async () => {
     await create(agent(), 'B');
 

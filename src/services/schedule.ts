@@ -121,15 +121,23 @@ async function pullDue(wc: string, pullInterval: number, deps: SyncDeps): Promis
 }
 
 /**
+ * Anlass eines Hintergrund-Syncs: nach einem Write, vor einem Read, oder der Takt des MCP-Servers
+ * (backe.md §2.19), der selbst schon alle `pull_interval` Sekunden kommt.
+ */
+export type SyncReason = 'write' | 'read' | 'periodic';
+
+/**
  * Startet den Hintergrund-Sync (backe.md §2.16.1, §2.16.3), wenn die Arbeitskopie existiert, der
  * wirksame Modus `auto` ist und der Git-Remote `sync.remote` da ist; ein Read zusätzlich nur, wenn
- * `pull_interval` seit dem letzten Versuch verstrichen ist. Ein laufender Sync hält den Start nicht
- * auf — das Debounce im neuen Prozess fängt ihn ab. Liefert, ob gestartet wurde. Wirft nie: Ein
- * Fehler blockiert weder den Write davor noch das Lesen danach; er landet, wenn möglich, im Log.
+ * `pull_interval` seit dem letzten Versuch verstrichen ist. `periodic` prüft das nicht: Der Prozess
+ * schreibt `last_attempt` erst kurz nach seinem Start, ein Takt genau `pull_interval` später fände
+ * den Versuch sonst noch nicht alt genug. Ein laufender Sync hält den Start nicht auf — das
+ * Debounce im neuen Prozess fängt ihn ab. Liefert, ob gestartet wurde. Wirft nie: Ein Fehler
+ * blockiert weder den Write davor noch das Lesen danach; er landet, wenn möglich, im Log.
  */
 export function scheduleSync(
   ctx: ResolvedContext,
-  reason: 'write' | 'read',
+  reason: SyncReason,
   deps: SyncDeps = {},
 ): Promise<boolean> {
   return neverThrows(ctx, deps, () => startIfDue(ctx, reason, deps));
@@ -153,7 +161,7 @@ async function neverThrows(
 
 async function startIfDue(
   ctx: ResolvedContext,
-  reason: 'write' | 'read',
+  reason: SyncReason,
   deps: SyncDeps,
 ): Promise<boolean> {
   const wc = ctx.backlog.workingCopy;

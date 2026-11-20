@@ -7,9 +7,11 @@
 import { revParse, setPullInterval, twoClones } from '../../test/helpers/git.ts';
 import { connectMcp } from '../../test/helpers/mcp.ts';
 import { git } from '../git/exec.ts';
+import { isoNow } from '../services/env.ts';
 import { createIssue } from '../services/issues.ts';
 import type { SpawnFn, SyncDeps, SyncHooks } from '../services/sync.ts';
 import { syncNow } from '../services/sync.ts';
+import { writeSyncState } from '../services/sync-state.ts';
 import type { McpDeps } from './server.ts';
 import { startPeriodicSync, syncResult } from './sync-tools.ts';
 
@@ -272,18 +274,21 @@ test('close waits for the background start of the last write', async () => {
   ]);
 });
 
-test('the periodic sync ticks every pull_interval', async () => {
+/** Löst beim nächsten Prozessstart auf. */
+const nextSpawn = () =>
+  new Promise<void>((r) => {
+    onSpawn = r;
+  });
+
+test('the periodic sync starts on every tick, even right after the last attempt', async () => {
   await setPullInterval(t.spw, 30);
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
   const m = await spwMcp();
-  const first = new Promise<void>((r) => {
-    onSpawn = r;
-  });
   try {
     expect(vi.getTimerCount()).toBe(1);
+    const first = nextSpawn();
     vi.advanceTimersByTime(30_000);
     await first;
-    expect(spawned).toHaveLength(1);
     expect(spawned[0]?.argv.slice(-6)).toEqual([
       'sync',
       '--background',
@@ -292,6 +297,13 @@ test('the periodic sync ticks every pull_interval', async () => {
       '--as',
       'spw',
     ]);
+    // Der gestartete Prozess schreibt `last_attempt` kurz nach dem Tick; der nächste Tick kommt
+    // genau `pull_interval` später und startet trotzdem.
+    await writeSyncState(t.spw.root, { last_attempt: isoNow(new Date()) });
+    const second = nextSpawn();
+    vi.advanceTimersByTime(30_000);
+    await second;
+    expect(spawned).toHaveLength(2);
   } finally {
     await m.close();
   }

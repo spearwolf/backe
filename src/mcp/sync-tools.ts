@@ -59,9 +59,10 @@ async function pullInterval(ctx: ResolvedContext): Promise<number> {
 }
 
 /**
- * Der periodische Hintergrund-Sync: alle `pull_interval` Sekunden (Stand beim Start) ein
- * `scheduleSync` wie vor einem Read; `pull_interval: 0` → kein Timer, jeder lesende Aufruf prüft
- * ohnehin. Der Timer hält den Prozess nicht am Leben. Liefert die Abbau-Funktion.
+ * Der periodische Hintergrund-Sync: alle `pull_interval` Sekunden (Stand beim Start) ein Start,
+ * ohne den Abstand zum letzten Versuch zu prüfen (`periodic`); `pull_interval: 0` → kein Timer,
+ * jeder lesende Aufruf prüft ohnehin. Der Timer hält den Prozess nicht am Leben. Liefert die
+ * Abbau-Funktion.
  */
 export async function startPeriodicSync(
   ctx: ResolvedContext,
@@ -70,8 +71,8 @@ export async function startPeriodicSync(
   const seconds = await pullInterval(ctx);
   if (seconds === 0) return () => {};
   // `scheduleSync` wirft nie; ein Tick, der beim Abbau noch läuft, startet höchstens einen
-  // Hintergrund-Sync, der ohnehin fällig war.
-  const timer = setInterval(() => void scheduleSync(ctx, 'read', deps), seconds * 1000);
+  // Hintergrund-Sync, dessen Debounce über `sync.lock` einen laufenden abfängt.
+  const timer = setInterval(() => void scheduleSync(ctx, 'periodic', deps), seconds * 1000);
   timer.unref();
   return () => clearInterval(timer);
 }
