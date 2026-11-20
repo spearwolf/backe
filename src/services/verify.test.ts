@@ -72,6 +72,7 @@ test('a clean history verifies and records the verified mark', async () => {
   expect(r.notices).toEqual([]);
   expect(r).toMatchObject({ anchor, to: await revParse(b.root, 'HEAD'), checked: 3 });
   expect(await readLocalState(b.root, 'verified')).toBe(await revParse(b.root, 'HEAD'));
+  expect(await readLocalState(b.root, 'clean')).toBe(await revParse(b.root, 'HEAD'));
 });
 
 type Spec = Omit<RawCommitSpec, 'key'> & { key?: Name };
@@ -110,6 +111,7 @@ test.each<[string, Spec, (string | RegExp)[]]>([
 
   expect(r.invalid).toEqual([{ sha, subject: 'raw', reasons: reasons.map(matcher) }]);
   expect(await readLocalState(b.root, 'verified')).toBe(anchor);
+  expect(await readLocalState(b.root, 'clean')).toBe(anchor);
 });
 
 function matcher(reason: string | RegExp) {
@@ -431,6 +433,13 @@ test('record with since needs since within the verified state', async () => {
 
   await verifyRange(b.root, { since: anchor, record: true });
   expect(await readLocalState(b.root, 'verified')).toBe(second);
+  expect(await readLocalState(b.root, 'clean')).toBe(second);
+
+  // Ein Gang ab einem anderen Stand als `clean` belegt nicht, dass der Stand dort aufgetaut war.
+  const third = await signed('spw', { x: '3' });
+  await verifyRange(b.root, { since: first, record: true });
+  expect(await readLocalState(b.root, 'verified')).toBe(third);
+  expect(await readLocalState(b.root, 'clean')).toBe(second);
 });
 
 test('a missing Backe-Op is a notice, not a violation', async () => {

@@ -809,6 +809,48 @@ describe('another identity', () => {
     );
   });
 
+  test('a clone in warn mode that inherits a frozen base still refuses tainted paths', async () => {
+    const config = await readFile(join(b.root, '.backe/backlog.jsonc'), 'utf8');
+    await executeWrite(ctx, {
+      kind: 'manual',
+      subject: 'verify: warn',
+      changes: [
+        {
+          path: '.backe/backlog.jsonc',
+          content: config.replace(/\n}\n$/, ',\n  "verify": "warn"\n}\n'),
+        },
+      ],
+    });
+    const asClaude = await addClaude(b);
+    const id = await createdId();
+    const content = await readFile(join(b.root, issueFile(id)), 'utf8');
+    const bad = await rawCommit(b.root, {
+      files: { [issueFile(id)]: content.replace('title: A', 'title: X') },
+      actor: 'spw',
+      op: 'manual',
+    });
+    // Die vertraute Arbeitskopie kennt einen Remote-Stand nach dem ungültigen Commit; der Clone
+    // übernimmt ihn als `verified`, obwohl der Stand dort eingefroren ist.
+    await writeLocalState(b.root, 'upstream', bad);
+    const first = await executeWrite(asClaude, CREATE_B);
+    expect(first.verifyNotices).toEqual([`${bad.slice(0, 7)}: unsigniert`]);
+    const wc = managedClonePath(b.homes, 'acme', 'claude-1');
+    expect(await readLocalState(wc, 'verified')).toBe(bad);
+    const before = await revParse(wc, 'HEAD');
+
+    const err = await catchErrAsync(() =>
+      executeWrite(asClaude, {
+        kind: 'op',
+        op: { op: 'issue.edit', id, set: { title: { from: 'X', to: 'Y' } } },
+      }),
+    );
+    expect(err).toMatchObject({
+      code: 'validation',
+      message: `verify würde den Commit ablehnen: baut auf ungültigem Commit ${bad.slice(0, 7)} auf`,
+    });
+    expect(await revParse(wc, 'HEAD')).toBe(before);
+  });
+
   test('a backlog without remote clones the new identity from the existing working copy', async () => {
     const asClaude = await addClaude(b);
     const before = await revParse(b.root, 'HEAD');

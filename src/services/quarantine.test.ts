@@ -12,6 +12,7 @@ import {
   testKey,
 } from '../../test/helpers/git.ts';
 import { git } from '../git/exec.ts';
+import { readLocalState } from '../git/local-state.ts';
 import { BACKLOG_CONFIG, QUARANTINE } from '../store/layout.ts';
 import { quarantineCommit } from './quarantine.ts';
 import { nextCommitBasis, verifyRange, writeCommitBasis } from './verify.ts';
@@ -87,12 +88,13 @@ test('a revert while another invalid commit stays open may restore content of a 
   expect(await readFile(join(b.root, file), 'utf8')).toBe(content);
 });
 
-test('the write basis walked from verified matches the full walk', async () => {
+test('the write basis walked from the last clean state matches the full walk', async () => {
   const ctx = await b.context();
   const quarantined = await badCommit();
   await quarantineCommit(ctx, { sha: quarantined, decision: 'accepted', reason: 'harmlos' });
   const verified = await revParse(b.root, 'HEAD');
   expect((await verifyRange(b.root, { record: true })).invalid).toEqual([]);
+  expect(await readLocalState(b.root, 'clean')).toBe(verified);
   const open = await rawCommit(b.root, { files: { 'notes/x.txt': '1\n' }, actor: 'spw' });
 
   const full = await nextCommitBasis(b.root);

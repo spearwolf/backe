@@ -5,9 +5,11 @@ import { git } from './exec.ts';
 
 /**
  * `upstream` ist der zuletzt verifizierte Stand des Remotes; anders als `verified` zeigt er nie auf
- * einen ungepushten lokalen Commit.
+ * einen ungepushten lokalen Commit. `clean` ist der letzte Stand, den `verify` selbst ohne
+ * ungültigen Commit aufgezeichnet hat (oder der Init-Commit); anders als `verified`, das ein Clone
+ * mit seiner Abstammungsbasis vorbelegt, ist der Stand dort nie eingefroren.
  */
-export type LocalStateName = 'anchor' | 'verified' | 'identity' | 'upstream';
+export type LocalStateName = 'anchor' | 'verified' | 'clean' | 'identity' | 'upstream';
 
 /** Zustandsverzeichnis unter dem Git-Dir (auch hinter einer `.git`-Datei); wird bei Bedarf angelegt. */
 export async function stateDir(wc: string): Promise<string> {

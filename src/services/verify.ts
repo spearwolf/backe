@@ -471,17 +471,23 @@ export async function nextCommitBasis(wc: string): Promise<{
  * Grundlage für den Schreibpfad: Stand und eingefrorener Stand wie bei `nextCommitBasis`, ohne
  * Quarantäne-Text. Die Bereichsprüfung gegen `verified` gehört zu `verify`, nicht zum Schreiben:
  * Liegt HEAD nach einem lokalen Reset unter `verified`, wird trotzdem geschrieben; nur ein
- * fehlender Anker bleibt ein Fehler. Ist `verified` ein Vorfahre von HEAD, beginnt der Gang dort:
- * `verified` wird nur aufgezeichnet, wenn kein ungültiger Commit ungedeckt ist, und dann hat die
- * maßgebliche Quarantäne den Stand aufgetaut — eingefroren ist er dort nie.
+ * fehlender Anker bleibt ein Fehler.
+ *
+ * Ist `clean` ein Vorfahre von HEAD, beginnt der Gang dort, sonst beim Anker. `clean` schreiben nur
+ * `initBacklog` (der Init-Commit) und `verifyRange` beim Aufzeichnen ohne ungültigen Commit, nach
+ * einem Gang vom Anker oder von `clean` aus. Ohne ungedeckten ungültigen Commit hat die
+ * maßgebliche Quarantäne alle offenen gedeckt und den Stand aufgetaut — eingefroren ist er bei
+ * `clean` also nie, und ein Gang ab dort findet dieselben offenen Commits wie der volle. `verified`
+ * taugt dafür nicht: Ein Clone belegt es ungeprüft mit seiner Abstammungsbasis vor, und im Modus
+ * `warn`/`off` bleibt diese stehen, auch wenn der Stand dort eingefroren ist.
  */
 export async function writeCommitBasis(
   wc: string,
 ): Promise<{ state: State; frozen?: FrozenBasis }> {
-  const verified = await readLocalState(wc, 'verified');
+  const clean = await readLocalState(wc, 'clean');
   const since =
-    verified !== undefined && (await isAncestor(wc, verified, 'HEAD').catch(() => false))
-      ? verified
+    clean !== undefined && (await isAncestor(wc, clean, 'HEAD').catch(() => false))
+      ? clean
       : undefined;
   const w = await walk(wc, since === undefined ? {} : { since }, false);
   return { state: w.next, ...frozenOf(w) };
@@ -505,7 +511,14 @@ export async function verifyRange(wc: string, opts: VerifyOptions = {}): Promise
     if (entry === undefined) report.invalid.push(finding);
     else report.quarantined.push({ ...finding, decision: entry.decision, note: entry.reason });
   }
-  if (opts.record && report.invalid.length === 0) await writeLocalState(wc, 'verified', to);
+  if (opts.record && report.invalid.length === 0) {
+    await writeLocalState(wc, 'verified', to);
+    // Nur ein Gang, der selbst auf nicht eingefrorenem Grund beginnt, belegt, dass `to` es auch ist.
+    const since = opts.since === undefined ? undefined : await resolveCommit(wc, opts.since);
+    if (since === undefined || since === (await readLocalState(wc, 'clean'))) {
+      await writeLocalState(wc, 'clean', to);
+    }
+  }
   return report;
 }
 

@@ -140,6 +140,7 @@ export async function initBacklog(input: InitInput): Promise<{ root: string; anc
     });
     await writeLocalState(root, 'anchor', commit);
     await writeLocalState(root, 'verified', commit);
+    await writeLocalState(root, 'clean', commit);
     await writeLocalState(root, 'identity', handle);
     return commit;
   }

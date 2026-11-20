@@ -68,11 +68,12 @@ test('init commits a .gitignore for editor and system junk files', async () => {
   expect((await git(['status', '--porcelain'], { cwd: b.root })).stdout).toBe('');
 });
 
-test('anchor, verified and identity are recorded', async () => {
+test('anchor, verified, clean and identity are recorded', async () => {
   const b = await testBacklog();
   const head = await revParse(b.root, 'HEAD');
   expect(await readLocalState(b.root, 'anchor')).toBe(head);
   expect(await readLocalState(b.root, 'verified')).toBe(head);
+  expect(await readLocalState(b.root, 'clean')).toBe(head);
   expect(await readLocalState(b.root, 'identity')).toBe('spw');
   expect(await readLocalState(b.root, 'upstream')).toBeUndefined();
 });
