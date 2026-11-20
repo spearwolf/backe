@@ -2,20 +2,17 @@
  * `backe sync [--background] [--interactive]`, `sync status` und `sync resolve [<id>]
  * [--drop | --apply]` (backe.md §2.16.2, §2.16.4).
  */
-import { rm } from 'node:fs/promises';
-import { extname } from 'node:path';
 import type { Command } from 'commander';
 import { requireWriter } from '../../context/resolve.ts';
 import { BackeError } from '../../core/errors.ts';
 import { summarizeBatch, summarizeOp } from '../../ops/operation.ts';
 import { runBackground, type SyncStatus, syncStatus } from '../../services/background.ts';
-import type { ManualConflictPath, ManualResolver } from '../../services/replay.ts';
 import { resolveConflict } from '../../services/resolve.ts';
 import { type SyncOutcome, syncNow } from '../../services/sync.ts';
 import { type ConflictEntry, listConflicts } from '../../services/sync-state.ts';
-import { editorCommand, editText } from '../editor.ts';
 import { action, type CommandEnv, emit, type Runtime, subcommand } from '../options.ts';
 import { json, lines, renderError, renderHints, safeText } from '../output.ts';
+import { interactiveResolver } from '../prompt.ts';
 
 const short = (sha: string) => sha.slice(0, 7);
 
@@ -58,72 +55,6 @@ const syncJson = (out: SyncOutcome) => ({
   skipped: out.skipped,
   notices: out.notices.length === 0 ? undefined : out.notices,
 });
-
-/** Eine Zeile, die mit einem Konfliktmarker beginnt. */
-const MARKER = /^(<<<<<<< |=======|>>>>>>> )/m;
-
-/**
- * `e` bei einem Textkonflikt: je Konfliktpfad mit Markern der Text in den Editor; der Inhalt danach
- * darf keine Marker mehr tragen. Pfade ohne Text mit Markern (Binär, Löschen gegen Ändern) bleiben
- * wie im Remote. Ein Rest von Markern heißt: noch einmal fragen (`undefined`).
- */
-async function editConflicts(
-  env: CommandEnv,
-  sha: string,
-  paths: readonly ManualConflictPath[],
-): Promise<Map<string, Buffer> | undefined> {
-  const files = new Map<string, Buffer>();
-  for (const c of paths) {
-    if (c.merged === undefined) {
-      env.io.stderr(
-        renderHints([`${c.path} lässt sich nicht im Editor lösen; bleibt wie im Remote`]),
-      );
-      continue;
-    }
-    const ext = extname(c.path).slice(1) || 'txt';
-    const edited = await editText(env.io, `sync-${short(sha)}`, c.merged.toString('utf8'), ext);
-    await rm(edited.file, { force: true });
-    if (MARKER.test(edited.text)) {
-      env.io.stderr(renderHints([`${c.path} hat noch Konfliktmarker`]));
-      return undefined;
-    }
-    files.set(c.path, Buffer.from(edited.text, 'utf8'));
-  }
-  return files;
-}
-
-/**
- * Der Resolver von `sync --interactive` (backe.md §2.16.2): je `manual`-Textkonflikt
- * `[e]ditieren, [l]okal nehmen, [r]emote behalten, [a]bbrechen`, bis eine gültige Antwort kommt.
- */
-function interactiveResolver(env: CommandEnv): ManualResolver {
-  return async ({ sha, subject, paths }) => {
-    env.io.stderr(
-      lines([
-        safeText(
-          `Textkonflikt in manual-Commit ${short(sha)} (${subject}): ${paths.map((p) => p.path).join(', ')}`,
-        ),
-      ]),
-    );
-    for (;;) {
-      const answer = (
-        await env.io.ask('[e]ditieren, [l]okal nehmen, [r]emote behalten, [a]bbrechen? ')
-      )
-        .trim()
-        .toLowerCase();
-      if (answer === 'l') return { kind: 'local' };
-      if (answer === 'r') return { kind: 'remote' };
-      if (answer === 'a') return { kind: 'abort' };
-      if (answer !== 'e') continue;
-      if (editorCommand(env.io) === undefined) {
-        env.io.stderr(renderHints(['Kein Editor verfügbar (BACKE_EDITOR, VISUAL oder EDITOR)']));
-        continue;
-      }
-      const files = await editConflicts(env, sha, paths);
-      if (files !== undefined) return { kind: 'edit', files };
-    }
-  };
-}
 
 type SyncOpts = { background?: boolean; interactive?: boolean };
 
@@ -211,7 +142,7 @@ export function syncCommands(program: Command, rt: Runtime): void {
           const ctx = await env.context();
           const out = await syncNow(
             ctx,
-            opts.interactive === true ? { resolveManual: interactiveResolver(env) } : {},
+            opts.interactive === true ? { resolveManual: interactiveResolver(env.io) } : {},
           );
           if (env.format === 'json') {
             env.out(json(syncJson(out)));

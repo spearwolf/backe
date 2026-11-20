@@ -137,7 +137,7 @@ async function claimWith(
     return await claimHeld(ctx, setup, claim, deps);
   } finally {
     // Ein Hintergrund-Lauf, der währenddessen nur `sync.dirty` setzen konnte, startet jetzt.
-    await scheduleDeferred(ctx, await syncFile(setup.wc, 'sync.dirty'), deps);
+    await scheduleDeferred(ctx, setup.wc, deps);
   }
 }
 

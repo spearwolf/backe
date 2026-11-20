@@ -2,7 +2,7 @@
  * Anhänge eines Issues (backe.md §2.8): als Datei, URL oder JSON hinzufügen, auflisten, holen und
  * entfernen. Den Inhalt liest die CLI und reicht ihn hinein; der Service prüft nur Dateinamen.
  */
-import { stat } from 'node:fs/promises';
+import { open, stat } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
@@ -10,7 +10,7 @@ import { ATTACHMENT_NAME_RE } from '../core/names.ts';
 import { attachmentsDir } from '../store/layout.ts';
 import { type WriteOutcome, writeOp } from './outcome.ts';
 import { openSnapshot, resolveIssueRef } from './read.ts';
-import type { WriteDeps } from './write.ts';
+import { headConfig, type WriteDeps } from './write.ts';
 
 /** `fileName` ist der Basename der Quelle. */
 export type AttachSource =
@@ -105,6 +105,20 @@ export async function listAttachments(
   );
 }
 
+const LFS_POINTER = Buffer.from('version https://git-lfs.github.com/spec/v1');
+
+/** Beginnt die Datei mit der Kopfzeile eines git-lfs-Pointers? */
+async function isLfsPointer(path: string): Promise<boolean> {
+  const handle = await open(path, 'r');
+  try {
+    const head = Buffer.alloc(LFS_POINTER.length);
+    const { bytesRead } = await handle.read(head, 0, head.length, 0);
+    return bytesRead === head.length && head.equals(LFS_POINTER);
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function getAttachment(
   ctx: ResolvedContext,
   ref: string,
@@ -123,6 +137,12 @@ export async function getAttachment(
   const size = await sizeOf(path);
   if (size === undefined) {
     throw new BackeError('not_found', `${path} existiert nicht`);
+  }
+  // Ein Clone ohne `git lfs pull` hat statt der Bytes den Pointer im Arbeitsbaum.
+  if ((await headConfig(root))?.attachments.lfs === true && (await isLfsPointer(path))) {
+    throw new BackeError('sync', `Anhang »${name}« ist nicht geladen (LFS)`, {
+      hint: `git -C ${root} lfs pull`,
+    });
   }
   return { name, file: entry.file, path, size };
 }

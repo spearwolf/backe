@@ -19,7 +19,7 @@ import { parseEntityFile } from '../store/frontmatter.ts';
 import { BACKLOG_CONFIG, userFile } from '../store/layout.ts';
 import { authorOf, isoNow } from './env.ts';
 import { firstStderrLine } from './init.ts';
-import { lfsAvailable, requireLfs, setUpLfs } from './lfs.ts';
+import { lfsPull, requireLfs } from './lfs.ts';
 import { type ManualResolver, readUnits, replayOnto } from './replay.ts';
 import { type SpawnFn, scheduleDeferred, syncRemote } from './schedule.ts';
 import { raiseSignal, withDeferredSignals } from './signals.ts';
@@ -307,22 +307,11 @@ export async function underWriteLock<T>(
 }
 
 /**
- * Mit `attachments.lfs` nach einer Baumänderung (wenn git-lfs da ist): `git lfs fetch` ohne Lock,
- * dann `git lfs checkout` unter dem Write-Lock — der Arbeitsbaum ändert sich nur dort. Scheitern
- * ist ein Hinweis, kein Fehler.
+ * Mit `attachments.lfs` nach einer Baumänderung: `git lfs pull`; der Checkout läuft unter dem
+ * Write-Lock, weil sich der Arbeitsbaum nur dort ändert.
  */
-async function lfsPull(r: Round, remote: string): Promise<string[]> {
-  const { wc, ctx } = r;
-  if (!(await lfsAvailable(wc))) return [];
-  try {
-    await setUpLfs(wc);
-    await git(['lfs', 'fetch', remote, 'HEAD'], { cwd: wc, env: transportEnv(ctx.env) });
-    await underWriteLock(wc, () => git(['lfs', 'checkout'], { cwd: wc }), r.deps.lock);
-    return [];
-  } catch (err) {
-    return [`git lfs pull fehlgeschlagen: ${firstStderrLine(err)}`];
-  }
-}
+const lfsPullRound = (r: Round, remote: string): Promise<string[]> =>
+  lfsPull(r.wc, remote, r.ctx.env, (fn) => underWriteLock(r.wc, fn, r.deps.lock));
 
 /** Mit `attachments.lfs` vor jedem Push: `git lfs push`; ohne git-lfs wie beim Write. */
 async function lfsPush(wc: string, env: Env, remote: string, sha: string): Promise<void> {
@@ -395,7 +384,7 @@ async function runRounds(r: Round, remote: string, branch: string, claimSha?: st
     out.notices.push(...local.notices);
     if (local.claimLost !== undefined) out.claimLost = local.claimLost;
     const lfs = (await headConfig(wc))?.attachments.lfs ?? false;
-    if (local.moved && lfs) out.notices.push(...(await lfsPull(r, remote)));
+    if (local.moved && lfs) out.notices.push(...(await lfsPullRound(r, remote)));
     let rejected = false;
     if (local.push !== undefined) {
       await deps.hooks?.beforePush?.(round, local.push);
@@ -503,7 +492,7 @@ export async function syncNow(
       deps.lock,
     );
   } finally {
-    await scheduleDeferred(ctx, await syncFile(p.wc, 'sync.dirty'), deps);
+    await scheduleDeferred(ctx, p.wc, deps);
   }
 }
 

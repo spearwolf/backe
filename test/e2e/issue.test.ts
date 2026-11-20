@@ -150,7 +150,11 @@ async function setup(): Promise<Setup> {
     [b.env.BACKE_HOME as string]: '<backe>',
     [cwd]: '<cwd>',
   };
-  return { b, ctx, env: { ...b.env, BACKE_USER: 'spw', NO_COLOR: '1' }, cwd, names, id, deps };
+  const env = { ...b.env, BACKE_USER: 'spw', NO_COLOR: '1' };
+  // Kein Read und kein Write dieser Tests soll einen Hintergrund-Sync starten.
+  const manual = await cli(['config', 'set', 'backlogs.acme.sync.mode', 'manual'], { env, cwd });
+  expect(manual.code).toBe(0);
+  return { b, ctx, env, cwd, names, id, deps };
 }
 
 const run = (s: Setup, args: string[], extra: { env?: Env; input?: string } = {}) =>

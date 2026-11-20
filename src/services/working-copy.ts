@@ -42,6 +42,7 @@ import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG, userFile } from '../store/layout.ts';
 import { ensureHub, hubPath } from './hub.ts';
 import { firstStderrLine } from './init.ts';
+import { lfsPull } from './lfs.ts';
 import { assertVerified, trustedVerifyMode, type VerifyReport, verifyRange } from './verify.ts';
 import { parseJsoncAs } from './verify-state.ts';
 
@@ -55,6 +56,7 @@ const CloneConfigSchema = z.object({
   version: BacklogConfigSchema.shape.version,
   sync: BacklogConfigSchema.shape.sync,
   verify: BacklogConfigSchema.shape.verify,
+  attachments: BacklogConfigSchema.shape.attachments,
 });
 type CloneConfig = z.infer<typeof CloneConfigSchema>;
 
@@ -217,7 +219,7 @@ async function cloneInto(input: {
     reference,
     temp,
   );
-  const { sync, version } = await readCloneConfig(temp, source);
+  const { sync, version, attachments } = await readCloneConfig(temp, source);
   if ((await headState(temp)).branch !== sync.branch) {
     await git(['switch', '-q', sync.branch], { cwd: temp });
   }
@@ -239,6 +241,10 @@ async function cloneInto(input: {
   }
   await writeLocalState(temp, 'identity', handle);
   const notices = await verifyClone(temp);
+  // Ein Clone hat bei `attachments.lfs` zunächst nur Pointer statt der Anhänge.
+  if (attachments.lfs) {
+    notices.push(...(await lfsPull(temp, input.origin ?? 'origin', env)));
+  }
   if (input.fromRemote) await writeLocalState(temp, 'upstream', await resolveCommit(temp, 'HEAD'));
   if (version > BACKLOG_FORMAT_VERSION) {
     notices.unshift(

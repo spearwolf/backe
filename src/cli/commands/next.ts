@@ -20,6 +20,7 @@ type Opts = {
   level?: string;
   all?: boolean;
   claim?: boolean;
+  sync?: boolean;
 };
 
 function levelArg(value: string | undefined): NextQuery['level'] {
@@ -41,6 +42,11 @@ export function nextCommand(program: Command, rt: Runtime): void {
       action(
         rt,
         async (env, opts: Opts) => {
+          if (opts.claim === true && opts.sync === true) {
+            throw new BackeError('usage', '--sync passt nicht zu --claim', {
+              hint: 'der Claim synchronisiert selbst',
+            });
+          }
           const level = levelArg(opts.level);
           const q: NextQuery = {
             ...(level === undefined ? {} : { level }),

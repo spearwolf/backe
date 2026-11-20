@@ -4,6 +4,7 @@ import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { testBacklog } from '../../test/helpers/git.ts';
 import type { Env } from '../context/paths.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
+import { writeSyncState } from '../services/sync-state.ts';
 import type { CliIo } from './io.ts';
 import {
   action,
@@ -20,19 +21,24 @@ import {
 } from './options.ts';
 import { buildProgram } from './run.ts';
 
-function fakeIo(env: Env, cwd: string, argv: string[] = []): CliIo {
+function fakeIo(
+  env: Env,
+  cwd: string,
+  argv: string[] = [],
+  stderr: (s: string) => void = () => {},
+): CliIo {
   return {
     argv,
     env,
     cwd,
     stdout: () => {},
     stdoutBytes: () => {},
-    stderr: () => {},
+    stderr,
     readStdin: async () => '',
     isTTY: false,
     stdinIsTTY: false,
     runEditor: async () => 0,
-    ask: async () => '',
+    prompt: async () => '',
   };
 }
 
@@ -128,4 +134,40 @@ test('a body from stdin must not be empty', async () => {
       "Leeren mit -d ''",
     ]);
   }
+});
+
+/** Ein Befehl, dessen Standardkontext scheitert und der danach mit eigenen Flags den echten auflöst. */
+async function statusLineOf(args: string[]): Promise<string> {
+  const b = await testBacklog();
+  await writeSyncState(b.root, {
+    last_attempt: '2026-01-01T00:00:00.000Z',
+    last_error: { code: 'sync', message: 'kaputt', at: '2026-01-01T00:00:00.000Z' },
+  });
+  const err: string[] = [];
+  const io = fakeIo({ ...b.env, BACKE_USER: 'spw' }, await tempDir(), [], (s) => err.push(s));
+  const program = addGlobalOptions(new Command('t').exitOverride().enablePositionalOptions());
+  subcommand(program, 'x', 'Test').action(
+    action(
+      runtime(io),
+      async (env: CommandEnv) => {
+        // Der erste Kontext scheitert (unbekannter Backlog); der Befehl fällt auf einen anderen zurück.
+        await env.context({ backlog: 'nope' }).catch(() => undefined);
+        await env.context({ backlog: 'acme' });
+      },
+      { formats: ['text', 'json', 'md'] },
+    ),
+  );
+  await program.parseAsync(['x', ...args], { from: 'user' });
+  return err.join('');
+}
+
+test('a rejected default context does not hide the status line of the context the command used', async () => {
+  expect(await statusLineOf([])).toBe(
+    'Sync: letzter Sync fehlgeschlagen: kaputt\nHinweis: backe sync status\n',
+  );
+});
+
+test('the status line is printed for text only, not for md or json', async () => {
+  expect(await statusLineOf(['--format', 'md'])).toBe('');
+  expect(await statusLineOf(['--format', 'json'])).toBe('');
 });

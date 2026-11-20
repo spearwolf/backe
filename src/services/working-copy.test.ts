@@ -22,7 +22,8 @@ import { readUserConfig, userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
 import { git } from '../git/exec.ts';
 import { clearLocalState, readLocalState, writeLocalState } from '../git/local-state.ts';
-import { BACKLOG_CONFIG } from '../store/layout.ts';
+import { attachmentsDir, BACKLOG_CONFIG } from '../store/layout.ts';
+import { createIssue } from './issues.ts';
 import { verifyRange } from './verify.ts';
 import {
   addBacklog,
@@ -1059,3 +1060,43 @@ describe('a failing identity write takes back what add registered', () => {
     expect(entry?.paths ?? {}).toEqual({});
   });
 });
+
+const lfsInstalled = await git(['lfs', 'version'], { cwd: '/' }).then(
+  () => true,
+  () => false,
+);
+
+test.skipIf(!lfsInstalled)(
+  'a clone with attachments.lfs pulls the attachment content',
+  async () => {
+    const ctx = await b.context();
+    const config = await readFile(join(b.root, BACKLOG_CONFIG), 'utf8');
+    await executeWrite(ctx, {
+      kind: 'manual',
+      subject: 'lfs an',
+      changes: [
+        {
+          path: BACKLOG_CONFIG,
+          content: config.replace(/\n}\n$/, ',\n  "attachments": { "lfs": true }\n}\n'),
+        },
+      ],
+    });
+    const id = (await createIssue(ctx, { title: 'Mit Anhang' })).id as string;
+    await executeWrite(ctx, {
+      kind: 'op',
+      op: { op: 'attach.add', id, name: 'log', file: 'log.txt', content: Buffer.from('Bytes\n') },
+    });
+    await git(['lfs', 'push', 'origin', 'main'], { cwd: b.root });
+    await push();
+
+    const r = await cloneBacklog({
+      homes: other.homes,
+      env: other.env,
+      url: b.remote as string,
+      handle: 'spw',
+    });
+
+    expect(r.notices).toEqual([]);
+    expect(await readFile(join(r.root, attachmentsDir(id), 'log.txt'), 'utf8')).toBe('Bytes\n');
+  },
+);

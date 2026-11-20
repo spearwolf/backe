@@ -177,16 +177,17 @@ async function startIfDue(
  * Nachlauf eines Vordergrund-Syncs, nachdem er `sync.lock` freigegeben hat: Hat ein
  * Hintergrund-Lauf in der Zwischenzeit nur `sync.dirty` gesetzt (der Lock war ja gehalten), wartet
  * dessen Anlass sonst bis zum nächsten Write oder Read. Dann startet der Hintergrund-Sync wie nach
- * einem Write. `dirty` ist der Pfad von `sync.dirty` der Arbeitskopie. Wirft nie.
+ * einem Write. `wc` ist die Arbeitskopie; der Pfad von `sync.dirty` wird innerhalb des Schutzes
+ * aufgelöst, damit auch ein Fehler dabei den Aufrufer (ein `finally`) nie erreicht. Wirft nie.
  */
 export function scheduleDeferred(
   ctx: ResolvedContext,
-  dirty: string,
+  wc: string,
   deps: SyncDeps = {},
 ): Promise<boolean> {
   return neverThrows(
     ctx,
     deps,
-    async () => (await exists(dirty)) && startIfDue(ctx, 'write', deps),
+    async () => (await exists(await syncFile(wc, 'sync.dirty'))) && startIfDue(ctx, 'write', deps),
   );
 }

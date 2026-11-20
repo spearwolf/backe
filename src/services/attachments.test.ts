@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { access, readFile } from 'node:fs/promises';
+import { access, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
@@ -153,4 +153,52 @@ test('a duplicate name is a conflict', async () => {
   ).toMatchObject({
     code: 'conflict',
   });
+});
+
+const lfsInstalled = await (async () => {
+  try {
+    execFileSync('git', ['lfs', 'version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+const POINTER =
+  'version https://git-lfs.github.com/spec/v1\noid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\nsize 12\n';
+
+async function setLfs(lfs: boolean): Promise<void> {
+  const cfgPath = join(b.root, '.backe/backlog.jsonc');
+  const cfg = JSON.parse(await readFile(cfgPath, 'utf8')) as Record<string, unknown>;
+  cfg.attachments = { max_bytes: 1024, lfs };
+  await executeWrite(ctx, {
+    kind: 'manual',
+    subject: 'cfg',
+    changes: [{ path: '.backe/backlog.jsonc', content: JSON.stringify(cfg) }],
+  });
+}
+
+test.skipIf(!lfsInstalled)('attach get on an lfs pointer asks for lfs pull', async () => {
+  await setLfs(true);
+  await addAttachment(ctx, id, { name: 'log', source: file('log.txt', bytes('viele Bytes\n')) });
+  // Ein Clone ohne `git lfs pull` hat statt der Bytes den Pointer im Arbeitsbaum.
+  const path = ((await getAttachment(ctx, id, 'log')) as { path: string }).path;
+  await writeFile(path, POINTER);
+  const err = await catchErrAsync(() => getAttachment(ctx, id, 'log'));
+  expect(err).toMatchObject({
+    code: 'sync',
+    message: 'Anhang »log« ist nicht geladen (LFS)',
+    hint: `git -C ${b.root} lfs pull`,
+  });
+});
+
+test('an lfs pointer is plain content while attachments.lfs is off', async () => {
+  await addAttachment(ctx, id, { name: 'log', source: file('log.txt', bytes(POINTER)) });
+  expect(await getAttachment(ctx, id, 'log')).toMatchObject({ name: 'log', file: 'log.txt' });
+});
+
+test('an lfs pointer that is not the whole file start is no pointer', async () => {
+  await setLfs(false);
+  await addAttachment(ctx, id, { name: 'log', source: file('log.txt', bytes(`x${POINTER}`)) });
+  expect(await getAttachment(ctx, id, 'log')).toMatchObject({ name: 'log' });
 });

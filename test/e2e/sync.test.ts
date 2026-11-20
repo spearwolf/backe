@@ -347,3 +347,10 @@ test('sync without remote prints kein Remote', async () => {
   expect(interactive.code).toBe(2);
   expect(interactive.stderr).toMatch(/^Fehler: --interactive braucht ein Terminal/);
 });
+
+test('next --claim --sync is a usage error, the claim syncs by itself', async () => {
+  const s = await setup();
+  const r = await run(s, ['next', '--claim', '--sync']);
+  expect(r.code).toBe(2);
+  expect(r.stderr).toMatch(/^Fehler: --sync passt nicht zu --claim/);
+});

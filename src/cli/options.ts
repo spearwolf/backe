@@ -269,7 +269,14 @@ async function commandEnv(
         ctx = resolveContext({ cwd: io.cwd, env: io.env, flags: all });
         resolved.set(key, ctx);
       }
-      trace.ctx ??= ctx;
+      // Nur ein aufgelöster Kontext zählt für Kopfzeile und Hintergrund-Start; ein gescheiterter
+      // Standardkontext würde sie sonst für den Kontext sperren, den der Befehl danach nutzt.
+      ctx.then(
+        (resolvedCtx) => {
+          trace.ctx ??= Promise.resolve(resolvedCtx);
+        },
+        () => {},
+      );
       return ctx;
     },
     handle: () => {
@@ -356,7 +363,7 @@ export function action<A extends unknown[]>(
     if (reads) await beforeRead(env, trace, opts.sync === true);
     await fn(env, ...(args.slice(0, -1) as A));
     if (spec.write === true) await afterWrite(trace);
-    if (env.format !== 'json' && (spec.statusLine?.(opts) ?? true)) {
+    if (env.format === 'text' && (spec.statusLine?.(opts) ?? true)) {
       await emitStatusLine(env, trace);
     }
   };
