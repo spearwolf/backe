@@ -23,7 +23,7 @@ import { attachmentsDir } from '../store/layout.ts';
 import { listCommentsFrom, loadSnapshotFrom } from '../store/snapshot.ts';
 import { authorOf } from './env.ts';
 import { type ManualResolver, type ReplayResult, readUnits, replayOnto } from './replay.ts';
-import { listConflicts } from './sync-state.ts';
+import { listConflicts, writeConflicts } from './sync-state.ts';
 import { executeWrite, type WriteDeps, type WriteInput } from './write.ts';
 
 let t: Awaited<ReturnType<typeof twoClones>>;
@@ -263,10 +263,6 @@ test('attach.add takes its content from the original commit', async () => {
   const r = await replay({ randomBytes: seqBytes(100) });
   expect([r.replayed, r.conflicts]).toEqual([2, []]);
   const fresh = r.notices[0]?.ids[1] as string;
-  const { stdout } = await git(['cat-file', 'blob', `${r.head}:${attachmentsDir(fresh)}/log.bin`], {
-    cwd: wc,
-  });
-  expect(Buffer.from(stdout, 'latin1').length).toBe(bytes.length);
   const blob = await git(['rev-parse', `${r.head}:${attachmentsDir(fresh)}/log.bin`], { cwd: wc });
   const original = await git(['rev-parse', `HEAD:${attachmentsDir(mine)}/log.bin`], { cwd: wc });
   expect(blob.stdout).toBe(original.stdout);
@@ -382,11 +378,12 @@ test('a resolver choosing local, remote and edit is honoured', async () => {
   expect(a?.theirs?.toString()).toBe(LINES.replace('eins', 'Eins'));
   expect(a?.merged?.toString()).toMatch(/^<<<<<<< remote\n/m);
   expect(a?.merged?.toString()).toMatch(/^>>>>>>> lokal\n/m);
-  // A und C werden Commits, B nur mit seinem konfliktfreien Pfad, D gar nicht.
-  expect(r.replayed).toBe(3);
+  // A und C werden Commits; B und D fallen ganz weg, auch B mit seinem konfliktfreien Pfad.
+  expect(r.replayed).toBe(2);
   expect(await showFile(r.head, 'a.md')).toBe(LINES.replace('eins', 'Eins'));
   expect(await showFile(r.head, 'b.md')).toBe(LINES.replace('eins', 'EINS'));
-  expect(await showFile(r.head, 'b2.md')).toBe('mit\n');
+  const b2 = await git(['ls-tree', '--name-only', r.head, '--', 'b2.md'], { cwd: wc });
+  expect(b2.stdout).toBe('');
   expect(await showFile(r.head, 'c.md')).toBe('ed\n');
 
   const err = await catchErrAsync(() => replay({ resolveManual: async () => ({ kind: 'abort' }) }));
@@ -429,6 +426,17 @@ test('a lost claim unit is reported as claimLost, not shelved', async () => {
   expect(r.claimLost?.error).toBeInstanceOf(BackeError);
   expect(r.claimLost?.error.code).toBe('conflict');
   expect((await snapshotAt(r.head)).issues.has(z)).toBe(true);
+});
+
+test('a claim unit without issue.claim is a caller error', async () => {
+  const id = await sharedIssue();
+  await remote(op(setTitle(id, 'A', 'B')));
+  const mine = await local(op(setTitle(id, 'A', 'C')));
+  const err = await catchErrAsync(() => replay({ claimSha: mine.commit as string }));
+  expect([err.code, err.message]).toEqual([
+    'unexpected',
+    `Claim-Einheit ${(mine.commit as string).slice(0, 7)} enthält kein issue.claim`,
+  ]);
 });
 
 test('a claim unit that still applies is replayed normally', async () => {
@@ -573,4 +581,49 @@ test('independent violations get entries of their own with distinct ids', async 
     ['20261119T080000Z-ffffff', setTitle(x, 'A', 'C')],
     ['20261119T080000Z-000000', setTitle(y, 'Y', 'Y2')],
   ]);
+});
+
+test('shelved units keep the original attachment source under a rewritten id', async () => {
+  const y = await sharedIssue();
+  const theirs = idOf(
+    await remote(op({ op: 'issue.create', title: 'remote' }), { randomBytes: seqBytes() }),
+  );
+  await remote(op(setTitle(y, 'A', 'B')));
+  const batch = await local(
+    {
+      kind: 'batch',
+      ops: [
+        { op: 'issue.create', ref: '$x', title: 'lokal' },
+        { op: 'attach.add', id: '$x', name: 'a', file: 'a.txt', content: Buffer.from('a\n') },
+        setTitle(y, 'A', 'C'),
+      ],
+    },
+    { randomBytes: seqBytes() },
+  );
+  const mine = batch.refs.$x as string;
+  expect(mine).toBe(theirs);
+  const follower = await local(
+    op({ op: 'attach.add', id: mine, name: 'b', file: 'b.txt', content: Buffer.from('b\n') }),
+  );
+  const r = await replay({ randomBytes: seqBytes(100) });
+  expect([r.replayed, r.notices]).toEqual([0, []]);
+  expect(r.conflicts).toHaveLength(1);
+  const [shelved, followed] = r.conflicts[0]?.units ?? [];
+  const fresh = (shelved?.ops[0] as { id: string } | undefined)?.id;
+  expect(fresh).not.toBe(mine);
+  expect(shelved).toMatchObject({
+    sha: batch.commit,
+    kind: 'batch',
+    sources: { 1: `${batch.commit}:${attachmentsDir(mine)}/a.txt` },
+  });
+  expect(shelved?.ops[1]).toEqual({ op: 'attach.add', id: fresh, name: 'a', file: 'a.txt' });
+  expect(followed).toEqual({
+    sha: follower.commit,
+    subject: expect.any(String),
+    kind: 'op',
+    ops: [{ op: 'attach.add', id: fresh, name: 'b', file: 'b.txt' }],
+    sources: { 0: `${follower.commit}:${attachmentsDir(mine)}/b.txt` },
+  });
+  await writeConflicts(wc, r.conflicts);
+  expect(await listConflicts(wc)).toEqual(r.conflicts);
 });

@@ -18,7 +18,6 @@ import {
   removedHandles,
   treeChanges,
 } from '../git/history.ts';
-import { mergeText } from '../git/merge-file.ts';
 import { parseCommitMessage, TRAILER_ACTOR, TRAILER_OP } from '../git/message.ts';
 import { gitTreeSource } from '../git/tree-source.ts';
 import { type ApplyContext, applyOperation, commentsNeeded } from '../ops/apply.ts';
@@ -41,6 +40,7 @@ import {
 } from '../store/snapshot.ts';
 import { overlaySource, type TreeSource } from '../store/source.ts';
 import { isoNow } from './env.ts';
+import { type ManualResolver, manualChanges } from './manual-merge.ts';
 import type { ConflictEntry, ConflictUnit } from './sync-state.ts';
 import { loadStates, signatureCache, signatureReasons } from './verify-state.ts';
 import { manualMessage, opMessage, touches } from './write.ts';
@@ -52,31 +52,7 @@ export type ReplayUnit = {
   ops: Operation[];
 };
 
-/** Konfliktpfad eines `manual`-Commits; `ours` ist der aktuelle Stand (Remote), `theirs` lokal. */
-export type ManualConflictPath = {
-  path: string;
-  base: Buffer | null;
-  ours: Buffer | null;
-  theirs: Buffer | null;
-  /** Ergebnis von `git merge-file` mit Markern, wenn beide Seiten Text sind. */
-  merged?: Buffer;
-};
-
-/**
- * Entscheidet einen Textkonflikt eines `manual`-Commits: `edit` liefert den Endinhalt je
- * Konfliktpfad (ein fehlender Pfad bleibt wie im Remote), `local` nimmt die lokale Seite,
- * `remote` lässt die Änderung an den Konfliktpfaden weg, `abort` bricht die Runde ab.
- */
-export type ManualResolver = (c: {
-  sha: string;
-  subject: string;
-  paths: ManualConflictPath[];
-}) => Promise<
-  | { kind: 'edit'; files: Map<string, Buffer> }
-  | { kind: 'local' }
-  | { kind: 'remote' }
-  | { kind: 'abort' }
->;
+export type { ManualConflictPath, ManualResolver } from './manual-merge.ts';
 
 export type ReplayResult = {
   /** Der letzte gebaute Commit; ohne einen ist es `onto`. */
@@ -196,6 +172,10 @@ async function parentOf(wc: string, sha: string): Promise<string | undefined> {
   return (await objectInfo(wc, [spec])).get(spec)?.oid;
 }
 
+/** `<sha>:<pfad>` des Anhangs einer `attach.add` im Ursprungs-Commit, aus ihrer ursprünglichen ID. */
+const attachmentSource = (sha: string, op: Extract<Operation, { op: 'attach.add' }>) =>
+  `${sha}:${attachmentsDir(op.id)}/${op.file}`;
+
 /**
  * `attach.add` ist ohne Inhalt aufgezeichnet (backe.md §2.8); er kommt als Blob unverändert aus dem
  * Ursprungs-Commit, unter dem Pfad aus der ursprünglichen ID — auch ein LFS-Pointer. Fehlt die
@@ -203,8 +183,7 @@ async function parentOf(wc: string, sha: string): Promise<string | undefined> {
  * Inhalt nicht, und ein leerer steht für ihn.
  */
 async function withAttachmentContent(wc: string, unit: ReplayUnit): Promise<Operation[]> {
-  const spec = (op: Extract<Operation, { op: 'attach.add' }>) =>
-    `${unit.sha}:${attachmentsDir(op.id)}/${op.file}`;
+  const spec = (op: Extract<Operation, { op: 'attach.add' }>) => attachmentSource(unit.sha, op);
   const wanted = unit.ops.flatMap((op) =>
     op.op === 'attach.add' && op.file !== undefined && op.content === undefined ? [spec(op)] : [],
   );
@@ -256,87 +235,6 @@ async function renormalized(
   });
 }
 
-const same = (a: Buffer | null, b: Buffer | null) =>
-  a === null || b === null ? a === b : a.equals(b);
-const isText = (b: Buffer | null) => b === null || !b.includes(0);
-
-function manualConflict(sha: string, paths: readonly string[]): BackeError {
-  return new BackeError(
-    'conflict',
-    `Textkonflikt in manual-Commit ${short(sha)}: ${paths.join(', ')}`,
-    { hint: 'backe sync --interactive', details: { commit: sha, paths } },
-  );
-}
-
-/**
- * Die Änderungen eines `manual`-Commits auf dem aktuellen Stand `head` (backe.md §2.16.2): je Pfad
- * `basis` = Parent, `lokal` = Ursprungs-Commit, `aktuell` = `head`. Was sich nicht sauber
- * übernehmen lässt, entscheidet `resolve`; ohne ihn bricht die Runde mit `conflict` ab.
- */
-async function manualChanges(
-  wc: string,
-  unit: ReplayUnit,
-  head: string,
-  resolve: ManualResolver | undefined,
-): Promise<FileChange[]> {
-  const parent = await parentOf(wc, unit.sha);
-  const paths = (await treeChanges(wc, parent, unit.sha)).map((c) => c.path);
-  const blobs = await readBlobs(
-    wc,
-    paths.flatMap((p) => [
-      ...(parent === undefined ? [] : [`${parent}:${p}`]),
-      `${unit.sha}:${p}`,
-      `${head}:${p}`,
-    ]),
-  );
-  const changes: FileChange[] = [];
-  const conflicts: ManualConflictPath[] = [];
-  for (const path of paths) {
-    const base = parent === undefined ? null : (blobs.get(`${parent}:${path}`) ?? null);
-    const theirs = blobs.get(`${unit.sha}:${path}`) ?? null;
-    const ours = blobs.get(`${head}:${path}`) ?? null;
-    if (same(theirs, ours)) continue;
-    if (same(ours, base)) {
-      changes.push({ path, content: theirs });
-      continue;
-    }
-    if (same(theirs, base)) continue;
-    if (ours === null || theirs === null || ![base, ours, theirs].every(isText)) {
-      conflicts.push({ path, base, ours, theirs });
-      continue;
-    }
-    const merged = await mergeText(wc, {
-      base: base ?? Buffer.alloc(0),
-      ours,
-      theirs,
-      labels: ['remote', 'basis', 'lokal'],
-    });
-    if (!merged.clean) conflicts.push({ path, base, ours, theirs, merged: merged.content });
-    else if (!merged.content.equals(ours)) changes.push({ path, content: merged.content });
-  }
-  if (conflicts.length === 0) return changes;
-  const abort = () =>
-    manualConflict(
-      unit.sha,
-      conflicts.map((c) => c.path),
-    );
-  const decision =
-    resolve === undefined
-      ? { kind: 'abort' as const }
-      : await resolve({ sha: unit.sha, subject: unit.subject, paths: conflicts });
-  if (decision.kind === 'abort') throw abort();
-  for (const c of conflicts) {
-    const content =
-      decision.kind === 'local'
-        ? c.theirs
-        : decision.kind === 'edit'
-          ? (decision.files.get(c.path) ?? c.ours)
-          : c.ours;
-    if (!same(content, c.ours)) changes.push({ path: c.path, content });
-  }
-  return changes;
-}
-
 /** Kommentare, die die Operationen brauchen, aus dem aktuellen Stand. */
 async function commentsFor(
   src: () => TreeSource,
@@ -360,12 +258,24 @@ function withoutContent(op: Operation): Operation {
   return rest;
 }
 
-const conflictUnit = (unit: ReplayUnit, ops: readonly Operation[]): ConflictUnit => ({
-  sha: unit.sha,
-  subject: unit.subject,
-  kind: unit.kind,
-  ops: ops.map(withoutContent),
-});
+/**
+ * Eine Einheit für die Ablage: `ops` mit den umgeschriebenen IDs, `sources` je `attach.add` mit
+ * Datei die Herkunft ihres Inhalts aus den ursprünglichen Operationen (Index → `<sha>:<pfad>`).
+ */
+function conflictUnit(unit: ReplayUnit, ops: readonly Operation[]): ConflictUnit {
+  const sources: Record<number, string> = {};
+  for (const [i, op] of unit.ops.entries()) {
+    if (op.op === 'attach.add' && op.file !== undefined)
+      sources[i] = attachmentSource(unit.sha, op);
+  }
+  return {
+    sha: unit.sha,
+    subject: unit.subject,
+    kind: unit.kind,
+    ops: ops.map(withoutContent),
+    ...(Object.keys(sources).length === 0 ? {} : { sources }),
+  };
+}
 
 function reasonOf(err: BackeError): ConflictEntry['reason'] {
   const details = err.details as { reason: string; ids?: unknown };
@@ -420,7 +330,8 @@ export async function replayOnto(wc: string, input: ReplayInput): Promise<Replay
 
   for (const unit of input.units) {
     if (unit.kind === 'manual') {
-      const changes = await manualChanges(wc, unit, head, input.resolveManual);
+      const parent = await parentOf(wc, unit.sha);
+      const changes = await manualChanges(wc, { ...unit, parent }, head, input.resolveManual);
       if (changes.length === 0) continue;
       await commit(changes, manualMessage(unit.subject, input.actor));
       base = await gitTreeSource(wc, head);
@@ -444,7 +355,6 @@ export async function replayOnto(wc: string, input: ReplayInput): Promise<Replay
       randomBytes: random,
     });
     const { ops } = rewrite;
-    notices.push(...rewrite.notices);
     const ctx: ApplyContext = {
       actor: input.actor,
       now,
@@ -466,7 +376,13 @@ export async function replayOnto(wc: string, input: ReplayInput): Promise<Replay
       if (!isViolation(err)) throw err;
       if (isClaim) {
         const claim = ops.find((op) => op.op === 'issue.claim');
-        claimLost = { id: claim?.id ?? '', error: err };
+        if (claim === undefined) {
+          throw new BackeError(
+            'unexpected',
+            `Claim-Einheit ${short(unit.sha)} enthält kein issue.claim`,
+          );
+        }
+        claimLost = { id: claim.id, error: err };
         continue;
       }
       const entry: ConflictEntry = {
@@ -481,6 +397,8 @@ export async function replayOnto(wc: string, input: ReplayInput): Promise<Replay
       taint(entry, ops);
       continue;
     }
+    // Umbenennungen einer abgelegten Einheit stehen in ihren Ops, nicht in den Hinweisen.
+    notices.push(...rewrite.notices);
     if (applied.changes.length === 0) continue;
     const extra = await renormalized(wc, unit, head, snapshot, applied.changes);
     const changes = [...applied.changes, ...extra];

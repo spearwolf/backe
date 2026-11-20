@@ -16,6 +16,11 @@ export type ConflictUnit = {
   subject: string;
   kind: 'op' | 'batch' | 'manual';
   ops: Operation[];
+  /**
+   * Herkunft des Inhalts je `attach.add` mit Datei (Index in `ops` → `<sha>:<pfad>`); der Pfad
+   * entsteht aus der ursprünglichen ID, auch wenn `ops` eine umgeschriebene nennt.
+   */
+  sources?: Record<number, string>;
 };
 
 /** Eintrag der Konfliktablage; `units[0]` ist die gescheiterte Einheit, danach die Folgeeinheiten. */
@@ -54,6 +59,7 @@ const StoredEntry = z.object({
       subject: z.string(),
       kind: z.enum(['op', 'batch', 'manual']),
       ops: z.array(z.unknown()),
+      sources: z.record(z.string().regex(/^\d+$/), z.string()).optional(),
     }),
   ),
 });
