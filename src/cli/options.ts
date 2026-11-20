@@ -13,9 +13,9 @@ import type { UserConfig } from '../core/schemas.ts';
 import type { Notice } from '../ops/notice.ts';
 import { freshen, scheduleSync, statusLine, syncStatus } from '../services/background.ts';
 import type { WriteOpsOutcome, WriteOutcome } from '../services/outcome.ts';
+import { checkFields } from '../services/views.ts';
 import type { CliIo } from './io.ts';
 import {
-  checkFields,
   type Format,
   json,
   lines,

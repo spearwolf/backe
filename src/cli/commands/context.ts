@@ -3,6 +3,7 @@ import type { Command } from 'commander';
 import type { Source } from '../../context/resolve.ts';
 import type { BacklogConfig } from '../../core/schemas.ts';
 import { type ContextInfo, contextInfo } from '../../services/context-info.ts';
+import { contextJson } from '../../services/views.ts';
 import { action, emit, type Runtime, subcommand, syncOption } from '../options.ts';
 import { columns, lines, paint, safeText, width } from '../output.ts';
 
@@ -53,12 +54,6 @@ function render(info: ContextInfo, color: boolean): string {
   ];
   if (info.props !== undefined) out.push('', ...declarations(info.props));
   return lines(out);
-}
-
-/** JSON mit snake_case-Keys: `user.can_write` statt des Service-Namens `canWrite`. */
-function contextJson(info: ContextInfo): Record<string, unknown> {
-  const { canWrite, ...user } = info.user;
-  return { ...info, user: { ...user, can_write: canWrite } };
 }
 
 export function contextCommand(program: Command, rt: Runtime): void {

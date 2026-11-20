@@ -11,6 +11,7 @@ import {
   listAttachments,
   removeAttachment,
 } from '../../services/attachments.ts';
+import { attachmentJson } from '../../services/views.ts';
 import {
   absPath,
   action,
@@ -101,7 +102,7 @@ export function attachCommands(program: Command, rt: Runtime): void {
         async (env, ref: string, name: string, opts: { output?: string }) => {
           const a = await getAttachment(await env.context(), ref, name);
           if ('url' in a) {
-            emit(env, { name: a.name, url: a.url }, () => `${a.url}\n`);
+            emit(env, attachmentJson(a), () => `${a.url}\n`);
             return;
           }
           const target = opts.output === undefined ? undefined : absPath(opts.output, env.io);
@@ -109,7 +110,7 @@ export function attachCommands(program: Command, rt: Runtime): void {
             env.format === 'json' && target === undefined ? undefined : await readFile(a.path);
           if (target !== undefined) await writeFile(target, bytes as Uint8Array);
           if (env.format === 'json') {
-            env.out(json({ name: a.name, file: a.file, size: a.size, path: target ?? a.path }));
+            env.out(json(attachmentJson(a, target)));
           } else if (target !== undefined) {
             env.out(`${target}\n`);
           } else {

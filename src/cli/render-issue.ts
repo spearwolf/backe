@@ -1,8 +1,7 @@
 /**
- * Darstellung von Issues (backe.md §2.18, §2.22, §2.23): Listenzeilen, Detailansicht als Text,
- * JSON und Markdown. Alles hier ist rein und liefert Text oder Objekte; geschrieben wird im Befehl.
+ * Darstellung von Issues (backe.md §2.18, §2.22, §2.23): Listenzeilen, Detailansicht als Text
+ * und Markdown; das JSON steht in `services/views.ts`. Alles hier ist rein und liefert Text oder Objekte; geschrieben wird im Befehl.
  */
-import { KEY_ORDER } from '../core/schemas.ts';
 import type { State } from '../core/state.ts';
 import type { IssueListItem } from '../services/issue-list.ts';
 import type {
@@ -12,26 +11,6 @@ import type {
   MissingRefView,
 } from '../services/issue-show.ts';
 import { lines, paint, type Style, safeText, width } from './output.ts';
-
-/** Felder eines Issues, wie sie in der Datei stehen; Grundlage für `--fields`. */
-export const ISSUE_FIELDS: readonly string[] = KEY_ORDER.issue;
-
-/** Erlaubte Felder für `issue list --fields`: Issue-Felder plus Baumtiefe und offene Abhängigkeiten. */
-export const LIST_FIELDS: readonly string[] = [...ISSUE_FIELDS, 'depth', 'open_deps'];
-
-/** Erlaubte Felder für `issue show --fields`: alles, was `issueDetailJson` liefern kann. */
-export const SHOW_FIELDS: readonly string[] = [
-  ...ISSUE_FIELDS,
-  'body',
-  'parents',
-  'dependents',
-  'children',
-  'progress',
-  'comments_count',
-  'last_reason',
-  'comments',
-  'notices',
-];
 
 /** Breite der State-Spalte: `in_progress`, der längste State. */
 const STATE_WIDTH = 11;
@@ -188,39 +167,6 @@ export function issueDetailText(d: IssueDetail, color: boolean): string {
   if (body.length > 0) out.push('', ...body);
   for (const c of d.comments) out.push('', commentHeading(c), ...bodyLines(c.body));
   return lines(out);
-}
-
-const nonEmpty = <T>(list: readonly T[]): readonly T[] | undefined =>
-  list.length === 0 ? undefined : list;
-
-/**
- * Detailansicht als JSON-Objekt: die Felder des Issues (`depends_on` als Referenzen mit State und
- * Titel), dazu Body, Vorfahren, Abhängige, Sub-Issues, Fortschritt, Kommentare und Hinweise.
- * Leere Listen und ein leerer Body fehlen.
- */
-export function issueDetailJson(d: IssueDetail): Record<string, unknown> {
-  return {
-    ...d.issue,
-    depends_on: nonEmpty(d.dependsOn),
-    body: d.body === '' ? undefined : d.body,
-    parents: nonEmpty(d.parents),
-    dependents: nonEmpty(d.dependents),
-    children: nonEmpty(d.children),
-    progress: d.progress,
-    comments_count: d.commentsCount,
-    last_reason: d.lastReason,
-    comments: nonEmpty(d.comments),
-    notices: nonEmpty(d.notices),
-  };
-}
-
-/** Ein Listeneintrag als JSON: das Issue, `depth` in der Baumansicht, `open_deps` nur wenn wahr. */
-export function issueListJson(item: IssueListItem): Record<string, unknown> {
-  return {
-    ...item.issue,
-    depth: item.depth,
-    open_deps: item.openDeps ? true : undefined,
-  };
 }
 
 /** Die Issue-Datei wie auf der Platte, je angefordertem Kommentar ein Trenner und dessen Datei. */

@@ -8,6 +8,7 @@ import type { UserConfig } from '../core/schemas.ts';
 import type { Notice } from '../ops/notice.ts';
 import { summarizeBatch, summarizeOp } from '../ops/operation.ts';
 import type { WriteOpsOutcome, WriteOutcome } from '../services/outcome.ts';
+import { errorJson, outcomeJson } from '../services/views.ts';
 import type { CliIo } from './io.ts';
 
 export const FORMATS = ['text', 'json', 'md'] as const;
@@ -125,29 +126,6 @@ export function fieldRows(rows: readonly (readonly [string, string | undefined])
 /** Zeilen als Text mit abschließendem Zeilenumbruch; ohne Zeilen leer. */
 export const lines = (rows: readonly string[]): string => rows.map((row) => `${row}\n`).join('');
 
-/** Ein Feld in `fields`, das nicht in `allowed` steht, ist `usage` mit der Liste der erlaubten. */
-export function checkFields(fields: readonly string[], allowed: readonly string[]): void {
-  const unknown = fields.filter((f) => !allowed.includes(f));
-  if (unknown.length === 0) return;
-  throw new BackeError(
-    'usage',
-    `Unbekannte Felder für --fields: ${unknown.map((f) => `»${f}«`).join(', ')}`,
-    { hint: `Erlaubt: ${allowed.join(', ')}`, details: { unknown, allowed } },
-  );
-}
-
-/** Nur die Felder `fields` von `obj`, in dieser Reihenfolge; ein unbekanntes Feld ist `usage`. */
-export function pickFields(
-  obj: Readonly<Record<string, unknown>>,
-  fields: readonly string[],
-  allowed: readonly string[],
-): Record<string, unknown> {
-  checkFields(fields, allowed);
-  const out: Record<string, unknown> = {};
-  for (const f of fields) if (obj[f] !== undefined) out[f] = obj[f];
-  return out;
-}
-
 const HEADER_KEYS = ['backlog', 'project', 'sprint', 'repo'] as const;
 
 /**
@@ -160,28 +138,6 @@ export function headerLine(header: Readonly<Record<string, string>>): string | u
   return HEADER_KEYS.filter((k) => header[k] !== undefined)
     .map((k) => `${k}=${safeText(header[k] as string)}`)
     .join(' ');
-}
-
-/** Die TS-Namen, unter denen Services Details ablegen; nur sie werden umbenannt. */
-const DETAIL_KEYS: Readonly<Record<string, string>> = {
-  exitCode: 'exit_code',
-  fromHash: 'from_hash',
-  reasonFile: 'reason_file',
-};
-
-/**
- * Fehler-Details für JSON: nur die festen Keys aus `DETAIL_KEYS` werden snake_case, überall wo sie
- * als Key stehen. Alle anderen Keys (etwa Nutzer-Keys unter `props`) und alle Werte bleiben.
- */
-function detailKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(detailKeys);
-  if (value === null || typeof value !== 'object') return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([k, v]) => [
-      Object.hasOwn(DETAIL_KEYS, k) ? DETAIL_KEYS[k] : k,
-      detailKeys(v),
-    ]),
-  );
 }
 
 /** Exit-Code eines Fehlers: der eines `BackeError`, sonst `1`. */
@@ -203,8 +159,7 @@ export function renderError(err: unknown, format: Format): string {
           `Unerwarteter Fehler: ${err instanceof Error ? err.message : String(err)}`,
         );
   if (format === 'json') {
-    const details = e.details === undefined ? undefined : detailKeys(e.details);
-    return json({ error: { code: e.code, message: e.message, hint: e.hint, details } });
+    return json(errorJson(e));
   }
   return safeText(`Fehler: ${e.message}\n${e.hint === undefined ? '' : `Hinweis: ${e.hint}\n`}`);
 }
@@ -222,13 +177,7 @@ export function renderOutcome(
   kind: 'create' | 'other',
 ): string {
   if (format === 'json') {
-    return json({
-      commit: o.commit ?? null,
-      ...('op' in o ? { op: o.op } : { ops: o.ops }),
-      id: o.id,
-      notices: o.notices.length === 0 ? undefined : o.notices,
-      warnings: o.warnings.length === 0 ? undefined : o.warnings,
-    });
+    return json(outcomeJson(o));
   }
   const ops = 'op' in o ? [o.op] : o.ops;
   // Eine Operation ist ein gewöhnlicher Commit, mehrere sind ein Batch-Commit.

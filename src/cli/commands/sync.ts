@@ -10,6 +10,7 @@ import { runBackground, type SyncStatus, syncStatus } from '../../services/backg
 import { resolveConflict } from '../../services/resolve.ts';
 import { type SyncOutcome, syncNow } from '../../services/sync.ts';
 import { type ConflictEntry, listConflicts } from '../../services/sync-state.ts';
+import { syncJson } from '../../services/views.ts';
 import { action, type CommandEnv, emit, type Runtime, subcommand } from '../options.ts';
 import { json, lines, renderError, renderHints, safeText } from '../output.ts';
 import { interactiveResolver } from '../prompt.ts';
@@ -45,16 +46,6 @@ function syncText(out: SyncOutcome, entries: readonly ConflictEntry[]): string {
   if (out.pushed !== undefined) rows.push(`push: ${short(out.pushed)}`);
   return rows.length === 0 ? 'aktuell\n' : lines(rows.map(safeText));
 }
-
-const syncJson = (out: SyncOutcome) => ({
-  fetched: out.fetched,
-  replayed: out.replayed,
-  conflicts: out.conflicts,
-  pushed: out.pushed ?? null,
-  rounds: out.rounds,
-  skipped: out.skipped,
-  notices: out.notices.length === 0 ? undefined : out.notices,
-});
 
 type SyncOpts = { background?: boolean; interactive?: boolean };
 

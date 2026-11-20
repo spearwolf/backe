@@ -1,6 +1,7 @@
 /** `backe sprint create | list | show | close` (backe.md §2.10, §2.17, §2.18). */
 import type { Command } from 'commander';
 import { closeSprint, createSprint, listSprints, showSprint } from '../../services/sprints.ts';
+import { sprintShowJson } from '../../services/views.ts';
 import {
   action,
   bodyArg,
@@ -12,7 +13,7 @@ import {
   syncOption,
 } from '../options.ts';
 import { bodyBlock, columns, headerLine, json, lines, paint, safeText } from '../output.ts';
-import { issueLines, issueListJson } from '../render-issue.ts';
+import { issueLines } from '../render-issue.ts';
 import { listSort } from './issue.ts';
 
 type CreateOpts = {
@@ -108,18 +109,7 @@ export function sprintCommands(program: Command, rt: Runtime): void {
             ...(sort === undefined ? {} : { sort }),
           });
           if (env.format === 'json') {
-            env.out(
-              json({
-                context: Object.keys(r.header).length === 0 ? undefined : r.header,
-                slug,
-                ...r.sprint,
-                body: r.body === '' ? undefined : r.body,
-                groups: r.groups.map((g) => ({
-                  state: g.state,
-                  issues: g.items.map(issueListJson),
-                })),
-              }),
-            );
+            env.out(json(sprintShowJson(slug, r)));
             return;
           }
           const { title, start, end, closed } = r.sprint;

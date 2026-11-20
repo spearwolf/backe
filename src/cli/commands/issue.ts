@@ -24,6 +24,13 @@ import {
   resumeIssue,
   unlinkIssue,
 } from '../../services/issues.ts';
+import {
+  issueDetailJson,
+  issueListResultJson,
+  LIST_FIELDS,
+  pickFields,
+  SHOW_FIELDS,
+} from '../../services/views.ts';
 import { editorCommand, editText, noEditorError } from '../editor.ts';
 import {
   action,
@@ -41,16 +48,8 @@ import {
   syncOption,
   text,
 } from '../options.ts';
-import { headerLine, json, lines, pickFields, safeText } from '../output.ts';
-import {
-  issueDetailJson,
-  issueDetailMd,
-  issueDetailText,
-  issueLines,
-  issueListJson,
-  LIST_FIELDS,
-  SHOW_FIELDS,
-} from '../render-issue.ts';
+import { headerLine, json, lines, safeText } from '../output.ts';
+import { issueDetailMd, issueDetailText, issueLines } from '../render-issue.ts';
 
 type ReasonOpts = { reason?: string; reasonFile?: string };
 
@@ -219,18 +218,7 @@ function defineList(parent: Command, name: string, rt: Runtime, description: str
           const q = listQuery(opts);
           const r = await listIssues(await env.context(), q);
           if (env.format === 'json') {
-            const issues = r.items.map((item) => {
-              const obj = issueListJson(item);
-              return env.fields === undefined ? obj : pickFields(obj, env.fields, LIST_FIELDS);
-            });
-            env.out(
-              json({
-                context: Object.keys(r.header).length === 0 ? undefined : r.header,
-                issues,
-                truncated: r.truncated ? true : undefined,
-                problems: r.problems.length === 0 ? undefined : r.problems,
-              }),
-            );
+            env.out(json(issueListResultJson(r, env.fields)));
             return;
           }
           const header = headerLine(r.header);

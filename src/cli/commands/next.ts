@@ -6,12 +6,10 @@ import type { Command } from 'commander';
 import { BackeError } from '../../core/errors.ts';
 import { nextClaim } from '../../services/claim.ts';
 import { type NextQuery, nextIssue } from '../../services/next.ts';
+import { NEXT_FIELDS, nextJson } from '../../services/views.ts';
 import { action, emitNotices, type Runtime, subcommand, syncOption } from '../options.ts';
-import { headerLine, json, lines, pickFields } from '../output.ts';
-import { ISSUE_FIELDS, issueLines, issueListJson } from '../render-issue.ts';
-
-/** Erlaubte Felder für `next --fields`: Issue-Felder plus `open_deps`. */
-const NEXT_FIELDS: readonly string[] = [...ISSUE_FIELDS, 'open_deps'];
+import { headerLine, json, lines } from '../output.ts';
+import { issueLines } from '../render-issue.ts';
 
 type Opts = {
   project?: string;
@@ -63,19 +61,17 @@ export function nextCommand(program: Command, rt: Runtime): void {
           const warnings = claimed?.claim.warnings ?? [];
           const item = { issue: r.issue, openDeps: r.openDeps };
           if (env.format === 'json') {
-            const issue = issueListJson(item);
             env.out(
-              json({
-                context: Object.keys(r.header).length === 0 ? undefined : r.header,
-                issue:
-                  env.fields === undefined ? issue : pickFields(issue, env.fields, NEXT_FIELDS),
-                resumed: r.resumed,
-                ...(claimed === undefined
-                  ? {}
-                  : { commit: claimed.claim.commit ?? null, attempts: claimed.attempts }),
-                notices: notices.length === 0 ? undefined : notices,
-                warnings: warnings.length === 0 ? undefined : warnings,
-              }),
+              json(
+                nextJson(r, {
+                  ...(claimed === undefined
+                    ? {}
+                    : { claimed: { commit: claimed.claim.commit, attempts: claimed.attempts } }),
+                  notices,
+                  warnings,
+                  ...(env.fields === undefined ? {} : { fields: env.fields }),
+                }),
+              ),
             );
             return;
           }

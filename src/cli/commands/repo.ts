@@ -3,6 +3,7 @@ import type { Command } from 'commander';
 import { checkRepos, type RepoCheck, repoCheckExit } from '../../services/repo-check.ts';
 import { locateRepo, type ScanEntry, scanRepos } from '../../services/repo-local.ts';
 import { addRepo, listRepos, removeRepo } from '../../services/repos.ts';
+import { repoLocateJson } from '../../services/views.ts';
 import {
   absPath,
   action,
@@ -94,17 +95,7 @@ export function repoCommands(program: Command, rt: Runtime): void {
   subcommand(repo, 'where <name>', 'lokaler Pfad eines Repos (aus der User-Config)').action(
     action(rt, async (env, name: string) => {
       const r = await locateRepo(await env.context(), name);
-      emit(
-        env,
-        {
-          name: r.name,
-          url: r.url,
-          canonical: r.canonical,
-          default_ref: r.defaultRef,
-          path: r.path,
-        },
-        () => `${safeText(r.path)}\n`,
-      );
+      emit(env, repoLocateJson(r), () => `${safeText(r.path)}\n`);
     }),
   );
 

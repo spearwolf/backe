@@ -3,6 +3,7 @@ import type { Command } from 'commander';
 import { BackeError } from '../../core/errors.ts';
 import { summarizeBatch } from '../../ops/operation.ts';
 import { runBatch } from '../../services/batch.ts';
+import { batchJson } from '../../services/views.ts';
 import {
   action,
   type CommandEnv,
@@ -48,15 +49,7 @@ export function batchCommand(program: Command, rt: Runtime): void {
           const r = await runBatch(await env.context(), input);
           env.committed(r.commit);
           if (env.format === 'json') {
-            env.out(
-              json({
-                commit: r.commit ?? null,
-                refs: r.refs,
-                ops: r.ops.length,
-                notices: r.notices.length === 0 ? undefined : r.notices,
-                warnings: r.warnings.length === 0 ? undefined : r.warnings,
-              }),
-            );
+            env.out(json(batchJson(r)));
             return;
           }
           env.out(
