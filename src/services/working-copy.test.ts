@@ -312,14 +312,44 @@ test('clone writes upstream for a remote clone', async () => {
   expect(await readLocalState(r.root, 'upstream')).toBe(await revParse(b.root, 'HEAD'));
 });
 
-test('a clone from a working copy without remote writes no upstream', async () => {
+test('a clone from a working copy without remote goes through the local hub', async () => {
   const local = await testBacklog();
   const ctx = await local.context({ as: 'claude-1' });
 
   const { root } = await ensureWorkingCopy(ctx, 'claude-1');
 
-  expect(await revParse(root, 'HEAD')).toBe(await revParse(local.root, 'HEAD'));
-  expect(await readLocalState(root, 'upstream')).toBeUndefined();
+  const head = await revParse(local.root, 'HEAD');
+  expect(await revParse(root, 'HEAD')).toBe(head);
+  expect(await readLocalState(root, 'upstream')).toBe(head);
+  const hub = join(local.homes.backeHome, 'backlogs', 'acme', 'hub.git');
+  expect((await git(['remote', 'get-url', 'origin'], { cwd: root })).stdout.trim()).toBe(hub);
+});
+
+test('an agent whose user is not pushed yet gets a sync hint', async () => {
+  const claude = await testKey('claude-1');
+  await executeWrite(await b.context(), {
+    kind: 'op',
+    op: {
+      op: 'user.add',
+      handle: 'claude-1',
+      name: 'Claude',
+      kind: 'agent',
+      operator: 'spw',
+      keys: [claude.line],
+    },
+  });
+  await setIdentity(b.homes, 'acme', 'claude-1', claude.priv);
+  const ctx = await b.context({ as: 'claude-1' });
+
+  const err = await catchErrAsync(() => ensureWorkingCopy(ctx, 'claude-1'));
+
+  expect(err).toMatchObject({
+    code: 'sync',
+    message: 'User claude-1 ist noch nicht gepusht',
+    hint: 'backe sync --as spw',
+  });
+  expect(await exists(managedClonePath(b.homes, 'acme', 'claude-1'))).toBe(false);
+  expect(await tempEntries(b.homes)).toEqual([]);
 });
 
 test('a remote whose HEAD is another branch is checked out on the sync branch', async () => {

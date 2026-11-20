@@ -133,7 +133,10 @@ export type WriteResult = {
   notices: Notice[];
   /** Alle committeten Pfade, sortiert. */
   paths: string[];
-  /** Gründe ungültiger Commits, wenn dieser Write die Arbeitskopie im Modus `warn` geklont hat. */
+  /**
+   * Hinweise des Clones, wenn dieser Write die Arbeitskopie erst geklont hat: ein neu angelegter
+   * lokaler Hub und im Modus `warn` die Gründe ungültiger Commits.
+   */
   verifyNotices: string[];
   chain: ChainEntry[];
   /** Hand-Edits mit unbekannten Keys (nur `edits`). */
@@ -849,7 +852,8 @@ async function markRenormalization(
 }
 
 /** Die Backlog-Config in `HEAD`; `undefined` ohne Commit oder Datei. */
-async function headConfig(wc: string): Promise<BacklogConfig | undefined> {
+/** Die Backlog-Config im `HEAD` von `wc`; ohne eine `undefined`. */
+export async function headConfig(wc: string): Promise<BacklogConfig | undefined> {
   const spec = `HEAD:${BACKLOG_CONFIG}`;
   const blob = (await readBlobs(wc, [spec])).get(spec);
   return blob == null

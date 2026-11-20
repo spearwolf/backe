@@ -38,9 +38,10 @@ import { clearLocalState, readLocalState, writeLocalState } from '../git/local-s
 import { branchesWithUnpushed, gitRemotes, gitToplevel } from '../git/query.ts';
 import { headState } from '../git/repo.ts';
 import { readJsonc } from '../store/jsonc.ts';
-import { BACKLOG_CONFIG } from '../store/layout.ts';
+import { BACKLOG_CONFIG, userFile } from '../store/layout.ts';
+import { ensureHub, hubPath } from './hub.ts';
 import { firstStderrLine } from './init.ts';
-import { assertVerified, trustedVerifyMode, verifyRange } from './verify.ts';
+import { assertVerified, trustedVerifyMode, type VerifyOptions, verifyRange } from './verify.ts';
 import { parseJsoncAs } from './verify-state.ts';
 
 /** Nur für Tests: läuft zwischen Clone und Abschluss. */
@@ -94,14 +95,15 @@ async function singleRoot(wc: string, source: string): Promise<string> {
 }
 
 /**
- * Prüft den Clone und zeichnet den verifizierten Stand auf. Gibt es ungültige Commits, entscheidet
- * der Modus des letzten vertrauenswürdigen Stands (`trustedVerifyMode`): `strict` wirft, `warn`
- * meldet die Gründe, `off` behält still.
+ * Prüft bis `opts.to` (Default `HEAD`) und zeichnet den verifizierten Stand auf. Gibt es ungültige
+ * Commits, entscheidet der Modus des letzten vertrauenswürdigen Stands (`trustedVerifyMode`):
+ * `strict` wirft, `warn` meldet die Gründe, `off` behält still. Clone, `backlog add` und Sync
+ * teilen sich das.
  */
-async function verifyClone(wc: string): Promise<string[]> {
-  const report = await verifyRange(wc, { record: true });
+export async function verifyAndJudge(wc: string, opts: VerifyOptions = {}): Promise<string[]> {
+  const report = await verifyRange(wc, { ...opts, record: true });
   if (report.invalid.length === 0) return report.notices;
-  const mode = await trustedVerifyMode(wc);
+  const mode = await trustedVerifyMode(wc, opts.to);
   if (mode === 'strict') assertVerified(report);
   if (mode === 'off') return [];
   const reasons = report.invalid.flatMap((f) => f.reasons.map((r) => `${shortSha(f.sha)}: ${r}`));
@@ -151,10 +153,13 @@ async function descendsFrom(wc: string, sha: string): Promise<boolean> {
  */
 type Reference = { path: string; dissociate: boolean };
 
+/** Klont `source` nach `temp`; `origin` ist der Name des Git-Remotes im Clone (Default `origin`). */
+type CloneSource = { url: string; origin?: string };
+
 /** Klont per git; scheitert git selbst (Netz, Auth, fehlende Quelle), ist das ein `sync`-Fehler. */
 async function gitClone(
   env: Env,
-  source: string,
+  { url: source, origin }: CloneSource,
   reference: Reference | undefined,
   temp: string,
 ): Promise<void> {
@@ -162,8 +167,9 @@ async function gitClone(
     reference === undefined
       ? []
       : ['--reference', reference.path, ...(reference.dissociate ? ['--dissociate'] : [])];
+  const name = origin === undefined ? [] : ['--origin', origin];
   try {
-    await git(['clone', '-q', ...ref, '--', source, temp], {
+    await git(['clone', '-q', ...ref, ...name, '--', source, temp], {
       cwd: dirname(temp),
       env: transportEnv(env),
     });
@@ -188,6 +194,8 @@ async function gitClone(
 async function cloneInto(input: {
   env: Env;
   source: string;
+  /** Name des Git-Remotes im Clone; Default `origin`. */
+  origin?: string;
   fromRemote: boolean;
   reference?: Reference;
   temp: string;
@@ -195,7 +203,12 @@ async function cloneInto(input: {
   trust: (name: string) => Promise<string | undefined>;
 }): Promise<{ name: string; notices: string[] }> {
   const { env, source, reference, temp, handle } = input;
-  await gitClone(env, source, reference, temp);
+  await gitClone(
+    env,
+    { url: source, ...(input.origin === undefined ? {} : { origin: input.origin }) },
+    reference,
+    temp,
+  );
   const { sync, version } = await readCloneConfig(temp, source);
   if ((await headState(temp)).branch !== sync.branch) {
     await git(['switch', '-q', sync.branch], { cwd: temp });
@@ -217,7 +230,7 @@ async function cloneInto(input: {
     await writeLocalState(temp, 'verified', base);
   }
   await writeLocalState(temp, 'identity', handle);
-  const notices = await verifyClone(temp);
+  const notices = await verifyAndJudge(temp);
   if (input.fromRemote) await writeLocalState(temp, 'upstream', await resolveCommit(temp, 'HEAD'));
   if (version > BACKLOG_FORMAT_VERSION) {
     notices.unshift(
@@ -312,12 +325,26 @@ export async function cloneBacklog(
 }
 
 /**
+ * Fehlt `users/<handle>.md` im frischen Clone, steht aber im `HEAD` der Quell-Arbeitskopie, hat
+ * deren Identität den User angelegt und noch nicht gepusht: Ohne ihn könnte der Clone nie schreiben.
+ */
+async function assertUserPushed(temp: string, reference: string, handle: string): Promise<void> {
+  if (await exists(join(temp, userFile(handle)))) return;
+  const spec = `HEAD:${userFile(handle)}`;
+  if ((await readBlobs(reference, [spec])).get(spec) == null) return;
+  const identity = await readLocalState(reference, 'identity');
+  throw new BackeError('sync', `User ${handle} ist noch nicht gepusht`, {
+    hint: identity === undefined ? 'backe sync' : `backe sync --as ${identity}`,
+  });
+}
+
+/**
  * Die Arbeitskopie des Handles; fehlt eine verwaltete, wird sie geklont (backe.md §2.16.1):
- * aus der registrierten Remote, ohne Remote aus der gelesenen Arbeitskopie. Die gelesene
- * Arbeitskopie dient als `--reference` (ein gebundener Clone nur mit `--dissociate`) und als
- * Quelle für Anker und verifizierten Stand.
- * Eine vorhandene Arbeitskopie kommt ohne Netzzugriff zurück; `notices` hat nur ein Clone im
- * Modus `warn`.
+ * aus der registrierten Remote, ohne Remote aus dem lokalen Hub (`ensureHub`), den die erste
+ * zweite Arbeitskopie aus der gelesenen anlegt. Die gelesene Arbeitskopie dient als `--reference`
+ * (ein gebundener Clone nur mit `--dissociate`) und als Quelle für Anker und verifizierten Stand.
+ * Eine vorhandene Arbeitskopie kommt ohne Netzzugriff zurück; `notices` hat nur ein Clone: der
+ * Hinweis auf einen neuen Hub und im Modus `warn` die Gründe ungültiger Commits.
  */
 export async function ensureWorkingCopy(
   ctx: ResolvedContext,
@@ -335,22 +362,34 @@ export async function ensureWorkingCopy(
   const root = ctx.backlog.root;
   const reference =
     root !== undefined && (await exists(join(root, BACKLOG_CONFIG))) ? root : undefined;
-  const source = entry?.remote ?? reference;
-  if (source === undefined) {
+  if (entry?.remote === undefined && reference === undefined) {
     throw new BackeError('not_found', `Keine Quelle zum Klonen von Backlog ${name}`, {
       hint: 'backe backlog clone <url>',
     });
   }
+  const notices: string[] = [];
+  let source = entry?.remote;
+  let origin: string | undefined;
+  if (source === undefined) {
+    const from = reference as string;
+    const { sync } = await readCloneConfig(from, from);
+    const hub = await ensureHub(ctx.homes, name, from, sync);
+    if (hub.created) notices.push(`Lokaler Hub ${hub.hub} angelegt; ${from} synct jetzt darüber`);
+    source = hub.hub;
+    origin = sync.remote;
+  }
+  const url = source;
   // Dauerhaft Objekte leihen darf der neue Clone nur von einem verwalteten Clone; ein gebundener
   // gehört dem Nutzer, der ihn jederzeit löschen kann.
   const managed =
     reference !== undefined &&
     (await samePath(reference, managedClonePath(ctx.homes, name, basename(reference))));
   return withTempClone(ctx.homes, async (temp) => {
-    const { notices } = await cloneInto({
+    const cloned = await cloneInto({
       env: ctx.env,
-      source,
-      fromRemote: entry?.remote !== undefined,
+      source: url,
+      ...(origin === undefined ? {} : { origin }),
+      fromRemote: true,
       ...(reference === undefined ? {} : { reference: { path: reference, dissociate: !managed } }),
       temp,
       handle,
@@ -358,13 +397,17 @@ export async function ensureWorkingCopy(
         if (actual !== name) {
           throw new BackeError(
             'validation',
-            `${source}: gehört zum Backlog »${actual}«, erwartet wurde »${name}«`,
+            `${url}: gehört zum Backlog »${actual}«, erwartet wurde »${name}«`,
           );
         }
         return reference;
       },
     });
-    return { root: await finish(ctx.homes, name, temp, wc), notices };
+    if (reference !== undefined) await assertUserPushed(temp, reference, handle);
+    return {
+      root: await finish(ctx.homes, name, temp, wc),
+      notices: [...notices, ...cloned.notices],
+    };
   });
 }
 
@@ -433,7 +476,7 @@ export async function addBacklog(input: {
   };
   let notices: string[];
   try {
-    notices = await verifyClone(wanted);
+    notices = await verifyAndJudge(wanted);
     // `upstream` ist der geprüfte Teil des Remote-Tracking-Branches: sein gemeinsamer Vorfahre mit
     // `HEAD`. Was der Branch darüber hinaus trägt, hat das Verify nicht gesehen; ein schon
     // vorhandenes `upstream` bleibt.
@@ -497,21 +540,25 @@ async function assertNoBoundInManaged(homes: Homes, name: string): Promise<void>
 
 /**
  * `--purge` ohne `--force` löscht keine Arbeit, die nur hier liegt: Jeder verwaltete Clone unter
- * `<BACKE_HOME>/backlogs/<name>` braucht eine Remote, und kein lokaler Branch darf Commits
- * tragen, die in keinem Remote-Tracking-Ref stehen. Ein Verzeichnis, das kein Clone ist, zählt nicht.
+ * `<BACKE_HOME>/backlogs/<name>` braucht eine Remote außer dem lokalen Hub — der wird mitgelöscht —,
+ * und kein lokaler Branch darf Commits tragen, die in keinem Remote-Tracking-Ref stehen. Ein
+ * Verzeichnis, das kein Clone ist, und der Hub selbst zählen nicht.
  */
 async function assertNothingOnlyHere(homes: Homes, name: string): Promise<void> {
   const managedDir = join(homes.backeHome, 'backlogs', name);
+  const hub = hubPath(homes, name);
   const entries = await readdir(managedDir, { withFileTypes: true }).catch(() => []);
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const clone = join(managedDir, entry.name);
+    if (clone === hub) continue;
     if ((await gitToplevel(clone)) !== (await physicalPath(clone))) continue;
     const refuse = (what: string) =>
       new BackeError('conflict', `Der verwaltete Clone »${clone}« ${what}`, {
         hint: `backe backlog remove ${name} --purge --force löscht trotzdem`,
       });
-    if ((await gitRemotes(clone)).length === 0) throw refuse('hat keine Remote');
+    const remotes = (await gitRemotes(clone)).filter((r) => r.url !== hub);
+    if (remotes.length === 0) throw refuse('hat keine Remote');
     const unpushed = await branchesWithUnpushed(clone);
     if (unpushed.length > 0) {
       throw refuse(
@@ -584,7 +631,8 @@ export async function showBacklog(
   const handles = new Set([
     ...Object.keys(entry.paths),
     ...Object.keys(cfg.identities?.[name] ?? {}),
-    ...dirs,
+    // Der lokale Hub `hub.git` ist keine Arbeitskopie; sein Name ist kein Handle.
+    ...dirs.filter(isHandle),
   ]);
   const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
   const workingCopies: WorkingCopyInfo[] = [];

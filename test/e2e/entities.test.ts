@@ -347,7 +347,13 @@ test('user create-agent prints the key path and the agent can write', async () =
 
   // Der Agent schreibt mit eigenem Key in seine eigene Arbeitskopie (eine je Identität).
   const asBot = ['--as', 'bot-1'];
-  const id = ok(await run(s, [...asBot, 'new', '-t', 'Vom Agent'])).trim();
+  // Ohne Remote legt der erste Clone des Agents den lokalen Hub an und sagt es.
+  const first = await run(s, [...asBot, 'new', '-t', 'Vom Agent']);
+  expect(first.code).toBe(0);
+  expect(normalize(first.stderr, s.names)).toBe(
+    'Warnung: Lokaler Hub <backe>/backlogs/acme/hub.git angelegt; <root> synct jetzt darüber\n',
+  );
+  const id = first.stdout.trim();
   const issue = JSON.parse(ok(await run(s, [...asBot, 'show', id, '--json']))) as {
     creator: string;
   };

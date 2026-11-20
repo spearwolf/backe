@@ -27,6 +27,12 @@ export async function gitRemotes(cwd: string): Promise<{ name: string; url: stri
   );
 }
 
+/** URL des Git-Remotes `name`; `undefined`, wenn es ihn nicht gibt. */
+export async function remoteUrl(cwd: string, name: string): Promise<string | undefined> {
+  const r = await git(['config', '--get', `remote.${name}.url`], { cwd, okExitCodes: [1] });
+  return r.exitCode === 1 ? undefined : r.stdout.replace(/\n$/, '');
+}
+
 /**
  * Commits von `refs/heads/<branch>`, die in keinem Remote-Tracking-Ref enthalten sind
  * (`git rev-list --count <branch> --not --remotes`); ein Branch, den es nicht gibt, zählt 0.

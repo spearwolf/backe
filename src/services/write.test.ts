@@ -833,7 +833,11 @@ describe('another identity', () => {
     // übernimmt ihn als `verified`, obwohl der Stand dort eingefroren ist.
     await writeLocalState(b.root, 'upstream', bad);
     const first = await executeWrite(asClaude, CREATE_B);
-    expect(first.verifyNotices).toEqual([`${bad.slice(0, 7)}: unsigniert`]);
+    // Ohne Remote klont der Agent über den lokalen Hub; dessen Hinweis steht vorn.
+    expect(first.verifyNotices).toEqual([
+      expect.stringMatching(/^Lokaler Hub .* angelegt; /),
+      `${bad.slice(0, 7)}: unsigniert`,
+    ]);
     const wc = managedClonePath(b.homes, 'acme', 'claude-1');
     expect(await readLocalState(wc, 'verified')).toBe(bad);
     const before = await revParse(wc, 'HEAD');
