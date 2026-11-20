@@ -1,6 +1,7 @@
 import { readdir } from 'node:fs/promises';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { testBacklog } from '../../test/helpers/git.ts';
+import { git } from './exec.ts';
 import { stateDir } from './local-state.ts';
 import { mergeText } from './merge-file.ts';
 
@@ -29,9 +30,19 @@ test('overlapping edits return markers with the labels', async () => {
   expect(text).toContain('>>>>>>> lokal');
 });
 
-test('a failing git is unexpected', async () => {
+test('a failing merge-file call is unexpected and leaves no temp files', async () => {
+  const { root } = await testBacklog();
+  // Ein NUL im Label lässt den Prozessstart scheitern, nachdem die Temp-Dateien angelegt sind.
   const err = await catchErrAsync(() =>
-    mergeText('/nonexistent-dir-for-backe', { base: b(''), ours: b(''), theirs: b(''), labels }),
+    mergeText(root, { base: b(''), ours: b(''), theirs: b(''), labels: ['a\0b', 'x', 'y'] }),
   );
   expect(err.code).toBe('unexpected');
+  expect(await readdir(await stateDir(root))).not.toContainEqual(expect.stringMatching(/^merge-/));
+});
+
+test('markers do not depend on the user merge.conflictStyle', async () => {
+  const { root } = await testBacklog();
+  await git(['config', 'merge.conflictStyle', 'diff3'], { cwd: root });
+  const r = await mergeText(root, { base: b('a\n'), ours: b('b\n'), theirs: b('c\n'), labels });
+  expect(r.content.toString()).not.toContain('||||||| basis');
 });

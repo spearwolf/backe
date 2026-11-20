@@ -4,6 +4,8 @@ import { readBlobs } from './history.ts';
 
 /** Was `loadSnapshotFrom` fast immer liest; kommt in einem einzigen `cat-file --batch` vorab. */
 const PRELOAD_DIRS = ['.backe/', 'users/', 'projects/', 'sprints/', 'repos/'];
+/** Wie `readBlobs`: Replace-Refs schieben keine anderen Objekte unter. */
+const ENV = { GIT_NO_REPLACE_OBJECTS: '1' } as const;
 const ISSUE_FILE = /^issues\/[^/]+\/[^/]+\/issue\.md$/;
 
 function wanted(path: string): boolean {
@@ -22,10 +24,11 @@ function wanted(path: string): boolean {
  */
 export async function gitTreeSource(wc: string, rev: string): Promise<TreeSource> {
   const tree = (
-    await git(['rev-parse', '--verify', '--end-of-options', `${rev}^{tree}`], { cwd: wc })
+    await git(['rev-parse', '--verify', '--end-of-options', `${rev}^{tree}`], { cwd: wc, env: ENV })
   ).stdout.trim();
   const { stdout } = await git(['ls-tree', '-r', '-z', '--full-tree', '--end-of-options', tree], {
     cwd: wc,
+    env: ENV,
   });
 
   const dirs = new Map<string, Map<string, boolean>>([['', new Map()]]);

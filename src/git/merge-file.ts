@@ -38,7 +38,22 @@ export async function mergeText(
     const [lo, lb, lt] = sides.labels;
     const okExitCodes = Array.from({ length: MAX_CONFLICTS }, (_, i) => i + 1);
     const result = await gitBytes(
-      ['merge-file', '-p', '-L', lo, '-L', lb, '-L', lt, '--', ours, base, theirs],
+      [
+        '-c',
+        'merge.conflictStyle=merge',
+        'merge-file',
+        '-p',
+        '-L',
+        lo,
+        '-L',
+        lb,
+        '-L',
+        lt,
+        '--',
+        ours,
+        base,
+        theirs,
+      ],
       { cwd: wc, okExitCodes },
     );
     return { clean: result.exitCode === 0, content: result.stdout };

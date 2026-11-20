@@ -76,10 +76,11 @@ function readDirSorted(src: TreeSource, dir: string): Promise<SourceEntry[]> {
   return src.list(dir);
 }
 
-/** Inhalt einer Datei, die die Quelle eben aufgelistet hat; fehlt sie doch, ist das ein Fehler. */
+/** Inhalt einer Datei, die die Quelle eben aufgelistet hat; verschwindet sie doch (Wettlauf), ist das unerwartet. */
 async function readText(src: TreeSource, path: string): Promise<string> {
   const bytes = await src.read(path);
-  if (bytes === undefined) throw new BackeError('not_found', `${path} fehlt`);
+  if (bytes === undefined)
+    throw new BackeError('unexpected', `Datei »${path}« verschwand zwischen Auflisten und Lesen`);
   return bytes.toString('utf8');
 }
 
