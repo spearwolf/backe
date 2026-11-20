@@ -26,8 +26,9 @@ export type ToolKind = 'read' | 'write' | 'sync';
 export type WriteQueue = { run<T>(fn: () => Promise<T>): Promise<T> };
 
 /**
- * Hintergrund-Starts, die ein Tool angestoßen, aber nicht abgewartet hat. `settled` wartet, bis
- * keiner mehr läuft — auch auf solche, die währenddessen dazukommen.
+ * Was neben der Warteschlange läuft und vor dem Ende fertig werden muss: laufende Sync-Tools und
+ * die Hintergrund-Starts nach Writes, die das Tool-Ergebnis nicht abwartet. `settled` wartet, bis
+ * nichts mehr läuft — auch auf das, was währenddessen dazukommt.
  */
 export type Pending = { add(p: Promise<unknown>): void; settled(): Promise<void> };
 
@@ -96,7 +97,13 @@ async function execute(
     await scheduleSync(ctx, 'read', sync);
     return run();
   }
-  if (kind === 'sync') return run();
+  if (kind === 'sync') {
+    // Neben der Warteschlange, aber verfolgt: `close()` lässt einen laufenden Claim oder
+    // `sync_now` zu Ende laufen. Ablehnungen bekommt der Aufrufer, `pending` ignoriert sie.
+    const running = run();
+    env.pending.add(running);
+    return running;
+  }
   return env.queue.run(async () => {
     const value = await run();
     // Nicht abgewartet: Das Ergebnis des Writes steht fest; `scheduleSync` wirft nie. Gemerkt
@@ -107,12 +114,15 @@ async function execute(
   });
 }
 
-/** Registriert ein Tool mit Fehlergrenze; `run` bekommt den frisch aufgelösten Kontext. */
+/**
+ * Registriert ein Tool mit Fehlergrenze; `run` bekommt den frisch aufgelösten Kontext. `kind` darf
+ * von den Argumenten abhängen (`issue_next` mit `claim` ist kein Read, sondern ein Sync-Tool).
+ */
 export function defineTool<S extends z.ZodObject>(
   server: McpServer,
   env: ToolEnv,
   name: string,
-  spec: { description: string; input: S; kind: ToolKind },
+  spec: { description: string; input: S; kind: ToolKind | ((args: z.infer<S>) => ToolKind) },
   run: (ctx: ResolvedContext, args: z.infer<S>) => Promise<unknown>,
 ): void {
   // Mit generischem `S` löst TypeScript den Callback-Typ des SDK nicht auf; das Schema geht daher
@@ -123,8 +133,10 @@ export function defineTool<S extends z.ZodObject>(
     { description: spec.description, inputSchema },
     async (args): Promise<CallToolResult> => {
       try {
+        const a = args as z.infer<S>;
+        const kind = typeof spec.kind === 'function' ? spec.kind(a) : spec.kind;
         const ctx = await env.context();
-        return toolResult(await execute(env, spec.kind, ctx, () => run(ctx, args as z.infer<S>)));
+        return toolResult(await execute(env, kind, ctx, () => run(ctx, a)));
       } catch (err) {
         return toolError(err);
       }

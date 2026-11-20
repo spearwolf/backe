@@ -153,9 +153,10 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
         claim: z.boolean().optional(),
         fields: strings.optional(),
       }),
-      // Auch mit `claim` lesend: Der Frische-Anstoß davor schadet nicht, der Claim läuft neben
-      // der Warteschlange und synct selbst.
-      kind: 'read',
+      // Mit `claim` kein Read (wie `next --claim` der CLI): Ein vorab angestoßener
+      // Hintergrund-Sync könnte `sync.lock` vor dem Claim greifen und ihn eine ganze Runde
+      // warten lassen. Der Claim synct selbst, neben der Warteschlange.
+      kind: (a) => (a.claim === true ? 'sync' : 'read'),
     },
     async (ctx, a) => {
       const q: NextQuery = {

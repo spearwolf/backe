@@ -11,7 +11,7 @@ import type { ResolvedContext } from '../context/resolve.ts';
 import { scheduleSync } from '../services/background.ts';
 import { claimIssue } from '../services/claim.ts';
 import { type SyncDeps, type SyncOutcome, syncNow } from '../services/sync.ts';
-import { noticeJson, outcomeJson, syncJson } from '../services/views.ts';
+import { nonEmpty, noticeJson, outcomeJson, syncJson } from '../services/views.ts';
 import { requireHeadConfig } from '../services/write.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
 import { defineTool, type ToolEnv } from './tool.ts';
@@ -21,8 +21,7 @@ const DEFAULT_PULL_INTERVAL = 60;
 
 /** Ergebnis von `sync_now`: wie `sync --json`, die Hinweise aber als Objekte `{message}`. */
 export function syncResult(out: SyncOutcome): Record<string, unknown> {
-  const json = syncJson(out);
-  return { ...json, notices: out.notices.length === 0 ? undefined : out.notices.map(noticeJson) };
+  return { ...syncJson(out), notices: nonEmpty(out.notices.map(noticeJson)) };
 }
 
 export function registerSyncTools(server: McpServer, env: ToolEnv): void {

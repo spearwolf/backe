@@ -179,6 +179,41 @@ test('a write tool runs through the queue, a sync tool beside it', async () => {
   }
 });
 
+test('the kind may depend on the arguments', async () => {
+  let enqueued = 0;
+  const m = await harness((server, env) => {
+    const queue = env.queue;
+    const counting: ToolEnv = {
+      ...env,
+      queue: {
+        run: (fn) => {
+          enqueued += 1;
+          return queue.run(fn);
+        },
+      },
+    };
+    defineTool(
+      server,
+      counting,
+      'k',
+      {
+        description: 'k',
+        input: z.object({ write: z.boolean() }),
+        kind: (a) => (a.write ? 'write' : 'sync'),
+      },
+      () => Promise.resolve({ commit: null }),
+    );
+  });
+  try {
+    await m.call('k', { write: false });
+    expect(enqueued).toBe(0);
+    await m.call('k', { write: true });
+    expect(enqueued).toBe(1);
+  } finally {
+    await m.close();
+  }
+});
+
 test('a context that fails to resolve becomes an error result', async () => {
   const b = await testBacklog();
   const opts = { cwd: b.root, env: b.env, flags: { as: b.handle }, allowDelete: false };

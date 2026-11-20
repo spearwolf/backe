@@ -47,8 +47,9 @@ export async function prepareMcp(opts: McpOptions): Promise<ResolvedContext> {
 /**
  * Zustand je Prozess (Warteschlange, Timer) plus `build`, die Factory für `serveStdio`:
  * baut bei jedem Aufruf ein frisches `McpServer` mit allen Tools, ohne Nebenwirkung. `close`
- * baut den Timer ab und wartet, bis die laufenden Writes und die von ihnen angestoßenen
- * Hintergrund-Starts durch sind.
+ * baut den Timer ab und lässt laufende Tool-Aufrufe zu Ende laufen (backe.md §2.19 Ende): die
+ * Writes der Warteschlange, laufende Sync-Tools (Claim, `sync_now`) und die Hintergrund-Starts
+ * nach Writes.
  */
 export type BackeMcp = { build(): McpServer; close(): Promise<void> };
 

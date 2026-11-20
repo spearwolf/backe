@@ -9,7 +9,7 @@ import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { revParse, testBacklog, twoClones } from '../../test/helpers/git.ts';
+import { revParse, setPullInterval, testBacklog, twoClones } from '../../test/helpers/git.ts';
 import { seqBytes } from '../../test/helpers/snapshot.ts';
 import { exists } from '../context/paths.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
@@ -86,18 +86,6 @@ const manual = (ctx: ResolvedContext): ResolvedContext => ({
     backlogs: { acme: { ...ctx.userConfig.backlogs?.acme, sync: { mode: 'manual' } } },
   },
 });
-
-/** Ein gültiger Admin-Commit von spw setzt `sync.pull_interval` in der Backlog-Config. */
-async function setPullInterval(seconds: number): Promise<void> {
-  const config = await readFile(join(t.spw.root, BACKLOG_CONFIG), 'utf8');
-  const changed = config.replace(/\n}\n$/, `,\n  "sync": { "pull_interval": ${seconds} }\n}\n`);
-  expect(changed).not.toBe(config);
-  await executeWrite(spw(), {
-    kind: 'manual',
-    subject: `pull_interval: ${seconds}`,
-    changes: [{ path: BACKLOG_CONFIG, content: changed }],
-  });
-}
 
 /** Ein Git-Repo mit `.backe/backlog.jsonc` im Arbeitsbaum, aber nicht in HEAD. */
 async function uncommittedBacklog(): Promise<string> {
@@ -461,7 +449,7 @@ describe('freshen', () => {
   });
 
   test('pull_interval 0 spawns on every read', async () => {
-    await setPullInterval(0);
+    await setPullInterval(t.spw, 0);
     await writeSyncState(t.spw.root, { last_attempt: '2026-11-20T08:00:00Z' });
 
     expect(await scheduleSync(spw(), 'read', deps())).toBe(true);

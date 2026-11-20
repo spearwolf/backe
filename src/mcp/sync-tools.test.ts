@@ -143,6 +143,48 @@ test('issue_next without claim reports no commit', async () => {
   });
 });
 
+test('issue_next with claim schedules no read sync before claiming', async () => {
+  await setPullInterval(t.spw, 0);
+  const x = await shared('X');
+  const m = await agentMcp();
+  await using([m], async () => {
+    // Mit pull_interval 0 ist jeder Read fällig; der Claim darf trotzdem keinen anstoßen.
+    expect(await m.call('issue_next', { claim: true })).toHaveProperty('ok.attempts', [x]);
+    expect(spawned).toEqual([]);
+    expect(await m.call('issue_next')).toHaveProperty('ok.issue.id', x);
+    expect(spawned).toHaveLength(1);
+  });
+});
+
+test('close lets a running claim finish', async () => {
+  const x = await shared('X');
+  const g = gate();
+  let paused = false;
+  const m = await agentMcp({
+    beforePush: async (_round, sha) => {
+      if (paused || !(await isClaim(t.agent.wc, sha))) return;
+      paused = true;
+      g.reached();
+      await g.open;
+    },
+  });
+  // Die Antwort erreicht den Client nicht mehr, sobald die Verbindung zu ist.
+  const call = m.call('issue_claim', { id: x }).catch(() => undefined);
+  await g.atGate;
+  let closed = false;
+  const closing = m.close().then(() => {
+    closed = true;
+  });
+  await new Promise<void>((r) => setImmediate(r));
+  expect(closed).toBe(false);
+  g.release();
+  await closing;
+  const head = await remoteHead();
+  expect(await isClaim(t.remote, head)).toBe(true);
+  expect(head).toBe(await revParse(t.agent.wc, 'HEAD'));
+  await call;
+});
+
 test('syncResult turns string notices into objects', () => {
   expect(
     syncResult({
@@ -236,8 +278,6 @@ test('the periodic sync ticks every pull_interval', async () => {
     await m.close();
   }
   expect(vi.getTimerCount()).toBe(0);
-  vi.advanceTimersByTime(60_000);
-  expect(spawned).toHaveLength(1);
 });
 
 test('pull_interval 0 starts no timer', async () => {

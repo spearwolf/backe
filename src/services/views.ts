@@ -62,7 +62,8 @@ export function pickFields(
   return out;
 }
 
-const nonEmpty = <T>(list: readonly T[]): readonly T[] | undefined =>
+/** Eine leere Liste fällt im JSON weg. */
+export const nonEmpty = <T>(list: readonly T[]): readonly T[] | undefined =>
   list.length === 0 ? undefined : list;
 
 /**
