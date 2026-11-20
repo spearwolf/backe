@@ -448,7 +448,11 @@ function changedPathsOf(changes: readonly FileChange[]): string[] {
 const committedPaths = (s: Step): string[] => [...s.paths, ...(s.renormalize ?? [])].sort();
 
 /** Commit-Message nach backe.md §2.13 für Operationen: eine im Trailer, mehrere als Batch. */
-function opMessage(kind: 'op' | 'batch', recorded: readonly Operation[], handle: string): string {
+export function opMessage(
+  kind: 'op' | 'batch',
+  recorded: readonly Operation[],
+  handle: string,
+): string {
   const actor = [TRAILER_ACTOR, handle] as const;
   if (kind === 'batch') {
     return formatCommitMessage({
@@ -464,19 +468,24 @@ function opMessage(kind: 'op' | 'batch', recorded: readonly Operation[], handle:
   });
 }
 
+/** Commit-Message eines `manual`-Commits (backe.md §2.13). */
+export function manualMessage(subject: string, handle: string): string {
+  return formatCommitMessage({
+    subject,
+    trailers: [
+      [TRAILER_ACTOR, handle],
+      [TRAILER_OP, 'manual'],
+    ],
+  });
+}
+
 function manualStep(subject: string, changes: readonly FileChange[], handle: string): Step {
   return {
     kind: 'manual',
     changes,
     recorded: [],
     paths: changedPathsOf(changes),
-    message: formatCommitMessage({
-      subject,
-      trailers: [
-        [TRAILER_ACTOR, handle],
-        [TRAILER_OP, 'manual'],
-      ],
-    }),
+    message: manualMessage(subject, handle),
   };
 }
 
@@ -797,7 +806,7 @@ async function setUpLfs(wc: string): Promise<void> {
 }
 
 /** Ob `path` von `change` geschrieben oder (als Verzeichnis) mitgelöscht wird. */
-function touches(change: FileChange, path: string): boolean {
+export function touches(change: FileChange, path: string): boolean {
   return change.path === path || path.startsWith(`${change.path}/`);
 }
 

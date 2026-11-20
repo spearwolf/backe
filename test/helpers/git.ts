@@ -19,6 +19,7 @@ import {
   TRAILER_OP,
 } from '../../src/git/message.ts';
 import { initBacklog } from '../../src/services/init.ts';
+import { ensureWorkingCopy } from '../../src/services/working-copy.ts';
 import { executeWrite } from '../../src/services/write.ts';
 import { tempDir } from './backlog.ts';
 
@@ -311,4 +312,34 @@ export async function warnModeAgent(): Promise<{
   await setIdentity(remote.homes, 'acme', 'claude-1', claude.priv);
   const ctx = await remote.context({ as: 'claude-1', backlog: 'acme' });
   return { remote, ctx, notice: `${bad.slice(0, 7)}: unsigniert` };
+}
+
+/**
+ * Backlog mit bare Remote und dem Agent `claude-1` (Operator `spw`) mit eigener Arbeitskopie;
+ * beide stehen auf demselben gepushten Stand. `sync.mode` bleibt `auto`, gestartet wird nichts.
+ */
+export async function twoClones(): Promise<{
+  remote: string;
+  spw: TestBacklog & { ctx: ResolvedContext };
+  agent: { ctx: ResolvedContext; wc: string };
+}> {
+  const spw = await testBacklog({ remote: true });
+  const ctx = await spw.context();
+  const claude = await testKey('claude-1');
+  await executeWrite(ctx, {
+    kind: 'op',
+    op: {
+      op: 'user.add',
+      handle: 'claude-1',
+      name: 'Claude',
+      kind: 'agent',
+      operator: 'spw',
+      keys: [claude.line],
+    },
+  });
+  await git(['push', '-q', 'origin', 'main'], { cwd: spw.root });
+  await setIdentity(spw.homes, 'acme', 'claude-1', claude.priv);
+  const agentCtx = await spw.context({ as: 'claude-1', backlog: 'acme' });
+  const { root: wc } = await ensureWorkingCopy(agentCtx, 'claude-1');
+  return { remote: spw.remote as string, spw: { ...spw, ctx }, agent: { ctx: agentCtx, wc } };
 }
