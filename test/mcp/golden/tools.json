@@ -53,7 +53,7 @@
   },
   {
     "name": "batch",
-    "description": "Mehrere Operationen in einem Commit (wie backe batch); ops sind Objekte im Format von backe.md §2.16.6, Platzhalter wie $a verbinden sie",
+    "description": "Mehrere Operationen in einem Commit (wie backe batch); ops sind Objekte im Format von backe.md §2.16.6, Platzhalter wie $a verbinden sie; erlaubt sind issue.create, issue.edit, issue.move, issue.resume, issue.reopen, issue.rank, comment.add, attach.add mit url und mit --allow-delete issue.delete",
     "inputSchema": {
       "type": "object",
       "properties": {

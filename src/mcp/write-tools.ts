@@ -116,6 +116,42 @@ async function attachSource(a: AttachArgs, home: string, cwd: string): Promise<A
   return { kind: 'file', fileName: basename(path), content: await readFile(path) };
 }
 
+/**
+ * Operationen, die `batch` im MCP-Modus annimmt: dieselben Writes wie die Einzel-Tools, dazu
+ * `issue.delete` nur mit `--allow-delete`. Alles andere (Projekte, Sprints, Repos, User, Löschen
+ * von Kommentaren und Anhängen) bleibt dem CLI vorbehalten (backe.md §2.19).
+ */
+const BATCH_OPS: ReadonlySet<string> = new Set([
+  'issue.create',
+  'issue.edit',
+  'issue.move',
+  'issue.resume',
+  'issue.reopen',
+  'issue.rank',
+  'comment.add',
+  'attach.add',
+]);
+
+/**
+ * Lehnt die erste Operation mit einem `op` außerhalb von {@link BATCH_OPS} ab, bevor der Batch
+ * etwas liest oder schreibt. Einträge ohne String-`op` prüft `runBatch` mit seiner eigenen Meldung.
+ * Jede Operation steht auf einer eigenen Zeile; die Nummer zählt wie dort ab 1.
+ */
+export function rejectBatchOps(
+  ops: readonly Record<string, unknown>[],
+  allowDelete: boolean,
+): void {
+  ops.forEach((o, i) => {
+    const op = o.op;
+    if (typeof op !== 'string') return;
+    if (BATCH_OPS.has(op) || (allowDelete && op === 'issue.delete')) return;
+    const line = i + 1;
+    throw new BackeError('validation', `Zeile ${line}: »${op}« gibt es im MCP-Modus nicht`, {
+      details: { line },
+    });
+  });
+}
+
 export function registerWriteTools(server: McpServer, env: ToolEnv): void {
   defineTool(
     server,
@@ -344,7 +380,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     'batch',
     {
       description:
-        'Mehrere Operationen in einem Commit (wie backe batch); ops sind Objekte im Format von backe.md §2.16.6, Platzhalter wie $a verbinden sie',
+        'Mehrere Operationen in einem Commit (wie backe batch); ops sind Objekte im Format von backe.md §2.16.6, Platzhalter wie $a verbinden sie; erlaubt sind issue.create, issue.edit, issue.move, issue.resume, issue.reopen, issue.rank, comment.add, attach.add mit url und mit --allow-delete issue.delete',
       input: z.object({ ops: z.array(z.record(z.string(), z.unknown())) }),
       kind: 'write',
     },
@@ -352,6 +388,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
       if (a.ops.length === 0) {
         throw new BackeError('usage', 'batch braucht mindestens eine Operation');
       }
+      rejectBatchOps(a.ops, env.opts.allowDelete);
       const text = a.ops.map((o) => JSON.stringify(o)).join('\n');
       return batchJson(await runBatch(ctx, text, env.opts.deps?.write));
     },

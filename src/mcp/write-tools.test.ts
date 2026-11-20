@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { testBacklog } from '../../test/helpers/git.ts';
+import { revParse, testBacklog } from '../../test/helpers/git.ts';
 import { connectMcp } from '../../test/helpers/mcp.ts';
 import { git } from '../git/exec.ts';
 import { issueFile } from '../store/layout.ts';
@@ -176,6 +176,51 @@ test('batch writes one commit and returns refs', () =>
     expect(r.ok.refs.$a).toMatch(/^bk-/);
     expect(r.ok.ops).toBe(2);
     expect(await count(b)).toBe(before + 1);
+  }));
+
+/** Ein Batch mit genau `op`, der abgelehnt wird, ohne dass `HEAD` sich bewegt. */
+async function rejected(m: Mcp, b: Backlog, op: Record<string, unknown>): Promise<void> {
+  const head = await revParse(b.root, 'HEAD');
+  const r = await m.call('batch', { ops: [{ op: 'comment.add', id: 'bk-x', body: 'x' }, op] });
+  expect(r).toEqual({
+    error: {
+      code: 'validation',
+      message: `Zeile 2: »${op.op as string}« gibt es im MCP-Modus nicht`,
+      details: { line: 2 },
+    },
+  });
+  expect(await revParse(b.root, 'HEAD')).toBe(head);
+}
+
+test('batch rejects issue.delete without allowDelete and takes it with', async () => {
+  await withMcp(async (m, b) => {
+    const id = await create(m);
+    await rejected(m, b, { op: 'issue.delete', id });
+    expect(await readFile(join(b.root, issueFile(id)), 'utf8')).toContain(id);
+  });
+  await withMcp(
+    async (m) => {
+      const id = await create(m);
+      const r = await m.call('batch', { ops: [{ op: 'issue.delete', id }] });
+      expect(r).toMatchObject({ ok: { ops: 1 } });
+    },
+    { allowDelete: true },
+  );
+});
+
+test('batch rejects user, project, repo and removing ops before touching the backlog', () =>
+  withMcp(async (m, b) => {
+    const id = await create(m);
+    await rejected(m, b, { op: 'user.add', handle: 'mallory', keys: ['ssh-ed25519 AAAA x'] });
+    await rejected(m, b, { op: 'project.create', path: 'geheim' });
+    await rejected(m, b, { op: 'repo.add', name: 'r', url: 'https://example.com/r.git' });
+    await rejected(m, b, { op: 'comment.delete', id, comment: 'c-1' });
+    await rejected(m, b, { op: 'attach.rm', id, name: 'a' });
+    await rejected(m, b, { op: 'issue.claim', id });
+    // Ohne String-`op` bleibt es bei der Meldung von `runBatch`.
+    const r = await m.call('batch', { ops: [{ op: 5 }] });
+    expect(r).toMatchObject({ error: { code: 'validation', details: { line: 1 } } });
+    expect((r as { error: { message: string } }).error.message).not.toContain('MCP-Modus');
   }));
 
 test('issue_delete exists only with allowDelete', async () => {
