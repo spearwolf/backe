@@ -16,6 +16,7 @@ import {
   limitArg,
   type Runtime,
   subcommand,
+  syncOption,
   text,
 } from '../options.ts';
 import { columns, lines } from '../output.ts';
@@ -44,36 +45,46 @@ export function commentCommands(program: Command, rt: Runtime): void {
   const comment = subcommand(program, 'comment', 'Kommentare eines Issues');
 
   messageOptions(subcommand(comment, 'add <id>', 'Kommentar anlegen')).action(
-    action(rt, async (env, ref: string, opts: MessageOpts) => {
-      const body = await messageOf(env, opts);
-      emitOutcome(env, await addComment(await env.context(), ref, body), 'other');
-    }),
+    action(
+      rt,
+      async (env, ref: string, opts: MessageOpts) => {
+        const body = await messageOf(env, opts);
+        emitOutcome(env, await addComment(await env.context(), ref, body), 'other');
+      },
+      { write: true },
+    ),
   );
 
-  subcommand(comment, 'list <id>', 'Kommentare chronologisch, mit Nummer für edit und delete')
+  syncOption(
+    subcommand(comment, 'list <id>', 'Kommentare chronologisch, mit Nummer für edit und delete'),
+  )
     .option('--limit <n>', 'nur die letzten n')
     .action(
-      action(rt, async (env, ref: string, opts: { limit?: string }) => {
-        const limit = limitArg(opts.limit);
-        // Die Nummer zählt in der ganzen Liste, damit sie auch nach --limit für edit/delete taugt.
-        const all = await listIssueComments(await env.context(), ref);
-        const from = limit === undefined ? 0 : Math.max(0, all.length - limit);
-        const shown = all.slice(from);
-        // JSON trägt dieselbe Nummer `n`, die `comment edit|delete` annehmen.
-        const numbered = shown.map((c, i) => ({ n: from + i + 1, ...c }));
-        emit(env, numbered, () =>
-          lines(
-            columns(
-              shown.map((c, i) => [
-                String(from + i + 1),
-                c.file,
-                c.author,
-                c.body.split('\n', 1)[0] ?? '',
-              ]),
+      action(
+        rt,
+        async (env, ref: string, opts: { limit?: string }) => {
+          const limit = limitArg(opts.limit);
+          // Die Nummer zählt in der ganzen Liste, damit sie auch nach --limit für edit/delete taugt.
+          const all = await listIssueComments(await env.context(), ref);
+          const from = limit === undefined ? 0 : Math.max(0, all.length - limit);
+          const shown = all.slice(from);
+          // JSON trägt dieselbe Nummer `n`, die `comment edit|delete` annehmen.
+          const numbered = shown.map((c, i) => ({ n: from + i + 1, ...c }));
+          emit(env, numbered, () =>
+            lines(
+              columns(
+                shown.map((c, i) => [
+                  String(from + i + 1),
+                  c.file,
+                  c.author,
+                  c.body.split('\n', 1)[0] ?? '',
+                ]),
+              ),
             ),
-          ),
-        );
-      }),
+          );
+        },
+        { read: true },
+      ),
     );
 
   messageOptions(
@@ -83,10 +94,14 @@ export function commentCommands(program: Command, rt: Runtime): void {
       'eigenen Kommentar ändern (Dateiname oder Nummer)',
     ),
   ).action(
-    action(rt, async (env, ref: string, which: string, opts: MessageOpts) => {
-      const body = await messageOf(env, opts);
-      emitOutcome(env, await editComment(await env.context(), ref, which, body), 'other');
-    }),
+    action(
+      rt,
+      async (env, ref: string, which: string, opts: MessageOpts) => {
+        const body = await messageOf(env, opts);
+        emitOutcome(env, await editComment(await env.context(), ref, which, body), 'other');
+      },
+      { write: true },
+    ),
   );
 
   subcommand(
@@ -94,8 +109,12 @@ export function commentCommands(program: Command, rt: Runtime): void {
     'delete <id> <kommentar>',
     'eigenen Kommentar löschen (Dateiname oder Nummer)',
   ).action(
-    action(rt, async (env, ref: string, which: string) => {
-      emitOutcome(env, await deleteComment(await env.context(), ref, which), 'other');
-    }),
+    action(
+      rt,
+      async (env, ref: string, which: string) => {
+        emitOutcome(env, await deleteComment(await env.context(), ref, which), 'other');
+      },
+      { write: true },
+    ),
   );
 }

@@ -6,6 +6,7 @@
 import { rm } from 'node:fs/promises';
 import type { Command } from 'commander';
 import { BackeError } from '../../core/errors.ts';
+import { claimIssue } from '../../services/claim.ts';
 import { type IssueListQuery, listIssues } from '../../services/issue-list.ts';
 import { showIssue } from '../../services/issue-show.ts';
 import {
@@ -37,6 +38,7 @@ import {
   type Runtime,
   stdinBody,
   subcommand,
+  syncOption,
   text,
 } from '../options.ts';
 import { headerLine, json, lines, pickFields, safeText } from '../output.ts';
@@ -101,22 +103,26 @@ function defineCreate(parent: Command, name: string, rt: Runtime, description: s
     .option('--prop <key=wert|key:=json>', 'Property (wiederholbar)', collect)
     .option('--state <state>', 'Anfangszustand (Default backlog)')
     .action(
-      action(rt, async (env, opts: CreateOpts) => {
-        const body = await bodyArg(env, opts);
-        const r = await createIssue(await env.context(), {
-          title: opts.title,
-          ...(body === undefined ? {} : { body }),
-          ...(opts.state === undefined ? {} : { state: opts.state }),
-          ...(opts.project === undefined ? {} : { projects: opts.project }),
-          ...(opts.sprint === undefined ? {} : { sprints: opts.sprint }),
-          ...(opts.repo === undefined ? {} : { repos: opts.repo }),
-          ...(opts.assignee === undefined ? {} : { assignee: opts.assignee }),
-          ...(opts.dep === undefined ? {} : { deps: opts.dep }),
-          ...(opts.parent === undefined ? {} : { parent: opts.parent }),
-          ...(opts.prop === undefined ? {} : { props: opts.prop }),
-        });
-        emitOutcome(env, r, 'create');
-      }),
+      action(
+        rt,
+        async (env, opts: CreateOpts) => {
+          const body = await bodyArg(env, opts);
+          const r = await createIssue(await env.context(), {
+            title: opts.title,
+            ...(body === undefined ? {} : { body }),
+            ...(opts.state === undefined ? {} : { state: opts.state }),
+            ...(opts.project === undefined ? {} : { projects: opts.project }),
+            ...(opts.sprint === undefined ? {} : { sprints: opts.sprint }),
+            ...(opts.repo === undefined ? {} : { repos: opts.repo }),
+            ...(opts.assignee === undefined ? {} : { assignee: opts.assignee }),
+            ...(opts.dep === undefined ? {} : { deps: opts.dep }),
+            ...(opts.parent === undefined ? {} : { parent: opts.parent }),
+            ...(opts.prop === undefined ? {} : { props: opts.prop }),
+          });
+          emitOutcome(env, r, 'create');
+        },
+        { write: true },
+      ),
     );
 }
 
@@ -186,7 +192,7 @@ function listQuery(opts: ListOpts): IssueListQuery {
 }
 
 function defineList(parent: Command, name: string, rt: Runtime, description: string): void {
-  subcommand(parent, name, description)
+  syncOption(subcommand(parent, name, description))
     .option('--state <state[,state]|all>', 'States (Default: alle offenen; wiederholbar)', collect)
     .option('-p, --project <pfad>', 'Projekt samt Unterprojekten (wiederholbar)', collect)
     .option('--exact', 'nur genau diese Projekte, ohne Unterprojekte')
@@ -238,7 +244,7 @@ function defineList(parent: Command, name: string, rt: Runtime, description: str
             ]),
           );
         },
-        { fields: LIST_FIELDS },
+        { fields: LIST_FIELDS, read: true },
       ),
     );
 }
@@ -254,7 +260,7 @@ function commentsArg(value: string | undefined): number | 'all' | undefined {
 }
 
 function defineShow(parent: Command, name: string, rt: Runtime, description: string): void {
-  subcommand(parent, `${name} <id>`, description)
+  syncOption(subcommand(parent, `${name} <id>`, description))
     .option('--comments <n|all>', 'die letzten n Kommentare oder alle anhängen')
     .action(
       action(
@@ -274,7 +280,7 @@ function defineShow(parent: Command, name: string, rt: Runtime, description: str
           env.out(env.format === 'md' ? issueDetailMd(d) : issueDetailText(d, env.color));
           emitNotices(env, d.notices);
         },
-        { formats: ['text', 'json', 'md'], fields: SHOW_FIELDS },
+        { formats: ['text', 'json', 'md'], fields: SHOW_FIELDS, read: true },
       ),
     );
 }
@@ -348,40 +354,44 @@ function defineEdit(parent: Command, rt: Runtime): void {
       'neuer Body aus Datei, eine leere Datei leert ihn; »-« liest stdin, das nicht leer sein darf',
     )
     .action(
-      action(rt, async (env, ref: string, opts: EditOpts) => {
-        if (parentFlags.size > 1) {
-          throw new BackeError('usage', '--parent und --no-parent schließen sich aus');
-        }
-        const given = Object.entries(opts).filter(
-          ([key, v]) => v !== undefined && !(GLOBAL_KEYS as readonly string[]).includes(key),
-        );
-        if (given.length === 0) {
-          await editInEditor(env, ref);
-          return;
-        }
-        const body =
-          opts.bodyFile === undefined
-            ? undefined
-            : opts.bodyFile === '-'
-              ? await stdinBody(env.io, env.stdin, '--body-file <leere datei>')
-              : await fileText(opts.bodyFile, env.io);
-        const r = await editIssue(await env.context(), ref, {
-          ...(opts.title === undefined ? {} : { title: opts.title }),
-          ...(opts.addProject === undefined ? {} : { addProjects: opts.addProject }),
-          ...(opts.rmProject === undefined ? {} : { rmProjects: opts.rmProject }),
-          ...(opts.addSprint === undefined ? {} : { addSprints: opts.addSprint }),
-          ...(opts.rmSprint === undefined ? {} : { rmSprints: opts.rmSprint }),
-          ...(opts.addDep === undefined ? {} : { addDeps: opts.addDep }),
-          ...(opts.rmDep === undefined ? {} : { rmDeps: opts.rmDep }),
-          ...(opts.parent === undefined
-            ? {}
-            : { parent: opts.parent === false ? null : opts.parent }),
-          ...(opts.prop === undefined ? {} : { props: opts.prop }),
-          ...(opts.unsetProp === undefined ? {} : { unsetProps: opts.unsetProp }),
-          ...(body === undefined ? {} : { body }),
-        });
-        emitOutcome(env, r, 'other');
-      }),
+      action(
+        rt,
+        async (env, ref: string, opts: EditOpts) => {
+          if (parentFlags.size > 1) {
+            throw new BackeError('usage', '--parent und --no-parent schließen sich aus');
+          }
+          const given = Object.entries(opts).filter(
+            ([key, v]) => v !== undefined && !(GLOBAL_KEYS as readonly string[]).includes(key),
+          );
+          if (given.length === 0) {
+            await editInEditor(env, ref);
+            return;
+          }
+          const body =
+            opts.bodyFile === undefined
+              ? undefined
+              : opts.bodyFile === '-'
+                ? await stdinBody(env.io, env.stdin, '--body-file <leere datei>')
+                : await fileText(opts.bodyFile, env.io);
+          const r = await editIssue(await env.context(), ref, {
+            ...(opts.title === undefined ? {} : { title: opts.title }),
+            ...(opts.addProject === undefined ? {} : { addProjects: opts.addProject }),
+            ...(opts.rmProject === undefined ? {} : { rmProjects: opts.rmProject }),
+            ...(opts.addSprint === undefined ? {} : { addSprints: opts.addSprint }),
+            ...(opts.rmSprint === undefined ? {} : { rmSprints: opts.rmSprint }),
+            ...(opts.addDep === undefined ? {} : { addDeps: opts.addDep }),
+            ...(opts.rmDep === undefined ? {} : { rmDeps: opts.rmDep }),
+            ...(opts.parent === undefined
+              ? {}
+              : { parent: opts.parent === false ? null : opts.parent }),
+            ...(opts.prop === undefined ? {} : { props: opts.prop }),
+            ...(opts.unsetProp === undefined ? {} : { unsetProps: opts.unsetProp }),
+            ...(body === undefined ? {} : { body }),
+          });
+          emitOutcome(env, r, 'other');
+        },
+        { write: true },
+      ),
     );
 }
 
@@ -394,16 +404,20 @@ function defineMove(parent: Command, name: string, rt: Runtime, description: str
     .option('--blocked-by <id>', 'Blocker bei blocked (wiederholbar)', collect)
     .option('--force', 'done trotz offener Sub-Issues oder unter einem done-Parent')
     .action(
-      action(rt, async (env, ref: string, to: string, opts: MoveOpts) => {
-        const reason = await reasonOf(env, opts);
-        const r = await moveIssue(await env.context(), ref, {
-          to,
-          ...(reason === undefined ? {} : { reason }),
-          ...(opts.blockedBy === undefined ? {} : { blockedBy: opts.blockedBy }),
-          ...(opts.force === true ? { force: true } : {}),
-        });
-        emitOutcome(env, r, 'other');
-      }),
+      action(
+        rt,
+        async (env, ref: string, to: string, opts: MoveOpts) => {
+          const reason = await reasonOf(env, opts);
+          const r = await moveIssue(await env.context(), ref, {
+            to,
+            ...(reason === undefined ? {} : { reason }),
+            ...(opts.blockedBy === undefined ? {} : { blockedBy: opts.blockedBy }),
+            ...(opts.force === true ? { force: true } : {}),
+          });
+          emitOutcome(env, r, 'other');
+        },
+        { write: true },
+      ),
     );
 }
 
@@ -411,13 +425,17 @@ function defineResume(parent: Command, rt: Runtime): void {
   reasonOptions(
     subcommand(parent, 'resume <id>', 'blocked oder on_hold verlassen, zurück nach paused_from'),
   ).action(
-    action(rt, async (env, ref: string, opts: ReasonOpts) => {
-      const reason = await reasonOf(env, opts);
-      const r = await resumeIssue(await env.context(), ref, {
-        ...(reason === undefined ? {} : { reason }),
-      });
-      emitOutcome(env, r, 'other');
-    }),
+    action(
+      rt,
+      async (env, ref: string, opts: ReasonOpts) => {
+        const reason = await reasonOf(env, opts);
+        const r = await resumeIssue(await env.context(), ref, {
+          ...(reason === undefined ? {} : { reason }),
+        });
+        emitOutcome(env, r, 'other');
+      },
+      { write: true },
+    ),
   );
 }
 
@@ -425,14 +443,18 @@ function defineReopen(parent: Command, rt: Runtime): void {
   reasonOptions(subcommand(parent, 'reopen <id>', 'erledigtes Issue wieder öffnen'))
     .option('--to <state>', 'Zielzustand')
     .action(
-      action(rt, async (env, ref: string, opts: ReasonOpts & { to?: string }) => {
-        const reason = await reasonOf(env, opts);
-        const r = await reopenIssue(await env.context(), ref, {
-          ...(opts.to === undefined ? {} : { to: opts.to }),
-          ...(reason === undefined ? {} : { reason }),
-        });
-        emitOutcome(env, r, 'other');
-      }),
+      action(
+        rt,
+        async (env, ref: string, opts: ReasonOpts & { to?: string }) => {
+          const reason = await reasonOf(env, opts);
+          const r = await reopenIssue(await env.context(), ref, {
+            ...(opts.to === undefined ? {} : { to: opts.to }),
+            ...(reason === undefined ? {} : { reason }),
+          });
+          emitOutcome(env, r, 'other');
+        },
+        { write: true },
+      ),
     );
 }
 
@@ -465,8 +487,24 @@ function rankPosition(value: string | undefined, opts: RankOpts): RankPositionIn
 
 function defineSmallWrites(issue: Command, rt: Runtime): void {
   subcommand(issue, 'assign <id> <user>', 'zuweisen: Handle, me oder none').action(
-    action(rt, async (env, ref: string, who: string) => {
-      emitOutcome(env, await assignIssue(await env.context(), ref, who), 'other');
+    action(
+      rt,
+      async (env, ref: string, who: string) => {
+        emitOutcome(env, await assignIssue(await env.context(), ref, who), 'other');
+      },
+      { write: true },
+    ),
+  );
+
+  // Kein `write`: Der Claim synct selbst und pusht sich als letzten Commit; einen Hintergrund-Lauf,
+  // der währenddessen warten musste, startet der Service nach der Freigabe von `sync.lock`.
+  subcommand(
+    issue,
+    'claim <id>',
+    'übernehmen, synchron mit dem Remote; war jemand schneller, Exit 4',
+  ).action(
+    action(rt, async (env, ref: string) => {
+      emitOutcome(env, await claimIssue(await env.context(), ref), 'other');
     }),
   );
 
@@ -476,10 +514,14 @@ function defineSmallWrites(issue: Command, rt: Runtime): void {
     .option('--before <id>', 'vor <id>')
     .option('--after <id>', 'hinter <id>')
     .action(
-      action(rt, async (env, ref: string, value: string | undefined, opts: RankOpts) => {
-        const pos = rankPosition(value, opts);
-        emitOutcome(env, await rankIssue(await env.context(), ref, pos), 'other');
-      }),
+      action(
+        rt,
+        async (env, ref: string, value: string | undefined, opts: RankOpts) => {
+          const pos = rankPosition(value, opts);
+          emitOutcome(env, await rankIssue(await env.context(), ref, pos), 'other');
+        },
+        { write: true },
+      ),
     );
 
   subcommand(
@@ -487,15 +529,23 @@ function defineSmallWrites(issue: Command, rt: Runtime): void {
     'link <id> <ziel>',
     'Repo verknüpfen: <repo>[@<ref>] oder <url>[@<ref>]',
   ).action(
-    action(rt, async (env, ref: string, target: string) => {
-      emitOutcome(env, await linkIssue(await env.context(), ref, target), 'other');
-    }),
+    action(
+      rt,
+      async (env, ref: string, target: string) => {
+        emitOutcome(env, await linkIssue(await env.context(), ref, target), 'other');
+      },
+      { write: true },
+    ),
   );
 
   subcommand(issue, 'unlink <id> <repo>', 'Repo-Verknüpfung lösen').action(
-    action(rt, async (env, ref: string, repo: string) => {
-      emitOutcome(env, await unlinkIssue(await env.context(), ref, repo), 'other');
-    }),
+    action(
+      rt,
+      async (env, ref: string, repo: string) => {
+        emitOutcome(env, await unlinkIssue(await env.context(), ref, repo), 'other');
+      },
+      { write: true },
+    ),
   );
 
   subcommand(issue, 'delete <id>', 'Issue löschen (Historie bleibt in Git)')
@@ -521,6 +571,7 @@ function defineSmallWrites(issue: Command, rt: Runtime): void {
           });
           emitOutcome(env, r, 'other');
         },
+        { write: true },
       ),
     );
 }

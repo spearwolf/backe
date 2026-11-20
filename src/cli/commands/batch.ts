@@ -41,28 +41,33 @@ export function batchCommand(program: Command, rt: Runtime): void {
   subcommand(program, 'batch [quelle]', 'Operationen als JSONL in einem Commit ausführen')
     .option('-f, --file <pfad|->', 'JSONL-Datei (»-« liest stdin)')
     .action(
-      action(rt, async (env, dash: string | undefined, opts: { file?: string }) => {
-        const input = await inputOf(env, opts.file, dash);
-        const r = await runBatch(await env.context(), input);
-        if (env.format === 'json') {
+      action(
+        rt,
+        async (env, dash: string | undefined, opts: { file?: string }) => {
+          const input = await inputOf(env, opts.file, dash);
+          const r = await runBatch(await env.context(), input);
+          env.committed(r.commit);
+          if (env.format === 'json') {
+            env.out(
+              json({
+                commit: r.commit ?? null,
+                refs: r.refs,
+                ops: r.ops.length,
+                notices: r.notices.length === 0 ? undefined : r.notices,
+                warnings: r.warnings.length === 0 ? undefined : r.warnings,
+              }),
+            );
+            return;
+          }
           env.out(
-            json({
-              commit: r.commit ?? null,
-              refs: r.refs,
-              ops: r.ops.length,
-              notices: r.notices.length === 0 ? undefined : r.notices,
-              warnings: r.warnings.length === 0 ? undefined : r.warnings,
-            }),
+            lines([
+              r.ops.length === 0 ? 'unverändert: batch' : summarizeBatch(r.ops),
+              ...columns(Object.entries(r.refs)),
+            ]),
           );
-          return;
-        }
-        env.out(
-          lines([
-            r.ops.length === 0 ? 'unverändert: batch' : summarizeBatch(r.ops),
-            ...columns(Object.entries(r.refs)),
-          ]),
-        );
-        emitNotices(env, r.notices, r.warnings);
-      }),
+          emitNotices(env, r.notices, r.warnings);
+        },
+        { write: true },
+      ),
     );
 }

@@ -1,5 +1,6 @@
 /** Alles, was die CLI von außen braucht; in Tests ersetzbar, in `main.ts` an den Prozess gebunden. */
 import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline/promises';
 import type { Env } from '../context/paths.ts';
 
 export type CliIo = {
@@ -18,6 +19,8 @@ export type CliIo = {
   stdinIsTTY: boolean;
   /** Startet `command` über die Shell mit `file` als `$1`, erbt die Ein- und Ausgabe; liefert den Exit-Code. */
   runEditor(command: string, file: string): Promise<number>;
+  /** Fragt auf stderr und liest eine Zeile vom Terminal (`sync --interactive`). */
+  ask(question: string): Promise<string>;
 };
 
 async function readAll(stream: NodeJS.ReadableStream): Promise<string> {
@@ -54,5 +57,13 @@ export function nodeIo(): CliIo {
         // Ein Signal-Ende hat keinen Exit-Code; es zählt als Fehlschlag.
         child.on('close', (code) => resolve(code ?? 1));
       }),
+    ask: async (question) => {
+      const rl = createInterface({ input: process.stdin, output: process.stderr });
+      try {
+        return await rl.question(question);
+      } finally {
+        rl.close();
+      }
+    },
   };
 }

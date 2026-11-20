@@ -83,7 +83,7 @@ import { setUpLfs } from './lfs.ts';
 import { raiseSignal, withDeferredSignals } from './signals.ts';
 import { coversOpen, type FrozenBasis, pathTaintReasons, writeCommitBasis } from './verify.ts';
 import { activeFingerprints, parseJsoncAs, type State } from './verify-state.ts';
-import { ensureWorkingCopy, identityMismatch } from './working-copy.ts';
+import { ensureWorkingCopy, hubNotices, identityMismatch } from './working-copy.ts';
 
 export type WriteInput =
   | { kind: 'op'; op: Operation }
@@ -139,8 +139,8 @@ export type WriteResult = {
   /** Alle committeten Pfade, sortiert. */
   paths: string[];
   /**
-   * Hinweise des Clones, wenn dieser Write die Arbeitskopie erst geklont hat: ein neu angelegter
-   * lokaler Hub und im Modus `warn` die Gründe ungültiger Commits.
+   * Warnungen des Clones, wenn dieser Write die Arbeitskopie erst geklont hat: im Modus `warn` die
+   * Gründe ungültiger Commits. Ein dabei neu angelegter Hub steht als Hinweis in `notices`.
    */
   verifyNotices: string[];
   chain: ChainEntry[];
@@ -893,9 +893,14 @@ export async function executeWrite(
   deps: WriteDeps = {},
 ): Promise<WriteResult> {
   const { handle, key, workingCopy } = requireWriter(ctx);
-  const { root: wc, notices: verifyNotices } = (await exists(join(workingCopy, BACKLOG_CONFIG)))
+  const cloned: { root: string; notices: string[]; hub?: string } = (await exists(
+    join(workingCopy, BACKLOG_CONFIG),
+  ))
     ? { root: workingCopy, notices: [] }
     : await ensureWorkingCopy(ctx, handle);
+  const { root: wc, notices: verifyNotices } = cloned;
+  // Ein neu angelegter Hub ist ein Hinweis zum Ergebnis, keine Warnung des Klons.
+  const hub = hubNotices(cloned.hub);
   const dir = await stateDir(wc);
   const journal = join(dir, 'write.journal');
   let deferred: NodeJS.Signals | undefined;
@@ -1068,7 +1073,8 @@ export async function executeWrite(
 
   await deps.hooks?.beforeLock?.();
   try {
-    return await withFileLock(join(dir, 'write.lock'), locked, deps.lock);
+    const r = await withFileLock(join(dir, 'write.lock'), locked, deps.lock);
+    return hub.length === 0 ? r : { ...r, notices: [...hub, ...r.notices] };
   } finally {
     if (deferred !== undefined) (deps.raise ?? raiseSignal)(deferred);
   }

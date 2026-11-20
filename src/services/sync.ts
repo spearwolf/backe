@@ -14,7 +14,6 @@ import type { BacklogConfig } from '../core/schemas.ts';
 import { git, transportEnv } from '../git/exec.ts';
 import { isAncestor, readBlobs, resolveCommit } from '../git/history.ts';
 import { readLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
-import { remoteUrl } from '../git/query.ts';
 import { assertOnBranch, dirtyPaths } from '../git/repo.ts';
 import { parseEntityFile } from '../store/frontmatter.ts';
 import { BACKLOG_CONFIG, userFile } from '../store/layout.ts';
@@ -22,6 +21,7 @@ import { authorOf, isoNow } from './env.ts';
 import { firstStderrLine } from './init.ts';
 import { lfsAvailable, requireLfs, setUpLfs } from './lfs.ts';
 import { type ManualResolver, readUnits, replayOnto } from './replay.ts';
+import { type SpawnFn, scheduleDeferred, syncRemote } from './schedule.ts';
 import { raiseSignal, withDeferredSignals } from './signals.ts';
 import {
   readSyncState,
@@ -47,8 +47,7 @@ export type SyncHooks = {
 
 type Env = ResolvedContext['env'];
 
-/** Startet `backe sync --background` als eigenständigen Prozess; `log` nimmt seine Ausgabe auf. */
-export type SpawnFn = (args: { argv: string[]; cwd: string; env: Env; log: string }) => void;
+export { effectiveMode, type SpawnFn, syncRemote } from './schedule.ts';
 
 export type SyncDeps = {
   now?: () => Date;
@@ -80,16 +79,6 @@ const MAX_ROUNDS = 5;
 const BACKOFF_MS = 200;
 const FETCH_TIMEOUT_MS = 60_000;
 const PUSH_TIMEOUT_MS = 120_000;
-
-/** Wirksamer Modus (backe.md §2.16.2): die User-Config vor `sync.mode` des Backlogs. */
-export function effectiveMode(ctx: ResolvedContext, config: BacklogConfig): 'auto' | 'manual' {
-  return ctx.userConfig.backlogs?.[ctx.backlog.value]?.sync?.mode ?? config.sync.mode;
-}
-
-/** URL des Git-Remotes `remote` der Arbeitskopie; ohne ihn `undefined` (»kein Remote«). */
-export function syncRemote(wc: string, remote: string): Promise<string | undefined> {
-  return remoteUrl(wc, remote);
-}
 
 /** Ein Git-Aufruf ist mit einem Exit-Code gescheitert und hat dabei `pattern` auf stderr gemeldet. */
 function stderrMatches(err: unknown, pattern: RegExp): boolean {
@@ -448,9 +437,14 @@ type Prepared = Round & { config: BacklogConfig; notices: string[]; remote: bool
 /** Arbeitskopie (bei Bedarf geklont), Config aus ihrem HEAD und ob der Git-Remote existiert. */
 async function prepare(ctx: ResolvedContext, deps: SyncDeps): Promise<Prepared> {
   const { handle, key, workingCopy } = requireWriter(ctx);
-  const { root: wc, notices } = (await exists(join(workingCopy, BACKLOG_CONFIG)))
+  const cloned: { root: string; notices: string[]; hub?: string } = (await exists(
+    join(workingCopy, BACKLOG_CONFIG),
+  ))
     ? { root: workingCopy, notices: [] }
     : await ensureWorkingCopy(ctx, handle);
+  const wc = cloned.root;
+  // Sync-Hinweise sind alle Hinweise; der neue Hub steht vorn.
+  const notices = [...(cloned.hub === undefined ? [] : [cloned.hub]), ...cloned.notices];
   const config = await requireHeadConfig(wc);
   const remote = (await syncRemote(wc, config.sync.remote)) !== undefined;
   return { ctx, wc, handle, key, deps, config, notices, remote };
@@ -491,7 +485,9 @@ async function heldRound(p: Prepared, opts: { claimSha?: string }): Promise<Sync
  * Eine Sync-Runde (backe.md §2.16.2) unter `sync.lock` (wartend): bis zu fünf Durchgänge aus
  * `fetch`, Verify, lokalem Abschnitt und `push`. Ohne Git-Remote `sync.remote` → `skipped`.
  * `sync.json` hält Zeit und Ergebnis; ein Fehler steht dort als `last_error` und wird dann neu
- * geworfen. `claimSha` markiert die Claim-Einheit (backe.md §2.16.5).
+ * geworfen. `claimSha` markiert die Claim-Einheit (backe.md §2.16.5). Hat ein Hintergrund-Lauf
+ * währenddessen nur `sync.dirty` gesetzt, startet nach der Freigabe der Hintergrund-Sync
+ * (`scheduleDeferred`).
  */
 export async function syncNow(
   ctx: ResolvedContext,
@@ -500,7 +496,15 @@ export async function syncNow(
 ): Promise<SyncOutcome> {
   const p = await prepare(ctx, deps);
   if (!p.remote) return skipped(p.notices);
-  return withFileLock(await syncFile(p.wc, 'sync.lock'), () => heldRound(p, opts), deps.lock);
+  try {
+    return await withFileLock(
+      await syncFile(p.wc, 'sync.lock'),
+      () => heldRound(p, opts),
+      deps.lock,
+    );
+  } finally {
+    await scheduleDeferred(ctx, await syncFile(p.wc, 'sync.dirty'), deps);
+  }
 }
 
 /**

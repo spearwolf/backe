@@ -37,6 +37,7 @@ import { isAncestor, mergeBase, readBlobs, resolveCommit, rootCommits } from '..
 import { clearLocalState, readLocalState, writeLocalState } from '../git/local-state.ts';
 import { branchesWithUnpushed, gitRemotes, gitToplevel } from '../git/query.ts';
 import { headState } from '../git/repo.ts';
+import type { Notice } from '../ops/notice.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG, userFile } from '../store/layout.ts';
 import { ensureHub, hubPath } from './hub.ts';
@@ -374,13 +375,14 @@ async function assertUserPushed(temp: string, reference: string, handle: string)
  * aus der registrierten Remote, ohne Remote aus dem lokalen Hub — fehlt er noch, aus der gelesenen
  * Arbeitskopie, und erst der geprüfte Clone legt den Hub an (`ensureHub`) und hängt sich daran. Die gelesene Arbeitskopie dient als `--reference`
  * (ein gebundener Clone nur mit `--dissociate`) und als Quelle für Anker und verifizierten Stand.
- * Eine vorhandene Arbeitskopie kommt ohne Netzzugriff zurück; `notices` hat nur ein Clone: der
- * Hinweis auf einen neuen Hub und im Modus `warn` die Gründe ungültiger Commits.
+ * Eine vorhandene Arbeitskopie kommt ohne Netzzugriff zurück; `notices` hat nur ein Clone: im
+ * Modus `warn` die Gründe ungültiger Commits. `hub` nennt einen dabei neu angelegten Hub — ein
+ * Hinweis, keine Warnung.
  */
 export async function ensureWorkingCopy(
   ctx: ResolvedContext,
   handle: string,
-): Promise<{ root: string; notices: string[] }> {
+): Promise<{ root: string; notices: string[]; hub?: string }> {
   const name = ctx.backlog.value;
   const wc = workingCopyPath(ctx.userConfig, ctx.homes, name, handle);
   if (await exists(join(wc, BACKLOG_CONFIG))) return { root: wc, notices: [] };
@@ -434,20 +436,26 @@ export async function ensureWorkingCopy(
       },
     });
     if (reference !== undefined) await assertUserPushed(temp, reference, handle);
-    const notices: string[] = [];
+    let created: string | undefined;
     if (viaHub !== undefined) {
       const { from, sync } = viaHub;
       const hub = await ensureHub(ctx.homes, name, from, sync);
       if (hub.created && hub.linked) {
-        notices.push(`Lokaler Hub ${hub.hub} angelegt; ${from} synct jetzt darüber`);
+        created = `Lokaler Hub ${hub.hub} angelegt; ${from} synct jetzt darüber`;
       }
       await linkToHub(temp, hub.hub, sync);
     }
     return {
       root: await finish(ctx.homes, name, temp, wc),
-      notices: [...notices, ...cloned.notices],
+      notices: cloned.notices,
+      ...(created === undefined ? {} : { hub: created }),
     };
   });
+}
+
+/** Der Hinweis auf einen neu angelegten Hub als Notice; ohne Hub keiner. */
+export function hubNotices(hub: string | undefined): Notice[] {
+  return hub === undefined ? [] : [{ code: 'hub_created', message: hub, ids: [] }];
 }
 
 /** Die Arbeitskopie `wc` gehört `identity`; die von `handle` liegt unter `own`. */

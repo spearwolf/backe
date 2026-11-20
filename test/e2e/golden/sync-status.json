@@ -1,0 +1,1 @@
+{"remote":"<remote>","mode":"manual","unpushed":1,"last_attempt":"<ts>","last_success":"<ts>","running":false,"conflicts":[{"id":"<konflikt>","created":"<ts>","subject":"issue edit <id>","reason":{"code":"conflict","message":"<id>: title ist \"Spw 1\", erwartet \"Geteilt\"","reason":"precondition","ids":["<id>"]}}]}

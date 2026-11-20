@@ -767,9 +767,6 @@ test('next picks, resumes and explains an empty result with exit 3', async () =>
   const badLevel = await run(s, ['next', '--level', 'mid']);
   expect(badLevel.code).toBe(2);
   expect(badLevel.stderr).toBe('Fehler: Ungültige Ebene: »mid«\nHinweis: leaf oder top\n');
-  // Ein Claim gehört nicht zu diesem Befehl.
-  expect((await run(s, ['next', '--claim'])).code).toBe(2);
-  expect((await run(s, ['issue', 'claim', s.id.D])).code).toBe(2);
 
   // Ein fortgesetztes Issue kann offene Abhängigkeiten haben; die Zeile markiert sie.
   expect(ok(await run(s, ['issue', 'edit', s.id.C1, '--add-dep', s.id.D]))).toBe(

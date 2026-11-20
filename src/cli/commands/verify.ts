@@ -63,6 +63,7 @@ async function quarantine(env: CommandEnv, opts: Opts): Promise<void> {
   }
   const reason = (await text(opts.reason, env.io, env.stdin)).trim();
   const r = await quarantineCommit(await env.context(), { sha, decision, reason });
+  env.committed(r.commit);
   const notices = r.notices.length === 0 ? undefined : r.notices;
   const warnings = r.verifyNotices.length === 0 ? undefined : r.verifyNotices;
   emit(env, { commit: r.commit ?? null, sha, decision, reason, notices, warnings }, () =>
@@ -78,29 +79,33 @@ export function verifyCommand(program: Command, rt: Runtime): void {
     .option('--revert <sha>', 'ungültigen Commit umkehren und in die Quarantäne eintragen')
     .option('--reason <text>', 'Begründung für --accept/--revert (»-« liest stdin)')
     .action(
-      action(rt, async (env, opts: Opts) => {
-        if (opts.accept !== undefined || opts.revert !== undefined) return quarantine(env, opts);
-        if (opts.reason !== undefined) {
-          throw new BackeError('usage', '--reason gehört zu --accept oder --revert');
-        }
-        const report = await verifyBacklog(await env.context(), {
-          ...(opts.since === undefined ? { record: true } : { since: opts.since }),
-        });
-        // Im JSON-Modus bleibt stdout bei einem Fehler leer; der Bericht steht in dessen Details.
-        const reportJson = verifyJson(report);
-        if (env.format === 'json') {
-          if (report.invalid.length === 0) env.out(json(reportJson));
-        } else {
-          env.out(render(report, opts.since, env.color));
-          const hints = [...report.notices, ...report.propNotices];
-          if (hints.length > 0) env.io.stderr(renderHints(hints));
-          const warnings = report.unknownKeys.map(
-            (u) =>
-              `${u.path}: unbekannte Keys ${u.keys.join(', ')} — eigene Daten gehören nach props`,
-          );
-          if (warnings.length > 0) env.io.stderr(renderNotices([], warnings));
-        }
-        assertVerified(report, reportJson);
-      }),
+      action(
+        rt,
+        async (env, opts: Opts) => {
+          if (opts.accept !== undefined || opts.revert !== undefined) return quarantine(env, opts);
+          if (opts.reason !== undefined) {
+            throw new BackeError('usage', '--reason gehört zu --accept oder --revert');
+          }
+          const report = await verifyBacklog(await env.context(), {
+            ...(opts.since === undefined ? { record: true } : { since: opts.since }),
+          });
+          // Im JSON-Modus bleibt stdout bei einem Fehler leer; der Bericht steht in dessen Details.
+          const reportJson = verifyJson(report);
+          if (env.format === 'json') {
+            if (report.invalid.length === 0) env.out(json(reportJson));
+          } else {
+            env.out(render(report, opts.since, env.color));
+            const hints = [...report.notices, ...report.propNotices];
+            if (hints.length > 0) env.io.stderr(renderHints(hints));
+            const warnings = report.unknownKeys.map(
+              (u) =>
+                `${u.path}: unbekannte Keys ${u.keys.join(', ')} — eigene Daten gehören nach props`,
+            );
+            if (warnings.length > 0) env.io.stderr(renderNotices([], warnings));
+          }
+          assertVerified(report, reportJson);
+        },
+        { write: true },
+      ),
     );
 }

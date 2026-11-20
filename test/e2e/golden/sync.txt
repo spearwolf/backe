@@ -1,0 +1,23 @@
+$ backe sync
+[exit 0]
+[stdout]
+push: <spw-head7>
+[stderr]
+
+$ backe --as bot-1 sync
+[exit 0]
+[stdout]
+fetch: 1 neue Commits
+[stderr]
+
+$ backe --as bot-1 ls
+[exit 0]
+[stdout]
+<erstes>  backlog      -  Erstes
+[stderr]
+
+$ backe sync
+[exit 0]
+[stdout]
+aktuell
+[stderr]

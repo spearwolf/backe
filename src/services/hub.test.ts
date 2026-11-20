@@ -42,9 +42,10 @@ const isBare = async (dir: string) =>
 test('a second identity without remote creates the hub and both copies sync through it', async () => {
   const agent = await addAgent();
 
-  const { root, notices } = await ensureWorkingCopy(agent, 'claude-1');
+  const { root, notices, hub } = await ensureWorkingCopy(agent, 'claude-1');
 
-  expect(notices).toEqual([`Lokaler Hub ${hubPath()} angelegt; ${solo.root} synct jetzt darüber`]);
+  expect(hub).toBe(`Lokaler Hub ${hubPath()} angelegt; ${solo.root} synct jetzt darüber`);
+  expect(notices).toEqual([]);
   expect(await isBare(hubPath())).toBe(true);
   expect(await syncRemote(solo.root, 'origin')).toBe(hubPath());
   expect(await syncRemote(root, 'origin')).toBe(hubPath());
@@ -65,6 +66,7 @@ test('a second identity without remote creates the hub and both copies sync thro
   const third = await addAgent('claude-2');
   await syncNow(spw);
   const again = await ensureWorkingCopy(third, 'claude-2');
+  expect(again).not.toHaveProperty('hub');
   expect(again.notices).toEqual([]);
   expect(await revParse(again.root, 'HEAD')).toBe(await revParse(solo.root, 'HEAD'));
 });
@@ -117,8 +119,9 @@ test('a hub the source is not linked to brings no notice', async () => {
   await git(['remote', 'add', 'origin', bare], { cwd: solo.root });
   const agent = await addAgent();
 
-  const { root, notices } = await ensureWorkingCopy(agent, 'claude-1');
+  const { root, notices, hub } = await ensureWorkingCopy(agent, 'claude-1');
 
+  expect(hub).toBeUndefined();
   expect(notices).toEqual([]);
   expect(await syncRemote(root, 'origin')).toBe(hubPath());
   expect(await syncRemote(solo.root, 'origin')).toBe(bare);

@@ -21,7 +21,12 @@ async function setup(): Promise<Setup> {
     [b.env.BACKE_HOME as string]: '<backe>',
     [cwd]: '<cwd>',
   };
-  return { b, env: { ...b.env, BACKE_USER: 'spw', NO_COLOR: '1' }, cwd, names };
+  const s = { b, env: { ...b.env, BACKE_USER: 'spw', NO_COLOR: '1' }, cwd, names };
+  // Mit dem Hub eines Agents bekommt der Backlog ein Remote; kein Write soll dann einen
+  // Hintergrund-Sync starten.
+  const manual = await cli(['config', 'set', 'backlogs.acme.sync.mode', 'manual'], s);
+  expect(manual.code).toBe(0);
+  return s;
 }
 
 const run = (s: Setup, args: string[], extra: { env?: Env; input?: string } = {}) =>
@@ -347,11 +352,17 @@ test('user create-agent prints the key path and the agent can write', async () =
 
   // Der Agent schreibt mit eigenem Key in seine eigene Arbeitskopie (eine je Identität).
   const asBot = ['--as', 'bot-1'];
-  // Ohne Remote legt der erste Clone des Agents den lokalen Hub an und sagt es.
+  // Ohne Remote legt der erste Clone des Agents den lokalen Hub an und sagt es; im Modus
+  // `manual` nennt die Kopfzeile danach den ungepushten Commit.
   const first = await run(s, [...asBot, 'new', '-t', 'Vom Agent']);
   expect(first.code).toBe(0);
   expect(normalize(first.stderr, s.names)).toBe(
-    'Warnung: Lokaler Hub <backe>/backlogs/acme/hub.git angelegt; <root> synct jetzt darüber\n',
+    [
+      'Hinweis: Lokaler Hub <backe>/backlogs/acme/hub.git angelegt; <root> synct jetzt darüber',
+      'Sync: 1 ungepusht',
+      'Hinweis: backe sync status',
+      '',
+    ].join('\n'),
   );
   const id = first.stdout.trim();
   const issue = JSON.parse(ok(await run(s, [...asBot, 'show', id, '--json']))) as {

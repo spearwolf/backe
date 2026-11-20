@@ -32,6 +32,7 @@ function fakeIo(env: Env, cwd: string, argv: string[] = []): CliIo {
     isTTY: false,
     stdinIsTTY: false,
     runEditor: async () => 0,
+    ask: async () => '',
   };
 }
 

@@ -2,8 +2,6 @@
  * Der Hintergrund-Sync (backe.md §2.16.2) samt Debounce über `sync.lock` und `sync.dirty`, sein
  * Start nach Writes und beim Lesen (§2.16.3) und der Sync-Status mit seiner Kopfzeile.
  */
-import { spawn } from 'node:child_process';
-import { appendFileSync, closeSync, openSync } from 'node:fs';
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { lockHeld, withFileLock } from '../context/lock.ts';
@@ -18,15 +16,14 @@ import { BACKLOG_CONFIG } from '../store/layout.ts';
 import { isoNow } from './env.ts';
 import {
   effectiveMode,
-  type SpawnFn,
-  type SyncDeps,
-  type SyncOutcome,
-  syncHeld,
-  syncNow,
+  errorParts,
+  logLine,
+  logPath,
+  scheduleSync,
   syncRemote,
-} from './sync.ts';
+} from './schedule.ts';
+import { type SyncDeps, type SyncOutcome, syncHeld, syncNow } from './sync.ts';
 import {
-  appendSyncLog,
   type ConflictEntry,
   listConflicts,
   readSyncState,
@@ -36,79 +33,7 @@ import {
 } from './sync-state.ts';
 import { requireHeadConfig } from './write.ts';
 
-export type { SpawnFn } from './sync.ts';
-
-/**
- * Startet `argv` als eigenständigen Prozess (detached, `unref`), stdout und stderr im
- * Append-Modus nach `log`, das vorher bei Bedarf rotiert wird. Scheitert der Start, steht das
- * im Log; den startenden Befehl stört es nicht.
- */
-export const spawnDetached: SpawnFn = ({ argv, cwd, env, log }) => {
-  rotateSyncLog(log);
-  const fd = openSync(log, 'a');
-  try {
-    const [cmd, ...args] = argv;
-    const child = spawn(cmd as string, args, {
-      cwd,
-      detached: true,
-      stdio: ['ignore', fd, fd],
-      env,
-    });
-    child.on('error', (err) => {
-      try {
-        appendFileSync(
-          log,
-          `${isoNow(new Date())} unexpected: Hintergrund-Sync nicht gestartet: ${err.message}\n`,
-        );
-      } catch {
-        // Ohne beschreibbares Log bleibt nur, den Start still aufzugeben.
-      }
-    });
-    child.unref();
-  } finally {
-    closeSync(fd);
-  }
-};
-
-/** Kommandozeile des Hintergrund-Prozesses: derselbe Node, dasselbe Skript, `sync --background`. */
-function backgroundArgv(backlog: string, handle: string): string[] {
-  return [
-    process.execPath,
-    ...process.execArgv,
-    ...process.argv.slice(1, 2),
-    'sync',
-    '--background',
-    '--backlog',
-    backlog,
-    '--as',
-    handle,
-  ];
-}
-
-const errorParts = (err: unknown): { code: string; message: string } =>
-  err instanceof BackeError
-    ? { code: err.code, message: err.message }
-    : { code: 'unexpected', message: err instanceof Error ? err.message : String(err) };
-
-/** `sync.log` der Arbeitskopie; ohne Arbeitskopie oder Git-Dir `undefined`. */
-async function logPath(wc: string | undefined): Promise<string | undefined> {
-  if (wc === undefined) return undefined;
-  try {
-    return await syncFile(wc, 'sync.log');
-  } catch {
-    return undefined;
-  }
-}
-
-/** Schreibt eine Logzeile, wenn es ein Log gibt; ein unschreibbares Log hält nichts auf. */
-async function logLine(log: string | undefined, at: string, code: string, message: string) {
-  if (log === undefined) return;
-  try {
-    await appendSyncLog(log, at, code, message);
-  } catch {
-    // Ein Log, das sich nicht schreiben lässt, hält den Sync nicht auf.
-  }
-}
+export { type SpawnFn, scheduleSync, spawnDetached } from './schedule.ts';
 
 /**
  * `backe sync --background` (backe.md §2.16.2): versucht `sync.lock` genau einmal. Gehalten →
@@ -186,60 +111,6 @@ export async function runBackground(
     await record(code, message);
     return { rounds, deferred: false };
   }
-}
-
-/**
- * Seit dem letzten Versuch ist mindestens `pull_interval` vergangen. Ohne lesbaren Versuch oder
- * mit einem in der Zukunft (die Uhr wurde zurückgestellt) ist es immer fällig.
- */
-async function pullDue(wc: string, pullInterval: number, deps: SyncDeps): Promise<boolean> {
-  const last = Date.parse((await readSyncState(wc)).last_attempt ?? '');
-  const now = (deps.now ?? (() => new Date()))().getTime();
-  return Number.isNaN(last) || now < last || now - last >= pullInterval * 1000;
-}
-
-/**
- * Startet den Hintergrund-Sync (backe.md §2.16.1, §2.16.3), wenn die Arbeitskopie existiert, der
- * wirksame Modus `auto` ist und der Git-Remote `sync.remote` da ist; ein Read zusätzlich nur, wenn
- * `pull_interval` seit dem letzten Versuch verstrichen ist. Ein laufender Sync hält den Start nicht
- * auf — das Debounce im neuen Prozess fängt ihn ab. Liefert, ob gestartet wurde. Wirft nie: Ein
- * Fehler blockiert weder den Write davor noch das Lesen danach; er landet, wenn möglich, im Log.
- */
-export async function scheduleSync(
-  ctx: ResolvedContext,
-  reason: 'write' | 'read',
-  deps: SyncDeps = {},
-): Promise<boolean> {
-  try {
-    return await startIfDue(ctx, reason, deps);
-  } catch (err) {
-    const { code, message } = errorParts(err);
-    const at = isoNow((deps.now ?? (() => new Date()))());
-    await logLine(await logPath(ctx.backlog.workingCopy), at, code, message);
-    return false;
-  }
-}
-
-async function startIfDue(
-  ctx: ResolvedContext,
-  reason: 'write' | 'read',
-  deps: SyncDeps,
-): Promise<boolean> {
-  const wc = ctx.backlog.workingCopy;
-  const handle = ctx.user.value;
-  if (wc === undefined || handle === undefined) return false;
-  if (!(await exists(join(wc, BACKLOG_CONFIG)))) return false;
-  const config = await requireHeadConfig(wc);
-  if (effectiveMode(ctx, config) === 'manual') return false;
-  if ((await syncRemote(wc, config.sync.remote)) === undefined) return false;
-  if (reason === 'read' && !(await pullDue(wc, config.sync.pull_interval, deps))) return false;
-  (deps.spawn ?? spawnDetached)({
-    argv: backgroundArgv(ctx.backlog.value, handle),
-    cwd: wc,
-    env: ctx.env,
-    log: await syncFile(wc, 'sync.log'),
-  });
-  return true;
 }
 
 /**

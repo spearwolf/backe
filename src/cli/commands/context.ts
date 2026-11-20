@@ -3,7 +3,7 @@ import type { Command } from 'commander';
 import type { Source } from '../../context/resolve.ts';
 import type { BacklogConfig } from '../../core/schemas.ts';
 import { type ContextInfo, contextInfo } from '../../services/context-info.ts';
-import { action, emit, type Runtime, subcommand } from '../options.ts';
+import { action, emit, type Runtime, subcommand, syncOption } from '../options.ts';
 import { columns, lines, paint, safeText, width } from '../output.ts';
 
 type Opts = { project?: string; sprint?: string; props?: boolean };
@@ -62,15 +62,19 @@ function contextJson(info: ContextInfo): Record<string, unknown> {
 }
 
 export function contextCommand(program: Command, rt: Runtime): void {
-  subcommand(program, 'context', 'aufgelösten Kontext mit Herkunft jedes Werts zeigen')
+  syncOption(subcommand(program, 'context', 'aufgelösten Kontext mit Herkunft jedes Werts zeigen'))
     .option('--project <pfad>', 'Projekt für diesen Aufruf')
     .option('--sprint <slug>', 'Sprint für diesen Aufruf')
     .option('--props', 'Property-Deklarationen des Backlogs anhängen')
     .action(
-      action(rt, async (env, opts: Opts) => {
-        const ctx = await env.context({ project: opts.project, sprint: opts.sprint });
-        const info = await contextInfo(ctx, { props: opts.props === true });
-        emit(env, contextJson(info), () => render(info, env.color));
-      }),
+      action(
+        rt,
+        async (env, opts: Opts) => {
+          const ctx = await env.context({ project: opts.project, sprint: opts.sprint });
+          const info = await contextInfo(ctx, { props: opts.props === true });
+          emit(env, contextJson(info), () => render(info, env.color));
+        },
+        { read: true },
+      ),
     );
 }

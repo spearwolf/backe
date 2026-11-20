@@ -27,7 +27,11 @@ async function setup(opts: { remote?: boolean } = {}): Promise<Setup> {
     [anchor.slice(0, 7)]: '<anchor7>',
   };
   if (b.remote !== undefined) names[b.remote] = '<remote>';
-  return { b, env: { ...b.env, BACKE_USER: 'spw' }, cwd, names };
+  const s = { b, env: { ...b.env, BACKE_USER: 'spw' }, cwd, names };
+  // Kein Read und kein Write dieser Tests soll einen Hintergrund-Sync starten.
+  const manual = await cli(['config', 'set', 'backlogs.acme.sync.mode', 'manual'], s);
+  expect(manual.code).toBe(0);
+  return s;
 }
 
 /** Leeres Home ohne Config und ohne Backlog. */

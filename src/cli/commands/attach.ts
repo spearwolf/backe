@@ -19,6 +19,7 @@ import {
   emitOutcome,
   type Runtime,
   subcommand,
+  syncOption,
   text,
 } from '../options.ts';
 import { columns, json, lines } from '../output.ts';
@@ -62,52 +63,70 @@ export function attachCommands(program: Command, rt: Runtime): void {
     .option('--url <url>', 'URL statt Datei')
     .option('--json <json|->', 'JSON-Inhalt (»-« liest stdin)')
     .action(
-      action(rt, async (env, ref: string, file: string | undefined, opts: AddOpts) => {
-        const source = await sourceOf(env, file, opts);
-        const r = await addAttachment(await env.context(), ref, { name: opts.name, source });
-        emitOutcome(env, r, 'other');
-      }),
+      action(
+        rt,
+        async (env, ref: string, file: string | undefined, opts: AddOpts) => {
+          const source = await sourceOf(env, file, opts);
+          const r = await addAttachment(await env.context(), ref, { name: opts.name, source });
+          emitOutcome(env, r, 'other');
+        },
+        { write: true },
+      ),
     );
 
-  subcommand(attach, 'list <id>', 'Anhänge auflisten').action(
-    action(rt, async (env, ref: string) => {
-      const list = await listAttachments(await env.context(), ref);
-      emit(env, list, () =>
-        lines(columns(list.map((a) => [a.name, a.file ?? a.url ?? '', String(a.size ?? '-')]))),
-      );
-    }),
+  syncOption(subcommand(attach, 'list <id>', 'Anhänge auflisten')).action(
+    action(
+      rt,
+      async (env, ref: string) => {
+        const list = await listAttachments(await env.context(), ref);
+        emit(env, list, () =>
+          lines(columns(list.map((a) => [a.name, a.file ?? a.url ?? '', String(a.size ?? '-')]))),
+        );
+      },
+      { read: true },
+    ),
   );
 
-  subcommand(
-    attach,
-    'get <id> <name>',
-    'Anhang holen: Inhalt nach stdout oder mit -o in eine Datei',
+  syncOption(
+    subcommand(
+      attach,
+      'get <id> <name>',
+      'Anhang holen: Inhalt nach stdout oder mit -o in eine Datei',
+    ),
   )
     .option('-o, --output <pfad>', 'in diese Datei schreiben (überschreibt) und den Pfad drucken')
     .action(
-      action(rt, async (env, ref: string, name: string, opts: { output?: string }) => {
-        const a = await getAttachment(await env.context(), ref, name);
-        if ('url' in a) {
-          emit(env, { name: a.name, url: a.url }, () => `${a.url}\n`);
-          return;
-        }
-        const target = opts.output === undefined ? undefined : absPath(opts.output, env.io);
-        const bytes =
-          env.format === 'json' && target === undefined ? undefined : await readFile(a.path);
-        if (target !== undefined) await writeFile(target, bytes as Uint8Array);
-        if (env.format === 'json') {
-          env.out(json({ name: a.name, file: a.file, size: a.size, path: target ?? a.path }));
-        } else if (target !== undefined) {
-          env.out(`${target}\n`);
-        } else {
-          env.io.stdoutBytes(bytes as Uint8Array);
-        }
-      }),
+      action(
+        rt,
+        async (env, ref: string, name: string, opts: { output?: string }) => {
+          const a = await getAttachment(await env.context(), ref, name);
+          if ('url' in a) {
+            emit(env, { name: a.name, url: a.url }, () => `${a.url}\n`);
+            return;
+          }
+          const target = opts.output === undefined ? undefined : absPath(opts.output, env.io);
+          const bytes =
+            env.format === 'json' && target === undefined ? undefined : await readFile(a.path);
+          if (target !== undefined) await writeFile(target, bytes as Uint8Array);
+          if (env.format === 'json') {
+            env.out(json({ name: a.name, file: a.file, size: a.size, path: target ?? a.path }));
+          } else if (target !== undefined) {
+            env.out(`${target}\n`);
+          } else {
+            env.io.stdoutBytes(bytes as Uint8Array);
+          }
+        },
+        { read: true },
+      ),
     );
 
   subcommand(attach, 'rm <id> <name>', 'Anhang entfernen').action(
-    action(rt, async (env, ref: string, name: string) => {
-      emitOutcome(env, await removeAttachment(await env.context(), ref, name), 'other');
-    }),
+    action(
+      rt,
+      async (env, ref: string, name: string) => {
+        emitOutcome(env, await removeAttachment(await env.context(), ref, name), 'other');
+      },
+      { write: true },
+    ),
   );
 }

@@ -1,0 +1,20 @@
+$ backe --as bot-1 sync
+[exit 0]
+[stdout]
+fetch: 1 neue Commits
+replay: 1 Einheiten neu signiert
+konflikt: <konflikt>  issue edit <id>
+push: <bot-head7>
+[stderr]
+Sync: 1 Konflikt
+Hinweis: backe sync status
+
+$ backe --as bot-1 sync status
+[exit 0]
+[stdout]
+remote  <remote>
+modus  manual
+ungepusht  1
+letzter Sync  <ts>
+<konflikt>  issue edit <id>  <id>: title ist "Spw 1", erwartet "Geteilt"
+[stderr]

@@ -15,13 +15,14 @@ import { readLocalState } from '../git/local-state.ts';
 import { gitTreeSource } from '../git/tree-source.ts';
 import type { Notice } from '../ops/notice.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
-import { type BacklogSnapshot, loadSnapshotFrom } from '../store/snapshot.ts';
+import { type BacklogSnapshot, loadSnapshot, loadSnapshotFrom } from '../store/snapshot.ts';
 import { type NextOutcome, type NextQuery, nextActor, pickNext } from './next.ts';
 import { type WriteOutcome, writeOp } from './outcome.ts';
 import { resolveIssueRef } from './read.ts';
+import { scheduleDeferred } from './schedule.ts';
 import { effectiveMode, type SyncDeps, syncHeld, syncRemote } from './sync.ts';
 import { syncFile } from './sync-state.ts';
-import { ensureWorkingCopy } from './working-copy.ts';
+import { ensureWorkingCopy, hubNotices } from './working-copy.ts';
 import { requireHeadConfig, type WriteDeps } from './write.ts';
 
 export type ClaimOutcome = WriteOutcome & { local?: 'no_remote' | 'manual'; pushed?: string };
@@ -39,25 +40,34 @@ const LOCAL_NOTICE = {
 /** Grund in `details.reason`, wenn ein Claim beim Push an einen Schnelleren verloren ging. */
 const CLAIM_LOST = 'claim_lost';
 
+type Setup = {
+  wc: string;
+  handle: string;
+  local?: 'no_remote' | 'manual';
+  /** Warnungen eines frischen Klons (Gründe ungültiger Commits im Modus `warn`). */
+  warnings: string[];
+  /** Hinweis auf einen dabei neu angelegten Hub. */
+  notices: Notice[];
+};
+
 /**
  * Arbeitskopie (bei Bedarf geklont) und ob der Claim nur lokal geht: ohne Git-Remote
- * `sync.remote` oder im wirksamen Modus `manual`. Die Hinweise eines frischen Klons kommen mit.
+ * `sync.remote` oder im wirksamen Modus `manual`. Warnungen und Hinweise eines frischen Klons
+ * kommen mit.
  */
-async function claimSetup(
-  ctx: ResolvedContext,
-): Promise<{ wc: string; handle: string; local?: 'no_remote' | 'manual'; warnings: string[] }> {
+async function claimSetup(ctx: ResolvedContext): Promise<Setup> {
   const { handle, workingCopy } = requireWriter(ctx);
   const cloned = (await exists(join(workingCopy, BACKLOG_CONFIG)))
     ? undefined
     : await ensureWorkingCopy(ctx, handle);
   const wc = cloned?.root ?? workingCopy;
-  const warnings = cloned?.notices ?? [];
+  const base = { wc, handle, warnings: cloned?.notices ?? [], notices: hubNotices(cloned?.hub) };
   const config = await requireHeadConfig(wc);
   if ((await syncRemote(wc, config.sync.remote)) === undefined) {
-    return { wc, handle, local: 'no_remote', warnings };
+    return { ...base, local: 'no_remote' };
   }
-  if (effectiveMode(ctx, config) === 'manual') return { wc, handle, local: 'manual', warnings };
-  return { wc, handle, warnings };
+  if (effectiveMode(ctx, config) === 'manual') return { ...base, local: 'manual' };
+  return base;
 }
 
 /** Das Issue im zuletzt bekannten Remote-Stand (`upstream`); ohne ihn oder ohne Issue `undefined`. */
@@ -119,16 +129,36 @@ async function claimWith(
       ids: [written.id as string],
     };
     const warnings = [...setup.warnings, ...written.warnings];
-    return { ...written, warnings, local: setup.local, notices: [...written.notices, notice] };
+    const notices = [...setup.notices, ...written.notices, notice];
+    return { ...written, warnings, local: setup.local, notices };
   }
   // Reihenfolge der Locks wie beim Hintergrund-Sync: `sync.lock`, darin kurz der Write-Lock.
+  try {
+    return await claimHeld(ctx, setup, claim, deps);
+  } finally {
+    // Ein Hintergrund-Lauf, der währenddessen nur `sync.dirty` setzen konnte, startet jetzt.
+    await scheduleDeferred(ctx, await syncFile(setup.wc, 'sync.dirty'), deps);
+  }
+}
+
+/** Der Claim mit Remote: blockierende Runde, Write und Push-Runde unter einem `sync.lock`. */
+async function claimHeld(
+  ctx: ResolvedContext,
+  setup: Setup,
+  claim: (s: BacklogSnapshot, actor: string) => { op: 'issue.claim'; id: string },
+  deps: ClaimDeps,
+): Promise<ClaimOutcome> {
   return withFileLock(
     await syncFile(setup.wc, 'sync.lock'),
     async () => {
       // Ein Fehler der blockierenden Runde (etwa kein Netz) lässt den Claim ganz ausfallen.
       const warnings = [...setup.warnings, ...(await syncHeld(ctx, deps)).notices];
       const written = await writeOp(ctx, claim, deps);
-      const out: ClaimOutcome = { ...written, warnings: [...warnings, ...written.warnings] };
+      const out: ClaimOutcome = {
+        ...written,
+        notices: [...setup.notices, ...written.notices],
+        warnings: [...warnings, ...written.warnings],
+      };
       // Schon `in_progress` mit mir: unverändert, und es gibt nichts zu pushen.
       if (written.commit === undefined) return out;
       const id = written.id as string;
@@ -170,7 +200,8 @@ function isLost(err: unknown): boolean {
 /**
  * `backe next --claim` (backe.md §2.16.5): Auswahl wie `next`, aber auf dem Stand nach der
  * blockierenden Runde; geht der Claim verloren, wird ohne die verlorenen Kandidaten neu gewählt,
- * höchstens fünfmal. `attempts` nennt alle versuchten Issues, das geclaimte zuletzt.
+ * höchstens fünfmal. `attempts` nennt alle versuchten Issues, das geclaimte zuletzt; `issue` steht
+ * im Stand nach dem Claim.
  */
 export async function nextClaim(
   ctx: ResolvedContext,
@@ -189,7 +220,10 @@ export async function nextClaim(
       const claim = await claimWith(ctx, select, deps);
       const next = picked.next as NextOutcome;
       attempts.push(next.issue.id);
-      return { ...next, claim, attempts };
+      // Gewählt wurde vor dem Claim; ausgegeben wird das Issue, wie es jetzt dasteht.
+      const now = await loadSnapshot(requireWriter(ctx).workingCopy);
+      const issue = now.issues.get(next.issue.id)?.data as NextOutcome['issue'];
+      return { ...next, issue, claim, attempts };
     } catch (err) {
       if (picked.next === undefined || !isLost(err)) throw err;
       attempts.push(picked.next.issue.id);

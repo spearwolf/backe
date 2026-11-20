@@ -49,6 +49,8 @@ export async function setupTools(): Promise<Tools> {
   const cwd = await tempDir();
   const env: Env = { ...b.env, BACKE_USER: 'spw', NO_COLOR: '1' };
   const t = { env, cwd };
+  // Kein Write dieser Tests soll einen Hintergrund-Sync starten.
+  ok(await run(t, ['config', 'set', 'backlogs.acme.sync.mode', 'manual']));
   const id = ok(await run(t, ['new', '-t', 'Erstes'])).trim();
   const names: Record<string, string> = {
     [b.root]: '<root>',

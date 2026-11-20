@@ -298,6 +298,53 @@ describe('runBackground', () => {
   });
 });
 
+describe('deferred background runs', () => {
+  /** Ein Hintergrund-Lauf, während der Vordergrund-Sync `sync.lock` hält: er setzt nur `sync.dirty`. */
+  const deferDuringFetch = (extra: SyncDeps = {}): SyncDeps =>
+    deps({
+      ...extra,
+      hooks: {
+        afterFetch: async () => {
+          expect(await runBackground(agent(), deps())).toEqual({ rounds: 0, deferred: true });
+          await extra.hooks?.afterFetch?.(1);
+        },
+      },
+    });
+
+  test('a background run deferred during a foreground sync starts after the release', async () => {
+    await create(agent(), 'B');
+
+    await syncNow(agent(), deferDuringFetch());
+
+    expect(spawned.map((c) => c.argv.slice(-6, -4))).toEqual([['sync', '--background']]);
+    expect(await exists(await state('sync.dirty'))).toBe(true);
+  });
+
+  test('a foreground sync without a deferred run starts nothing', async () => {
+    await create(agent(), 'B');
+    await syncNow(agent(), deps());
+    expect(spawned).toEqual([]);
+  });
+
+  test('a failed foreground sync still starts the deferred run', async () => {
+    const failing = deferDuringFetch({
+      hooks: {
+        afterFetch: async () => {
+          throw new Error('abgebrochen');
+        },
+      },
+    });
+
+    await expect(syncNow(agent(), failing)).rejects.toThrow('abgebrochen');
+    expect(spawned).toHaveLength(1);
+  });
+
+  test('in manual mode the deferred run waits for the next sync', async () => {
+    await syncNow(manual(agent()), deferDuringFetch());
+    expect(spawned).toEqual([]);
+  });
+});
+
 describe('scheduleSync', () => {
   test('scheduleSync after a write spawns only in auto mode with a remote', async () => {
     expect(await scheduleSync(agent(), 'write', deps())).toBe(true);

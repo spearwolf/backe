@@ -273,9 +273,11 @@ describe('claimIssue edge cases', () => {
   test('a background sync during the claim is deferred and the claim stays correct', async () => {
     const [x] = (await shared('X')) as [string];
     let background: { rounds: number; deferred: boolean } | undefined;
+    const spawned: string[][] = [];
 
     const r = await claimIssue(agent(), x, {
       ...noSleep,
+      spawn: ({ argv }) => void spawned.push(argv),
       hooks: {
         beforePush: async (_round, sha) => {
           if (background !== undefined || (await claimOf(t.agent.wc, sha)) === undefined) return;
@@ -286,6 +288,8 @@ describe('claimIssue edge cases', () => {
 
     expect(background).toEqual({ rounds: 0, deferred: true });
     expect(await exists(await syncFile(t.agent.wc, 'sync.dirty'))).toBe(true);
+    // Nach der Freigabe von `sync.lock` startet der aufgeschobene Lauf.
+    expect(spawned.map((argv) => argv.slice(-6, -4))).toEqual([['sync', '--background']]);
     expect(r.pushed).toBe(await revParse(t.remote, 'refs/heads/main'));
     expect(await claimOf(t.agent.wc, r.commit as string)).toBe(x);
     expect(await listConflicts(t.agent.wc)).toEqual([]);
@@ -443,6 +447,8 @@ describe('nextClaim', () => {
     expect(stolen).toHaveLength(1);
     expect(r.attempts).toEqual([lost, won]);
     expect(r.issue.id).toBe(won);
+    // Das Issue kommt im Stand nach dem Claim zurück.
+    expect(r.issue).toMatchObject({ state: 'in_progress', assignee: 'spw' });
     expect(r.claim).toMatchObject({ id: won, pushed: await revParse(t.remote, 'refs/heads/main') });
     expect(await claims(t.remote, 'refs/heads/main')).toEqual([`spw ${won}`, `claude-1 ${lost}`]);
   });

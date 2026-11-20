@@ -11,15 +11,19 @@ import { readUserConfig, userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
 import type { UserConfig } from '../core/schemas.ts';
 import type { Notice } from '../ops/notice.ts';
+import { freshen, scheduleSync, statusLine, syncStatus } from '../services/background.ts';
 import type { WriteOpsOutcome, WriteOutcome } from '../services/outcome.ts';
 import type { CliIo } from './io.ts';
 import {
   checkFields,
   type Format,
   json,
+  lines,
+  renderHints,
   renderNotices,
   renderOutcome,
   resolveFormat,
+  safeText,
   useColor,
 } from './output.ts';
 
@@ -140,7 +144,15 @@ export type CommandEnv = {
   handle(): string;
   /** Ausgabe nach stdout. */
   out(s: string): void;
+  /**
+   * Meldet den Commit eines Writes (`emitOutcome` tut das selbst). Bei einem Befehl mit
+   * `write: true` startet danach bei Bedarf der Hintergrund-Sync; ohne Commit nichts.
+   */
+  committed(commit: string | undefined): void;
 };
+
+/** Optionen eines Aufrufs, wie commander sie liefert. */
+type Opts = Record<string, unknown>;
 
 export type CommandSpec = {
   /** Formate, die der Befehl ausgeben kann; Default `text` und `json`. */
@@ -152,6 +164,37 @@ export type CommandSpec = {
    * `config get` und `config edit`, die sie melden bzw. reparieren.
    */
   lenientConfig?: boolean;
+  /**
+   * Lesender Befehl (backe.md §2.16.3): Option `--sync` (`syncOption`) dreht vor dem Lesen eine
+   * blockierende Runde, deren Fehler den Befehl abbricht; sonst startet bei Bedarf der
+   * Hintergrund-Sync, und das Lesen läuft sofort weiter. Eine Funktion entscheidet je Aufruf
+   * (`next --claim` liest nicht, sondern claimt).
+   */
+  read?: true | ((opts: Opts) => boolean);
+  /**
+   * Schreibender Befehl (backe.md §2.16.1): Hat die Aktion einen Commit gemeldet
+   * (`env.committed`), startet danach bei Bedarf der Hintergrund-Sync. Ein Fehler dabei lässt den
+   * Write gelingen.
+   */
+  write?: true;
+  /**
+   * Die Kopfzeile (backe.md §2.16.2) nach der Aktion; Default an. `sync status` zeigt den Zustand
+   * selbst, `sync --background` schreibt in sein Log.
+   */
+  statusLine?: (opts: Opts) => boolean;
+};
+
+/** Die Option `--sync` eines lesenden Befehls. */
+export function syncOption(cmd: Command): Command {
+  return cmd.option('--sync', 'vorher blockierend mit dem Remote synchronisieren');
+}
+
+/** Was eine Aktion über den Aufruf hinterlässt: den ersten aufgelösten Kontext und den Commit. */
+type Trace = {
+  ctx?: Promise<ResolvedContext>;
+  commit?: string;
+  /** Vergisst die aufgelösten Kontexte; der nächste Aufruf von `context` löst neu auf. */
+  forget(): void;
 };
 
 const CONTEXT_KEYS = [
@@ -169,7 +212,11 @@ function splitFields(raw: string | undefined): string[] | undefined {
     .filter((f) => f !== '');
 }
 
-async function commandEnv(rt: Runtime, cmd: Command, spec: CommandSpec): Promise<CommandEnv> {
+async function commandEnv(
+  rt: Runtime,
+  cmd: Command,
+  spec: CommandSpec,
+): Promise<{ env: CommandEnv; trace: Trace }> {
   const { io } = rt;
   const g = globalOpts(cmd);
   const homes = resolveHomes(io.env, io.cwd);
@@ -200,7 +247,13 @@ async function commandEnv(rt: Runtime, cmd: Command, spec: CommandSpec): Promise
     checkFields(fields, spec.fields);
   }
   const resolved = new Map<string, Promise<ResolvedContext>>();
-  return {
+  const trace: Trace = {
+    forget: () => {
+      resolved.clear();
+      delete trace.ctx;
+    },
+  };
+  const env: CommandEnv = {
     io,
     format,
     ...(fields === undefined ? {} : { fields }),
@@ -216,6 +269,7 @@ async function commandEnv(rt: Runtime, cmd: Command, spec: CommandSpec): Promise
         ctx = resolveContext({ cwd: io.cwd, env: io.env, flags: all });
         resolved.set(key, ctx);
       }
+      trace.ctx ??= ctx;
       return ctx;
     },
     handle: () => {
@@ -228,12 +282,66 @@ async function commandEnv(rt: Runtime, cmd: Command, spec: CommandSpec): Promise
       return handle;
     },
     out: (s) => io.stdout(s),
+    committed: (commit) => {
+      if (commit !== undefined) trace.commit = commit;
+    },
   };
+  return { env, trace };
+}
+
+/**
+ * Frische vor dem Lesen. Ohne `--sync` startet höchstens der Hintergrund-Sync; ein Kontext, der
+ * sich nicht auflösen lässt, meldet der Befehl dann selbst. Mit `--sync` läuft die Runde
+ * blockierend; danach wird der Kontext neu aufgelöst, weil sie die Arbeitskopie erst geklont haben
+ * kann. Ihre Hinweise gehen im Text-Modus nach stderr.
+ */
+async function beforeRead(env: CommandEnv, trace: Trace, force: boolean): Promise<void> {
+  if (!force) {
+    let ctx: ResolvedContext;
+    try {
+      ctx = await env.context();
+    } catch {
+      return;
+    }
+    await freshen(ctx, { force: false });
+    return;
+  }
+  const out = await freshen(await env.context(), { force: true });
+  trace.forget();
+  if (env.format !== 'json' && out !== undefined) env.io.stderr(renderHints(out.notices));
+}
+
+/**
+ * Die Kopfzeile auf stderr (backe.md §2.16.2), wenn der Befehl einen Kontext mit Arbeitskopie
+ * aufgelöst hat und etwas offen ist. Fehler beim Bestimmen des Status bleiben still.
+ */
+async function emitStatusLine(env: CommandEnv, trace: Trace): Promise<void> {
+  if (trace.ctx === undefined) return;
+  try {
+    const ctx = await trace.ctx;
+    if (ctx.backlog.workingCopy === undefined) return;
+    const line = statusLine(await syncStatus(ctx));
+    if (line !== undefined) env.io.stderr(lines([safeText(line), 'Hinweis: backe sync status']));
+  } catch {
+    // Ohne Arbeitskopie oder lesbaren Zustand gibt es keine Kopfzeile.
+  }
+}
+
+/** Nach einem Write mit Commit: Hintergrund-Sync bei Bedarf. Wirft nie. */
+async function afterWrite(trace: Trace): Promise<void> {
+  if (trace.commit === undefined || trace.ctx === undefined) return;
+  try {
+    await scheduleSync(await trace.ctx, 'write');
+  } catch {
+    // Der Kontext hat die Aktion schon getragen; scheitert er jetzt doch, bleibt der Write gültig.
+  }
 }
 
 /**
  * Aktion eines Befehls: baut die `CommandEnv` und ruft `fn` mit den Argumenten von commander
- * (Positionsargumente, dann die Optionen des Befehls). Fehler fängt `run`.
+ * (Positionsargumente, dann die Optionen des Befehls). Davor bei `read` die Frische, danach bei
+ * `write` der Start des Hintergrund-Syncs und im Text-Modus die Kopfzeile. Fehler fängt `run`;
+ * nach einem Fehler gibt es keine Kopfzeile, die Fehlermeldung ist dann die Ausgabe.
  */
 export function action<A extends unknown[]>(
   rt: Runtime,
@@ -242,8 +350,15 @@ export function action<A extends unknown[]>(
 ): (...args: unknown[]) => Promise<void> {
   return async (...args: unknown[]) => {
     const cmd = args.at(-1) as Command;
-    const env = await commandEnv(rt, cmd, spec);
+    const opts = cmd.opts() as Opts;
+    const { env, trace } = await commandEnv(rt, cmd, spec);
+    const reads = typeof spec.read === 'function' ? spec.read(opts) : spec.read === true;
+    if (reads) await beforeRead(env, trace, opts.sync === true);
     await fn(env, ...(args.slice(0, -1) as A));
+    if (spec.write === true) await afterWrite(trace);
+    if (env.format !== 'json' && (spec.statusLine?.(opts) ?? true)) {
+      await emitStatusLine(env, trace);
+    }
   };
 }
 
@@ -316,6 +431,7 @@ export function emitOutcome(
 ): void {
   env.out(renderOutcome(o, env.format, kind));
   emitNotices(env, o.notices, o.warnings);
+  env.committed(o.commit);
 }
 
 /**
