@@ -509,7 +509,7 @@ Ein Audit legt Dutzende Findings auf einmal an, ein Folgelauf schließt und änd
 - Commit-Message: Zusammenfassung (`batch: 34 create, 12 move`), Trailer `Backe-Op: batch`, die Operationen als JSONL im Body — so bleibt der Batch für das Replay (§2.16.4) vollständig. Beim Replay gilt er als Einheit: Verletzt eine Operation ihre Vorbedingung, geht der ganze Batch in die Konfliktablage.
 - Ausgabe: die Zuordnung Platzhalter → vergebene ID, im JSON-Modus als Objekt.
 - Obergrenze 1000 Operationen pro Batch; darüber mehrere Batches.
-- MCP-Tool `batch` mit derselben Semantik.
+- MCP-Tool `batch` mit derselben Semantik, beschränkt auf die Operationen, die auch die MCP-Tools schreiben (§2.19).
 
 ### 2.17 CLI-Oberfläche
 
@@ -575,11 +575,11 @@ backe attach add   <id> --name <n> (<datei> | --url <u> | --json <json|->)
 - **Kontext:** Aufgelöst wird wie beim CLI, ausgehend vom Arbeitsverzeichnis des Prozesses, dessen Env und den globalen Optionen. Ohne auflösbare Identität mit Key, bei einem fremden Handle oder bei ungültiger Config startet der Server nicht: stderr trägt `Fehler: …` und `Hinweis: …` wie beim CLI, Exit-Code `2`, stdout bleibt leer. Danach löst jeder Tool-Aufruf den Kontext mit denselben Eingaben neu auf; Änderungen an Configs gelten ab dem nächsten Aufruf.
 - **stdout** gehört dem Protokoll; Logs und Fehler des Servers gehen nach stderr.
 - Der Server ist ein dünner Adapter über denselben Service-Layer wie das CLI (§2.20); kein Feature existiert nur in einer der beiden Türen, außer den hier genannten Ausnahmen. Jedes Tool liefert dasselbe JSON wie der entsprechende Befehl mit `--format json` (gleiche Keys, gleiche Auslassungen).
-- **Ergebnisform:** Erfolg ist ein einzelner Text-Content mit kompaktem JSON, ohne `structuredContent` und ohne `outputSchema`. Ein Fehler hat `isError: true` und denselben Text-Content `{"error":{"code","message","hint?","details?"}}` wie das CLI im JSON-Modus (§2.18); der Server läuft weiter. Prüfungen auf Parameterebene (genau eins von, leer, widersprüchlich) melden `usage` bzw. `validation`; Schemaverletzungen, die das SDK vor dem Handler abfängt, kommen im Format des SDK (`MCP error -32602: …`).
+- **Ergebnisform:** Erfolg ist ein einzelner Text-Content mit kompaktem JSON, ohne `structuredContent` und ohne `outputSchema`. Ein Fehler hat `isError: true` und denselben Text-Content `{"error":{"code","message","hint?","details?"}}` wie das CLI im JSON-Modus (§2.18); der Server läuft weiter. Prüfungen auf Parameterebene (genau eins von, leer, widersprüchlich) melden `usage` bzw. `validation`. Jedes Tool-Schema ist strikt (`additionalProperties: false`): Ein unbekannter Parameter ist eine Schemaverletzung und fällt nicht still weg. Schemaverletzungen fängt das SDK vor dem Handler ab; sie kommen als Fehler-Ergebnis mit dem Klartext des SDK (`Input validation error: …`, der den Parameter nennt), nicht als JSON.
 - **`notices`:** Im Ergebnis ist jeder Eintrag ein Objekt `{code?, message, ids?}`, auch die Hinweise von `sync_now`.
 - **Hints** nennen CLI-Befehle und -Flags wörtlich. Der Server erklärt das in `instructions`: ein Tool entspricht dem gleichnamigen Befehl (`issue_move` ↔ `backe issue move`), ein Flag dem Parameter in snake_case (`--add-dep` ↔ `add_deps`, `--blocked-by` ↔ `blocked_by`). Server-Identität: Name `backe`, Version aus dem Paket.
 - **Nebenläufigkeit:** Lokale Writes laufen im Server nacheinander über eine Warteschlange; parallele Aufrufe gelingen alle, jeder mit eigenem Commit. `issue_claim`, `issue_next` mit `claim` und `sync_now` sind synchron mit dem Remote, laufen daneben und warten selbst auf `sync.lock`. Lesende Tools laufen ohne Warteschlange.
-- **Hintergrund-Sync (§2.16.2):** Nach jedem lokalen Write mit Commit startet der Server einen Hintergrund-Sync, ohne das Ergebnis darauf warten zu lassen; vor jedem lesenden Tool wie beim CLI nach §2.16.3. `issue_claim`, `issue_next` mit `claim` und `sync_now` sprechen selbst mit dem Remote und starten weder vorher noch nachher einen Hintergrund-Sync (wie `claim` und `next --claim` im CLI). Zusätzlich läuft ein periodischer Sync alle `pull_interval` Sekunden, solange der Server läuft; das Intervall liest der Server beim Start aus `.backe/backlog.jsonc` in `HEAD` der Arbeitskopie (ungültige Config: Server startet nicht; Arbeitskopie fehlt noch: 60 s; `0`: kein Timer).
+- **Hintergrund-Sync (§2.16.2):** Nach jedem lokalen Write mit Commit startet der Server einen Hintergrund-Sync, ohne das Ergebnis darauf warten zu lassen; vor jedem lesenden Tool wie beim CLI nach §2.16.3. `issue_claim`, `issue_next` mit `claim` und `sync_now` sprechen selbst mit dem Remote und starten weder vorher noch nachher einen Hintergrund-Sync (wie `claim` und `next --claim` im CLI). Zusätzlich startet der Server alle `pull_interval` Sekunden einen Hintergrund-Sync, solange er läuft, unabhängig davon, wie lange der letzte Versuch zurückliegt (Modus `auto`, Arbeitskopie und Git-Remote vorausgesetzt; das Debounce über `sync.lock` fängt einen laufenden ab); das Intervall liest der Server beim Start aus `.backe/backlog.jsonc` in `HEAD` der Arbeitskopie (ungültige Config: Server startet nicht; Arbeitskopie fehlt noch: 60 s; `0`: kein Timer).
 - **Ende:** Der Server endet, wenn stdin endet, mit Exit-Code `0`. Vorher warten Warteschlange, die von ihr angestoßenen Hintergrund-Syncs und laufende synchrone Aufrufe ab.
 - **Tools** (kurze deutsche Beschreibungen; Parameternamen in snake_case wie die JSON-Keys; `?` = optional):
 
@@ -602,16 +602,18 @@ backe attach add   <id> --name <n> (<datei> | --url <u> | --json <json|->)
   | `project_list`, `sprint_list` | `project list`, `sprint list` | — |
   | `sprint_get` | `sprint show` | `slug`, `project?[]`, `repo?[]`, `all?`, `sort?` |
   | `repo_locate` | `repo where` — Name → URL, Default-Ref, lokaler Pfad | `name` |
-  | `batch` | `batch` (§2.16.6) | `ops` (Array von Objekten, je eine Zeile im Format von §2.16.6; mindestens eine) |
+  | `batch` | `batch` (§2.16.6), beschränkt auf `issue.create`, `issue.edit`, `issue.move`, `issue.resume`, `issue.reopen`, `issue.rank`, `comment.add`, `attach.add` (nur `url`) und mit `--allow-delete` `issue.delete` | `ops` (Array von Objekten, je eine Zeile im Format von §2.16.6; mindestens eine) |
   | `sync_now` | `sync` (blockierend) | — |
   | `issue_delete` | `issue delete`; nur mit `--allow-delete` registriert | `id`, `force?`, `children?` (`orphan`\|`recursive`) |
 
 - **Parameterregeln:**
   - `props` in `issue_create` und `issue_update` ist ein Objekt; die Keys folgen der Key-Grammatik aus §2.24 (sonst `validation` `Ungültiger Property-Key »<key>«`), jeder Wert ist ein JSON-Wert wie bei `--prop <key>:=<json>`. `null` ist nur in `issue_update` erlaubt und entfernt die Property.
-  - `attachment_add` liest `path` relativ zum Arbeitsverzeichnis des Servers (`~` wird expandiert) wie `attach add <datei>`; `text` ist UTF-8-Inhalt, der Dateiname ist `name` und trägt eine Endung. Gibt der Aufruf nicht genau eins von `path`, `url`, `json`, `text` an, ist das ein `usage`-Fehler.
+  - `attachment_add` liest `path` relativ zum Arbeitsverzeichnis des Servers (`~` wird expandiert) wie `attach add <datei>`, aber nur Dateien, die physisch (auch über Symlinks hinweg) im Arbeitsverzeichnis liegen, damit ein Agent keine beliebige lesbare Datei in den geteilten, signierten Backlog committet; sonst `validation` `Datei »<path>« liegt außerhalb des Arbeitsverzeichnisses` mit dem Hinweis, den Inhalt per `text` oder `json` zu übergeben; `text` ist UTF-8-Inhalt, der Dateiname ist `name` und trägt eine Endung. Gibt der Aufruf nicht genau eins von `path`, `url`, `json`, `text` an, ist das ein `usage`-Fehler.
   - `attachment_get` liefert das Ergebnis von `attach get --json` und zusätzlich `text` mit dem Inhalt, wenn die Datei höchstens 262 144 Bytes groß und gültiges UTF-8 ist; sonst ohne `text`.
   - `issue_next` mit `claim` verhält sich wie `next --claim` (§2.16.5).
-- **Nicht exponiert** in v1: `user *`, `backlog *`, `config *`, Änderungen an `.backe/` und die CLI-only-Befehle aus §4.2. `issue_delete` gibt es nur mit `--allow-delete`.
+  - `fields` in `issue_list`, `issue_get` und `issue_next` wird vor jedem Service-Aufruf geprüft; ein unbekanntes Feld ist `usage`, bevor gelesen oder übernommen wird.
+  - `batch` lehnt jede Operation außerhalb der Liste in der Tabelle ab, bevor etwas geschrieben wird: `validation` `Zeile <n>: »<op>« gibt es im MCP-Modus nicht`.
+- **Nicht exponiert** in v1, auch nicht über `batch`: `user *`, `backlog *`, `config *`, Änderungen an `.backe/` und die CLI-only-Befehle aus §4.2. `issue_delete` und `issue.delete` im Batch gibt es nur mit `--allow-delete`.
 - **Resources:** `backe://issue/{id}` liefert die Issue-Datei als Markdown (`text/markdown`); `{id}` darf eine Kurz-ID sein, die Antwort trägt die volle ID im URI. Die Resource hat keine Liste (ein Backlog kann zehntausende Issues haben); eine unbekannte ID ist ein MCP-Fehler mit der Meldung des Service.
 
 ### 2.20 Technik
@@ -829,7 +831,7 @@ Keine. Der Name `backe` ist eine Format-Entscheidung: Er steckt in `~/.backe/`, 
 - **Orphan-Branch-Modus:** Backlog als eigener Branch im Code-Repo, ausgecheckt als Worktree — für Ein-Repo-Projekte ohne separates Backlog-Repo.
 - Watcher/Daemon mit Benachrichtigungen; TUI; Volltext-Index bei großen Backlogs (Bedingung: `issue list -q` über 1 s bei 10⁴ Issues).
 - Brücke zu GitHub Issues.
-- **Weitere MCP-Tools:** In v1 nur über das CLI erreichbar sind `issue link|unlink`, `comment list|edit|rm`, `attach list|rm`, die Writes auf Projekte, Sprints und Repos, `repo check|scan`, `verify`, `commit`, `sync status|resolve` und `doctor`.
+- **Weitere MCP-Tools:** In v1 nur über das CLI erreichbar — weder als Tool noch als Operation im MCP-`batch` — sind `issue link|unlink`, `comment list|edit|rm`, `attach list|rm`, die Writes auf Projekte, Sprints und Repos, `repo check|scan`, `verify`, `commit`, `sync status|resolve` und `doctor`.
 - Standalone-Binaries (Node SEA) zusätzlich zum npm-Paket.
 
 ## 5. Tests *(Plan)*

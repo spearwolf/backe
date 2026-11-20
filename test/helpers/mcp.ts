@@ -43,8 +43,9 @@ export type McpConnection = {
   client: Client;
   /**
    * Ruft ein Tool und parst `content[0].text`: Erfolg als `{ok}`, ein Fehler-Ergebnis als
-   * `{error}`. Fehler, die das SDK vor dem Handler abfängt (Text `MCP error …`, kein JSON),
-   * kommen als `{error:{code:'protocol', message:<text>}}`.
+   * `{error}`. Fehler, die das SDK vor dem Handler abfängt (Klartext wie
+   * `Input validation error: …`, kein JSON), kommen als
+   * `{error:{code:'protocol', message:<text>}}`.
    */
   call(name: string, args?: object): Promise<CallResult>;
   close(): Promise<void>;
