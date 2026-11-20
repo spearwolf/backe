@@ -9,6 +9,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { expandPath, isMissing } from '../context/paths.ts';
 import { BackeError } from '../core/errors.ts';
+import { PROP_KEY_RE } from '../core/names.ts';
 import { type AttachSource, addAttachment } from '../services/attachments.ts';
 import { runBatch } from '../services/batch.ts';
 import { addComment } from '../services/comments.ts';
@@ -37,6 +38,11 @@ export function propsArgs(
 ): { props: string[]; unset: string[] } {
   const out = { props: [] as string[], unset: [] as string[] };
   for (const [key, value] of Object.entries(props)) {
+    if (!PROP_KEY_RE.test(key)) {
+      throw new BackeError('validation', `Ungültiger Property-Key »${key}«`, {
+        hint: 'erlaubt: Kleinbuchstaben, Ziffern, _ . -, beginnend mit einem Buchstaben',
+      });
+    }
     if (value === null) {
       if (!allowNull) {
         throw new BackeError('validation', `Property »${key}«: null geht nur in issue_update`);

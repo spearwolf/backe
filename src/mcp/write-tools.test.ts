@@ -44,6 +44,20 @@ test('propsArgs turns values into JSON assignments and null into unset', () => {
   expect(() => propsArgs({ level: null }, false)).toThrow('null geht nur in issue_update');
 });
 
+test('props keys outside the key grammar are rejected, set and unset alike', () =>
+  withMcp(async (m, b) => {
+    const id = await create(m);
+    const file = () => readFile(join(b.root, issueFile(id)), 'utf8');
+    const before = await file();
+    expect(await m.call('issue_update', { id, props: { 'a=b': 1 } })).toMatchObject({
+      error: { code: 'validation', message: 'Ungültiger Property-Key »a=b«' },
+    });
+    expect(await m.call('issue_update', { id, props: { Bad: null } })).toMatchObject({
+      error: { code: 'validation', message: 'Ungültiger Property-Key »Bad«' },
+    });
+    expect(await file()).toBe(before);
+  }));
+
 test('issue_create returns the outcome of backe issue create --json', () =>
   withMcp(async (m) => {
     const r = await m.call('issue_create', { title: 'Neu', body: 'Text' });
@@ -137,6 +151,9 @@ test('writes with a commit schedule a background sync', async () => {
       await vi.waitFor(() => expect(calls).toHaveLength(1));
       const same = await m.call('issue_move', { id, to: 'backlog' });
       expect(same).toMatchObject({ ok: { commit: null } });
+      // Ein Schreib-Roundtrip der Warteschlange ohne Commit hat den Nachlauf schon durchlaufen.
+      await Promise.resolve();
+      expect(calls).toHaveLength(1);
       // Der Nachlauf ist nicht abgewartet; ein Roundtrip danach macht ihn sichtbar.
       await m.call('comment_add', { id: id, body: 'x' }).then(() => undefined);
       await vi.waitFor(() => expect(calls).toHaveLength(2));
