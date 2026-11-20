@@ -43,6 +43,14 @@ function takeable(holder: Holder, id: Identity): boolean {
   return !id.isAlive(holder.pid);
 }
 
+function identity(opts: LockOptions): Identity {
+  return {
+    isAlive: opts.isAlive ?? processAlive,
+    host: opts.host ?? hostname(),
+    bootTime: opts.bootTime ?? Date.now() - uptime() * 1000,
+  };
+}
+
 function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -139,11 +147,7 @@ export async function withFileLock<T>(
 ): Promise<T> {
   const timeoutMs = opts.timeoutMs ?? 5000;
   const retryMs = opts.retryMs ?? 50;
-  const id: Identity = {
-    isAlive: opts.isAlive ?? processAlive,
-    host: opts.host ?? hostname(),
-    bootTime: opts.bootTime ?? Date.now() - uptime() * 1000,
-  };
+  const id = identity(opts);
   const deadline = Date.now() + timeoutMs;
 
   await mkdir(dirname(lockPath), { recursive: true });
@@ -181,4 +185,13 @@ export async function withFileLock<T>(
   } finally {
     await rm(lockPath, { force: true });
   }
+}
+
+/**
+ * Ob `lockPath` gerade gehalten wird, so wie `withFileLock` urteilt: Die Datei existiert und ist
+ * nicht übernehmbar (lebender Halter, fremder Host oder unlesbare PID).
+ */
+export async function lockHeld(lockPath: string, opts: LockOptions = {}): Promise<boolean> {
+  const content = await readLock(lockPath);
+  return content !== undefined && !takeable(parseHolder(content), identity(opts));
 }

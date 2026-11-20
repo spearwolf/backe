@@ -23,7 +23,13 @@ import { firstStderrLine } from './init.ts';
 import { lfsAvailable, requireLfs, setUpLfs } from './lfs.ts';
 import { type ManualResolver, readUnits, replayOnto } from './replay.ts';
 import { raiseSignal, withDeferredSignals } from './signals.ts';
-import { readSyncState, type SyncState, writeConflicts, writeSyncState } from './sync-state.ts';
+import {
+  readSyncState,
+  type SyncState,
+  syncFile,
+  writeConflicts,
+  writeSyncState,
+} from './sync-state.ts';
 import { verifyRange } from './verify.ts';
 import { ensureWorkingCopy, judgeReport } from './working-copy.ts';
 import { headConfig } from './write.ts';
@@ -33,7 +39,14 @@ export type SyncHooks = {
   afterFetch?: (round: number) => Promise<void>;
   beforePush?: (round: number, sha: string) => Promise<void>;
   afterRound?: () => Promise<void>;
+  /** Der Hintergrund-Sync hat `sync.dirty` zum letzten Mal geprüft und gibt gleich `sync.lock` frei. */
+  beforeRelease?: () => Promise<void>;
 };
+
+type Env = ResolvedContext['env'];
+
+/** Startet `backe sync --background` als eigenständigen Prozess; `log` nimmt seine Ausgabe auf. */
+export type SpawnFn = (args: { argv: string[]; cwd: string; env: Env; log: string }) => void;
 
 export type SyncDeps = {
   now?: () => Date;
@@ -43,6 +56,8 @@ export type SyncDeps = {
   hooks?: SyncHooks;
   lock?: LockOptions;
   resolveManual?: ManualResolver;
+  /** Startet den Hintergrund-Prozess (Default: detached `child_process.spawn`). */
+  spawn?: SpawnFn;
 };
 
 export type SyncOutcome = {
@@ -71,8 +86,6 @@ export function effectiveMode(ctx: ResolvedContext, config: BacklogConfig): 'aut
 export function syncRemote(wc: string, remote: string): Promise<string | undefined> {
   return remoteUrl(wc, remote);
 }
-
-type Env = ResolvedContext['env'];
 
 /** Ein Git-Aufruf ist mit einem Exit-Code gescheitert und hat dabei `pattern` auf stderr gemeldet. */
 function stderrMatches(err: unknown, pattern: RegExp): boolean {
@@ -422,6 +435,53 @@ function lastError(err: unknown, at: string): NonNullable<SyncState['last_error'
   };
 }
 
+type Prepared = Round & { config: BacklogConfig; notices: string[]; remote: boolean };
+
+/** Arbeitskopie (bei Bedarf geklont), Config aus ihrem HEAD und ob der Git-Remote existiert. */
+async function prepare(ctx: ResolvedContext, deps: SyncDeps): Promise<Prepared> {
+  const { handle, key, workingCopy } = requireWriter(ctx);
+  const { root: wc, notices } = (await exists(join(workingCopy, BACKLOG_CONFIG)))
+    ? { root: workingCopy, notices: [] }
+    : await ensureWorkingCopy(ctx, handle);
+  const config = await headConfig(wc);
+  if (config === undefined) {
+    throw new BackeError('validation', `${wc} ist kein Backlog: ${BACKLOG_CONFIG} fehlt in HEAD`);
+  }
+  const remote = (await syncRemote(wc, config.sync.remote)) !== undefined;
+  return { ctx, wc, handle, key, deps, config, notices, remote };
+}
+
+const skipped = (notices: string[]): SyncOutcome => ({
+  fetched: 0,
+  replayed: 0,
+  conflicts: [],
+  pushed: undefined,
+  rounds: 0,
+  skipped: 'no_remote',
+  notices,
+});
+
+/** Die Runde, während der Aufrufer `sync.lock` hält; `sync.json` hält Zeit und Ergebnis. */
+async function heldRound(p: Prepared, opts: { claimSha?: string }): Promise<SyncOutcome> {
+  const { wc, config, deps } = p;
+  const now = deps.now ?? (() => new Date());
+  const before = await readSyncState(wc);
+  const attempt = isoNow(now());
+  try {
+    const out = await runRounds(p, config.sync.remote, config.sync.branch, opts.claimSha);
+    await writeSyncState(wc, { last_attempt: attempt, last_success: isoNow(now()) });
+    return { ...out, notices: [...p.notices, ...out.notices] };
+  } catch (err) {
+    const { last_error: _, ...kept } = before;
+    await writeSyncState(wc, {
+      ...kept,
+      last_attempt: attempt,
+      last_error: lastError(err, attempt),
+    });
+    throw err;
+  }
+}
+
 /**
  * Eine Sync-Runde (backe.md §2.16.2) unter `sync.lock` (wartend): bis zu fünf Durchgänge aus
  * `fetch`, Verify, lokalem Abschnitt und `push`. Ohne Git-Remote `sync.remote` → `skipped`.
@@ -433,46 +493,16 @@ export async function syncNow(
   deps: SyncDeps = {},
   opts: { claimSha?: string } = {},
 ): Promise<SyncOutcome> {
-  const { handle, key, workingCopy } = requireWriter(ctx);
-  const { root: wc, notices } = (await exists(join(workingCopy, BACKLOG_CONFIG)))
-    ? { root: workingCopy, notices: [] }
-    : await ensureWorkingCopy(ctx, handle);
-  const config = await headConfig(wc);
-  if (config === undefined) {
-    throw new BackeError('validation', `${wc} ist kein Backlog: ${BACKLOG_CONFIG} fehlt in HEAD`);
-  }
-  if ((await syncRemote(wc, config.sync.remote)) === undefined) {
-    return {
-      fetched: 0,
-      replayed: 0,
-      conflicts: [],
-      pushed: undefined,
-      rounds: 0,
-      skipped: 'no_remote',
-      notices,
-    };
-  }
-  const now = deps.now ?? (() => new Date());
-  const round: Round = { ctx, wc, handle, key, deps };
-  return withFileLock(
-    join(await stateDir(wc), 'sync.lock'),
-    async () => {
-      const before = await readSyncState(wc);
-      const attempt = isoNow(now());
-      try {
-        const out = await runRounds(round, config.sync.remote, config.sync.branch, opts.claimSha);
-        await writeSyncState(wc, { last_attempt: attempt, last_success: isoNow(now()) });
-        return { ...out, notices: [...notices, ...out.notices] };
-      } catch (err) {
-        const { last_error: _, ...kept } = before;
-        await writeSyncState(wc, {
-          ...kept,
-          last_attempt: attempt,
-          last_error: lastError(err, attempt),
-        });
-        throw err;
-      }
-    },
-    deps.lock,
-  );
+  const p = await prepare(ctx, deps);
+  if (!p.remote) return skipped(p.notices);
+  return withFileLock(await syncFile(p.wc, 'sync.lock'), () => heldRound(p, opts), deps.lock);
+}
+
+/**
+ * Wie `syncNow`, aber für einen Aufrufer, der `sync.lock` schon hält (der Hintergrund-Sync dreht
+ * darunter mehrere Runden).
+ */
+export async function syncHeld(ctx: ResolvedContext, deps: SyncDeps = {}): Promise<SyncOutcome> {
+  const p = await prepare(ctx, deps);
+  return p.remote ? heldRound(p, {}) : skipped(p.notices);
 }

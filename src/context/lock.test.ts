@@ -3,7 +3,7 @@ import { chmod, mkdir, readdir, readFile, rm, utimes, writeFile } from 'node:fs/
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { withFileLock } from './lock.ts';
+import { lockHeld, withFileLock } from './lock.ts';
 
 let linkError: Error | undefined;
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -315,4 +315,15 @@ test('a failure to publish other than EEXIST is rethrown and leaves nothing behi
     await chmod(dir, 0o700);
   }
   expect(await readdir(dir)).toEqual([]);
+});
+
+test('lockHeld sees a live holder and ignores a missing or takeable lock', async () => {
+  const lock = join(await tempDir(), 'x.lock');
+  expect(await lockHeld(lock)).toBe(false);
+  await writeFile(lock, `${process.pid}\n${new Date().toISOString()}\n`);
+  expect(await lockHeld(lock)).toBe(true);
+  await writeFile(lock, `999999\n${new Date().toISOString()}\n`);
+  expect(await lockHeld(lock, { isAlive: () => false })).toBe(false);
+  await writeFile(lock, `${process.pid}\n${new Date().toISOString()}\nanderswo\n`);
+  expect(await lockHeld(lock)).toBe(true);
 });

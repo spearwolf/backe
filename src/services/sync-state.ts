@@ -1,9 +1,11 @@
 /**
  * Lokaler Zustand des Syncs unter `.git/backe` (backe.md §2.16.2, §2.16.4): die Konfliktablage
  * `conflicts/<id>.json` und `sync.json` mit Zeit und Fehler der letzten Runde. Beides wird atomar
- * geschrieben; was sich nicht lesen lässt, gilt als nicht vorhanden.
+ * geschrieben; was sich nicht lesen lässt, gilt als nicht vorhanden. Dazu die Dateien des
+ * Hintergrund-Syncs: `sync.lock`, das Dirty-Flag `sync.dirty` und das Log `sync.log`.
  */
-import { mkdir, readdir, readFile, rm } from 'node:fs/promises';
+import { renameSync, statSync } from 'node:fs';
+import { appendFile, mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { BackeError } from '../core/errors.ts';
@@ -78,6 +80,42 @@ const StoredSyncState = z.object({
     })
     .optional(),
 });
+
+export type SyncFile = 'sync.json' | 'sync.lock' | 'sync.dirty' | 'sync.log';
+
+/** Pfad einer Sync-Datei der Arbeitskopie. */
+export async function syncFile(wc: string, name: SyncFile): Promise<string> {
+  return join(await stateDir(wc), name);
+}
+
+/** Ein Log über dieser Größe wird beim Start eines Hintergrund-Syncs nach `<log>.1` verschoben. */
+export const SYNC_LOG_MAX_BYTES = 1024 * 1024;
+
+/**
+ * Verschiebt `log` nach `<log>.1` (ein älteres `.1` wird ersetzt), wenn es größer als
+ * `SYNC_LOG_MAX_BYTES` ist. Synchron, weil der Start des Hintergrund-Prozesses es vor dem Öffnen
+ * seines Log-Deskriptors braucht.
+ */
+export function rotateSyncLog(log: string): void {
+  let size: number;
+  try {
+    size = statSync(log).size;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw err;
+  }
+  if (size > SYNC_LOG_MAX_BYTES) renameSync(log, `${log}.1`);
+}
+
+/** Hängt eine Zeile `<at> <code>: <message>` an `log` an. */
+export async function appendSyncLog(
+  log: string,
+  at: string,
+  code: string,
+  message: string,
+): Promise<void> {
+  await appendFile(log, `${at} ${code}: ${message}\n`);
+}
 
 async function conflictsDir(wc: string): Promise<string> {
   return join(await stateDir(wc), 'conflicts');
@@ -155,7 +193,7 @@ export async function removeConflict(wc: string, id: string): Promise<void> {
 export async function readSyncState(wc: string): Promise<SyncState> {
   let text: string;
   try {
-    text = await readFile(join(await stateDir(wc), 'sync.json'), 'utf8');
+    text = await readFile(await syncFile(wc, 'sync.json'), 'utf8');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
     throw err;
@@ -171,6 +209,6 @@ export async function readSyncState(wc: string): Promise<SyncState> {
 }
 
 export async function writeSyncState(wc: string, s: SyncState): Promise<void> {
-  const file = join(await stateDir(wc), 'sync.json');
+  const file = await syncFile(wc, 'sync.json');
   await writeFileAtomic(file, `${JSON.stringify({ version: 1, ...s })}\n`);
 }
