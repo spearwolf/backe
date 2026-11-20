@@ -12,6 +12,29 @@ import { issueListResultJson, sprintShowJson } from '../services/views.ts';
 import { executeWrite } from '../services/write.ts';
 import { BACKLOG_CONFIG, issueFile } from '../store/layout.ts';
 
+const listSpy = vi.hoisted(() => vi.fn());
+const nextSpy = vi.hoisted(() => vi.fn());
+vi.mock('../services/issue-list.ts', async (orig) => {
+  const actual = await orig<typeof import('../services/issue-list.ts')>();
+  return {
+    ...actual,
+    listIssues: (...a: Parameters<typeof actual.listIssues>) => {
+      listSpy(...a);
+      return actual.listIssues(...a);
+    },
+  };
+});
+vi.mock('../services/next.ts', async (orig) => {
+  const actual = await orig<typeof import('../services/next.ts')>();
+  return {
+    ...actual,
+    nextIssue: (...a: Parameters<typeof actual.nextIssue>) => {
+      nextSpy(...a);
+      return actual.nextIssue(...a);
+    },
+  };
+});
+
 async function withMcp<T>(
   fn: (
     m: Awaited<ReturnType<typeof connectMcp>>,
@@ -69,6 +92,16 @@ test('issue_get with comments last carries exactly one comment', () =>
     const none = (await m.call('issue_get', { id: i })) as { ok: Record<string, unknown> };
     expect(none.ok).not.toHaveProperty('comments');
     expect(none.ok.comments_count).toBe(2);
+  }));
+
+test('issue_get with comments last on an issue without comments has none', () =>
+  withMcp(async (m, b) => {
+    const i = await id(createIssue(await b.context(), { title: 'A' }));
+    const r = (await m.call('issue_get', { id: i, comments: 'last' })) as {
+      ok: Record<string, unknown>;
+    };
+    expect(r.ok).not.toHaveProperty('comments');
+    expect(r.ok.comments_count).toBe(0);
   }));
 
 test('issue_get resolves a short id', () =>
@@ -140,7 +173,9 @@ test('the issue resource serves the file as markdown', () =>
     expect(r.contents[0]).toMatchObject({ uri: `backe://issue/${i}`, mimeType: 'text/markdown' });
     expect((r.contents[0] as { text: string }).text).toBe(file);
     expect((r.contents[0] as { text: string }).text).toContain('Text');
-    await expect(m.client.readResource({ uri: 'backe://issue/zzzzzzzz' })).rejects.toThrow();
+    await expect(m.client.readResource({ uri: 'backe://issue/zzzzzzzz' })).rejects.toThrow(
+      /Keine Issue-ID passt zu »zzzzzzzz«/,
+    );
   }));
 
 test('reads schedule a background sync', async () => {
@@ -166,12 +201,11 @@ test('reads schedule a background sync', async () => {
   }
 });
 
-test('issue_list maps every parameter onto the query', () =>
+test('issue_list maps every parameter onto its query field', () =>
   withMcp(async (m, b) => {
-    const ctx = await b.context();
-    await createIssue(ctx, { title: 'A' });
-    const all = {
-      state: ['open'],
+    await createIssue(await b.context(), { title: 'A' });
+    const params = {
+      state: ['open', 'done'],
       project: ['web'],
       exact: true,
       sprint: ['s1'],
@@ -179,48 +213,40 @@ test('issue_list maps every parameter onto the query', () =>
       assignee: 'none',
       creator: 'me',
       mode: 'ready',
-      parent: 'nope',
+      parent: 'abc',
       top_level: true,
       prop: ['p=1'],
-      has_prop: ['p'],
+      has_prop: ['q'],
       query: 'A',
       tree: true,
       sort: 'created',
       all: true,
-      limit: 1,
+      limit: 3,
     };
-    // Die Parameter erreichen den Service: Er prüft sie und lehnt unbekannte Namen ab.
-    const r = await m.call('issue_list', all);
-    expect(r).toHaveProperty('error');
-    const ok = await m.call('issue_list', {
-      state: ['all'],
-      exact: false,
+    listSpy.mockClear();
+    await m.call('issue_list', params);
+    expect(listSpy.mock.calls[0]?.[1]).toEqual({
+      states: ['open', 'done'],
+      projects: ['web'],
+      exact: true,
+      sprints: ['s1'],
+      repos: ['r'],
       assignee: 'none',
       creator: 'me',
       mode: 'ready',
-      top_level: true,
-      query: 'A',
+      parent: 'abc',
+      topLevel: true,
+      props: ['p=1'],
+      hasProps: ['q'],
+      text: 'A',
       tree: true,
       sort: 'created',
       all: true,
-      limit: 1,
+      limit: 3,
     });
-    expect(ok).toEqual({
-      ok: issueListResultJson(
-        await listIssues(ctx, {
-          states: ['all'],
-          assignee: 'none',
-          creator: 'me',
-          mode: 'ready',
-          topLevel: true,
-          text: 'A',
-          tree: true,
-          sort: 'created',
-          all: true,
-          limit: 1,
-        }),
-      ),
-    });
+    listSpy.mockClear();
+    await m.call('issue_list', { exact: false, top_level: false, tree: false, all: false });
+    expect(listSpy.mock.calls[0]?.[1]).toEqual({});
   }));
 
 test('issue_next, sprint_get and issue_get accept their optional parameters', () =>
@@ -237,10 +263,21 @@ test('issue_next, sprint_get and issue_get accept their optional parameters', ()
       'ok.issue.id',
       i,
     );
-    // Die Filter erreichen den Service: ein unbekanntes Projekt, Sprint oder Repo scheitert dort.
-    for (const filter of [{ project: 'x' }, { sprint: 's' }, { repo: 'r' }]) {
-      expect(await m.call('issue_next', filter)).toHaveProperty('error');
-    }
+    nextSpy.mockClear();
+    await m.call('issue_next', {
+      level: 'top',
+      project: 'web',
+      sprint: 's1',
+      repo: 'r',
+      all: true,
+    });
+    expect(nextSpy.mock.calls[0]?.[1]).toEqual({
+      level: 'top',
+      project: 'web',
+      sprint: 's1',
+      repo: 'r',
+      all: true,
+    });
     expect(
       await m.call('sprint_get', {
         slug: 's1',
