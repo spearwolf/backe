@@ -14,7 +14,7 @@ import {
 import { git } from '../git/exec.ts';
 import { BACKLOG_CONFIG, QUARANTINE } from '../store/layout.ts';
 import { quarantineCommit } from './quarantine.ts';
-import { verifyRange } from './verify.ts';
+import { nextCommitBasis, verifyRange, writeCommitBasis } from './verify.ts';
 import { executeWrite } from './write.ts';
 
 const USER_FILE = 'users/spw.md';
@@ -85,6 +85,21 @@ test('a revert while another invalid commit stays open may restore content of a 
   expect(r.invalid.map((f) => f.sha)).toEqual([first]);
   expect(r.quarantined.map((f) => f.sha)).toEqual([bad]);
   expect(await readFile(join(b.root, file), 'utf8')).toBe(content);
+});
+
+test('the write basis walked from verified matches the full walk', async () => {
+  const ctx = await b.context();
+  const quarantined = await badCommit();
+  await quarantineCommit(ctx, { sha: quarantined, decision: 'accepted', reason: 'harmlos' });
+  const verified = await revParse(b.root, 'HEAD');
+  expect((await verifyRange(b.root, { record: true })).invalid).toEqual([]);
+  const open = await rawCommit(b.root, { files: { 'notes/x.txt': '1\n' }, actor: 'spw' });
+
+  const full = await nextCommitBasis(b.root);
+  const since = await writeCommitBasis(b.root);
+  expect(since.frozen).toEqual({ at: verified, firstOpen: open, open: [open] });
+  expect(since.frozen).toEqual(full.frozen);
+  expect(since.state.usersTree).toBe(full.state.usersTree);
 });
 
 test('revert brings back a file the commit deleted', async () => {

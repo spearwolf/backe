@@ -77,12 +77,16 @@ test('without a signal nothing is raised', async () => {
   expect(raised).toEqual([]);
 });
 
-test('without raise the deferred signal reaches the restored listeners', async () => {
-  const delivered = new Promise<string>((resolve) => {
-    process.once('SIGINT', (s) => resolve(s));
-  });
-  await withDeferredSignals(async () => {
-    process.emit('SIGINT');
-  });
-  expect(await delivered).toBe('SIGINT');
+test('the deferred signal is raised only after the foreign listeners are back', async () => {
+  const own = () => {};
+  process.on('SIGINT', own);
+  const seen: boolean[] = [];
+  await withDeferredSignals(
+    async () => {
+      process.emit('SIGINT');
+    },
+    { raise: () => seen.push(process.listeners('SIGINT').includes(own)) },
+  );
+  expect(seen).toEqual([true]);
+  process.off('SIGINT', own);
 });

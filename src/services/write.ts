@@ -10,12 +10,13 @@ import { workingCopyPath } from '../context/registry.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
 import { userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
-import { shortSha } from '../core/ids.ts';
 import {
   BACKLOG_FORMAT_VERSION,
   type BacklogConfig,
   BacklogConfigSchema,
   type Comment,
+  type Quarantine,
+  QuarantineSchema,
   type User,
   validateEntity,
 } from '../core/schemas.ts';
@@ -79,8 +80,8 @@ import {
   settleEdits,
 } from './hand-edits.ts';
 import { raiseSignal, withDeferredSignals } from './signals.ts';
-import { nextCommitBasis } from './verify.ts';
-import { activeFingerprints, type State } from './verify-state.ts';
+import { coversOpen, type FrozenBasis, pathTaintReasons, writeCommitBasis } from './verify.ts';
+import { activeFingerprints, parseJsoncAs, type State } from './verify-state.ts';
 import { ensureWorkingCopy, identityMismatch } from './working-copy.ts';
 
 export type WriteInput =
@@ -547,36 +548,108 @@ function policyStateAfter(state: PolicyState, changes: readonly TreeChange[]): P
   return { config, users };
 }
 
+/** Der eingefrorene Stand, gegen den `verify` den nächsten Commit beurteilt. */
+type Frozen = FrozenBasis & { state: State };
+
 /**
- * Prüft jeden Commit der Hand-Edit-Kette wie `verify` (backe.md §2.13 Punkt 4) und liefert dessen
- * Gründe: gegen den Stand von HEAD bzw. nach dem vorigen Schritt — solange ungültige Commits offen
- * sind, wie bei `verify` jeden Schritt gegen den eingefrorenen Stand `frozen`. Rekursiv gelöschte
- * Issue-Verzeichnisse prüft `verify` frei (Issue und Kommentare darin), sie tragen hier nichts bei.
+ * Die Dateien entlang einer geplanten Kette: HEAD, überlagert mit dem, was frühere Schritte
+ * schreiben. Liefert je Schritt die geänderten Dateien mit ihrer Blob-ID im Parent und die
+ * Blob-ID danach (über den Clean-Filter der Arbeitskopie, wie `git add` sie ablegt).
  */
-async function editsPolicyReasons(
+function chainTree(wc: string, head: string) {
+  const written = new Map<string, string | Uint8Array | null>();
+  const oidOf = async (path: string, content: string | Uint8Array | null) =>
+    content === null ? undefined : cleanBlobId(wc, path, content);
+  /** Dateien unter `dir` im Parent des nächsten Schritts. */
+  async function filesUnder(dir: string): Promise<string[]> {
+    const { stdout } = await git(
+      ['ls-tree', '-r', '-z', '--name-only', '--end-of-options', head, '--', dir],
+      { cwd: wc, env: { GIT_LITERAL_PATHSPECS: '1' } },
+    );
+    const files = new Set(stdout.split('\0').filter((f) => f !== ''));
+    for (const [path, content] of written) {
+      if (!path.startsWith(`${dir}/`)) continue;
+      if (content === null) files.delete(path);
+      else files.add(path);
+    }
+    return [...files];
+  }
+  return {
+    /** Die Dateien, die `step` ändert, samt Blob-ID im Parent; `after` je Pfad. */
+    async changes(step: Step) {
+      const next = new Map<string, string | Uint8Array | null>();
+      for (const c of step.changes) {
+        if (c.recursive === true) for (const f of await filesUnder(c.path)) next.set(f, null);
+        else next.set(c.path, c.content);
+      }
+      const unwritten = (p: string) => !written.has(p);
+      const renormalize = step.renormalize ?? [];
+      const fromHead = [...next.keys(), ...renormalize].filter(unwritten);
+      const specs = fromHead.map((p) => `${head}:${p}`);
+      const [info, blobs] = await Promise.all([
+        objectInfo(wc, specs),
+        readBlobs(
+          wc,
+          renormalize.filter(unwritten).map((p) => `${head}:${p}`),
+        ),
+      ]);
+      // Neu abgelegt wird der Inhalt, der schon da ist — jetzt durch den Filter der neuen Regel.
+      for (const p of renormalize) {
+        next.set(
+          p,
+          written.has(p) ? (written.get(p) ?? null) : (blobs.get(`${head}:${p}`) ?? null),
+        );
+      }
+      const files = await Promise.all(
+        [...next].map(async ([path]) => ({
+          path,
+          parent: written.has(path)
+            ? await oidOf(path, written.get(path) ?? null)
+            : info.get(`${head}:${path}`)?.oid,
+        })),
+      );
+      return {
+        files,
+        after: async (path: string) => oidOf(path, next.get(path) ?? null),
+        apply: () => {
+          for (const [path, content] of next) written.set(path, content);
+        },
+      };
+    },
+  };
+}
+
+/**
+ * Prüft die geplante Kette vor dem Schreiben, wie `verify` ihre Commits beurteilen wird (backe.md
+ * §2.13 Punkt 4), und liefert die Gründe. Jeder Schritt gilt gegen den Stand von HEAD bzw. nach
+ * dem vorigen Schritt; solange ungültige Commits offen sind (`frozen`), wie bei `verify` gegen den
+ * eingefrorenen Stand und zusätzlich auf verseuchte Pfade (`pathTaintReasons`, dieselbe Regel wie
+ * in `verify`). Ein sonst gültiger Schritt, dessen Quarantäne alle offenen Commits deckt, taut auf;
+ * die Schritte danach gelten wieder gegen ihren Parent. `before` ist der Inhalt bearbeiteter
+ * Pfade in HEAD (Hand-Edits). Rekursiv gelöschte Issue-Verzeichnisse prüft die Policy frei (Issue
+ * und Kommentare darin); für verseuchte Pfade zählt jede Datei darin.
+ */
+async function chainReasons(
   wc: string,
   head: string,
-  edits: HandEdits,
+  snapshot: BacklogSnapshot,
+  before: ReadonlyMap<string, Buffer | null> | undefined,
   steps: readonly Step[],
   actor: string,
-  frozen: State | undefined,
+  frozen: Frozen | undefined,
 ): Promise<string[]> {
-  if (typeof frozen?.config === 'string') {
-    return [`nicht prüfbar: ${BACKLOG_CONFIG}: ${frozen.config}`];
-  }
-  const judge: PolicyState | undefined =
-    frozen === undefined
-      ? undefined
-      : { config: frozen.config as BacklogConfig, users: frozen.users };
   let state: PolicyState = {
-    config: edits.base.config,
-    users: new Map([...edits.base.users].map(([h, u]) => [h, u.data])),
+    config: snapshot.config,
+    users: new Map([...snapshot.users].map(([h, u]) => [h, u.data])),
   };
   const known = new Map<string, string | null>();
-  for (const [path, content] of edits.before) known.set(path, utf8Text(content));
+  for (const [path, content] of before ?? []) known.set(path, utf8Text(content));
+  const tree = chainTree(wc, head);
+  let open = frozen;
   let removed: ReadonlySet<string> | undefined;
   const reasons: string[] = [];
   for (const step of steps) {
+    const found: string[] = [];
     const last = new Map<string, FileChange>();
     for (const c of step.changes) if (c.recursive !== true) last.set(c.path, c);
     const missing = [...last.keys()].filter((p) => policyRelevant(p) && !known.has(p));
@@ -587,65 +660,57 @@ async function editsPolicyReasons(
     for (const p of missing) known.set(p, utf8Text(blobs.get(`${head}:${p}`)));
     const changes: TreeChange[] = [...last.values()].map((c) => {
       const after = utf8Text(c.content);
-      const before = policyRelevant(c.path) ? (known.get(c.path) ?? null) : null;
+      const was = policyRelevant(c.path) ? (known.get(c.path) ?? null) : null;
       return {
         path: c.path,
-        status: after === null ? 'D' : before === null && policyRelevant(c.path) ? 'A' : 'M',
-        oldMode: before === null ? '000000' : '100644',
+        status: after === null ? 'D' : was === null && policyRelevant(c.path) ? 'A' : 'M',
+        oldMode: was === null ? '000000' : '100644',
         newMode: after === null ? '000000' : '100644',
-        before,
+        before: was,
         after,
       };
     });
     const next = policyStateAfter(state, changes);
-    const addsUser = changes.some((c) => c.status === 'A' && classifyPath(c.path).kind === 'user');
-    if (addsUser) removed ??= await removedHandles(wc, head);
-    const found = checkCommitPolicy({
-      actor,
-      parent: judge ?? state,
-      after: next,
-      changes,
-      removedHandles: removed ?? new Set(),
-    });
+    const judge = open?.state ?? state;
+    if (typeof judge.config === 'string') {
+      found.push(`nicht prüfbar: ${BACKLOG_CONFIG}: ${judge.config}`);
+    } else {
+      const addsUser = changes.some(
+        (c) => c.status === 'A' && classifyPath(c.path).kind === 'user',
+      );
+      if (addsUser) removed ??= await removedHandles(wc, head);
+      found.push(
+        ...checkCommitPolicy({
+          actor,
+          parent: { config: judge.config, users: judge.users },
+          after: next,
+          changes,
+          removedHandles: removed ?? new Set(),
+        }),
+      );
+    }
+    const quarantine = last.get(QUARANTINE);
+    let entries: Quarantine['entries'] | undefined;
+    if (quarantine !== undefined) {
+      const parsed =
+        quarantine.content === null
+          ? { entries: [] }
+          : parseJsoncAs(QuarantineSchema, utf8Text(quarantine.content) as string, QUARANTINE);
+      if (typeof parsed === 'string') found.push(`quarantine.jsonc ungültig: ${parsed}`);
+      else entries = parsed.entries;
+    }
+    if (open !== undefined) {
+      const valid = found.length === 0 ? entries : undefined;
+      const files = await tree.changes(step);
+      found.push(...(await pathTaintReasons(wc, files.files, files.after, open, valid)));
+      files.apply();
+      if (valid !== undefined && coversOpen(valid, open.open)) open = undefined;
+    }
     for (const reason of found) if (!reasons.includes(reason)) reasons.push(reason);
     for (const c of changes) known.set(c.path, c.after);
     state = next;
   }
   return reasons;
-}
-
-/**
- * Solange der Stand eingefroren ist, verwirft `verify` jeden Commit, der einen Pfad ändert, dessen
- * Blob im Parent von dem im eingefrorenen Stand `frozen.at` abweicht (Verseuchte Pfade, siehe
- * `taintReasons` in verify.ts). Vor dem Schreiben heißt das: Jeder committete Pfad muss in HEAD den
- * Blob aus `frozen.at` tragen, und kein Pfad darf in der Kette ein zweites Mal geändert werden —
- * im Parent stünde dann der neue Inhalt des früheren Schritts.
- *
- * Ein Write, der die Quarantäne-Datei ändert, bleibt frei: Er entscheidet über die ungültigen
- * Commits (etwa eine Umkehr von Hand), und ob er auftaut oder nur zurücksetzt, beurteilt `verify`
- * erst mit der ganzen Historie. Wer sie ändern darf, prüft die Policy der Hand-Edits.
- */
-async function taintedPathReasons(
-  wc: string,
-  head: string,
-  frozen: { at: string; firstOpen: string },
-  steps: readonly Step[],
-): Promise<string[]> {
-  if (steps.some((s) => s.changes.some((c) => c.path === QUARANTINE))) return [];
-  const committed = steps.map(committedPaths);
-  const paths = [...new Set(committed.flat())];
-  const info = await objectInfo(
-    wc,
-    paths.flatMap((p) => [`${head}:${p}`, `${frozen.at}:${p}`]),
-  );
-  const oid = (rev: string, p: string) => info.get(`${rev}:${p}`)?.oid;
-  const overlaps = (p: string, q: string) =>
-    p === q || p.startsWith(`${q}/`) || q.startsWith(`${p}/`);
-  const again = committed.some((own, i) =>
-    own.some((p) => committed.slice(0, i).some((earlier) => earlier.some((q) => overlaps(p, q)))),
-  );
-  const tainted = again || paths.some((p) => oid(head, p) !== oid(frozen.at, p));
-  return tainted ? [`baut auf ungültigem Commit ${shortSha(frozen.firstOpen)} auf`] : [];
 }
 
 /**
@@ -813,8 +878,9 @@ async function settleWorkingCopy(
  * Schutz ungesicherter Änderungen, Dateien schreiben und signiert committen — bei Hand-Edits als
  * Kette, bei der HEAD einmal springt. Scheitert etwas nach dem Schreiben, kommt der Inhalt vor
  * dem Write zurück (Hand-Edits bleiben Hand-Edits). Geprüft wird gegen den Stand, gegen den
- * `verify` den Commit beurteilt (`nextCommitBasis`, einmal je Write): Solange ungültige Commits
- * offen sind, ist das der eingefrorene Stand — für Signier-Key, Hand-Edits und verseuchte Pfade.
+ * `verify` den Commit beurteilt (`writeCommitBasis`, einmal je Write): Solange ungültige Commits
+ * offen sind, ist das der eingefrorene Stand — für Signier-Key, Policy (auch von Operationen) und
+ * verseuchte Pfade.
  * Quarantäne-Writes (`manual` mit `signers`) bringen ihren Stand selbst mit. SIGINT/SIGTERM im
  * kritischen Abschnitt werden aufgeschoben (`withDeferredSignals`) und, wenn dieser Write der
  * äußerste Abschnitt ist, erst nach Freigabe des Locks ausgelöst.
@@ -858,7 +924,7 @@ export async function executeWrite(
     // Ein Quarantäne-Write bringt den Stand mit, gegen den er geprüft hat; jeder andere fragt
     // `verify` einmal. Nur solange ungültige Commits offen sind, weicht dieser Stand von HEAD ab.
     const quarantineSigners = resolved?.kind === 'manual' ? resolved.signers : undefined;
-    const basis = quarantineSigners === undefined ? await nextCommitBasis(wc) : undefined;
+    const basis = quarantineSigners === undefined ? await writeCommitBasis(wc) : undefined;
     const frozen =
       basis?.frozen === undefined ? undefined : { ...basis.frozen, state: basis.state };
     const signers =
@@ -882,12 +948,11 @@ export async function executeWrite(
     const planned = await plan(wc, snapshot, head, resolved, edits, handle, deps);
     const { steps } = planned;
     await markRenormalization(wc, head, snapshot.attributes, steps);
-    const reasons = [
-      ...(edits === undefined
+    // Operationen prüft `apply` gegen HEAD; gegen den eingefrorenen Stand nur diese Prüfung.
+    const reasons =
+      edits === undefined && frozen === undefined
         ? []
-        : await editsPolicyReasons(wc, head, edits, steps, handle, frozen?.state)),
-      ...(frozen === undefined ? [] : await taintedPathReasons(wc, head, frozen, steps)),
-    ];
+        : await chainReasons(wc, head, snapshot, edits?.before, steps, handle, frozen);
     if (reasons.length > 0) {
       // Vor dem Schreiben: Hand-Edits bleiben liegen, HEAD bleibt, wo er ist.
       throw new BackeError(

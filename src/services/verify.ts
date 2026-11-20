@@ -266,42 +266,83 @@ async function checkCommit(
 
 // --- Verseuchte Pfade -----------------------------------------------------------------------
 
+/** Der eingefrorene Stand: sein Commit und die offenen ungültigen Commits, ältester zuerst. */
+export type FrozenAt = { at: string; open: readonly string[] };
+
+/** Ob `entries` alle offenen ungültigen Commits decken; ein gültiger Commit, der sie setzt, taut auf. */
+export const coversOpen = (entries: Quarantine['entries'], open: readonly string[]): boolean =>
+  open.every((sha) => entries.some((e) => e.sha === sha));
+
 /**
  * Ein Commit auf einem eingefrorenen Stand baut auf den offenen ungültigen Commits auf, sobald er
  * einen Pfad ändert, dessen Blob im Parent von dem im eingefrorenen Stand `frozen.at` abweicht:
- * Sonst trüge ein gültiger Commit den Inhalt eines ungültigen weiter.
+ * Sonst trüge ein gültiger Commit den Inhalt eines ungültigen weiter. Gemeinsam für `verify` und
+ * die Vorabprüfung im Schreibpfad, damit beide dasselbe beurteilen.
+ *
+ * `changes` sind die geänderten Dateien mit ihrer Blob-ID im Parent (fehlt → `undefined`),
+ * `after` liefert die Blob-ID danach; gefragt wird sie nur bei einem Commit, der die
+ * Quarantäne-Datei ändert. `entries` ist die Quarantäne, die der Commit setzt, wenn er die Datei
+ * ändert und sonst gültig ist.
  *
  * Die Quarantäne-Datei selbst wird nie verglichen: Sie ist das Mittel, den Stand aufzutauen, wird
  * als Ganzes gegen den eingefrorenen Stand beurteilt (nur Admins) und nennt Commits nur über ihren
  * Hash; hätte ein ungültiger Commit sie geändert, könnte sonst keine Quarantäne ihn je decken. Ein
- * Commit, der sie ändert und damit auftaut, ist ganz ausgenommen (`thaws`, im Aufrufer). Taut er
- * nicht auf, darf er Pfade nur zurücksetzen: auf den Blob im eingefrorenen Stand, auf den Blob
- * eines offenen ungültigen Commits, über den ohnehin noch entschieden werden muss, oder auf den
- * Blob im Parent eines solchen Commits — den schreibt eine echte Umkehr, und er kann aus einem
- * gültigen Commit nach dem Einfrieren stammen. So kehrt eine Quarantäne mit `reverted` einen
- * Commit um, während andere noch offen sind. Jede andere Änderung trüge Neues auf dem ungültigen
- * Stand weiter.
+ * Commit, dessen Quarantäne alle offenen Commits deckt und damit auftaut, ist ganz ausgenommen.
+ * Ändert er sie, ohne aufzutauen, darf er Pfade nur zurücksetzen: auf den Blob im eingefrorenen
+ * Stand, auf den Blob eines offenen ungültigen Commits, über den ohnehin noch entschieden werden
+ * muss, oder auf den Blob im Parent eines solchen Commits — den schreibt eine echte Umkehr, und er
+ * kann aus einem gültigen Commit nach dem Einfrieren stammen. So kehrt eine Quarantäne mit
+ * `reverted` einen Commit um, während andere noch offen sind. Jede andere Änderung trüge Neues auf
+ * dem ungültigen Stand weiter.
  */
+export async function pathTaintReasons(
+  wc: string,
+  changes: readonly { path: string; parent: string | undefined }[],
+  after: (path: string) => Promise<string | undefined>,
+  frozen: FrozenAt,
+  entries: Quarantine['entries'] | undefined,
+): Promise<string[]> {
+  if (entries !== undefined && coversOpen(entries, frozen.open)) return [];
+  const decides = changes.some((c) => c.path === QUARANTINE);
+  const paths = changes.filter((c) => c.path !== QUARANTINE);
+  const back = decides ? [frozen.at, ...frozen.open.flatMap((o) => [o, `${o}^`])] : [];
+  const info = await objectInfo(
+    wc,
+    paths.flatMap((c) => [frozen.at, ...back].map((rev) => `${rev}:${c.path}`)),
+  );
+  const oid = (rev: string, path: string) => info.get(`${rev}:${path}`)?.oid;
+  for (const c of paths) {
+    if (c.parent === oid(frozen.at, c.path)) continue;
+    const now = decides ? await after(c.path) : undefined;
+    if (!decides || !back.some((rev) => oid(rev, c.path) === now)) {
+      return [`baut auf ungültigem Commit ${shortSha(frozen.open[0] as string)} auf`];
+    }
+  }
+  return [];
+}
+
+/** `pathTaintReasons` für einen Commit der Historie. */
 async function taintReasons(
   wc: string,
   commit: CommitInfo,
-  frozen: { at: string; open: readonly string[] },
+  frozen: FrozenAt,
+  entries: Quarantine['entries'] | undefined,
 ): Promise<string[]> {
   const parent = commit.parents[0] as string;
   if (parent === frozen.at) return [];
-  const changes = await treeChanges(wc, parent, commit.sha);
-  const decides = changes.some((c) => c.path === QUARANTINE);
-  const paths = changes.map((c) => c.path).filter((p) => p !== QUARANTINE);
-  const back = [frozen.at, ...frozen.open.flatMap((o) => [o, `${o}^`])];
-  const revs = [parent, frozen.at, ...(decides ? [commit.sha, ...back] : [])];
+  const raw = await treeChanges(wc, parent, commit.sha);
   const info = await objectInfo(
     wc,
-    paths.flatMap((p) => revs.map((rev) => `${rev}:${p}`)),
+    raw.flatMap((c) => [`${parent}:${c.path}`, `${commit.sha}:${c.path}`]),
   );
   const oid = (rev: string, path: string) => info.get(`${rev}:${path}`)?.oid;
-  const undoes = (p: string) => decides && back.some((rev) => oid(rev, p) === oid(commit.sha, p));
-  const tainted = paths.some((p) => oid(parent, p) !== oid(frozen.at, p) && !undoes(p));
-  return tainted ? [`baut auf ungültigem Commit ${shortSha(frozen.open[0] as string)} auf`] : [];
+  return pathTaintReasons(
+    wc,
+    raw.map((c) => ({ path: c.path, parent: oid(parent, c.path) })),
+    async (path) => oid(commit.sha, path),
+    frozen,
+    entries,
+  );
 }
 
 // --- Quarantäne -----------------------------------------------------------------------------
@@ -319,7 +360,7 @@ const governs = (c: Checked): c is Checked & { quarantine: Quarantine } =>
 
 /** `c` setzt eine Quarantäne, die alle offenen ungültigen Commits deckt, und taut den Stand auf. */
 const thaws = (c: Checked, open: readonly string[]): boolean =>
-  governs(c) && open.every((sha) => c.quarantine.entries.some((e) => e.sha === sha));
+  governs(c) && coversOpen(c.quarantine.entries, open);
 
 // --- Der Gang durch die Historie ------------------------------------------------------------
 
@@ -331,8 +372,8 @@ type Walk = {
   governing: { sha: string | undefined; entries: Quarantine['entries'] };
   /** Der Stand, gegen den `verify` einen Commit auf `to` beurteilen würde. */
   next: State;
-  /** Der erste offene ungültige Commit; ohne eingefrorenen Stand `undefined`. */
-  firstOpen: string | undefined;
+  /** Die offenen ungültigen Commits, ältester zuerst; ohne eingefrorenen Stand leer. */
+  open: string[];
   /** Der Commit, dessen Stand eingefroren ist; ohne eingefrorenen Stand `undefined`. */
   frozenAt: string | undefined;
 };
@@ -367,8 +408,9 @@ async function walk(wc: string, opts: VerifyOptions, descent = true): Promise<Wa
     const sig = await sigs.of(commit, before);
     const states = { before, after: stateOf(commit.sha), basis };
     const c = await checkCommit(wc, commit, anchor, states, sig);
-    if (frozenAt !== undefined && commit.parents.length === 1 && !thaws(c, open)) {
-      c.reasons.push(...(await taintReasons(wc, commit, { at: frozenAt, open })));
+    if (frozenAt !== undefined && commit.parents.length === 1) {
+      const entries = governs(c) ? c.quarantine.entries : undefined;
+      c.reasons.push(...(await taintReasons(wc, commit, { at: frozenAt, open }, entries)));
     }
     checked.push(c);
     if (c.reasons.length > 0) {
@@ -389,32 +431,60 @@ async function walk(wc: string, opts: VerifyOptions, descent = true): Promise<Wa
     checked,
     governing,
     next: stateOf(frozenAt ?? to),
-    firstOpen: open[0],
+    open,
     frozenAt,
   };
 }
 
 // --- Einstieg -------------------------------------------------------------------------------
 
+/** Der eingefrorene Stand für den nächsten Commit; `firstOpen` steht im Grund `baut auf …`. */
+export type FrozenBasis = { at: string; firstOpen: string; open: string[] };
+
+function frozenOf(w: Walk): { frozen?: FrozenBasis } {
+  if (w.frozenAt === undefined) return {};
+  return { frozen: { at: w.frozenAt, firstOpen: w.open[0] as string, open: w.open } };
+}
+
 /**
  * Grundlage des nächsten Commits auf `HEAD`: der Stand, gegen den `verifyRange` ihn für Rechte,
  * Signatur und Identitätsschutz beurteilen wird (eingefroren, solange ungültige Commits ungedeckt
  * sind, sonst `HEAD`), und der Text der maßgeblichen Quarantäne-Datei (ohne eine solche
- * `undefined`). Ob er verseuchte Pfade ändert (`taintReasons`), prüft das nicht; dafür nennt
- * `frozen` den eingefrorenen Commit und den ersten offenen ungültigen Commit.
+ * `undefined`). Ob er verseuchte Pfade ändert, prüft das nicht; dafür nennt `frozen` den
+ * eingefrorenen Commit und die offenen ungültigen Commits (`pathTaintReasons`).
  */
 export async function nextCommitBasis(wc: string): Promise<{
   state: State;
   quarantineText: string | undefined;
-  frozen?: { at: string; firstOpen: string };
+  frozen?: FrozenBasis;
 }> {
-  const { governing, next, frozenAt, firstOpen } = await walk(wc, {});
-  const frozen =
-    frozenAt === undefined ? {} : { frozen: { at: frozenAt, firstOpen: firstOpen as string } };
+  const w = await walk(wc, {});
+  const { governing, next } = w;
+  const frozen = frozenOf(w);
   if (governing.sha === undefined) return { state: next, quarantineText: undefined, ...frozen };
   const spec = `${governing.sha}:${QUARANTINE}`;
   const text = (await readBlobs(wc, [spec])).get(spec)?.toString('utf8');
   return { state: next, quarantineText: text, ...frozen };
+}
+
+/**
+ * Grundlage für den Schreibpfad: Stand und eingefrorener Stand wie bei `nextCommitBasis`, ohne
+ * Quarantäne-Text. Die Bereichsprüfung gegen `verified` gehört zu `verify`, nicht zum Schreiben:
+ * Liegt HEAD nach einem lokalen Reset unter `verified`, wird trotzdem geschrieben; nur ein
+ * fehlender Anker bleibt ein Fehler. Ist `verified` ein Vorfahre von HEAD, beginnt der Gang dort:
+ * `verified` wird nur aufgezeichnet, wenn kein ungültiger Commit ungedeckt ist, und dann hat die
+ * maßgebliche Quarantäne den Stand aufgetaut — eingefroren ist er dort nie.
+ */
+export async function writeCommitBasis(
+  wc: string,
+): Promise<{ state: State; frozen?: FrozenBasis }> {
+  const verified = await readLocalState(wc, 'verified');
+  const since =
+    verified !== undefined && (await isAncestor(wc, verified, 'HEAD').catch(() => false))
+      ? verified
+      : undefined;
+  const w = await walk(wc, since === undefined ? {} : { since }, false);
+  return { state: w.next, ...frozenOf(w) };
 }
 
 /** Prüft die Commits nach `since` (ohne: ab dem Anker) bis `to` (Default `HEAD`). */

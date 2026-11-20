@@ -622,9 +622,13 @@ describe('paths changed by an open invalid commit', () => {
     expect((await nextCommitBasis(b.root)).frozen).toBeUndefined();
     const frozen = await revParse(b.root, 'HEAD');
     const B = await takeOver();
-    await addKey();
+    const C = await addKey();
 
-    expect((await nextCommitBasis(b.root)).frozen).toEqual({ at: frozen, firstOpen: B });
+    expect((await nextCommitBasis(b.root)).frozen).toEqual({
+      at: frozen,
+      firstOpen: B,
+      open: [B, C],
+    });
   });
 
   test('a commit on untouched paths after an invalid one stays valid', async () => {

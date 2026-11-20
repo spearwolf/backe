@@ -404,6 +404,57 @@ test('a write on a path changed by an open invalid commit is refused', async () 
   expect(await revParse(b.root, 'HEAD^')).toBe(before);
 });
 
+test('an op while frozen is checked against the frozen state', async () => {
+  const bob = await testKey('bob-op');
+  await executeWrite(ctx, {
+    kind: 'op',
+    op: { op: 'user.add', handle: 'bob', name: 'Bob', kind: 'human', keys: [bob.line] },
+  });
+  // bob macht sich selbst zum Admin; der Commit ist ungültig, der Stand davor eingefroren.
+  const config = await readFile(join(b.root, '.backe/backlog.jsonc'), 'utf8');
+  const widened = config.replace(
+    '"admins": [\n    "spw"\n  ]',
+    '"admins": [\n    "spw",\n    "bob"\n  ]',
+  );
+  expect(widened).not.toBe(config);
+  await rawCommit(b.root, {
+    files: { '.backe/backlog.jsonc': widened },
+    key: bob,
+    actor: 'bob',
+    op: 'manual',
+  });
+  await writeLocalState(b.root, 'identity', 'bob');
+  const asBob: ResolvedContext = {
+    ...ctx,
+    backlog: { ...ctx.backlog, boundTo: 'bob' },
+    user: { ...ctx.user, value: 'bob', key: bob.priv },
+  };
+  const xena = await testKey('xena');
+  const before = await revParse(b.root, 'HEAD');
+
+  const err = await catchErrAsync(() =>
+    executeWrite(asBob, {
+      kind: 'op',
+      op: { op: 'user.add', handle: 'xena', name: 'Xena', kind: 'human', keys: [xena.line] },
+    }),
+  );
+  expect(err).toMatchObject({
+    code: 'validation',
+    message: 'verify würde den Commit ablehnen: bob darf den User xena nicht anlegen',
+  });
+  expect(await revParse(b.root, 'HEAD')).toBe(before);
+  expect(await statusShort(b.root)).toEqual([]);
+});
+
+test('a write below the last verified state still succeeds', async () => {
+  await executeWrite(ctx, CREATE);
+  await verifyRange(b.root, { record: true });
+  await git(['reset', '-q', '--hard', 'HEAD~1'], { cwd: b.root });
+  const r = await executeWrite(ctx, CREATE_B);
+  expect(r.commit).toBe(await revParse(b.root, 'HEAD'));
+  expect(await revParse(b.root, 'HEAD^')).toBe(head);
+});
+
 test('SIGINT is deferred until the write finished', async () => {
   const raised: string[] = [];
   const listeners = process.listenerCount('SIGINT');
@@ -1330,6 +1381,28 @@ describe('edits', () => {
     expect(report.quarantined.map((f) => f.sha)).toEqual([bad]);
   });
 
+  test('edits: a quarantine that does not thaw leaves later steps bound by tainted paths', async () => {
+    const [a] = (await issues('A')) as [string];
+    const original = await read(issueFile(a));
+    const first = await rawCommit(b.root, { files: { 'notes.md': 'x\n' }, actor: 'spw' });
+    await rawCommit(b.root, {
+      files: { [issueFile(a)]: original.replace('title: A', 'title: X') },
+      actor: 'spw',
+    });
+    const before = await revParse(b.root, 'HEAD');
+    // Deckt nur den ersten offenen Commit: Der Stand bleibt eingefroren, der Titel ist verseucht.
+    const entries = [{ sha: first, decision: 'accepted', reason: 'harmlos' }];
+    await write(QUARANTINE, `${JSON.stringify({ entries }, null, 2)}\n`);
+    await edit(issueFile(a), (s) => s.replace('title: X', 'title: Y'));
+
+    const err = await catchErrAsync(() => executeWrite(ctx, EDITS));
+    expect(err).toMatchObject({
+      code: 'validation',
+      message: `verify würde den Commit ablehnen: baut auf ungültigem Commit ${first.slice(0, 7)} auf`,
+    });
+    expect(await revParse(b.root, 'HEAD')).toBe(before);
+  });
+
   test('edits read the format version from HEAD', async () => {
     await edit('.backe/backlog.jsonc', (s) => s.replace('"version": 1', '"version": 99'));
     const r = await executeWrite(ctx, EDITS);
@@ -1580,6 +1653,68 @@ describe('lfs', () => {
         reasons: [`baut auf ungültigem Commit ${bad.slice(0, 7)} auf`],
       });
       expect(await revParse(b.root, 'HEAD')).toBe(before);
+    },
+  );
+
+  test.runIf(hasLfs)(
+    'lfs: an edits chain with renormalized attachments restores them on failure and in recovery',
+    async () => {
+      const id = await createdId();
+      await executeWrite(ctx, {
+        kind: 'op',
+        op: { op: 'attach.add', id, name: 'old', file: 'old.txt', content: Buffer.from('alt\n') },
+      });
+      const old = `${attachmentsDir(id)}/old.txt`;
+      await enableLfs();
+      await writeFile(join(b.root, '.gitattributes'), `${LFS_RULE}\n`);
+      const start = await revParse(b.root, 'HEAD');
+      const staged = async () =>
+        (await git(['ls-files', '-s', '--', old, '.gitattributes'], { cwd: b.root })).stdout;
+      const index = await staged();
+
+      // Scheitern vor dem Ref-Update: Hand-Edits, Arbeitsbaum und Index wie vorher.
+      const err = await catchErrAsync(() =>
+        executeWrite(
+          ctx,
+          { kind: 'edits' },
+          {
+            hooks: {
+              afterFiles: async () => {
+                throw new BackeError('unexpected', 'boom');
+              },
+            },
+          },
+        ),
+      );
+      expect(err.message).toBe('boom');
+      expect(await revParse(b.root, 'HEAD')).toBe(start);
+      expect(await staged()).toBe(index);
+      expect(await readFile(join(b.root, '.gitattributes'), 'utf8')).toBe(`${LFS_RULE}\n`);
+      expect(await readFile(join(b.root, old), 'utf8')).toBe('alt\n');
+
+      // Absturz nach dem Ref-Update: Die Recovery gleicht auch den Index des Anhangs an.
+      const journal = join(await stateDir(b.root), 'write.journal');
+      let left = '';
+      const r = await executeWrite(
+        ctx,
+        { kind: 'edits' },
+        {
+          hooks: {
+            afterCommit: async () => {
+              left = await readFile(journal, 'utf8');
+            },
+          },
+        },
+      );
+      expect(r.chain).toMatchObject([{ kind: 'manual', paths: ['.gitattributes', old] }]);
+      expect(JSON.parse(left).paths).toContain(old);
+      const raw = await revParse(b.root, `${start}:${old}`);
+      await git(['update-index', '--cacheinfo', `100644,${raw},${old}`], { cwd: b.root });
+      await writeFile(journal, left);
+      expect(await statusShort(b.root)).not.toEqual([]);
+
+      await executeWrite(ctx, CREATE_B);
+      expect(await statusShort(b.root)).toEqual([]);
     },
   );
 
