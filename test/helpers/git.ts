@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterAll } from 'vitest';
+import { afterAll, vi } from 'vitest';
 import { type Env, type Homes, resolveHomes } from '../../src/context/paths.ts';
 import { setIdentity } from '../../src/context/registry.ts';
 import {
@@ -22,6 +22,11 @@ import { initBacklog } from '../../src/services/init.ts';
 import { ensureWorkingCopy } from '../../src/services/working-copy.ts';
 import { executeWrite } from '../../src/services/write.ts';
 import { tempDir } from './backlog.ts';
+
+// Tests auf echten Git-Repos (Klone, Sync-Runden, Replay) starten viele Git-Prozesse; mit
+// Coverage reichen die 5 s des Vitest-Standards auf den CI-Runnern nicht, auf macOS liegen
+// schon einfache Claim-Tests bei 4–5 s. Gilt für jede Testdatei, die diesen Helfer importiert.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 export type TestKey = { priv: string; pub: string; line: string };
 
