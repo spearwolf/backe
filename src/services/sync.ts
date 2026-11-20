@@ -72,6 +72,8 @@ export type SyncOutcome = {
   skipped?: 'no_remote';
   notices: string[];
   claimLost?: { id: string; error: BackeError };
+  /** Der Commit der Claim-Einheit nach der Runde (nach einem Replay neu signiert); nur mit Claim. */
+  claimSha?: string;
 };
 
 const MAX_ROUNDS = 5;
@@ -416,7 +418,7 @@ async function runRounds(r: Round, remote: string, branch: string, claimSha?: st
       }
     }
     await deps.hooks?.afterRound?.();
-    if (!rejected) return out;
+    if (!rejected) return claim === undefined ? out : { ...out, claimSha: claim };
     if (round === MAX_ROUNDS) {
       throw new BackeError('sync', `Push nach ${MAX_ROUNDS} Runden abgelehnt`);
     }
@@ -503,9 +505,13 @@ export async function syncNow(
 
 /**
  * Wie `syncNow`, aber für einen Aufrufer, der `sync.lock` schon hält (der Hintergrund-Sync dreht
- * darunter mehrere Runden).
+ * darunter mehrere Runden, der Claim hält ihn über Runde, Write und Push).
  */
-export async function syncHeld(ctx: ResolvedContext, deps: SyncDeps = {}): Promise<SyncOutcome> {
+export async function syncHeld(
+  ctx: ResolvedContext,
+  deps: SyncDeps = {},
+  opts: { claimSha?: string } = {},
+): Promise<SyncOutcome> {
   const p = await prepare(ctx, deps);
-  return p.remote ? heldRound(p, {}) : skipped(p.notices);
+  return p.remote ? heldRound(p, opts) : skipped(p.notices);
 }

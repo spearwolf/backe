@@ -6,6 +6,7 @@ export type NoticeCode =
   | 'settled_dependency'
   | 'unblockable'
   | 'id_rewritten'
-  | 'claim_local';
+  | 'claim_local'
+  | 'claim_lost';
 
 export type Notice = { code: NoticeCode; message: string; ids: string[] };

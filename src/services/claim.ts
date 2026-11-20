@@ -2,19 +2,25 @@
  * Der synchrone Claim (backe.md §2.16.5): `issue claim` und `next --claim` sind die einzigen
  * Writes, die aufs Netz warten. Erst eine blockierende Sync-Runde, dann der Claim als gewöhnlicher
  * Write gegen den frischen Stand, dann eine Runde, die ihn als letzten Commit pusht. Geht er dabei
- * an einen Schnelleren verloren, fällt nur er weg; die übrigen lokalen Commits bleiben.
+ * an einen Schnelleren verloren, fällt nur er weg; die übrigen lokalen Commits bleiben. Alles drei
+ * läuft unter einem `sync.lock`, damit kein Hintergrund-Sync den Claim dazwischen ohne
+ * Claim-Kennung replayt.
  */
 import { join } from 'node:path';
+import { withFileLock } from '../context/lock.ts';
 import { exists } from '../context/paths.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
+import { readLocalState } from '../git/local-state.ts';
+import { gitTreeSource } from '../git/tree-source.ts';
 import type { Notice } from '../ops/notice.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
-import { type BacklogSnapshot, loadSnapshot } from '../store/snapshot.ts';
+import { type BacklogSnapshot, loadSnapshotFrom } from '../store/snapshot.ts';
 import { type NextOutcome, type NextQuery, nextActor, pickNext } from './next.ts';
 import { type WriteOutcome, writeOp } from './outcome.ts';
 import { resolveIssueRef } from './read.ts';
-import { effectiveMode, type SyncDeps, type SyncOutcome, syncNow, syncRemote } from './sync.ts';
+import { effectiveMode, type SyncDeps, syncHeld, syncRemote } from './sync.ts';
+import { syncFile } from './sync-state.ts';
 import { ensureWorkingCopy } from './working-copy.ts';
 import { requireHeadConfig, type WriteDeps } from './write.ts';
 
@@ -54,23 +60,41 @@ async function claimSetup(
   return { wc, handle, warnings };
 }
 
+/** Das Issue im zuletzt bekannten Remote-Stand (`upstream`); ohne ihn oder ohne Issue `undefined`. */
+async function remoteIssue(wc: string, id: string) {
+  const upstream = await readLocalState(wc, 'upstream');
+  if (upstream === undefined) return undefined;
+  const s = await loadSnapshotFrom(await gitTreeSource(wc, upstream), `Commit ${upstream}`);
+  return s.issues.get(id)?.data;
+}
+
 /**
  * Der Fehler eines verlorenen Claims (Exit 4): `<id> wurde inzwischen von <assignee> übernommen`,
- * wenn jetzt jemand anderes das Issue hat, sonst die Meldung der Verletzung.
+ * wenn auf dem Remote jetzt jemand anderes das Issue hat, sonst `fallback`.
  */
 async function lostClaim(
   wc: string,
   handle: string,
-  lost: NonNullable<SyncOutcome['claimLost']>,
+  id: string,
+  fallback: string,
 ): Promise<BackeError> {
-  // Der Stand nach der Runde: der Remote-Stand samt der übrigen lokalen Commits.
-  const assignee = (await loadSnapshot(wc)).issues.get(lost.id)?.data.assignee;
+  const assignee = (await remoteIssue(wc, id))?.assignee;
   const taken = assignee !== undefined && assignee !== handle;
   return new BackeError(
     'conflict',
-    taken ? `${lost.id} wurde inzwischen von ${assignee} übernommen` : lost.error.message,
-    { details: { reason: CLAIM_LOST, id: lost.id, ...(taken ? { assignee } : {}) } },
+    taken ? `${id} wurde inzwischen von ${assignee} übernommen` : fallback,
+    { details: { reason: CLAIM_LOST, id, ...(taken ? { assignee } : {}) } },
   );
+}
+
+/**
+ * Hat die Push-Runde den Claim weder gepusht noch als verloren gemeldet, lag er schon auf dem
+ * Remote. Das Netz dahinter: Der Remote-Stand muss das Issue `in_progress` mit mir zeigen.
+ */
+async function assertClaimed(wc: string, handle: string, id: string): Promise<void> {
+  const issue = await remoteIssue(wc, id);
+  if (issue?.state === 'in_progress' && issue.assignee === handle) return;
+  throw await lostClaim(wc, handle, id, `Claim ${id} ist nicht auf dem Remote angekommen`);
 }
 
 /**
@@ -83,32 +107,46 @@ async function claimWith(
   deps: ClaimDeps,
 ): Promise<ClaimOutcome> {
   const setup = await claimSetup(ctx);
-  const warnings = [...setup.warnings];
-  // Ein Fehler der blockierenden Runde (etwa kein Netz) lässt den Claim ganz ausfallen.
-  if (setup.local === undefined) warnings.push(...(await syncNow(ctx, deps)).notices);
-  const written = await writeOp(
-    ctx,
-    (s, actor) => ({ op: 'issue.claim', id: select(s, actor) }),
-    deps,
-  );
-  const out: ClaimOutcome = { ...written, warnings: [...warnings, ...written.warnings] };
+  const claim = (s: BacklogSnapshot, actor: string) => ({
+    op: 'issue.claim' as const,
+    id: select(s, actor),
+  });
   if (setup.local !== undefined) {
+    const written = await writeOp(ctx, claim, deps);
     const notice: Notice = {
       code: 'claim_local',
       message: LOCAL_NOTICE[setup.local],
       ids: [written.id as string],
     };
-    return { ...out, local: setup.local, notices: [...out.notices, notice] };
+    const warnings = [...setup.warnings, ...written.warnings];
+    return { ...written, warnings, local: setup.local, notices: [...written.notices, notice] };
   }
-  // Schon `in_progress` mit mir: unverändert, und es gibt nichts zu pushen.
-  if (written.commit === undefined) return out;
-  const pushed = await syncNow(ctx, deps, { claimSha: written.commit });
-  if (pushed.claimLost !== undefined)
-    throw await lostClaim(setup.wc, setup.handle, pushed.claimLost);
-  out.warnings.push(...pushed.notices);
-  if (pushed.pushed === undefined) return out;
-  // Der Claim ist der letzte lokale Commit; nach einem Replay trägt er einen neuen SHA.
-  return { ...out, commit: pushed.pushed, pushed: pushed.pushed };
+  // Reihenfolge der Locks wie beim Hintergrund-Sync: `sync.lock`, darin kurz der Write-Lock.
+  return withFileLock(
+    await syncFile(setup.wc, 'sync.lock'),
+    async () => {
+      // Ein Fehler der blockierenden Runde (etwa kein Netz) lässt den Claim ganz ausfallen.
+      const warnings = [...setup.warnings, ...(await syncHeld(ctx, deps)).notices];
+      const written = await writeOp(ctx, claim, deps);
+      const out: ClaimOutcome = { ...written, warnings: [...warnings, ...written.warnings] };
+      // Schon `in_progress` mit mir: unverändert, und es gibt nichts zu pushen.
+      if (written.commit === undefined) return out;
+      const id = written.id as string;
+      const round = await syncHeld(ctx, deps, { claimSha: written.commit });
+      if (round.claimLost !== undefined) {
+        throw await lostClaim(setup.wc, setup.handle, id, round.claimLost.error.message);
+      }
+      out.warnings.push(...round.notices);
+      if (round.pushed === undefined) await assertClaimed(setup.wc, setup.handle, id);
+      // Nach einem Replay trägt der Claim einen neuen SHA.
+      return {
+        ...out,
+        commit: round.claimSha ?? written.commit,
+        ...(round.pushed === undefined ? {} : { pushed: round.pushed }),
+      };
+    },
+    deps.lock,
+  );
 }
 
 /**

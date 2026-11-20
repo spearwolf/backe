@@ -19,7 +19,7 @@ import { seqBytes } from '../../test/helpers/snapshot.ts';
 import { setIdentity } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { git } from '../git/exec.ts';
-import { clearLocalState } from '../git/local-state.ts';
+import { clearLocalState, writeLocalState } from '../git/local-state.ts';
 import { issueFile } from '../store/layout.ts';
 import { loadSnapshot } from '../store/snapshot.ts';
 import { resignCommits } from './resign.ts';
@@ -299,4 +299,52 @@ test('an identity without working copy has nothing to re-sign', async () => {
   const agent = await b.context({ as: 'claude-1', backlog: 'acme' });
 
   expect(await resignCommits(agent)).toEqual({ commits: [], rewritten: 0 });
+});
+
+test('local commits without a common ancestor with upstream are verify', async () => {
+  await rawCommit(b.root, { files: { 'notes.md': 'x\n' } });
+  const empty = await git(['hash-object', '-t', 'tree', '--stdin', '-w'], {
+    cwd: b.root,
+    input: '',
+  });
+  const orphan = await git(['commit-tree', empty.stdout.trim()], {
+    cwd: b.root,
+    input: 'fremd\n',
+    env: {
+      GIT_AUTHOR_NAME: 'Raw',
+      GIT_AUTHOR_EMAIL: 'raw@backe.invalid',
+      GIT_COMMITTER_NAME: 'Raw',
+      GIT_COMMITTER_EMAIL: 'raw@backe.invalid',
+    },
+  });
+  await writeLocalState(b.root, 'upstream', orphan.stdout.trim());
+  const before = await head();
+
+  const err = await catchErrAsync(() => resignCommits(ctx));
+
+  expect(err.code).toBe('verify');
+  expect(await head()).toBe(before);
+});
+
+test('a manual text conflict while re-signing points to backe commit', async () => {
+  const a = await create(ctx, 'A');
+  const lines = (await readFile(join(b.root, issueFile(a)), 'utf8')).split('\n');
+  [lines[1], lines[2]] = [lines[2] as string, lines[1] as string];
+  const swapped = lines.join('\n');
+  // Fremd und nicht kanonisch; die Übersetzung schreibt die Datei kanonisch neu.
+  await rawCommit(b.root, { files: { [issueFile(a)]: swapped.replace('title: A', 'title: A2') } });
+  // Danach ein gültiger manual-Commit von spw auf denselben Zeilen.
+  await rawCommit(b.root, {
+    files: { [issueFile(a)]: swapped.replace('title: A', 'title: A3') },
+    key: b.key,
+    actor: 'spw',
+    op: 'manual',
+    subject: 'von Hand weiter',
+  });
+  const before = await head();
+
+  const err = await catchErrAsync(() => resignCommits(ctx));
+
+  expect(err).toMatchObject({ code: 'conflict', hint: 'Hand-Edits per backe commit neu anlegen' });
+  expect(await head()).toBe(before);
 });

@@ -93,9 +93,13 @@ export type WriteInput =
       /**
        * Leitet die Operation(en) unter dem Write-Lock aus dem frisch geladenen Snapshot ab; wirft
        * sie, wird nichts geschrieben. Eine Operation (auch als Array der Länge 1) läuft danach wie
-       * `kind: 'op'`, ab zwei wie `kind: 'batch'`; ein leeres Array schreibt nichts.
+       * `kind: 'op'`, ab zwei wie `kind: 'batch'`; ein leeres Array schreibt nichts. Asynchron darf
+       * sie sein, wenn sie unter dem Lock noch etwas lesen muss (etwa Kommentare).
        */
-      derive: (snapshot: BacklogSnapshot, actor: string) => Operation | readonly Operation[];
+      derive: (
+        snapshot: BacklogSnapshot,
+        actor: string,
+      ) => Operation | readonly Operation[] | Promise<Operation | readonly Operation[]>;
     }
   | {
       kind: 'manual';
@@ -918,7 +922,7 @@ export async function executeWrite(
     const snapshot = edits?.base ?? wcSnapshot;
     assertActorIsUser(snapshot, handle);
     const resolved: ResolvedInput | undefined =
-      input.kind === 'derive' ? resolveDerived(input.derive(snapshot, handle)) : input;
+      input.kind === 'derive' ? resolveDerived(await input.derive(snapshot, handle)) : input;
     // Ein Quarantäne-Write bringt den Stand mit, gegen den er geprüft hat; jeder andere fragt
     // `verify` einmal. Nur solange ungültige Commits offen sind, weicht dieser Stand von HEAD ab.
     const quarantineSigners = resolved?.kind === 'manual' ? resolved.signers : undefined;

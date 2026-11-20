@@ -81,14 +81,15 @@ export async function resolveConflict(
     return { commit: undefined, ops: entry.units.flatMap((u) => u.ops) };
   }
   const ops = await entryOps(wc, entry);
-  const comments = await editedComments(wc, ops);
   let derived: Operation[] = [];
   const r = await executeWrite(
     ctx,
     {
       kind: 'derive',
-      derive: (s) => {
+      // Unter dem Write-Lock: Kommentare nach dem Umschreiben der IDs, im Stand dieses Writes.
+      derive: async (s) => {
         const named = rewriteCollisions(s, ops, new Map(), deps).ops;
+        const comments = await editedComments(wc, named);
         derived = named.map((op) => rebaseOp(s, op, comments));
         return derived;
       },

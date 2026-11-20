@@ -192,21 +192,29 @@ const signing = (b: Build) => ({ key: b.key, author: b.author, env: b.ctx.env })
  * Lässt er sich dort nicht mehr anwenden, bricht `--resign` ab; nichts ist geschehen.
  */
 async function replayCommit(b: Build, unit: ReplayUnit, current: string): Promise<string> {
-  const r = await replayOnto(b.wc, {
-    onto: current,
-    units: [unit],
-    actor: b.handle,
-    key: b.key,
-    author: b.author,
-    env: b.ctx.env,
-    now: () => new Date(b.now),
-    randomBytes: b.randomBytes,
-  });
+  let r: Awaited<ReturnType<typeof replayOnto>>;
+  try {
+    r = await replayOnto(b.wc, {
+      onto: current,
+      units: [unit],
+      actor: b.handle,
+      key: b.key,
+      author: b.author,
+      env: b.ctx.env,
+      now: () => new Date(b.now),
+      randomBytes: b.randomBytes,
+    });
+  } catch (err) {
+    // Ein Textkonflikt eines `manual`-Commits: `sync --interactive` hilft hier nicht.
+    if (!(err instanceof BackeError) || err.code !== 'conflict') throw err;
+    throw new BackeError(err.code, err.message, { hint: RESIGN_HINT, details: err.details });
+  }
   const [conflict] = r.conflicts;
   if (conflict !== undefined) {
     throw new BackeError(
       'conflict',
       `Lokaler Commit ${short(unit.sha)} lässt sich nach dem Neusignieren nicht mehr anwenden: ${conflict.reason.message}`,
+      { hint: RESIGN_HINT },
     );
   }
   return r.head;
@@ -225,6 +233,9 @@ async function localBase(wc: string): Promise<string> {
   if (anchor === undefined) throw new BackeError('verify', `Kein Vertrauensanker in ${wc}`);
   return anchor;
 }
+
+/** Hinweis, wenn ein gültiger Commit nach einem übersetzten nicht mehr passt. */
+const RESIGN_HINT = 'Hand-Edits per backe commit neu anlegen';
 
 const kindOf = (message: string): ChainEntry['kind'] => {
   const op = parseCommitMessage(message).trailers.get(TRAILER_OP)?.[0];
@@ -259,6 +270,12 @@ export async function resignCommits(
       const head = await assertOnBranch(wc, config.sync.branch);
       const ref = await localBase(wc);
       const base = await mergeBase(wc, ref, head);
+      if (base === undefined) {
+        throw new BackeError(
+          'verify',
+          `HEAD hat keinen gemeinsamen Vorfahren mit ${short(ref)}; lokale Commits unbestimmbar`,
+        );
+      }
       const local = await localCommits(wc, { base, head }, handle);
       const first = local.findIndex((l) => l.unit === undefined);
       if (first < 0) return none;

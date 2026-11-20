@@ -474,6 +474,35 @@ test('the claim unit lost in replay comes back as claimLost', async () => {
   expect(await revParse(agentWc(), 'HEAD')).toBe(await remoteHead());
 });
 
+test('an unpushed claim lost in a plain round is dropped with a notice', async () => {
+  const x = await sharedIssue('X');
+  await write(spw(), { op: 'issue.claim', id: x });
+  await pushSpw();
+  await write(agent(), { op: 'issue.claim', id: x });
+
+  const r = await syncNow(agent(), deps());
+
+  expect(r.conflicts).toEqual([]);
+  expect(r.claimLost).toBeUndefined();
+  expect(r.notices).toEqual([`Claim ${x} verloren: ${x} ist nicht claimbar (State in_progress)`]);
+  expect(await listConflicts(agentWc())).toEqual([]);
+  expect(await revParse(agentWc(), 'HEAD')).toBe(await remoteHead());
+});
+
+test('a claim after a shelved unit on the same issue is no follower', async () => {
+  const x = await sharedIssue('X');
+  await write(spw(), setTitle(x, 'X', 'Remote'));
+  await pushSpw();
+  await write(agent(), setTitle(x, 'X', 'Lokal'));
+  await write(agent(), { op: 'issue.claim', id: x });
+
+  const r = await syncNow(agent(), deps());
+
+  const [entry] = await listConflicts(agentWc());
+  expect(entry?.units.map((u) => u.ops[0]?.op)).toEqual(['issue.edit']);
+  expect(r).toMatchObject({ replayed: 1, pushed: await remoteHead() });
+});
+
 test('a claim re-signed in rejected rounds is still recognised when it is lost', async () => {
   const x = await sharedIssue('X');
   await create(spw(), 'Y');

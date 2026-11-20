@@ -321,8 +321,10 @@ function reasonOf(err: BackeError): ConflictEntry['reason'] {
 /**
  * Wendet `units` der Reihe nach auf `onto` an (backe.md §2.16.4) und baut je Einheit mit Wirkung
  * einen neuen signierten Commit. `op`/`batch`: Kollisionen umschreiben, dann voll geprüft
- * anwenden; eine Verletzung legt die Einheit samt ihrer Folgeeinheiten ab (die Claim-Einheit
- * endet stattdessen als `claimLost` und wird ohne Folgeprüfung versucht). `manual`: Dreiwege je
+ * anwenden; eine Verletzung legt die Einheit samt ihrer Folgeeinheiten ab. Claims nie: Die
+ * Claim-Einheit (`claimSha`) endet als `claimLost`, jede andere Einheit nur aus `issue.claim` fällt
+ * mit dem Hinweis `Claim <id> verloren: <grund>` weg; beide werden ohne Folgeprüfung versucht und
+ * belasten nichts. `manual`: Dreiwege je
  * Pfad. Jeder andere Fehler bricht ab; dann ist nichts geschehen außer losen Git-Objekten.
  */
 export async function replayOnto(wc: string, input: ReplayInput): Promise<ReplayResult> {
@@ -369,7 +371,9 @@ export async function replayOnto(wc: string, input: ReplayInput): Promise<Replay
       continue;
     }
     const isClaim = unit.sha === input.claimSha;
-    if (!isClaim) {
+    // Ein Claim landet nie in der Konfliktablage, auch ohne `claimSha` (backe.md §2.16.5).
+    const claimOnly = unit.ops.length > 0 && unit.ops.every((op) => op.op === 'issue.claim');
+    if (!isClaim && !claimOnly) {
       const named = unit.ops.map((op) => substituteIds(op, ids));
       const followed = taintKeys(named, createdIds(named))
         .map((k) => tainted.get(k))
@@ -412,6 +416,15 @@ export async function replayOnto(wc: string, input: ReplayInput): Promise<Replay
           );
         }
         claimLost = { id: claim.id, error: err };
+        continue;
+      }
+      if (claimOnly) {
+        const ids = ops.map((op) => (op as { id: string }).id);
+        notices.push({
+          code: 'claim_lost',
+          message: `Claim ${ids.join(', ')} verloren: ${err.message}`,
+          ids,
+        });
         continue;
       }
       const entry: ConflictEntry = {

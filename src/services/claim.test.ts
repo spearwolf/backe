@@ -7,6 +7,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { revParse, testBacklog, testKey, twoClones } from '../../test/helpers/git.ts';
+import { exists } from '../context/paths.ts';
 import { setIdentity } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { git } from '../git/exec.ts';
@@ -14,9 +15,11 @@ import { parseCommitMessage, TRAILER_OP } from '../git/message.ts';
 import type { Operation } from '../ops/operation.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
 import { loadSnapshot } from '../store/snapshot.ts';
+import { runBackground } from './background.ts';
 import { claimIssue, nextClaim } from './claim.ts';
 import type { SyncDeps } from './sync.ts';
 import { syncNow } from './sync.ts';
+import { listConflicts, syncFile } from './sync-state.ts';
 import { executeWrite } from './write.ts';
 
 let t: Awaited<ReturnType<typeof twoClones>>;
@@ -267,6 +270,93 @@ describe('claimIssue', () => {
 });
 
 describe('claimIssue edge cases', () => {
+  test('a background sync during the claim is deferred and the claim stays correct', async () => {
+    const [x] = (await shared('X')) as [string];
+    let background: { rounds: number; deferred: boolean } | undefined;
+
+    const r = await claimIssue(agent(), x, {
+      ...noSleep,
+      hooks: {
+        beforePush: async (_round, sha) => {
+          if (background !== undefined || (await claimOf(t.agent.wc, sha)) === undefined) return;
+          background = await runBackground(agent(), noSleep);
+        },
+      },
+    });
+
+    expect(background).toEqual({ rounds: 0, deferred: true });
+    expect(await exists(await syncFile(t.agent.wc, 'sync.dirty'))).toBe(true);
+    expect(r.pushed).toBe(await revParse(t.remote, 'refs/heads/main'));
+    expect(await claimOf(t.agent.wc, r.commit as string)).toBe(x);
+    expect(await listConflicts(t.agent.wc)).toEqual([]);
+  });
+
+  test('the claim commit stays the outcome commit when later local commits are pushed', async () => {
+    const [x] = (await shared('X')) as [string];
+    let rounds = 0;
+
+    const r = await claimIssue(agent(), x, {
+      ...noSleep,
+      hooks: {
+        beforePush: async (round, sha) => {
+          if (round !== 1 || rounds++ > 0 || (await claimOf(t.agent.wc, sha)) === undefined) return;
+          await create(agent(), 'Danach');
+          await create(spw(), 'Y');
+          await syncNow(spw(), noSleep);
+        },
+      },
+    });
+
+    expect(r.pushed).toBe(await revParse(t.remote, 'refs/heads/main'));
+    expect(r.commit).not.toBe(r.pushed);
+    expect(await claimOf(t.agent.wc, r.commit as string)).toBe(x);
+    expect(await claimOf(t.agent.wc, r.pushed as string)).toBeUndefined();
+  });
+
+  test('a claim that is already on the remote is confirmed from the remote state', async () => {
+    const [x] = (await shared('X')) as [string];
+
+    const r = await claimIssue(agent(), x, {
+      ...noSleep,
+      hooks: {
+        afterCommit: async () => {
+          await git(['push', '-q', 'origin', 'HEAD:main'], { cwd: t.agent.wc });
+        },
+      },
+    });
+
+    expect(r.pushed).toBeUndefined();
+    expect(r.commit).toBe(await revParse(t.remote, 'refs/heads/main'));
+  });
+
+  test('a claim on the remote that someone took over since is a conflict', async () => {
+    const [x] = (await shared('X')) as [string];
+
+    const err = await catchErrAsync(() =>
+      claimIssue(agent(), x, {
+        ...noSleep,
+        hooks: {
+          afterCommit: async () => {
+            await git(['push', '-q', 'origin', 'HEAD:main'], { cwd: t.agent.wc });
+            await syncNow(spw(), noSleep);
+            await write(spw(), {
+              op: 'issue.edit',
+              id: x,
+              set: { assignee: { from: 'claude-1', to: 'spw' } },
+            });
+            await syncNow(spw(), noSleep);
+          },
+        },
+      }),
+    );
+
+    expect(err).toMatchObject({
+      code: 'conflict',
+      message: `${x} wurde inzwischen von spw übernommen`,
+      details: { reason: 'claim_lost', id: x, assignee: 'spw' },
+    });
+  });
+
   test('a claim lost to a deleted issue reports the violation', async () => {
     const [x] = (await shared('X')) as [string];
     let deleted = false;
