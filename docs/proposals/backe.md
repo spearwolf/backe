@@ -516,7 +516,7 @@ Ein Audit legt Dutzende Findings auf einmal an, ein Folgelauf schließt und änd
 Konventionen wie `gh`: `backe <nomen> <verb>`, für die häufigsten Befehle Top-Level-Aliase.
 
 ```
-backe init | doctor | context | verify | commit | batch | mcp
+backe init | doctor | context | verify | commit | batch | mcp [--allow-delete]
 backe backlog  list | use | clone | add | remove | show
 backe issue    create | list | show | edit | move | resume | reopen
               | assign | claim | rank | link | unlink | delete
@@ -570,31 +570,49 @@ backe attach add   <id> --name <n> (<datei> | --url <u> | --json <json|->)
 
 ### 2.19 MCP-Modus
 
-`backe mcp [--backlog …]` startet einen MCP-Server über stdio (offizielles TypeScript-SDK v2, Paket `@modelcontextprotocol/server`). Der Server bedient über `serveStdio` beide Protokoll-Generationen: Clients mit `initialize`-Handshake (Revisionen bis 2025-11-25) und Clients der Revision 2026-07-28.
+`backe mcp [--allow-delete]` startet einen MCP-Server über stdio (offizielles TypeScript-SDK v2, Paket `@modelcontextprotocol/server`). Der Server bedient über `serveStdio` beide Protokoll-Generationen: Clients mit `initialize`-Handshake (Revisionen bis 2025-11-25) und Clients der Revision 2026-07-28. Die globalen Optionen `-B`/`--backlog` und `--as` dürfen vor oder nach `mcp` stehen.
 
-- Kontext-Auflösung wie beim CLI, ausgehend vom Arbeitsverzeichnis des Prozesses und dessen Env. Ohne auflösbare Identität mit Key startet der Server nicht.
-- Der Server ist ein dünner Adapter über denselben Service-Layer wie das CLI (§2.20); kein Feature existiert nur in einer der beiden Türen, außer den hier genannten Ausnahmen.
-- **Tools** (kurze Beschreibungen, kompakte JSON-Ergebnisse):
+- **Kontext:** Aufgelöst wird wie beim CLI, ausgehend vom Arbeitsverzeichnis des Prozesses, dessen Env und den globalen Optionen. Ohne auflösbare Identität mit Key, bei einem fremden Handle oder bei ungültiger Config startet der Server nicht: stderr trägt `Fehler: …` und `Hinweis: …` wie beim CLI, Exit-Code `2`, stdout bleibt leer. Danach löst jeder Tool-Aufruf den Kontext mit denselben Eingaben neu auf; Änderungen an Configs gelten ab dem nächsten Aufruf.
+- **stdout** gehört dem Protokoll; Logs und Fehler des Servers gehen nach stderr.
+- Der Server ist ein dünner Adapter über denselben Service-Layer wie das CLI (§2.20); kein Feature existiert nur in einer der beiden Türen, außer den hier genannten Ausnahmen. Jedes Tool liefert dasselbe JSON wie der entsprechende Befehl mit `--format json` (gleiche Keys, gleiche Auslassungen).
+- **Ergebnisform:** Erfolg ist ein einzelner Text-Content mit kompaktem JSON, ohne `structuredContent` und ohne `outputSchema`. Ein Fehler hat `isError: true` und denselben Text-Content `{"error":{"code","message","hint?","details?"}}` wie das CLI im JSON-Modus (§2.18); der Server läuft weiter. Prüfungen auf Parameterebene (genau eins von, leer, widersprüchlich) melden `usage` bzw. `validation`; Schemaverletzungen, die das SDK vor dem Handler abfängt, kommen im Format des SDK (`MCP error -32602: …`).
+- **`notices`:** Im Ergebnis ist jeder Eintrag ein Objekt `{code?, message, ids?}`, auch die Hinweise von `sync_now`.
+- **Hints** nennen CLI-Befehle und -Flags wörtlich. Der Server erklärt das in `instructions`: ein Tool entspricht dem gleichnamigen Befehl (`issue_move` ↔ `backe issue move`), ein Flag dem Parameter in snake_case (`--add-dep` ↔ `add_deps`, `--blocked-by` ↔ `blocked_by`). Server-Identität: Name `backe`, Version aus dem Paket.
+- **Nebenläufigkeit:** Lokale Writes laufen im Server nacheinander über eine Warteschlange; parallele Aufrufe gelingen alle, jeder mit eigenem Commit. `issue_claim`, `issue_next` mit `claim` und `sync_now` sind synchron mit dem Remote, laufen daneben und warten selbst auf `sync.lock`. Lesende Tools laufen ohne Warteschlange.
+- **Hintergrund-Sync (§2.16.2):** Nach jedem Tool mit Commit startet der Server einen Hintergrund-Sync, ohne das Ergebnis darauf warten zu lassen; vor jedem lesenden Tool wie beim CLI nach §2.16.3. `issue_next` mit `claim` startet vorher keinen (wie `next --claim`). Zusätzlich läuft ein periodischer Sync alle `pull_interval` Sekunden, solange der Server läuft; das Intervall liest der Server beim Start aus `.backe/backlog.jsonc` in `HEAD` der Arbeitskopie (ungültige Config: Server startet nicht; Arbeitskopie fehlt noch: 60 s; `0`: kein Timer).
+- **Ende:** Der Server endet, wenn stdin endet, mit Exit-Code `0`. Vorher warten Warteschlange, die von ihr angestoßenen Hintergrund-Syncs und laufende synchrone Aufrufe ab.
+- **Tools** (kurze deutsche Beschreibungen; Parameternamen in snake_case wie die JSON-Keys; `?` = optional):
 
-  | Tool | Entspricht |
-  | --- | --- |
-  | `context_get` | `backe context` |
-  | `issue_list` | `issue list` inkl. Filter, `fields`, `limit` |
-  | `issue_get` | `issue show`, Parameter `comments: none\|last\|all`; enthält `depends_on`, `parent` und die abgeleiteten `dependents` und `children` |
-  | `issue_create`, `issue_update` | `issue create`, `issue edit` (Patch-Semantik; `props` als Objekt, `null` als Wert entfernt die Property) |
-  | `issue_move`, `issue_resume`, `issue_reopen` | gleichnamige Befehle |
-  | `issue_claim`, `issue_next` | `issue claim`, `next` |
-  | `comment_add` | `comment add` |
-  | `attachment_add`, `attachment_get` | `attach add`, `attach get` |
-  | `project_list`, `sprint_list`, `sprint_get` | gleichnamige Befehle |
-  | `repo_locate` | `repo where` — Name → URL, Default-Ref, lokaler Pfad |
-  | `issue_rank` | `issue rank` |
-  | `batch` | `batch` (§2.16.6) |
-  | `sync_now` | `sync` (blockierend) |
+  | Tool | Entspricht | Parameter |
+  | --- | --- | --- |
+  | `context_get` | `backe context` | `props?` |
+  | `issue_list` | `issue list` | `state?[]`, `project?[]`, `exact?`, `sprint?[]`, `repo?[]`, `assignee?`, `creator?`, `mode?` (`blocked`\|`unblockable`\|`ready`), `parent?`, `top_level?`, `prop?[]`, `has_prop?[]`, `query?`, `tree?`, `sort?` (`rank`\|`created`), `all?`, `limit?` (≥ 1), `fields?[]` |
+  | `issue_get` | `issue show`; enthält `depends_on`, `parent` und die abgeleiteten `dependents` und `children` | `id`, `comments?` (`none` Default \|`last`\|`all`), `fields?[]` |
+  | `issue_create` | `issue create` | `title`, `body?`, `state?`, `projects?[]`, `sprints?[]`, `repos?[]`, `assignee?`, `depends_on?[]`, `parent?`, `props?` (Objekt) |
+  | `issue_update` | `issue edit`, `issue assign` (Patch-Semantik) | `id`, `title?`, `body?`, `add_projects?[]`, `rm_projects?[]`, `add_sprints?[]`, `rm_sprints?[]`, `add_deps?[]`, `rm_deps?[]`, `parent?` (`null` löst), `assignee?` (Handle oder `me`; `null` entfernt), `props?` (Objekt; `null` als Wert entfernt die Property) |
+  | `issue_move` | `issue move` | `id`, `to`, `reason?`, `blocked_by?[]`, `force?` |
+  | `issue_resume` | `issue resume` | `id`, `reason?` |
+  | `issue_reopen` | `issue reopen` | `id`, `to?`, `reason?` |
+  | `issue_rank` | `issue rank` | `id`, genau eins von `top`, `bottom`, `before`, `after`, `value` |
+  | `issue_claim` | `issue claim` | `id` |
+  | `issue_next` | `next` | `level?` (`leaf`\|`top`), `project?`, `sprint?`, `repo?`, `all?`, `claim?`, `fields?[]` |
+  | `comment_add` | `comment add` | `id`, `body` |
+  | `attachment_add` | `attach add` | `id`, `name`, genau eins von `path`, `url`, `json`, `text` |
+  | `attachment_get` | `attach get` | `id`, `name` |
+  | `project_list`, `sprint_list` | `project list`, `sprint list` | — |
+  | `sprint_get` | `sprint show` | `slug`, `project?[]`, `repo?[]`, `all?`, `sort?` |
+  | `repo_locate` | `repo where` — Name → URL, Default-Ref, lokaler Pfad | `name` |
+  | `batch` | `batch` (§2.16.6) | `ops` (Array von Objekten, je eine Zeile im Format von §2.16.6; mindestens eine) |
+  | `sync_now` | `sync` (blockierend) | — |
+  | `issue_delete` | `issue delete`; nur mit `--allow-delete` registriert | `id`, `force?`, `children?` (`orphan`\|`recursive`) |
 
-- **Nicht exponiert** in v1: `issue delete`, `user *`, `backlog *`, `config *`, Änderungen an `.backe/`. `--allow-delete` schaltet `issue_delete` frei.
-- **Resources:** `backe://issue/{id}` liefert die Issue-Datei als Markdown.
-- Periodischer Hintergrund-Sync alle `pull_interval` Sekunden, solange der Server läuft.
+- **Parameterregeln:**
+  - `props` in `issue_create` und `issue_update` ist ein Objekt; die Keys folgen der Key-Grammatik aus §2.24 (sonst `validation` `Ungültiger Property-Key »<key>«`), jeder Wert ist ein JSON-Wert wie bei `--prop <key>:=<json>`. `null` ist nur in `issue_update` erlaubt und entfernt die Property.
+  - `attachment_add` liest `path` relativ zum Arbeitsverzeichnis des Servers (`~` wird expandiert) wie `attach add <datei>`; `text` ist UTF-8-Inhalt, der Dateiname ist `name` und trägt eine Endung. Gibt der Aufruf nicht genau eins von `path`, `url`, `json`, `text` an, ist das ein `usage`-Fehler.
+  - `attachment_get` liefert das Ergebnis von `attach get --json` und zusätzlich `text` mit dem Inhalt, wenn die Datei höchstens 262 144 Bytes groß und gültiges UTF-8 ist; sonst ohne `text`.
+  - `issue_next` mit `claim` verhält sich wie `next --claim` (§2.16.5).
+- **Nicht exponiert** in v1: `user *`, `backlog *`, `config *`, Änderungen an `.backe/` und die CLI-only-Befehle aus §4.2. `issue_delete` gibt es nur mit `--allow-delete`.
+- **Resources:** `backe://issue/{id}` liefert die Issue-Datei als Markdown (`text/markdown`); `{id}` darf eine Kurz-ID sein, die Antwort trägt die volle ID im URI. Die Resource hat keine Liste (ein Backlog kann zehntausende Issues haben); eine unbekannte ID ist ein MCP-Fehler mit der Meldung des Service.
 
 ### 2.20 Technik
 
@@ -811,6 +829,7 @@ Keine. Der Name `backe` ist eine Format-Entscheidung: Er steckt in `~/.backe/`, 
 - **Orphan-Branch-Modus:** Backlog als eigener Branch im Code-Repo, ausgecheckt als Worktree — für Ein-Repo-Projekte ohne separates Backlog-Repo.
 - Watcher/Daemon mit Benachrichtigungen; TUI; Volltext-Index bei großen Backlogs (Bedingung: `issue list -q` über 1 s bei 10⁴ Issues).
 - Brücke zu GitHub Issues.
+- **Weitere MCP-Tools:** In v1 nur über das CLI erreichbar sind `issue link|unlink`, `comment list|edit|rm`, `attach list|rm`, die Writes auf Projekte, Sprints und Repos, `repo check|scan`, `verify`, `commit`, `sync status|resolve` und `doctor`.
 - Standalone-Binaries (Node SEA) zusätzlich zum npm-Paket.
 
 ## 5. Tests *(Plan)*
