@@ -104,7 +104,13 @@ export function rotateSyncLog(log: string): void {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw err;
   }
-  if (size > SYNC_LOG_MAX_BYTES) renameSync(log, `${log}.1`);
+  if (size <= SYNC_LOG_MAX_BYTES) return;
+  try {
+    renameSync(log, `${log}.1`);
+  } catch (err) {
+    // Ein gleichzeitig startender Prozess hat schon rotiert.
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
 }
 
 /** Hängt eine Zeile `<at> <code>: <message>` an `log` an. */

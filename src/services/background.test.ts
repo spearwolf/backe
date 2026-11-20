@@ -163,6 +163,51 @@ describe('runBackground', () => {
     expect(await exists(await state('sync.dirty'))).toBe(false);
   });
 
+  test('a run deferred after the holder already checked the flag retries the lock', async () => {
+    let atRelease!: () => void;
+    const reachedRelease = new Promise<void>((r) => {
+      atRelease = r;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const holder = runBackground(
+      agent(),
+      deps({
+        hooks: {
+          beforeRelease: async () => {
+            atRelease();
+            await gate;
+          },
+        },
+      }),
+    );
+    await reachedRelease;
+
+    let busy = 0;
+    const late = runBackground(
+      agent(),
+      deps({
+        hooks: {
+          lockBusy: async () => {
+            busy++;
+            if (busy > 1) return;
+            // Der Halter gibt frei und prüft das Flag, bevor es hier geschrieben wird.
+            release();
+            expect(await holder).toEqual({ rounds: 1, deferred: false });
+            await create(agent(), 'B');
+          },
+        },
+      }),
+    );
+
+    expect(await late).toEqual({ rounds: 1, deferred: false });
+    expect(busy).toBe(1);
+    expect(await remoteHead()).toBe(await revParse(agentWc(), 'HEAD'));
+    expect(await exists(await state('sync.dirty'))).toBe(false);
+  });
+
   test('a stale sync lock of a dead process is taken over', async () => {
     await create(agent(), 'B');
     await writeFile(
@@ -238,6 +283,15 @@ describe('runBackground', () => {
     });
   });
 
+  test('a failure before the round is logged when the working copy is known', async () => {
+    const ctx: ResolvedContext = { ...agent(), user: { ...agent().user, key: undefined } };
+
+    expect(await runBackground(ctx, deps())).toEqual({ rounds: 0, deferred: false });
+
+    const log = await readFile(await state('sync.log'), 'utf8');
+    expect(log).toMatch(/^2026-11-20T08:00:00Z usage: Für »claude-1« ist kein Signing-Key/);
+  });
+
   test('without an identity nothing happens and nothing is thrown', async () => {
     const ctx: ResolvedContext = { ...agent(), user: { ...agent().user, value: undefined } };
     expect(await runBackground(ctx, deps())).toEqual({ rounds: 0, deferred: false });
@@ -285,6 +339,32 @@ describe('scheduleSync', () => {
     expect(call?.log).toBe(await state('sync.log'));
   });
 
+  test('a failing start never throws and is logged', async () => {
+    const failing = deps({
+      spawn: () => {
+        throw new Error('kein Prozess');
+      },
+    });
+
+    expect(await scheduleSync(agent(), 'write', failing)).toBe(false);
+    expect(await freshen(agent(), { force: false }, failing)).toBeUndefined();
+
+    const log = await readFile(await state('sync.log'), 'utf8');
+    expect(log).toBe(
+      '2026-11-20T08:00:00Z unexpected: kein Prozess\n2026-11-20T08:00:00Z unexpected: kein Prozess\n',
+    );
+  });
+
+  test('a failure without a usable working copy is swallowed', async () => {
+    const ctx: ResolvedContext = {
+      ...agent(),
+      backlog: { ...agent().backlog, workingCopy: await tempDir() },
+    };
+    await mkdir(join(ctx.backlog.workingCopy as string, '.backe'));
+    await writeFile(join(ctx.backlog.workingCopy as string, BACKLOG_CONFIG), '{}\n');
+    expect(await scheduleSync(ctx, 'write', deps())).toBe(false);
+  });
+
   test('without working copy on disk nothing is spawned', async () => {
     const ctx: ResolvedContext = {
       ...agent(),
@@ -320,6 +400,11 @@ describe('freshen', () => {
   test('a read without a readable last_attempt spawns', async () => {
     expect(await scheduleSync(agent(), 'read', deps())).toBe(true);
     await writeSyncState(agentWc(), { last_attempt: 'kaputt' });
+    expect(await scheduleSync(agent(), 'read', deps())).toBe(true);
+  });
+
+  test('a last_attempt in the future counts as due', async () => {
+    await writeSyncState(agentWc(), { last_attempt: '2026-11-20T09:00:00Z' });
     expect(await scheduleSync(agent(), 'read', deps())).toBe(true);
   });
 

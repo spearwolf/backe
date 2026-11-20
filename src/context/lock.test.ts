@@ -324,6 +324,6 @@ test('lockHeld sees a live holder and ignores a missing or takeable lock', async
   expect(await lockHeld(lock)).toBe(true);
   await writeFile(lock, `999999\n${new Date().toISOString()}\n`);
   expect(await lockHeld(lock, { isAlive: () => false })).toBe(false);
-  await writeFile(lock, `${process.pid}\n${new Date().toISOString()}\nanderswo\n`);
-  expect(await lockHeld(lock)).toBe(true);
+  await writeFile(lock, `999999\n${new Date().toISOString()}\nanderswo\n`);
+  expect(await lockHeld(lock, { isAlive: () => false })).toBe(true);
 });

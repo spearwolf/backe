@@ -34,7 +34,7 @@ import {
   type SyncState,
   syncFile,
 } from './sync-state.ts';
-import { headConfig } from './write.ts';
+import { requireHeadConfig } from './write.ts';
 
 export type { SpawnFn } from './sync.ts';
 
@@ -90,9 +90,31 @@ const errorParts = (err: unknown): { code: string; message: string } =>
     ? { code: err.code, message: err.message }
     : { code: 'unexpected', message: err instanceof Error ? err.message : String(err) };
 
+/** `sync.log` der Arbeitskopie; ohne Arbeitskopie oder Git-Dir `undefined`. */
+async function logPath(wc: string | undefined): Promise<string | undefined> {
+  if (wc === undefined) return undefined;
+  try {
+    return await syncFile(wc, 'sync.log');
+  } catch {
+    return undefined;
+  }
+}
+
+/** Schreibt eine Logzeile, wenn es ein Log gibt; ein unschreibbares Log hält nichts auf. */
+async function logLine(log: string | undefined, at: string, code: string, message: string) {
+  if (log === undefined) return;
+  try {
+    await appendSyncLog(log, at, code, message);
+  } catch {
+    // Ein Log, das sich nicht schreiben lässt, hält den Sync nicht auf.
+  }
+}
+
 /**
  * `backe sync --background` (backe.md §2.16.2): versucht `sync.lock` genau einmal. Gehalten →
- * `sync.dirty` anlegen, fertig (`deferred`). Sonst Runden, solange `sync.dirty` nach einer Runde
+ * `sync.dirty` anlegen und den Lock noch einmal versuchen; ist er dann immer noch gehalten, prüft
+ * sein Halter das Flag nachweislich nach dem Setzen (in seiner Schleife oder nach der Freigabe),
+ * und der Prozess endet (`deferred`). Mit dem Lock: Runden, solange `sync.dirty` nach einer Runde
  * wieder existiert; nach der Freigabe wird `sync.dirty` noch einmal geprüft und bei Bedarf erneut
  * der Lock versucht — das schließt die Lücke zwischen letzter Prüfung und Freigabe. Fehler einer
  * Runde stehen in `sync.json` und als Zeile `<iso> <code>: <message>` in `sync.log`, Hinweise als
@@ -104,14 +126,7 @@ export async function runBackground(
 ): Promise<{ rounds: number; deferred: boolean }> {
   const now = deps.now ?? (() => new Date());
   let log: string | undefined;
-  const record = async (code: string, message: string) => {
-    if (log === undefined) return;
-    try {
-      await appendSyncLog(log, isoNow(now()), code, message);
-    } catch {
-      // Ein Log, das sich nicht schreiben lässt, hält den Sync nicht auf.
-    }
-  };
+  const record = (code: string, message: string) => logLine(log, isoNow(now()), code, message);
   /** Eine Runde; liefert, ob sie gezählt wird (ohne Remote läuft keine). */
   const round = async (): Promise<number> => {
     try {
@@ -127,12 +142,13 @@ export async function runBackground(
 
   let rounds = 0;
   try {
+    log = await logPath(ctx.backlog.workingCopy);
+    if (log !== undefined) rotateSyncLog(log);
     const { workingCopy: wc } = requireWriter(ctx);
-    log = await syncFile(wc, 'sync.log');
-    rotateSyncLog(log);
     const lock = await syncFile(wc, 'sync.lock');
     const dirty = await syncFile(wc, 'sync.dirty');
-    for (;;) {
+    /** Mit dem Lock alle fälligen Runden; `false`, wenn ein anderer ihn hält. */
+    const turn = async (): Promise<boolean> => {
       let acquired = false;
       try {
         await withFileLock(
@@ -147,13 +163,23 @@ export async function runBackground(
           },
           { ...deps.lock, timeoutMs: 0 },
         );
+        return true;
       } catch (err) {
         if (acquired || !(err instanceof BackeError) || err.code !== 'conflict') throw err;
-        // Der Halter des Locks dreht nach seiner Runde noch eine.
-        await writeFile(dirty, '');
-        return { rounds, deferred: true };
+        return false;
       }
-      if (!(await exists(dirty))) return { rounds, deferred: false };
+    };
+    let busy = false;
+    for (;;) {
+      if (await turn()) {
+        busy = false;
+        if (!(await exists(dirty))) return { rounds, deferred: false };
+        continue;
+      }
+      await deps.hooks?.lockBusy?.();
+      await writeFile(dirty, '');
+      if (busy) return { rounds, deferred: true };
+      busy = true;
     }
   } catch (err) {
     const { code, message } = errorParts(err);
@@ -162,31 +188,49 @@ export async function runBackground(
   }
 }
 
-/** Seit dem letzten Versuch ist mindestens `pull_interval` vergangen (ohne lesbaren Versuch: ja). */
+/**
+ * Seit dem letzten Versuch ist mindestens `pull_interval` vergangen. Ohne lesbaren Versuch oder
+ * mit einem in der Zukunft (die Uhr wurde zurückgestellt) ist es immer fällig.
+ */
 async function pullDue(wc: string, pullInterval: number, deps: SyncDeps): Promise<boolean> {
   const last = Date.parse((await readSyncState(wc)).last_attempt ?? '');
-  if (Number.isNaN(last)) return true;
   const now = (deps.now ?? (() => new Date()))().getTime();
-  return now - last >= pullInterval * 1000;
+  return Number.isNaN(last) || now < last || now - last >= pullInterval * 1000;
 }
 
 /**
  * Startet den Hintergrund-Sync (backe.md §2.16.1, §2.16.3), wenn die Arbeitskopie existiert, der
  * wirksame Modus `auto` ist und der Git-Remote `sync.remote` da ist; ein Read zusätzlich nur, wenn
  * `pull_interval` seit dem letzten Versuch verstrichen ist. Ein laufender Sync hält den Start nicht
- * auf — das Debounce im neuen Prozess fängt ihn ab. Liefert, ob gestartet wurde.
+ * auf — das Debounce im neuen Prozess fängt ihn ab. Liefert, ob gestartet wurde. Wirft nie: Ein
+ * Fehler blockiert weder den Write davor noch das Lesen danach; er landet, wenn möglich, im Log.
  */
 export async function scheduleSync(
   ctx: ResolvedContext,
   reason: 'write' | 'read',
   deps: SyncDeps = {},
 ): Promise<boolean> {
+  try {
+    return await startIfDue(ctx, reason, deps);
+  } catch (err) {
+    const { code, message } = errorParts(err);
+    const at = isoNow((deps.now ?? (() => new Date()))());
+    await logLine(await logPath(ctx.backlog.workingCopy), at, code, message);
+    return false;
+  }
+}
+
+async function startIfDue(
+  ctx: ResolvedContext,
+  reason: 'write' | 'read',
+  deps: SyncDeps,
+): Promise<boolean> {
   const wc = ctx.backlog.workingCopy;
   const handle = ctx.user.value;
   if (wc === undefined || handle === undefined) return false;
   if (!(await exists(join(wc, BACKLOG_CONFIG)))) return false;
-  const config = await headConfig(wc);
-  if (config === undefined || effectiveMode(ctx, config) === 'manual') return false;
+  const config = await requireHeadConfig(wc);
+  if (effectiveMode(ctx, config) === 'manual') return false;
   if ((await syncRemote(wc, config.sync.remote)) === undefined) return false;
   if (reason === 'read' && !(await pullDue(wc, config.sync.pull_interval, deps))) return false;
   (deps.spawn ?? spawnDetached)({
@@ -200,7 +244,7 @@ export async function scheduleSync(
 
 /**
  * Frische vor dem Lesen (backe.md §2.16.3): `force` (`--sync`) dreht eine blockierende Runde, deren
- * Fehler den Befehl abbricht; sonst startet bei Bedarf der Hintergrund-Sync.
+ * Fehler den Befehl abbricht; sonst startet bei Bedarf der Hintergrund-Sync, ohne je zu werfen.
  */
 export async function freshen(
   ctx: ResolvedContext,
@@ -257,10 +301,7 @@ export async function syncStatus(
       hint: 'backe sync legt sie an',
     });
   }
-  const config = await headConfig(wc);
-  if (config === undefined) {
-    throw new BackeError('validation', `${wc} ist kein Backlog: ${BACKLOG_CONFIG} fehlt in HEAD`);
-  }
+  const config = await requireHeadConfig(wc);
   const remote = await syncRemote(wc, config.sync.remote);
   return {
     remote,

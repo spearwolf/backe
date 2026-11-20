@@ -1,3 +1,4 @@
+import type * as Fs from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
@@ -9,9 +10,26 @@ import {
   listConflicts,
   readSyncState,
   removeConflict,
+  rotateSyncLog,
   writeConflicts,
   writeSyncState,
 } from './sync-state.ts';
+
+let renameError: NodeJS.ErrnoException | undefined;
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof Fs>();
+  return {
+    ...actual,
+    renameSync: (...args: Parameters<typeof actual.renameSync>) => {
+      if (renameError) throw renameError;
+      return actual.renameSync(...args);
+    },
+  };
+});
+
+afterEach(() => {
+  renameError = undefined;
+});
 
 let b: TestBacklog;
 
@@ -109,4 +127,29 @@ test('a broken sync.json reads as empty', async () => {
     await writeFile(file, text);
     expect(await readSyncState(b.root)).toEqual({});
   }
+});
+
+describe('rotateSyncLog', () => {
+  const big = 'x'.repeat(1024 * 1024 + 1);
+  const error = (code: string) => Object.assign(new Error(code), { code });
+
+  test('a log moved away by a concurrent starter is no error', async () => {
+    const log = join(await stateDir(b.root), 'sync.log');
+    await writeFile(log, big);
+    renameError = error('ENOENT');
+    expect(() => rotateSyncLog(log)).not.toThrow();
+  });
+
+  test('other rename failures are rethrown', async () => {
+    const log = join(await stateDir(b.root), 'sync.log');
+    await writeFile(log, big);
+    renameError = error('EACCES');
+    expect(() => rotateSyncLog(log)).toThrow('EACCES');
+  });
+
+  test('a log that cannot be inspected is rethrown', async () => {
+    const blocker = join(await stateDir(b.root), 'blocker');
+    await writeFile(blocker, '');
+    expect(() => rotateSyncLog(join(blocker, 'sync.log'))).toThrow();
+  });
 });

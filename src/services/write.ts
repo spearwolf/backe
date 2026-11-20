@@ -837,6 +837,15 @@ export async function headConfig(wc: string): Promise<BacklogConfig | undefined>
     : BacklogConfigSchema.parse(readJsonc(blob.toString('utf8'), BACKLOG_CONFIG));
 }
 
+/** Config aus HEAD der Arbeitskopie; fehlt sie dort, ist `wc` kein Backlog (`validation`). */
+export async function requireHeadConfig(wc: string): Promise<BacklogConfig> {
+  const config = await headConfig(wc);
+  if (config === undefined) {
+    throw new BackeError('validation', `${wc} ist kein Backlog: ${BACKLOG_CONFIG} fehlt in HEAD`);
+  }
+  return config;
+}
+
 /**
  * Bringt die bearbeiteten Pfade auf den Stand nach den Commits: Pfade ohne wirksame Änderung
  * zurück auf HEAD, der Index aller bearbeiteten und committeten Pfade auf HEAD. Scheitert das,

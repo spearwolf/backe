@@ -32,7 +32,7 @@ import {
 } from './sync-state.ts';
 import { verifyRange } from './verify.ts';
 import { ensureWorkingCopy, judgeReport } from './working-copy.ts';
-import { headConfig } from './write.ts';
+import { headConfig, requireHeadConfig } from './write.ts';
 
 /** Nur für Tests: Reihenfolge und Pausen zwischen den Schritten einer Runde. */
 export type SyncHooks = {
@@ -41,6 +41,8 @@ export type SyncHooks = {
   afterRound?: () => Promise<void>;
   /** Der Hintergrund-Sync hat `sync.dirty` zum letzten Mal geprüft und gibt gleich `sync.lock` frei. */
   beforeRelease?: () => Promise<void>;
+  /** Der Hintergrund-Sync fand `sync.lock` gehalten und setzt gleich `sync.dirty`. */
+  lockBusy?: () => Promise<void>;
 };
 
 type Env = ResolvedContext['env'];
@@ -443,10 +445,7 @@ async function prepare(ctx: ResolvedContext, deps: SyncDeps): Promise<Prepared> 
   const { root: wc, notices } = (await exists(join(workingCopy, BACKLOG_CONFIG)))
     ? { root: workingCopy, notices: [] }
     : await ensureWorkingCopy(ctx, handle);
-  const config = await headConfig(wc);
-  if (config === undefined) {
-    throw new BackeError('validation', `${wc} ist kein Backlog: ${BACKLOG_CONFIG} fehlt in HEAD`);
-  }
+  const config = await requireHeadConfig(wc);
   const remote = (await syncRemote(wc, config.sync.remote)) !== undefined;
   return { ctx, wc, handle, key, deps, config, notices, remote };
 }
