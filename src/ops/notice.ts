@@ -4,6 +4,7 @@ export type NoticeCode =
   | 'forced_done'
   | 'blocker_deleted'
   | 'settled_dependency'
-  | 'unblockable';
+  | 'unblockable'
+  | 'id_rewritten';
 
 export type Notice = { code: NoticeCode; message: string; ids: string[] };
