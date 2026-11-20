@@ -143,20 +143,21 @@ function detailKeys(value: unknown): unknown {
   );
 }
 
-/**
- * Fehler als `{error:{code,message,hint?,details?}}`. Ein Fehler, der kein `BackeError` ist, wird
- * `unexpected` ohne Stacktrace.
- */
+/** Ein Fehler, der kein `BackeError` ist, wird `unexpected` ohne Stacktrace. */
+export function toBackeError(err: unknown): BackeError {
+  return err instanceof BackeError
+    ? err
+    : new BackeError(
+        'unexpected',
+        `Unerwarteter Fehler: ${err instanceof Error ? err.message : String(err)}`,
+      );
+}
+
+/** Fehler als `{error:{code,message,hint?,details?}}`, ohne Stacktrace. */
 export function errorJson(err: unknown): {
-  error: { code: string; message: string; hint: string | undefined; details: unknown };
+  error: { code: string; message: string; hint?: string | undefined; details?: unknown };
 } {
-  const e =
-    err instanceof BackeError
-      ? err
-      : new BackeError(
-          'unexpected',
-          `Unerwarteter Fehler: ${err instanceof Error ? err.message : String(err)}`,
-        );
+  const e = toBackeError(err);
   const details = e.details === undefined ? undefined : detailKeys(e.details);
   return { error: { code: e.code, message: e.message, hint: e.hint, details } };
 }

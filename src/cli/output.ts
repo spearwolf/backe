@@ -8,7 +8,7 @@ import type { UserConfig } from '../core/schemas.ts';
 import type { Notice } from '../ops/notice.ts';
 import { summarizeBatch, summarizeOp } from '../ops/operation.ts';
 import type { WriteOpsOutcome, WriteOutcome } from '../services/outcome.ts';
-import { errorJson, outcomeJson } from '../services/views.ts';
+import { errorJson, outcomeJson, toBackeError } from '../services/views.ts';
 import type { CliIo } from './io.ts';
 
 export const FORMATS = ['text', 'json', 'md'] as const;
@@ -151,13 +151,7 @@ export function exitCodeOf(err: unknown): number {
  * ohne Stacktrace.
  */
 export function renderError(err: unknown, format: Format): string {
-  const e =
-    err instanceof BackeError
-      ? err
-      : new BackeError(
-          'unexpected',
-          `Unerwarteter Fehler: ${err instanceof Error ? err.message : String(err)}`,
-        );
+  const e = toBackeError(err);
   if (format === 'json') {
     return json(errorJson(e));
   }
