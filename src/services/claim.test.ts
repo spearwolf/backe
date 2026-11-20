@@ -3,7 +3,7 @@
  * Agent `claude-1` teilen ein bares Remote. Die Reihenfolge der beiden Clients steuert
  * `SyncHooks.beforePush`; gewartet wird nie wirklich.
  */
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { revParse, testBacklog, testKey, twoClones } from '../../test/helpers/git.ts';
@@ -153,6 +153,63 @@ describe('claimIssue', () => {
     expect(r.pushed).toBe(await revParse(t.remote, 'refs/heads/main'));
     expect(r.commit).toBe(r.pushed);
     expect(await claims(t.remote, 'refs/heads/main')).toEqual([`claude-1 ${x}`]);
+  });
+
+  test('a claim replayed without effect while other commits are pushed is checked on the remote', async () => {
+    const [x] = (await shared('X')) as [string];
+    let raced = false;
+    const deps: SyncDeps = {
+      ...noSleep,
+      hooks: {
+        beforePush: async () => {
+          if (raced) return;
+          raced = true;
+          // Inzwischen steht X auf dem Remote schon in_progress mit claude-1; dazu ein lokaler Commit.
+          await executeWrite(spw(), {
+            kind: 'batch',
+            ops: [
+              { op: 'issue.edit', id: x, set: { assignee: { from: null, to: 'claude-1' } } },
+              { op: 'issue.move', id: x, from: 'backlog', to: 'in_progress' },
+            ],
+          });
+          await syncNow(spw(), noSleep);
+          await create(agent(), 'B');
+        },
+      },
+    };
+
+    const r = await claimIssue(agent(), x, deps);
+
+    expect(r.pushed).toBe(await revParse(t.remote, 'refs/heads/main'));
+    expect(await claims(t.remote, 'refs/heads/main')).toEqual([]);
+    expect(await issueOf(t.agent.wc, x)).toMatchObject({
+      state: 'in_progress',
+      assignee: 'claude-1',
+    });
+  });
+
+  test('a claim waits minutes for a background round holding sync.lock', async () => {
+    const [x] = (await shared('X')) as [string];
+    let offset = 0;
+    const now = Date.now.bind(Date);
+    vi.spyOn(Date, 'now').mockImplementation(() => now() + offset);
+    try {
+      await writeFile(
+        await syncFile(t.agent.wc, 'sync.lock'),
+        `${process.pid}\n${new Date().toISOString()}\n`,
+      );
+      const isAlive = () => {
+        offset += 60_000;
+        return offset < 240_000;
+      };
+
+      const r = await claimIssue(agent(), x, { ...noSleep, lock: { retryMs: 1, isAlive } });
+
+      expect(offset).toBeGreaterThanOrEqual(240_000);
+      expect(r.pushed).toBe(await revParse(t.remote, 'refs/heads/main'));
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   test('the blocking sync brings a claim of someone else first', async () => {

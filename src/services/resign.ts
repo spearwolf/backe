@@ -26,6 +26,7 @@ import { changedEntries } from '../git/status.ts';
 import { gitTreeSource } from '../git/tree-source.ts';
 import { type ApplyContext, assertActorIsUser, commentsNeeded } from '../ops/apply.ts';
 import { applyBatch } from '../ops/batch.ts';
+import type { Notice } from '../ops/notice.ts';
 import type { Operation } from '../ops/operation.ts';
 import { translateEdits } from '../ops/translate.ts';
 import type { FileChange } from '../store/files.ts';
@@ -40,11 +41,12 @@ import { authorOf, isoNow } from './env.ts';
 import { canonicalEdit } from './hand-edits.ts';
 import { type LocalCommit, localCommits, type ReplayUnit, replayOnto } from './replay.ts';
 import { resetKeep, underWriteLock } from './sync.ts';
-import { verifyRange } from './verify.ts';
+import { builtCommitReasons } from './verify.ts';
 import {
   type ChainEntry,
   manualMessage,
   opMessage,
+  recoverJournal,
   requireHeadConfig,
   type WriteDeps,
 } from './write.ts';
@@ -54,6 +56,8 @@ export type ResignOutcome = {
   commits: { commit: string; kind: ChainEntry['kind']; summary: string }[];
   /** Wie viele fremde Commits übersetzt wurden; `0` heißt: nichts neu zu signieren. */
   rewritten: number;
+  /** Hinweise des Replays gültiger Commits, etwa ein verlorener Claim; nur wenn es welche gibt. */
+  notices?: Notice[];
 };
 
 const short = (sha: string) => sha.slice(0, 7);
@@ -189,9 +193,14 @@ const signing = (b: Build) => ({ key: b.key, author: b.author, env: b.ctx.env })
 
 /**
  * Ein gültiger backe-Commit nach einem übersetzten: als Einheit wie im Replay auf `current`.
- * Lässt er sich dort nicht mehr anwenden, bricht `--resign` ab; nichts ist geschehen.
+ * Lässt er sich dort nicht mehr anwenden, bricht `--resign` ab; nichts ist geschehen. Ein reiner
+ * Claim, der nicht mehr geht, fällt wie im Sync weg; das sagt ein Hinweis.
  */
-async function replayCommit(b: Build, unit: ReplayUnit, current: string): Promise<string> {
+async function replayCommit(
+  b: Build,
+  unit: ReplayUnit,
+  current: string,
+): Promise<{ head: string; notices: Notice[] }> {
   let r: Awaited<ReturnType<typeof replayOnto>>;
   try {
     r = await replayOnto(b.wc, {
@@ -217,7 +226,7 @@ async function replayCommit(b: Build, unit: ReplayUnit, current: string): Promis
       { hint: RESIGN_HINT },
     );
   }
-  return r.head;
+  return { head: r.head, notices: r.notices };
 }
 
 /**
@@ -261,6 +270,7 @@ export async function resignCommits(
   return underWriteLock(
     wc,
     async () => {
+      await recoverJournal(wc);
       if ((await changedEntries(wc)).length > 0) {
         throw new BackeError('usage', '--resign geht nicht zusammen mit Hand-Edits', {
           hint: 'erst backe commit',
@@ -294,18 +304,21 @@ export async function resignCommits(
       };
       let current = start;
       let rewritten = 0;
+      const notices: Notice[] = [];
       for (const { commit, unit } of local.slice(first)) {
         if (unit === undefined) {
           current = await translateCommit(b, commit, current);
           rewritten++;
         } else {
-          current = await replayCommit(b, unit, current);
+          const replayed = await replayCommit(b, unit, current);
+          current = replayed.head;
+          notices.push(...replayed.notices);
         }
       }
       const built = current === start ? [] : await listCommits(wc, { from: start, to: current });
       if (built.length > 0) {
-        const report = await verifyRange(wc, { since: start, to: current, ancestor: start });
-        const reasons = [...new Set(report.invalid.flatMap((f) => f.reasons))];
+        // Ab `clean`, nicht ab `start`: Ein eingefrorener Stand kann vor `start` begonnen haben.
+        const reasons = await builtCommitReasons(wc, { base: start, head: current });
         if (reasons.length > 0) {
           throw new BackeError(
             'validation',
@@ -322,6 +335,7 @@ export async function resignCommits(
           summary: parseCommitMessage(c.message).subject,
         })),
         rewritten,
+        ...(notices.length === 0 ? {} : { notices }),
       };
     },
     deps.lock,

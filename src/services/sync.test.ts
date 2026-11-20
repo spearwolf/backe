@@ -15,17 +15,20 @@ import {
   twoClones,
 } from '../../test/helpers/git.ts';
 import { seqBytes } from '../../test/helpers/snapshot.ts';
+import { exists } from '../context/paths.ts';
 import { managedClonePath, setIdentity } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
-import { EXIT_CODES } from '../core/errors.ts';
+import { type BackeError, EXIT_CODES } from '../core/errors.ts';
 import { BacklogConfigSchema } from '../core/schemas.ts';
+import { sshFingerprint } from '../core/ssh.ts';
 import { git } from '../git/exec.ts';
-import { clearLocalState, readLocalState } from '../git/local-state.ts';
+import { clearLocalState, readLocalState, stateDir } from '../git/local-state.ts';
 import type { Operation } from '../ops/operation.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { attachmentsDir, BACKLOG_CONFIG, issueFile } from '../store/layout.ts';
 import { effectiveMode, type SyncDeps, syncNow, syncRemote } from './sync.ts';
-import { listConflicts, readSyncState } from './sync-state.ts';
+import { listConflicts, readSyncState, syncFile } from './sync-state.ts';
+import { removeUser, revokeKey } from './users.ts';
 import { verifyRange } from './verify.ts';
 import { executeWrite } from './write.ts';
 
@@ -411,6 +414,147 @@ describe('invalid incoming commits', () => {
   });
 });
 
+describe('a replay verify would reject', () => {
+  /** Lokaler Commit des Agenten, dann eine Änderung von spw auf dem Remote; liefert HEAD und `tip`. */
+  async function diverge(remoteChange: () => Promise<unknown>) {
+    await create(agent(), 'B');
+    const head = await revParse(agentWc(), 'HEAD');
+    await remoteChange();
+    await pushSpw();
+    return { head, tip: await remoteHead() };
+  }
+
+  async function expectUntouched(err: BackeError, head: string, tip: string) {
+    expect(err.code).toBe('verify');
+    expect(err.hint).toContain('identities.acme.claude-1.key');
+    expect(await revParse(agentWc(), 'HEAD')).toBe(head);
+    expect(await remoteHead()).toBe(tip);
+    expect(await listConflicts(agentWc())).toEqual([]);
+    expect(await statusShort(agentWc())).toEqual([]);
+    expect((await readSyncState(agentWc())).last_error?.code).toBe('verify');
+  }
+
+  test('a key revoked on the remote stops the round before anything changes', async () => {
+    const claude = await testKey('claude-1');
+    const { head, tip } = await diverge(() =>
+      revokeKey(spw(), 'claude-1', sshFingerprint(claude.line)),
+    );
+
+    const err = await catchErrAsync(() => syncNow(agent(), deps()));
+
+    await expectUntouched(err, head, tip);
+    expect(err.message).toContain('widerrufen');
+  });
+
+  test('a user removed on the remote stops the round before anything changes', async () => {
+    const { head, tip } = await diverge(() => removeUser(spw(), 'claude-1'));
+
+    const err = await catchErrAsync(() => syncNow(agent(), deps()));
+
+    await expectUntouched(err, head, tip);
+    expect(err.message).toContain('claude-1 ist im Stand von');
+  });
+
+  test('a configured key that is not one of the identity stops the round', async () => {
+    const { head, tip } = await diverge(() => create(spw(), 'A'));
+    await setIdentity(t.spw.homes, 'acme', 'claude-1', (await testKey('other')).priv);
+    const other = await t.spw.context({ as: 'claude-1', backlog: 'acme' });
+
+    const err = await catchErrAsync(() => syncNow(other, deps()));
+
+    await expectUntouched(err, head, tip);
+    expect(err.message).toContain('gehört nicht zu claude-1');
+  });
+
+  test('a replay onto a frozen state that changes a tainted path stops the round', async () => {
+    await setVerify('warn');
+    const x = await sharedIssue('X');
+    const path = issueFile(x);
+    const text = await readFile(join(t.spw.root, path), 'utf8');
+    await rawCommit(t.spw.root, { files: { [path]: `${text}Fremd.\n` }, actor: 'spw' });
+    await pushSpw();
+    const tip = await remoteHead();
+    await write(agent(), setTitle(x, 'X', 'Lokal'));
+    const head = await revParse(agentWc(), 'HEAD');
+
+    const err = await catchErrAsync(() => syncNow(agent(), deps()));
+
+    await expectUntouched(err, head, tip);
+    expect(err.message).toContain('baut auf ungültigem Commit');
+  });
+});
+
+test('a round first recovers the journal of a crashed write', async () => {
+  const b = await create(agent(), 'B');
+  // Absturz nach dem Ref-Update, bevor das Journal entfernt war.
+  const journal = join(await stateDir(agentWc()), 'write.journal');
+  await writeFile(
+    journal,
+    JSON.stringify({ head: await revParse(agentWc(), 'HEAD^'), paths: [issueFile(b)] }),
+  );
+  await create(spw(), 'A');
+  await pushSpw();
+
+  const r = await syncNow(agent(), deps());
+
+  expect(r.replayed).toBe(1);
+  expect(await exists(journal)).toBe(false);
+  await create(agent(), 'C');
+  expect(await statusShort(agentWc())).toEqual([]);
+});
+
+describe('a foreground round waits for sync.lock', () => {
+  let offset: number;
+
+  beforeEach(async () => {
+    offset = 0;
+    const now = Date.now.bind(Date);
+    vi.spyOn(Date, 'now').mockImplementation(() => now() + offset);
+    await writeFile(
+      await syncFile(agentWc(), 'sync.lock'),
+      `${process.pid}\n${new Date().toISOString()}\n`,
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** Jede Prüfung des Halters rückt die Uhr um `step` ms vor; tot ist er ab `aliveFor` ms. */
+  const holder = (step: number, aliveFor = Number.POSITIVE_INFINITY) => ({
+    retryMs: 1,
+    isAlive: () => {
+      offset += step;
+      return offset < aliveFor;
+    },
+  });
+
+  test('a holder busy for minutes is waited for', async () => {
+    await create(agent(), 'B');
+
+    const r = await syncNow(agent(), deps({ lock: holder(60_000, 240_000) }));
+
+    expect(offset).toBeGreaterThanOrEqual(240_000);
+    expect(r.pushed).toBe(await remoteHead());
+  });
+
+  test('after five minutes the round gives up with conflict', async () => {
+    const err = await catchErrAsync(() => syncNow(agent(), deps({ lock: holder(100_000) })));
+
+    expect(err.code).toBe('conflict');
+    expect(offset).toBe(300_000);
+  });
+
+  test('injected lock options still win', async () => {
+    const err = await catchErrAsync(() =>
+      syncNow(agent(), deps({ lock: { ...holder(1_000), timeoutMs: 2_000 } })),
+    );
+
+    expect(err.code).toBe('conflict');
+    expect(offset).toBe(2_000);
+  });
+});
+
 test('a foreign local commit blocks the sync', async () => {
   const bad = await rawCommit(agentWc(), { files: { 'notes.md': 'x\n' } });
 
@@ -629,6 +773,22 @@ test('without upstream the incoming state only has to descend from the anchor', 
   await syncNow(agent(), deps());
 
   expect(await readLocalState(agentWc(), 'upstream')).toBe(await revParse(t.spw.root, 'HEAD'));
+});
+
+test('without upstream a rewritten remote must still descend from the last known remote state', async () => {
+  const before = await revParse(t.spw.root, 'HEAD');
+  await sharedIssue('X');
+  await clearLocalState(agentWc(), 'upstream');
+  await git(['reset', '-q', '--hard', before], { cwd: t.spw.root });
+  await create(spw(), 'Y');
+  await git(['push', '-q', '-f', 'origin', 'main'], { cwd: t.spw.root });
+  const head = await revParse(agentWc(), 'HEAD');
+
+  const err = await catchErrAsync(() => syncNow(agent(), deps()));
+
+  expect(err.code).toBe('verify');
+  expect(err.message).toContain('kein Nachfahre des zuletzt verifizierten Stands');
+  expect(await revParse(agentWc(), 'HEAD')).toBe(head);
 });
 
 test('an identity without working copy is cloned first', async () => {

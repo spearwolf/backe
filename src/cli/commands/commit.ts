@@ -26,7 +26,7 @@ async function resign(env: CommandEnv): Promise<void> {
   const r = await resignCommits(await env.context());
   env.committed(r.commits.at(-1)?.commit);
   if (env.format === 'json') {
-    env.out(json({ commits: r.commits, rewritten: r.rewritten }));
+    env.out(json({ commits: r.commits, rewritten: r.rewritten, notices: r.notices }));
     return;
   }
   env.out(
@@ -34,6 +34,7 @@ async function resign(env: CommandEnv): Promise<void> {
       ? 'Nichts neu zu signieren\n'
       : lines(r.commits.map((c) => safeText(c.summary))),
   );
+  env.io.stderr(renderNotices(r.notices ?? [], []));
 }
 
 export function commitCommand(program: Command, rt: Runtime): void {

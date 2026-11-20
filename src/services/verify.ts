@@ -483,14 +483,41 @@ export async function nextCommitBasis(wc: string): Promise<{
  */
 export async function writeCommitBasis(
   wc: string,
+  rev = 'HEAD',
 ): Promise<{ state: State; frozen?: FrozenBasis }> {
+  const w = await walk(wc, await fromClean(wc, rev), false);
+  return { state: w.next, ...frozenOf(w) };
+}
+
+/** Bereich bis `to`, ab `clean`, wenn das ein Vorfahre von `to` ist, sonst ab dem Anker. */
+async function fromClean(wc: string, to: string): Promise<VerifyOptions> {
   const clean = await readLocalState(wc, 'clean');
   const since =
-    clean !== undefined && (await isAncestor(wc, clean, 'HEAD').catch(() => false))
-      ? clean
-      : undefined;
-  const w = await walk(wc, since === undefined ? {} : { since }, false);
-  return { state: w.next, ...frozenOf(w) };
+    clean !== undefined && (await isAncestor(wc, clean, to).catch(() => false)) ? clean : undefined;
+  return since === undefined ? { to } : { since, to };
+}
+
+/**
+ * Die Gründe, aus denen `verify` die Commits `base..head` ablehnen würde — Commits, die Replay oder
+ * `commit --resign` eben erst gebaut haben und die noch nicht auf HEAD stehen. Der Gang beginnt
+ * wie beim Schreibpfad bei `clean` (sonst beim Anker), damit ein eingefrorener Stand, der vor
+ * `base` begann, mitzählt: Signier-Key und Policy gegen ihn, dazu verseuchte Pfade. Abstammung
+ * prüft der Aufrufer; aufgezeichnet wird nichts.
+ */
+export async function builtCommitReasons(
+  wc: string,
+  range: { base: string; head: string },
+): Promise<string[]> {
+  const built = new Set(
+    (await listCommits(wc, { from: range.base, to: range.head })).map((c) => c.sha),
+  );
+  if (built.size === 0) return [];
+  const from = await fromClean(wc, range.base);
+  const { checked, governing } = await walk(wc, { ...from, to: range.head }, false);
+  const reasons = checked
+    .filter((c) => built.has(c.sha) && !governing.entries.some((e) => e.sha === c.sha))
+    .flatMap((c) => c.reasons);
+  return [...new Set(reasons)];
 }
 
 /** Prüft die Commits nach `since` (ohne: ab dem Anker) bis `to` (Default `HEAD`). */

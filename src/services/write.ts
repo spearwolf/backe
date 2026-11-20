@@ -338,8 +338,11 @@ async function restoreSaved(wc: string, saved: readonly SavedFile[]): Promise<vo
  * Commits des Writes direkt darauf. Ist nichts gelandet und hat das Journal den Inhalt vor dem
  * Write (Hand-Edits), kommt dieser zurück; sonst gleicht der Rollback Arbeitsbaum und Index an
  * HEAD an. Andernfalls bleibt das Journal liegen und der Write bricht ab, bevor etwas angefasst wird.
+ * Läuft unter dem Write-Lock als Erstes in jedem Abschnitt, der HEAD oder den Arbeitsbaum bewegt
+ * (Write, Sync, `commit --resign`, LFS-Checkout): Danach passte HEAD nicht mehr zum Journal.
  */
-async function recoverJournal(wc: string, journal: string): Promise<void> {
+export async function recoverJournal(wc: string): Promise<void> {
+  const journal = join(await stateDir(wc), 'write.journal');
   let text: string;
   try {
     text = await readFile(journal, 'utf8');
@@ -906,7 +909,7 @@ export async function executeWrite(
   let deferred: NodeJS.Signals | undefined;
 
   async function locked(): Promise<WriteResult> {
-    await recoverJournal(wc, journal);
+    await recoverJournal(wc);
     await checkIdentity(ctx, wc, handle);
     await checkFormatVersion(wc, input.kind === 'edits' ? 'HEAD' : undefined);
     const wcSnapshot = await loadSnapshot(wc);

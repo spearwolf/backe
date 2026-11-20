@@ -9,17 +9,20 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { type LockOptions, withFileLock } from '../context/lock.ts';
 import { exists } from '../context/paths.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
+import { userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
 import type { BacklogConfig } from '../core/schemas.ts';
+import { sshFingerprint } from '../core/ssh.ts';
 import { git, transportEnv } from '../git/exec.ts';
 import { isAncestor, readBlobs, resolveCommit } from '../git/history.ts';
 import { readLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
 import { assertOnBranch, dirtyPaths } from '../git/repo.ts';
+import { readPublicKey } from '../git/ssh.ts';
 import { parseEntityFile } from '../store/frontmatter.ts';
 import { BACKLOG_CONFIG, userFile } from '../store/layout.ts';
 import { authorOf, isoNow } from './env.ts';
 import { firstStderrLine } from './init.ts';
-import { lfsPull, requireLfs } from './lfs.ts';
+import { LFS_TIMEOUT_MS, lfsPull, requireLfs } from './lfs.ts';
 import { type ManualResolver, readUnits, replayOnto } from './replay.ts';
 import { type SpawnFn, scheduleDeferred, syncRemote } from './schedule.ts';
 import { raiseSignal, withDeferredSignals } from './signals.ts';
@@ -30,9 +33,10 @@ import {
   writeConflicts,
   writeSyncState,
 } from './sync-state.ts';
-import { verifyRange } from './verify.ts';
-import { ensureWorkingCopy, judgeReport } from './working-copy.ts';
-import { headConfig, requireHeadConfig } from './write.ts';
+import { builtCommitReasons, verifyRange, writeCommitBasis } from './verify.ts';
+import { activeFingerprints } from './verify-state.ts';
+import { descentBase, ensureWorkingCopy, judgeReport } from './working-copy.ts';
+import { headConfig, recoverJournal, requireHeadConfig } from './write.ts';
 
 /** Nur für Tests: Reihenfolge und Pausen zwischen den Schritten einer Runde. */
 export type SyncHooks = {
@@ -75,6 +79,19 @@ export type SyncOutcome = {
   claimSha?: string;
 };
 
+/**
+ * So lange wartet ein Vordergrund-Befehl (`sync`, `--sync`, Claim) auf `sync.lock`: Ein
+ * Hintergrund-Lauf hält ihn über Fetch, Push und Backoff, und ein Claim, der daran scheitert,
+ * gälte als verloren. Tote Halter werden wie sonst übernommen.
+ */
+export const FOREGROUND_SYNC_LOCK_MS = 300_000;
+
+/** Lock-Optionen eines Vordergrund-Befehls für `sync.lock`; injizierte Optionen gehen vor. */
+export const foregroundLock = (lock: LockOptions | undefined): LockOptions => ({
+  timeoutMs: FOREGROUND_SYNC_LOCK_MS,
+  ...lock,
+});
+
 const MAX_ROUNDS = 5;
 const BACKOFF_MS = 200;
 const FETCH_TIMEOUT_MS = 60_000;
@@ -115,17 +132,17 @@ async function fetchTip(
 type Passed = { tip: string; since: string | undefined };
 
 /**
- * Prüft Eingehendes bis `tip` (backe.md §2.13), ohne aufzuzeichnen: Abstammung von `upstream`
- * (ohne ihn genügt der Anker; `verified` darf auf ungepushte lokale Commits zeigen), dann die
- * Commits — ab `clean`, wenn das ein Vorfahre von `tip` ist, sonst ab dem Anker. Ungültige Commits
- * beurteilt der Modus (`judgeReport`); nur ohne sie gibt es `passed`.
+ * Prüft Eingehendes bis `tip` (backe.md §2.13), ohne aufzuzeichnen: Abstammung von `descent`
+ * (`descentBase` vor dem Fetch: `upstream`, sonst wie beim Clone; ohne beides genügt der Anker),
+ * dann die Commits — ab `clean`, wenn das ein Vorfahre von `tip` ist, sonst ab dem Anker.
+ * Ungültige Commits beurteilt der Modus (`judgeReport`); nur ohne sie gibt es `passed`.
  */
 async function verifyIncoming(
   wc: string,
   tip: string,
-  upstream: string | undefined,
+  descent: string | undefined,
 ): Promise<{ notices: string[]; passed?: Passed }> {
-  const ancestor = upstream ?? (await readLocalState(wc, 'anchor'));
+  const ancestor = descent ?? (await readLocalState(wc, 'anchor'));
   const clean = await readLocalState(wc, 'clean');
   const since =
     clean !== undefined && (await isAncestor(wc, clean, tip).catch(() => false))
@@ -216,6 +233,42 @@ type Section = {
 };
 
 /**
+ * `verify` würde die neu signierten Commits ablehnen: Meist passen Key oder Identität nicht mehr
+ * zum Remote-Stand (Key widerrufen, User entfernt).
+ */
+function replayRejected(r: Round, reasons: readonly string[]): BackeError {
+  const { ctx, handle } = r;
+  return new BackeError(
+    'verify',
+    `verify würde die neu signierten Commits ablehnen: ${reasons.join('; ')}`,
+    {
+      hint: `identities.${ctx.backlog.value}.${handle}.key in ${userConfigPath(ctx.homes.backeHome)} und ${userFile(handle)} im Remote-Stand prüfen`,
+      details: { reasons: [...reasons] },
+    },
+  );
+}
+
+/**
+ * Vor dem Replay auf `tip`: Der eigene Key muss im Stand, gegen den `verify` den nächsten Commit
+ * auf `tip` beurteilt (eingefroren, solange ungültige Commits offen sind), ein aktiver Key der
+ * eigenen Identität sein — sonst entstünden nur Commits, die `verify` ablehnt.
+ */
+async function assertSigner(r: Round, tip: string): Promise<void> {
+  const { users } = (await writeCommitBasis(r.wc, tip)).state;
+  const user = users.get(r.handle);
+  const fingerprint = sshFingerprint(await readPublicKey(r.key));
+  if (activeFingerprints(user).has(fingerprint)) return;
+  const revoked = (user?.revoked_keys ?? []).some((k) => sshFingerprint(k.key) === fingerprint);
+  const reason =
+    user === undefined
+      ? `${r.handle} ist im Stand von ${tip.slice(0, 7)} kein User`
+      : revoked
+        ? `Key ${fingerprint} von ${r.handle} ist widerrufen`
+        : `Key ${fingerprint} gehört nicht zu ${r.handle}`;
+  throw replayRejected(r, [reason]);
+}
+
+/**
  * Der lokale Abschnitt unter dem Write-Lock: lokale Commits sind `HEAD --not tip`. Keine →
  * Fast-Forward auf `tip`; `tip` schon in HEAD → nichts zu tun, HEAD wird gepusht; sonst Replay
  * auf `tip` und `reset --keep` auf das Ergebnis. Lokale Commits müssen backe-Commits der eigenen
@@ -226,6 +279,7 @@ type Section = {
 async function localSection(r: Round, s: Section): Promise<Local> {
   const { wc, handle } = r;
   const { tip } = s;
+  await recoverJournal(wc);
   const head = await assertOnBranch(wc, s.branch);
   const local: Local = {
     fetched: 0,
@@ -255,6 +309,7 @@ async function localSection(r: Round, s: Section): Promise<Local> {
   const base = tip ?? s.upstream ?? (await readLocalState(wc, 'verified'));
   const units = await readUnits(wc, { base, head }, handle);
   if (tip === undefined || (await isAncestor(wc, tip, head))) return done(local);
+  await assertSigner(r, tip);
   const now = r.deps.now ?? (() => new Date());
   const replay = await replayOnto(wc, {
     onto: tip,
@@ -268,6 +323,8 @@ async function localSection(r: Round, s: Section): Promise<Local> {
     ...(s.claimSha === undefined ? {} : { claimSha: s.claimSha }),
     ...(r.deps.resolveManual === undefined ? {} : { resolveManual: r.deps.resolveManual }),
   });
+  const reasons = await builtCommitReasons(wc, { base: tip, head: replay.head });
+  if (reasons.length > 0) throw replayRejected(r, reasons);
   await resetKeep(wc, head, replay.head);
   await writeConflicts(wc, replay.conflicts);
   const { claimSha: _, ...rest } = local;
@@ -307,17 +364,31 @@ export async function underWriteLock<T>(
 }
 
 /**
- * Mit `attachments.lfs` nach einer Baumänderung: `git lfs pull`; der Checkout läuft unter dem
- * Write-Lock, weil sich der Arbeitsbaum nur dort ändert.
+ * Mit `attachments.lfs` nach einer Baumänderung: `git lfs pull`; Filter-Einrichtung und Checkout
+ * laufen unter dem Write-Lock wie jeder Abschnitt, der den Arbeitsbaum ändert — samt
+ * Journal-Recovery.
  */
 const lfsPullRound = (r: Round, remote: string): Promise<string[]> =>
-  lfsPull(r.wc, remote, r.ctx.env, (fn) => underWriteLock(r.wc, fn, r.deps.lock));
+  lfsPull(r.wc, remote, r.ctx.env, (fn) =>
+    underWriteLock(
+      r.wc,
+      async () => {
+        await recoverJournal(r.wc);
+        return fn();
+      },
+      r.deps.lock,
+    ),
+  );
 
 /** Mit `attachments.lfs` vor jedem Push: `git lfs push`; ohne git-lfs wie beim Write. */
 async function lfsPush(wc: string, env: Env, remote: string, sha: string): Promise<void> {
   await requireLfs(wc);
   try {
-    await git(['lfs', 'push', remote, sha], { cwd: wc, env: transportEnv(env) });
+    await git(['lfs', 'push', remote, sha], {
+      cwd: wc,
+      env: transportEnv(env),
+      timeoutMs: LFS_TIMEOUT_MS,
+    });
   } catch (err) {
     throw new BackeError('sync', `LFS-Push nach ${remote} fehlgeschlagen: ${firstStderrLine(err)}`);
   }
@@ -365,12 +436,14 @@ async function runRounds(r: Round, remote: string, branch: string, claimSha?: st
   let claim = claimSha;
   for (let round = 1; ; round++) {
     out.rounds = round;
+    // Vor dem Fetch: Ohne `upstream` zählt der Remote-Tracking-Ref, wie er vorher stand.
+    const descent = await descentBase(wc);
     const tip = await fetchTip(wc, ctx.env, remote, branch);
     await deps.hooks?.afterFetch?.(round);
     const upstream = await readLocalState(wc, 'upstream');
     let passed: Passed | undefined;
     if (tip !== undefined && (tip !== upstream || (await readLocalState(wc, 'verified')) !== tip)) {
-      const incoming = await verifyIncoming(wc, tip, upstream);
+      const incoming = await verifyIncoming(wc, tip, descent);
       out.notices.push(...incoming.notices);
       passed = incoming.passed;
       await writeLocalState(wc, 'upstream', tip);
@@ -489,7 +562,7 @@ export async function syncNow(
     return await withFileLock(
       await syncFile(p.wc, 'sync.lock'),
       () => heldRound(p, opts),
-      deps.lock,
+      foregroundLock(deps.lock),
     );
   } finally {
     await scheduleDeferred(ctx, p.wc, deps);

@@ -41,23 +41,33 @@ export async function setUpLfs(wc: string): Promise<void> {
   );
 }
 
+/** Frist für `git lfs fetch` und `git lfs push`: Anhänge können groß sein, das Netz nicht. */
+export const LFS_TIMEOUT_MS = 300_000;
+
 /**
  * `git lfs pull` für eine Arbeitskopie (wenn git-lfs da ist): `git lfs fetch` ohne Lock, dann
- * `git lfs checkout` über `checkout` (der Sync legt dort den Write-Lock um den Aufruf, weil sich
- * nur dabei der Arbeitsbaum ändert). Scheitern ist ein Hinweis, kein Fehler; ohne git-lfs gibt es
- * nichts zu tun.
+ * Filter einrichten (`setUpLfs`) und `git lfs checkout` über `locked` (der Sync legt dort den
+ * Write-Lock um den Aufruf: Der Schreibpfad richtet den Filter ebenfalls ein, und nur der Checkout
+ * ändert den Arbeitsbaum). Scheitern ist ein Hinweis, kein Fehler; ohne git-lfs gibt es nichts zu
+ * tun.
  */
 export async function lfsPull(
   wc: string,
   remote: string,
   env: Env,
-  checkout: (fn: () => Promise<unknown>) => Promise<unknown> = (fn) => fn(),
+  locked: (fn: () => Promise<unknown>) => Promise<unknown> = (fn) => fn(),
 ): Promise<string[]> {
   if (!(await lfsAvailable(wc))) return [];
   try {
-    await setUpLfs(wc);
-    await git(['lfs', 'fetch', remote, 'HEAD'], { cwd: wc, env: transportEnv(env) });
-    await checkout(() => git(['lfs', 'checkout'], { cwd: wc }));
+    await git(['lfs', 'fetch', remote, 'HEAD'], {
+      cwd: wc,
+      env: transportEnv(env),
+      timeoutMs: LFS_TIMEOUT_MS,
+    });
+    await locked(async () => {
+      await setUpLfs(wc);
+      await git(['lfs', 'checkout'], { cwd: wc });
+    });
     return [];
   } catch (err) {
     return [`git lfs pull fehlgeschlagen: ${firstStderrLine(err)}`];

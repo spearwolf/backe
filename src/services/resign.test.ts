@@ -16,10 +16,11 @@ import {
   twoClones,
 } from '../../test/helpers/git.ts';
 import { seqBytes } from '../../test/helpers/snapshot.ts';
+import { exists } from '../context/paths.ts';
 import { setIdentity } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { git } from '../git/exec.ts';
-import { clearLocalState, writeLocalState } from '../git/local-state.ts';
+import { clearLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
 import { issueFile } from '../store/layout.ts';
 import { loadSnapshot } from '../store/snapshot.ts';
 import { resignCommits } from './resign.ts';
@@ -173,6 +174,81 @@ test('a foreign commit that verify would reject is not re-signed', async () => {
   expect(err.code).toBe('validation');
   expect(err.message).toMatch(/^verify würde den Commit ablehnen: /);
   expect(await head()).toBe(before);
+});
+
+test('a frozen state that began before the re-signed commits still counts', async () => {
+  const config = await readFile(join(b.root, '.backe/backlog.jsonc'), 'utf8');
+  await executeWrite(ctx, {
+    kind: 'manual',
+    subject: 'verify: warn',
+    changes: [
+      {
+        path: '.backe/backlog.jsonc',
+        content: config.replace(/\n}\n$/, ',\n  "verify": "warn"\n}\n'),
+      },
+    ],
+  });
+  const a = await create(ctx, 'A');
+  const text = await readFile(join(b.root, issueFile(a)), 'utf8');
+  // Ein ungültiger Commit, den die Arbeitskopie schon vom Remote hat: Ab ihm ist der Stand eingefroren.
+  const bad = await rawCommit(b.root, { files: { [issueFile(a)]: `${text}Fremd.\n` } });
+  await writeLocalState(b.root, 'upstream', bad);
+  await rawCommit(b.root, {
+    files: { [issueFile(a)]: (await retitled(b.root, a, 'A', 'A2')).replace('Fremd.', 'X.') },
+  });
+  const before = await head();
+
+  const err = await catchErrAsync(() => resignCommits(ctx));
+
+  expect(err.code).toBe('validation');
+  expect(err.message).toContain('baut auf ungültigem Commit');
+  expect(await head()).toBe(before);
+});
+
+test('resign first recovers the journal of a crashed write', async () => {
+  const a = await create(ctx, 'A');
+  await rawCommit(b.root, { files: { [issueFile(a)]: await retitled(b.root, a, 'A', 'A2') } });
+  const c = await create(ctx, 'C');
+  // Absturz nach dem Ref-Update, bevor das Journal entfernt war.
+  const journal = join(await stateDir(b.root), 'write.journal');
+  await writeFile(
+    journal,
+    JSON.stringify({ head: await revParse(b.root, 'HEAD^'), paths: [issueFile(c)] }),
+  );
+
+  const r = await resignCommits(ctx);
+
+  expect(r.rewritten).toBe(1);
+  expect(await exists(journal)).toBe(false);
+  await create(ctx, 'D');
+  expect(await statusShort(b.root)).toEqual([]);
+});
+
+test('a claim that no longer applies after re-signing is dropped with a notice', async () => {
+  const a = await create(ctx, 'A');
+  const text = await readFile(join(b.root, issueFile(a)), 'utf8');
+  await rawCommit(b.root, {
+    files: { [issueFile(a)]: text.replace('state: backlog', 'state: done') },
+  });
+  await rawCommit(b.root, {
+    files: { [issueFile(a)]: text.replace('state: backlog', 'state: in_progress') },
+    key: b.key,
+    actor: 'spw',
+    op: JSON.stringify({ op: 'issue.claim', id: a }),
+    subject: `issue claim ${a}`,
+  });
+
+  const r = await resignCommits(ctx);
+
+  expect(r.rewritten).toBe(1);
+  expect(r.notices).toEqual([
+    expect.objectContaining({
+      code: 'claim_lost',
+      ids: [a],
+      message: expect.stringMatching(new RegExp(`^Claim ${a} verloren: `)),
+    }),
+  ]);
+  expect((await loadSnapshot(b.root)).issues.get(a)?.data.state).toBe('done');
 });
 
 test('after a sync stopped at a foreign commit, resign lets the next sync through', async () => {

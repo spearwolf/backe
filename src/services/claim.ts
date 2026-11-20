@@ -20,7 +20,7 @@ import { type NextOutcome, type NextQuery, nextActor, pickNext } from './next.ts
 import { type WriteOutcome, writeOp } from './outcome.ts';
 import { resolveIssueRef } from './read.ts';
 import { scheduleDeferred } from './schedule.ts';
-import { effectiveMode, type SyncDeps, syncHeld, syncRemote } from './sync.ts';
+import { effectiveMode, foregroundLock, type SyncDeps, syncHeld, syncRemote } from './sync.ts';
 import { syncFile } from './sync-state.ts';
 import { ensureWorkingCopy, hubNotices } from './working-copy.ts';
 import { requireHeadConfig, type WriteDeps } from './write.ts';
@@ -167,7 +167,10 @@ async function claimHeld(
         throw await lostClaim(setup.wc, setup.handle, id, round.claimLost.error.message);
       }
       out.warnings.push(...round.notices);
-      if (round.pushed === undefined) await assertClaimed(setup.wc, setup.handle, id);
+      // Nicht gepusht, oder das Replay hat ihn ohne Wirkung fallen lassen.
+      if (round.pushed === undefined || round.claimSha === undefined) {
+        await assertClaimed(setup.wc, setup.handle, id);
+      }
       // Nach einem Replay trägt der Claim einen neuen SHA.
       return {
         ...out,
@@ -175,7 +178,7 @@ async function claimHeld(
         ...(round.pushed === undefined ? {} : { pushed: round.pushed }),
       };
     },
-    deps.lock,
+    foregroundLock(deps.lock),
   );
 }
 

@@ -134,9 +134,10 @@ async function syncAt(wc: string, rev: string): Promise<CloneConfig['sync'] | un
  * (zuletzt verifizierter Remote-Stand), sonst der gemeinsame Vorfahre von `verified` und ihrem
  * Remote-Tracking-Branch, sonst `verified`. `verified` allein darf auf einen ungepushten lokalen
  * Commit zeigen, den kein Remote kennt. Remote und Branch kommen aus der Config im `HEAD` der
- * vertrauten Arbeitskopie, nicht aus dem noch ungeprüften Clone.
+ * vertrauten Arbeitskopie, nicht aus dem noch ungeprüften Clone. Der Sync fragt vor dem Fetch
+ * dasselbe für Eingehendes, solange der Tracking-Ref noch den vorigen Remote-Stand trägt.
  */
-async function descentBase(trusted: string): Promise<string | undefined> {
+export async function descentBase(trusted: string): Promise<string | undefined> {
   const upstream = await readLocalState(trusted, 'upstream');
   if (upstream !== undefined) return upstream;
   const verified = await readLocalState(trusted, 'verified');
