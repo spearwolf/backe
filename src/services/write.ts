@@ -10,6 +10,7 @@ import { workingCopyPath } from '../context/registry.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
 import { userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
+import { shortSha } from '../core/ids.ts';
 import {
   BACKLOG_FORMAT_VERSION,
   type BacklogConfig,
@@ -61,6 +62,7 @@ import {
   GITATTRIBUTES,
   hasLfsRule,
   isLfsPath,
+  QUARANTINE,
 } from '../store/layout.ts';
 import {
   type BacklogSnapshot,
@@ -76,7 +78,9 @@ import {
   readHandEdits,
   settleEdits,
 } from './hand-edits.ts';
-import { activeFingerprints } from './verify-state.ts';
+import { raiseSignal, withDeferredSignals } from './signals.ts';
+import { nextCommitBasis } from './verify.ts';
+import { activeFingerprints, type State } from './verify-state.ts';
 import { ensureWorkingCopy, identityMismatch } from './working-copy.ts';
 
 export type WriteInput =
@@ -188,33 +192,6 @@ type SavedFile = { path: string; content: string | null };
  */
 type Journal = { head: string; paths: string[]; commits?: number; saved?: SavedFile[] };
 
-const DEFERRED_SIGNALS = ['SIGINT', 'SIGTERM'] as const;
-
-/** Merkt SIGINT/SIGTERM zwischen `install` und `release`, statt den Prozess zu beenden. */
-function signalDeferral() {
-  let pending: NodeJS.Signals | undefined;
-  const handlers = DEFERRED_SIGNALS.map((signal) => {
-    const handler = () => {
-      pending ??= signal;
-    };
-    return [signal, handler] as const;
-  });
-  return {
-    install(): void {
-      for (const [signal, handler] of handlers) process.on(signal, handler);
-    },
-    /** Entfernt die Handler (auch wenn nie installiert) und liefert das gemerkte Signal. */
-    release(): NodeJS.Signals | undefined {
-      for (const [signal, handler] of handlers) process.off(signal, handler);
-      return pending;
-    },
-  };
-}
-
-function raiseSignal(signal: NodeJS.Signals): void {
-  process.kill(process.pid, signal);
-}
-
 /** Erster Parent von `rev`; `undefined` beim Wurzel-Commit. */
 async function firstParent(wc: string, rev: string): Promise<string | undefined> {
   const { stdout } = await git(['log', '-1', '--format=%P', '--end-of-options', rev], { cwd: wc });
@@ -222,7 +199,27 @@ async function firstParent(wc: string, rev: string): Promise<string | undefined>
   return parent === '' ? undefined : parent;
 }
 
-/** Ob `commit` Subject und `Backe-Actor` von `message` trägt und jeden Pfad wie geplant enthält. */
+/**
+ * Blob-ID, die `git add` für `content` unter `path` ablegt: durch den Clean-Filter, den die
+ * Attribute der Arbeitskopie für `path` wählen (unter der LFS-Regel der Pointer).
+ */
+async function cleanBlobId(
+  wc: string,
+  path: string,
+  content: string | Uint8Array,
+): Promise<string> {
+  const { stdout } = await git(['hash-object', `--path=${path}`, '--stdin'], {
+    cwd: wc,
+    input: content,
+  });
+  return stdout.trim();
+}
+
+/**
+ * Ob `commit` Subject und `Backe-Actor` von `message` trägt und jeden Pfad wie geplant enthält.
+ * Anhänge unter der LFS-Regel des Commits liegen dort als Pointer; sie vergleicht die Blob-ID der
+ * geplanten Bytes nach dem Clean-Filter, alle anderen Pfade die Bytes selbst.
+ */
 async function matchesStep(
   wc: string,
   commit: string,
@@ -239,12 +236,23 @@ async function matchesStep(
     return false;
   }
   const specs = step.changes.map((c) => `${commit}:${c.path}`);
-  const [info, blobs] = await Promise.all([objectInfo(wc, specs), readBlobs(wc, specs)]);
-  return step.changes.every((c, i) => {
+  const attributes = `${commit}:${GITATTRIBUTES}`;
+  const [info, blobs] = await Promise.all([
+    objectInfo(wc, specs),
+    readBlobs(wc, [...specs, attributes]),
+  ]);
+  const lfs = hasLfsRule(blobs.get(attributes)?.toString('utf8'));
+  for (const [i, c] of step.changes.entries()) {
     const spec = specs[i] as string;
-    if (c.content === null) return info.get(spec) === undefined;
-    return blobs.get(spec)?.equals(Buffer.from(c.content)) === true;
-  });
+    if (c.content === null) {
+      if (info.get(spec) !== undefined) return false;
+    } else if (lfs && isLfsPath(c.path)) {
+      if (info.get(spec)?.oid !== (await cleanBlobId(wc, c.path, c.content))) return false;
+    } else if (blobs.get(spec)?.equals(Buffer.from(c.content)) !== true) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -367,7 +375,10 @@ async function checkIdentity(ctx: ResolvedContext, wc: string, handle: string): 
   }
 }
 
-/** Der Signier-Key ist ein aktiver Key des Schreibenden; sonst verwürfe `verify` den Commit. */
+/**
+ * Der Signier-Key ist ein aktiver Key des Schreibenden in `users`, dem Stand, gegen den `verify`
+ * den Commit beurteilt; sonst verwürfe es ihn.
+ */
 async function checkSigningKey(
   ctx: ResolvedContext,
   key: string,
@@ -382,9 +393,20 @@ async function checkSigningKey(
   }
 }
 
-/** Liest `version` roh, bevor das Schema greift: ein neueres Format schreibt dieses backe nicht. */
-async function checkFormatVersion(wc: string): Promise<void> {
-  const raw = readJsonc(await readFile(join(wc, BACKLOG_CONFIG), 'utf8'), BACKLOG_CONFIG);
+/**
+ * Liest `version` roh, bevor das Schema greift: ein neueres Format schreibt dieses backe nicht.
+ * Ohne `rev` aus der Arbeitskopie, sonst aus `rev` — bei Hand-Edits aus HEAD, denn eine von Hand
+ * geänderte Config ist selbst erst ein Teil des Writes.
+ */
+async function checkFormatVersion(wc: string, rev?: string): Promise<void> {
+  const spec = `${rev}:${BACKLOG_CONFIG}`;
+  const text =
+    rev === undefined
+      ? await readFile(join(wc, BACKLOG_CONFIG), 'utf8')
+      : (await readBlobs(wc, [spec])).get(spec)?.toString('utf8');
+  // Ohne Config in `rev` scheitert schon das Laden der Arbeitskopie.
+  if (text === undefined) return;
+  const raw = readJsonc(text, BACKLOG_CONFIG);
   const version = (raw as { version?: unknown } | null)?.version;
   if (typeof version === 'number' && version > BACKLOG_FORMAT_VERSION) {
     throw new BackeError(
@@ -420,6 +442,9 @@ function resolveDerived(d: Operation | readonly Operation[]): ResolvedInput | un
 function changedPathsOf(changes: readonly FileChange[]): string[] {
   return [...new Set(changes.map((c) => c.path))].sort();
 }
+
+/** Was der Commit eines Schritts aufnimmt: seine Änderungen und die neu abgelegten Anhänge. */
+const committedPaths = (s: Step): string[] => [...s.paths, ...(s.renormalize ?? [])].sort();
 
 /** Commit-Message nach backe.md §2.13 für Operationen: eine im Trailer, mehrere als Batch. */
 function opMessage(kind: 'op' | 'batch', recorded: readonly Operation[], handle: string): string {
@@ -523,18 +548,26 @@ function policyStateAfter(state: PolicyState, changes: readonly TreeChange[]): P
 }
 
 /**
- * Prüft jeden Commit der Hand-Edit-Kette wie `verify` (backe.md §2.13 Punkt 4): gegen den Stand
- * von HEAD bzw. nach dem vorigen Schritt. Ein Grund bricht vor dem Schreiben mit `validation` ab;
- * die Hand-Edits bleiben liegen. Rekursiv gelöschte Issue-Verzeichnisse prüft `verify` frei
- * (Issue und Kommentare darin), sie tragen hier nichts bei.
+ * Prüft jeden Commit der Hand-Edit-Kette wie `verify` (backe.md §2.13 Punkt 4) und liefert dessen
+ * Gründe: gegen den Stand von HEAD bzw. nach dem vorigen Schritt — solange ungültige Commits offen
+ * sind, wie bei `verify` jeden Schritt gegen den eingefrorenen Stand `frozen`. Rekursiv gelöschte
+ * Issue-Verzeichnisse prüft `verify` frei (Issue und Kommentare darin), sie tragen hier nichts bei.
  */
-async function checkEditsPolicy(
+async function editsPolicyReasons(
   wc: string,
   head: string,
   edits: HandEdits,
   steps: readonly Step[],
   actor: string,
-): Promise<void> {
+  frozen: State | undefined,
+): Promise<string[]> {
+  if (typeof frozen?.config === 'string') {
+    return [`nicht prüfbar: ${BACKLOG_CONFIG}: ${frozen.config}`];
+  }
+  const judge: PolicyState | undefined =
+    frozen === undefined
+      ? undefined
+      : { config: frozen.config as BacklogConfig, users: frozen.users };
   let state: PolicyState = {
     config: edits.base.config,
     users: new Map([...edits.base.users].map(([h, u]) => [h, u.data])),
@@ -569,7 +602,7 @@ async function checkEditsPolicy(
     if (addsUser) removed ??= await removedHandles(wc, head);
     const found = checkCommitPolicy({
       actor,
-      parent: state,
+      parent: judge ?? state,
       after: next,
       changes,
       removedHandles: removed ?? new Set(),
@@ -578,11 +611,41 @@ async function checkEditsPolicy(
     for (const c of changes) known.set(c.path, c.after);
     state = next;
   }
-  if (reasons.length > 0) {
-    throw new BackeError('validation', `verify würde den Commit ablehnen: ${reasons.join('; ')}`, {
-      details: { reasons },
-    });
-  }
+  return reasons;
+}
+
+/**
+ * Solange der Stand eingefroren ist, verwirft `verify` jeden Commit, der einen Pfad ändert, dessen
+ * Blob im Parent von dem im eingefrorenen Stand `frozen.at` abweicht (Verseuchte Pfade, siehe
+ * `taintReasons` in verify.ts). Vor dem Schreiben heißt das: Jeder committete Pfad muss in HEAD den
+ * Blob aus `frozen.at` tragen, und kein Pfad darf in der Kette ein zweites Mal geändert werden —
+ * im Parent stünde dann der neue Inhalt des früheren Schritts.
+ *
+ * Ein Write, der die Quarantäne-Datei ändert, bleibt frei: Er entscheidet über die ungültigen
+ * Commits (etwa eine Umkehr von Hand), und ob er auftaut oder nur zurücksetzt, beurteilt `verify`
+ * erst mit der ganzen Historie. Wer sie ändern darf, prüft die Policy der Hand-Edits.
+ */
+async function taintedPathReasons(
+  wc: string,
+  head: string,
+  frozen: { at: string; firstOpen: string },
+  steps: readonly Step[],
+): Promise<string[]> {
+  if (steps.some((s) => s.changes.some((c) => c.path === QUARANTINE))) return [];
+  const committed = steps.map(committedPaths);
+  const paths = [...new Set(committed.flat())];
+  const info = await objectInfo(
+    wc,
+    paths.flatMap((p) => [`${head}:${p}`, `${frozen.at}:${p}`]),
+  );
+  const oid = (rev: string, p: string) => info.get(`${rev}:${p}`)?.oid;
+  const overlaps = (p: string, q: string) =>
+    p === q || p.startsWith(`${q}/`) || q.startsWith(`${p}/`);
+  const again = committed.some((own, i) =>
+    own.some((p) => committed.slice(0, i).some((earlier) => earlier.some((q) => overlaps(p, q)))),
+  );
+  const tainted = again || paths.some((p) => oid(head, p) !== oid(frozen.at, p));
+  return tainted ? [`baut auf ungültigem Commit ${shortSha(frozen.firstOpen)} auf`] : [];
 }
 
 /**
@@ -625,15 +688,11 @@ async function plan(
       const subject = input.subject ?? `manual: ${edits.manual.length} Dateien`;
       steps.push(manualStep(subject, edits.manual, handle));
     }
-    if (ops.length === 0) {
-      await checkEditsPolicy(wc, head, edits, steps, handle);
-      return { ...none, steps };
-    }
+    if (ops.length === 0) return { ...none, steps };
     const r = applyEditOps(edits.afterManual, ops, applyCtx);
     if (r.changes.length > 0) {
       steps.push(opStep(r.recorded.length === 1 ? 'op' : 'batch', r.changes, r.recorded, handle));
     }
-    await checkEditsPolicy(wc, head, edits, steps, handle);
     return { steps, recorded: r.recorded, refs: r.refs, notices: r.notices };
   }
   if (input.kind === 'batch') {
@@ -753,8 +812,12 @@ async function settleWorkingCopy(
  * geklont; dann Lock, Journal-Recovery, Identität, Formatversion, Branch, Änderungen berechnen,
  * Schutz ungesicherter Änderungen, Dateien schreiben und signiert committen — bei Hand-Edits als
  * Kette, bei der HEAD einmal springt. Scheitert etwas nach dem Schreiben, kommt der Inhalt vor
- * dem Write zurück (Hand-Edits bleiben Hand-Edits). SIGINT/SIGTERM im kritischen Abschnitt werden
- * erst nach Freigabe des Locks ausgelöst.
+ * dem Write zurück (Hand-Edits bleiben Hand-Edits). Geprüft wird gegen den Stand, gegen den
+ * `verify` den Commit beurteilt (`nextCommitBasis`, einmal je Write): Solange ungültige Commits
+ * offen sind, ist das der eingefrorene Stand — für Signier-Key, Hand-Edits und verseuchte Pfade.
+ * Quarantäne-Writes (`manual` mit `signers`) bringen ihren Stand selbst mit. SIGINT/SIGTERM im
+ * kritischen Abschnitt werden aufgeschoben (`withDeferredSignals`) und, wenn dieser Write der
+ * äußerste Abschnitt ist, erst nach Freigabe des Locks ausgelöst.
  */
 export async function executeWrite(
   ctx: ResolvedContext,
@@ -767,12 +830,12 @@ export async function executeWrite(
     : await ensureWorkingCopy(ctx, handle);
   const dir = await stateDir(wc);
   const journal = join(dir, 'write.journal');
-  const signals = signalDeferral();
+  let deferred: NodeJS.Signals | undefined;
 
   async function locked(): Promise<WriteResult> {
     await recoverJournal(wc, journal);
     await checkIdentity(ctx, wc, handle);
-    await checkFormatVersion(wc);
+    await checkFormatVersion(wc, input.kind === 'edits' ? 'HEAD' : undefined);
     const wcSnapshot = await loadSnapshot(wc);
     // Hand-Edits gelten erst nach ihrer Prüfung; bis dahin regiert die Config aus HEAD.
     const config =
@@ -792,8 +855,15 @@ export async function executeWrite(
     assertActorIsUser(snapshot, handle);
     const resolved: ResolvedInput | undefined =
       input.kind === 'derive' ? resolveDerived(input.derive(snapshot, handle)) : input;
+    // Ein Quarantäne-Write bringt den Stand mit, gegen den er geprüft hat; jeder andere fragt
+    // `verify` einmal. Nur solange ungültige Commits offen sind, weicht dieser Stand von HEAD ab.
+    const quarantineSigners = resolved?.kind === 'manual' ? resolved.signers : undefined;
+    const basis = quarantineSigners === undefined ? await nextCommitBasis(wc) : undefined;
+    const frozen =
+      basis?.frozen === undefined ? undefined : { ...basis.frozen, state: basis.state };
     const signers =
-      (resolved?.kind === 'manual' ? resolved.signers : undefined) ??
+      quarantineSigners ??
+      frozen?.state.users ??
       new Map([...snapshot.users].map(([h, u]) => [h, u.data]));
     await checkSigningKey(ctx, key, handle, signers);
 
@@ -812,9 +882,24 @@ export async function executeWrite(
     const planned = await plan(wc, snapshot, head, resolved, edits, handle, deps);
     const { steps } = planned;
     await markRenormalization(wc, head, snapshot.attributes, steps);
+    const reasons = [
+      ...(edits === undefined
+        ? []
+        : await editsPolicyReasons(wc, head, edits, steps, handle, frozen?.state)),
+      ...(frozen === undefined ? [] : await taintedPathReasons(wc, head, frozen, steps)),
+    ];
+    if (reasons.length > 0) {
+      // Vor dem Schreiben: Hand-Edits bleiben liegen, HEAD bleibt, wo er ist.
+      throw new BackeError(
+        'validation',
+        `verify würde den Commit ablehnen: ${reasons.join('; ')}`,
+        {
+          details: { reasons },
+        },
+      );
+    }
     const allChanges = steps.flatMap((s) => s.changes);
     const renormalized = steps.flatMap((s) => s.renormalize ?? []);
-    const committedPaths = (s: Step) => [...s.paths, ...(s.renormalize ?? [])].sort();
     const settled = edits === undefined ? undefined : settleEdits(edits, allChanges);
     const result = (commits: readonly string[]): WriteResult => ({
       ...empty,
@@ -856,59 +941,68 @@ export async function executeWrite(
     }
     const author = authorOf(handle, (snapshot.users.get(handle) as StoredEntity<User>).data.name);
 
-    signals.install();
-    const saved = edits === undefined ? undefined : await capture(wc, paths);
-    const entry: Journal = {
-      head,
-      paths,
-      ...(steps.length > 1 ? { commits: steps.length } : {}),
-      ...(saved === undefined ? {} : { saved }),
-    };
-    await writeFileAtomic(journal, `${JSON.stringify(entry)}\n`);
-    const commits: string[] = [];
-    try {
-      for (const [i, step] of steps.entries()) {
-        const last = i === steps.length - 1;
-        await applyFileChanges(wc, step.changes);
-        if (last) await deps.hooks?.afterFiles?.();
-        commits.push(
-          await commitPaths(wc, {
-            paths: committedPaths(step),
-            message: step.message,
-            key,
-            author,
-            env: ctx.env,
-            parent: commits.at(-1) ?? head,
-            updateRef: last ? { from: head } : false,
-          }),
-        );
-      }
-      await deps.hooks?.afterCommit?.();
-    } catch (error) {
-      const done = await landedChain(wc, head, steps).catch(() => undefined);
-      if (done !== undefined) {
-        // Die Commits stehen schon auf HEAD: Ein Rollback würde sie verfälschen, ein Retry verdoppeln.
-        await rm(journal, { force: true });
-        return settle(done);
-      }
+    /** Der kritische Abschnitt: Journal, Dateien, Commits, Angleichen der Arbeitskopie. */
+    const critical = async (): Promise<WriteResult> => {
+      const saved = edits === undefined ? undefined : await capture(wc, paths);
+      // Auch die neu abgelegten Anhänge: Stürzt der Write nach dem Ref-Update ab, trüge ihr Index
+      // sonst noch den alten Blob.
+      const entry: Journal = {
+        head,
+        paths: [...new Set([...paths, ...renormalized])].sort(),
+        ...(steps.length > 1 ? { commits: steps.length } : {}),
+        ...(saved === undefined ? {} : { saved }),
+      };
+      await writeFileAtomic(journal, `${JSON.stringify(entry)}\n`);
+      const commits: string[] = [];
       try {
-        if (saved === undefined) await rollbackPaths(wc, paths);
-        else await restoreSaved(wc, saved);
-        await rm(journal, { force: true });
-      } catch {
-        // Das Journal bleibt liegen; der nächste Write versucht den Rollback erneut.
+        for (const [i, step] of steps.entries()) {
+          const last = i === steps.length - 1;
+          await applyFileChanges(wc, step.changes);
+          if (last) await deps.hooks?.afterFiles?.();
+          commits.push(
+            await commitPaths(wc, {
+              paths: committedPaths(step),
+              message: step.message,
+              key,
+              author,
+              env: ctx.env,
+              parent: commits.at(-1) ?? head,
+              updateRef: last ? { from: head } : false,
+            }),
+          );
+        }
+        await deps.hooks?.afterCommit?.();
+      } catch (error) {
+        const done = await landedChain(wc, head, steps).catch(() => undefined);
+        if (done !== undefined) {
+          // Die Commits stehen schon auf HEAD: Ein Rollback würde sie verfälschen, ein Retry verdoppeln.
+          await rm(journal, { force: true });
+          return settle(done);
+        }
+        try {
+          if (saved === undefined) await rollbackPaths(wc, entry.paths);
+          else await restoreSaved(wc, saved);
+          await rm(journal, { force: true });
+        } catch {
+          // Das Journal bleibt liegen; der nächste Write versucht den Rollback erneut.
+        }
+        throw error;
       }
-      throw error;
-    }
-    await rm(journal, { force: true });
-    return settle(commits);
+      await rm(journal, { force: true });
+      return settle(commits);
+    };
+    // Ist dieser Write der äußerste Abschnitt, löst er das Signal erst nach dem Lock aus.
+    return withDeferredSignals(critical, {
+      raise: (signal) => {
+        deferred = signal;
+      },
+    });
   }
 
   await deps.hooks?.beforeLock?.();
   try {
     return await withFileLock(join(dir, 'write.lock'), locked, deps.lock);
   } finally {
-    const signal = signals.release();
-    if (signal !== undefined) (deps.raise ?? raiseSignal)(signal);
+    if (deferred !== undefined) (deps.raise ?? raiseSignal)(deferred);
   }
 }

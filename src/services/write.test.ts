@@ -39,7 +39,8 @@ import {
   summarizeBatch,
   summarizeOp,
 } from '../ops/operation.ts';
-import { attachmentsDir, commentsDir, issueFile, LFS_RULE } from '../store/layout.ts';
+import { attachmentsDir, commentsDir, issueFile, LFS_RULE, QUARANTINE } from '../store/layout.ts';
+import { verifyRange } from './verify.ts';
 import { executeWrite, type WriteInput } from './write.ts';
 
 const NOW = new Date('2026-11-19T10:00:00Z');
@@ -339,6 +340,25 @@ describe('the signing key', () => {
     expect(await revParse(b.root, 'HEAD')).toBe(before);
   });
 
+  test('a write with an open invalid commit refuses a key that verify would refuse', async () => {
+    const fresh = await testKey('spw-fresh');
+    const file = await readFile(join(b.root, 'users/spw.md'), 'utf8');
+    // Unsigniert und damit ungültig: Für verify gilt der neue Key nicht.
+    const widened = file.replace(b.key.line, `${b.key.line}, ${fresh.line}`);
+    expect(widened).not.toBe(file);
+    await rawCommit(b.root, { files: { 'users/spw.md': widened }, actor: 'spw', op: 'manual' });
+    const before = await revParse(b.root, 'HEAD');
+    const err = await catchErrAsync(() =>
+      executeWrite({ ...ctx, user: { ...ctx.user, key: fresh.priv } }, CREATE),
+    );
+    expect(err).toMatchObject({
+      code: 'usage',
+      message: `Der Key ${fresh.priv} ist kein aktiver Key von spw`,
+    });
+    expect(await revParse(b.root, 'HEAD')).toBe(before);
+    expect(await statusShort(b.root)).toEqual([]);
+  });
+
   test('a key of another user is a usage error', async () => {
     const bob = await testKey('bob');
     await executeWrite(ctx, {
@@ -355,13 +375,43 @@ describe('the signing key', () => {
   });
 });
 
+test('a write on a path changed by an open invalid commit is refused', async () => {
+  const id = await createdId();
+  const file = issueFile(id);
+  const content = await readFile(join(b.root, file), 'utf8');
+  const bad = await rawCommit(b.root, {
+    files: { [file]: content.replace('title: A', 'title: X') },
+    actor: 'spw',
+    op: 'manual',
+  });
+  const before = await revParse(b.root, 'HEAD');
+  const reason = `baut auf ungültigem Commit ${bad.slice(0, 7)} auf`;
+  const err = await catchErrAsync(() =>
+    executeWrite(ctx, {
+      kind: 'op',
+      op: { op: 'issue.edit', id, set: { title: { from: 'X', to: 'Y' } } },
+    }),
+  );
+  expect(err).toMatchObject({
+    code: 'validation',
+    message: `verify würde den Commit ablehnen: ${reason}`,
+    details: { reasons: [reason] },
+  });
+  expect(await revParse(b.root, 'HEAD')).toBe(before);
+  expect(await statusShort(b.root)).toEqual([]);
+  // Pfade, die der ungültige Commit nicht berührt hat, bleiben schreibbar.
+  await executeWrite(ctx, CREATE_B);
+  expect(await revParse(b.root, 'HEAD^')).toBe(before);
+});
+
 test('SIGINT is deferred until the write finished', async () => {
   const raised: string[] = [];
   const listeners = process.listenerCount('SIGINT');
   await executeWrite(ctx, CREATE, {
     hooks: {
       afterFiles: async () => {
-        expect(process.listenerCount('SIGINT')).toBe(listeners + 1);
+        // Fremde Listener sind abgehängt; nur der eigene merkt sich das Signal.
+        expect(process.listenerCount('SIGINT')).toBe(1);
         process.emit('SIGINT');
       },
     },
@@ -1227,6 +1277,66 @@ describe('edits', () => {
     expect(await statusShort(b.root)).toEqual([' M .backe/backlog.jsonc', '?? users/xena.md']);
   });
 
+  test('hand edits are checked against the frozen state', async () => {
+    const bob = await testKey('bob-frozen');
+    await executeWrite(ctx, {
+      kind: 'op',
+      op: { op: 'user.add', handle: 'bob', name: 'Bob', kind: 'human', keys: [bob.line] },
+    });
+    // bob macht sich selbst zum Admin; der Commit ist ungültig, der Stand davor eingefroren.
+    const config = await read('.backe/backlog.jsonc');
+    const widened = config.replace(
+      '"admins": [\n    "spw"\n  ]',
+      '"admins": [\n    "spw",\n    "bob"\n  ]',
+    );
+    expect(widened).not.toBe(config);
+    await rawCommit(b.root, {
+      files: { '.backe/backlog.jsonc': widened },
+      key: bob,
+      actor: 'bob',
+      op: 'manual',
+    });
+    await writeLocalState(b.root, 'identity', 'bob');
+    const asBob: ResolvedContext = {
+      ...ctx,
+      backlog: { ...ctx.backlog, boundTo: 'bob' },
+      user: { ...ctx.user, value: 'bob', key: bob.priv },
+    };
+    const before = await revParse(b.root, 'HEAD');
+    await write('users/xena.md', '---\nname: Xena\nkind: human\n---\n');
+
+    const err = await catchErrAsync(() => executeWrite(asBob, EDITS));
+    expect(err.code).toBe('validation');
+    expect(err.details).toEqual({ reasons: ['bob darf den User xena nicht anlegen'] });
+    expect(await revParse(b.root, 'HEAD')).toBe(before);
+    expect(await statusShort(b.root)).toEqual(['?? users/xena.md']);
+  });
+
+  test('edits: a quarantine reverted by hand while frozen lands and verifies', async () => {
+    const [a] = (await issues('A')) as [string];
+    const original = await read(issueFile(a));
+    const bad = await rawCommit(b.root, {
+      files: { [issueFile(a)]: original.replace('title: A', 'title: X') },
+      actor: 'spw',
+    });
+    await write(issueFile(a), original);
+    const entries = [{ sha: bad, decision: 'reverted', reason: 'von Hand' }];
+    await write(QUARANTINE, `${JSON.stringify({ entries }, null, 2)}\n`);
+
+    const r = await executeWrite(ctx, EDITS);
+    expect(r.chain.map((c) => c.kind)).toEqual(['manual', 'op']);
+    const report = await verifyRange(b.root);
+    expect(report.invalid).toEqual([]);
+    expect(report.quarantined.map((f) => f.sha)).toEqual([bad]);
+  });
+
+  test('edits read the format version from HEAD', async () => {
+    await edit('.backe/backlog.jsonc', (s) => s.replace('"version": 1', '"version": 99'));
+    const r = await executeWrite(ctx, EDITS);
+    expect(r.chain).toMatchObject([{ kind: 'manual', paths: ['.backe/backlog.jsonc'] }]);
+    expect(await statusShort(b.root)).toEqual([]);
+  });
+
   test('edits: a hand-edited config that does not parse never lands', async () => {
     const config = await read('.backe/backlog.jsonc');
     await write('.backe/backlog.jsonc', config.replace(/\n}\n$/, ',\n  "attachments": 5\n}\n'));
@@ -1386,6 +1496,90 @@ describe('lfs', () => {
       expect(await statusShort(b.root)).toEqual([]);
       const pointer = await git(['cat-file', '-p', `HEAD:${old}`], { cwd: b.root });
       expect(pointer.stdout).toMatch(/^version https:\/\/git-lfs\.github\.com\/spec\/v1\n/);
+    },
+  );
+
+  test.runIf(hasLfs)(
+    'a crash after update-ref with renormalized attachments leaves them unstaged',
+    async () => {
+      const id = await createdId();
+      const attach = (file: string): WriteInput => ({
+        kind: 'op',
+        op: { op: 'attach.add', id, name: file, file, content: Buffer.from(`${file}\n`) },
+      });
+      const old = `${attachmentsDir(id)}/old.txt`;
+      await executeWrite(ctx, attach('old.txt'));
+      await enableLfs();
+      const start = await revParse(b.root, 'HEAD');
+      const journal = join(await stateDir(b.root), 'write.journal');
+      let left = '';
+      await executeWrite(ctx, attach('new.txt'), {
+        hooks: {
+          afterCommit: async () => {
+            left = await readFile(journal, 'utf8');
+          },
+        },
+      });
+      expect(JSON.parse(left).paths).toContain(old);
+      // Zustand wie nach einem SIGKILL nach dem Ref-Update, bevor der Index nachgezogen war.
+      const raw = await revParse(b.root, `${start}:${old}`);
+      await git(['update-index', '--cacheinfo', `100644,${raw},${old}`], { cwd: b.root });
+      await writeFile(journal, left);
+      expect(await statusShort(b.root)).not.toEqual([]);
+
+      await executeWrite(ctx, CREATE_B);
+      expect(await statusShort(b.root)).toEqual([]);
+      expect(await readdir(await stateDir(b.root))).not.toContain('write.journal');
+    },
+  );
+
+  test.runIf(hasLfs)('landedChain recognizes a landed commit with an lfs attachment', async () => {
+    await enableLfs();
+    const id = await createdId();
+    const before = await revParse(b.root, 'HEAD');
+    const path = `${attachmentsDir(id)}/log.txt`;
+    const r = await executeWrite(
+      ctx,
+      {
+        kind: 'op',
+        op: { op: 'attach.add', id, name: 'log', file: 'log.txt', content: Buffer.from('Bytes\n') },
+      },
+      {
+        hooks: {
+          afterCommit: async () => {
+            throw new BackeError('unexpected', 'boom');
+          },
+        },
+      },
+    );
+    expect(r.commit).toBe(await revParse(b.root, 'HEAD'));
+    expect(await revParse(b.root, 'HEAD^')).toBe(before);
+    expect(await readFile(join(b.root, path), 'utf8')).toBe('Bytes\n');
+    expect(await statusShort(b.root)).toEqual([]);
+    expect(await readdir(await stateDir(b.root))).not.toContain('write.journal');
+  });
+
+  test.runIf(hasLfs)(
+    'lfs: a chain touching a renormalized attachment again while frozen is refused',
+    async () => {
+      const id = await createdId();
+      await executeWrite(ctx, {
+        kind: 'op',
+        op: { op: 'attach.add', id, name: 'old', file: 'old.txt', content: Buffer.from('alt\n') },
+      });
+      await enableLfs();
+      const bad = await rawCommit(b.root, { files: { 'notes.md': 'x\n' }, actor: 'spw' });
+      const before = await revParse(b.root, 'HEAD');
+      // Die neue Regel legt den Anhang im manual-Commit neu ab; `issue.delete` danach ändert ihn
+      // ein zweites Mal — sein Parent trägt dann nicht mehr den Blob des eingefrorenen Stands.
+      await writeFile(join(b.root, '.gitattributes'), `${LFS_RULE}\n`);
+      await rm(join(b.root, issueFile(id)));
+
+      const err = await catchErrAsync(() => executeWrite(ctx, { kind: 'edits' }));
+      expect(err.details).toEqual({
+        reasons: [`baut auf ungültigem Commit ${bad.slice(0, 7)} auf`],
+      });
+      expect(await revParse(b.root, 'HEAD')).toBe(before);
     },
   );
 

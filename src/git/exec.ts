@@ -7,7 +7,8 @@ export type GitEnv = Readonly<Record<string, string | undefined>>;
 export type GitOptions = {
   cwd: string;
   env?: GitEnv;
-  input?: string;
+  /** Für stdin; Bytes etwa für `hash-object --stdin` mit Binärinhalt. */
+  input?: string | Uint8Array;
   okExitCodes?: readonly number[];
   /** Bricht den Aufruf nach so vielen Millisekunden ab (SIGKILL) und meldet `unexpected`. */
   timeoutMs?: number;

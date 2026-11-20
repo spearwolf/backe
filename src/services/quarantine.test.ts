@@ -69,6 +69,24 @@ test('revert restores the files and records the entry in the same commit', async
   expect((await logTrailers(b.root))[0]?.subject).toBe(`verify revert ${bad.slice(0, 7)}`);
 });
 
+test('a revert while another invalid commit stays open may restore content of a later valid commit', async () => {
+  const ctx = await b.context();
+  // Unsigniert: friert den Stand ein und bleibt offen.
+  const first = await rawCommit(b.root, { files: { 'notes/x.txt': '1\n' }, actor: 'spw' });
+  const valid = await executeWrite(ctx, { kind: 'op', op: { op: 'issue.create', title: 'V' } });
+  const file = valid.paths[0] as string;
+  const content = await readFile(join(b.root, file), 'utf8');
+  const bad = await badCommit({ [file]: content.replace('title: V', 'title: W') });
+  expect((await verifyRange(b.root)).invalid.map((f) => f.sha)).toEqual([first, bad]);
+
+  await quarantineCommit(ctx, { sha: bad, decision: 'reverted', reason: 'zurück auf V' });
+
+  const r = await verifyRange(b.root);
+  expect(r.invalid.map((f) => f.sha)).toEqual([first]);
+  expect(r.quarantined.map((f) => f.sha)).toEqual([bad]);
+  expect(await readFile(join(b.root, file), 'utf8')).toBe(content);
+});
+
 test('revert brings back a file the commit deleted', async () => {
   await rawCommit(b.root, { files: { 'notes/keep.txt': 'keep\n' }, key: b.key, actor: 'spw' });
   const bad = await badCommit({ 'notes/keep.txt': null });

@@ -275,10 +275,12 @@ async function checkCommit(
  * als Ganzes gegen den eingefrorenen Stand beurteilt (nur Admins) und nennt Commits nur über ihren
  * Hash; hätte ein ungültiger Commit sie geändert, könnte sonst keine Quarantäne ihn je decken. Ein
  * Commit, der sie ändert und damit auftaut, ist ganz ausgenommen (`thaws`, im Aufrufer). Taut er
- * nicht auf, darf er Pfade nur zurücksetzen: auf den Blob im eingefrorenen Stand oder auf den Blob
- * eines offenen ungültigen Commits, über den ohnehin noch entschieden werden muss. So kehrt eine
- * Quarantäne mit `reverted` einen Commit um, während andere noch offen sind. Jede andere Änderung
- * trüge Neues auf dem ungültigen Stand weiter.
+ * nicht auf, darf er Pfade nur zurücksetzen: auf den Blob im eingefrorenen Stand, auf den Blob
+ * eines offenen ungültigen Commits, über den ohnehin noch entschieden werden muss, oder auf den
+ * Blob im Parent eines solchen Commits — den schreibt eine echte Umkehr, und er kann aus einem
+ * gültigen Commit nach dem Einfrieren stammen. So kehrt eine Quarantäne mit `reverted` einen
+ * Commit um, während andere noch offen sind. Jede andere Änderung trüge Neues auf dem ungültigen
+ * Stand weiter.
  */
 async function taintReasons(
   wc: string,
@@ -290,14 +292,14 @@ async function taintReasons(
   const changes = await treeChanges(wc, parent, commit.sha);
   const decides = changes.some((c) => c.path === QUARANTINE);
   const paths = changes.map((c) => c.path).filter((p) => p !== QUARANTINE);
-  const revs = [parent, frozen.at, ...(decides ? [commit.sha, ...frozen.open] : [])];
+  const back = [frozen.at, ...frozen.open.flatMap((o) => [o, `${o}^`])];
+  const revs = [parent, frozen.at, ...(decides ? [commit.sha, ...back] : [])];
   const info = await objectInfo(
     wc,
     paths.flatMap((p) => revs.map((rev) => `${rev}:${p}`)),
   );
   const oid = (rev: string, path: string) => info.get(`${rev}:${path}`)?.oid;
-  const undoes = (p: string) =>
-    decides && [frozen.at, ...frozen.open].some((rev) => oid(rev, p) === oid(commit.sha, p));
+  const undoes = (p: string) => decides && back.some((rev) => oid(rev, p) === oid(commit.sha, p));
   const tainted = paths.some((p) => oid(parent, p) !== oid(frozen.at, p) && !undoes(p));
   return tainted ? [`baut auf ungültigem Commit ${shortSha(frozen.open[0] as string)} auf`] : [];
 }

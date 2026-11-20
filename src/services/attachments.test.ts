@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { access, readFile, writeFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
@@ -14,6 +14,7 @@ import {
   removeAttachment,
 } from './attachments.ts';
 import { createIssue } from './issues.ts';
+import { executeWrite } from './write.ts';
 
 const bytes = (s: string) => new TextEncoder().encode(s);
 const file = (fileName: string, content = new Uint8Array()): AttachSource => ({
@@ -68,16 +69,12 @@ test('file names, limits and empty files', async () => {
   const cfgPath = join(b.root, '.backe/backlog.jsonc');
   const cfg = JSON.parse(await readFile(cfgPath, 'utf8')) as Record<string, unknown>;
   cfg.attachments = { max_bytes: 4, lfs: false };
-  await writeFile(cfgPath, JSON.stringify(cfg));
-  execFileSync('git', ['-C', b.root, 'commit', '-qam', 'cfg', '--no-gpg-sign'], {
-    env: {
-      ...process.env,
-      GIT_CONFIG_GLOBAL: '/dev/null',
-      GIT_AUTHOR_NAME: 't',
-      GIT_AUTHOR_EMAIL: 't@t',
-      GIT_COMMITTER_NAME: 't',
-      GIT_COMMITTER_EMAIL: 't@t',
-    },
+  // Gültig signiert: Ein ungültiger Commit fröre den Stand ein, und Writes auf das Issue danach
+  // bauten für verify auf ihm auf.
+  await executeWrite(ctx, {
+    kind: 'manual',
+    subject: 'cfg',
+    changes: [{ path: '.backe/backlog.jsonc', content: JSON.stringify(cfg) }],
   });
   await addAttachment(ctx, id, { name: 'vier', source: file('a.TXT', bytes('abcd')) });
   expect(
