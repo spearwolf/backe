@@ -21,7 +21,7 @@ import { encodeOp, type Operation } from '../ops/operation.ts';
 import { serializeEntityFile } from '../store/frontmatter.ts';
 import { BACKLOG_CONFIG, issueFile, QUARANTINE, userFile } from '../store/layout.ts';
 import { listIssueIds } from '../store/snapshot.ts';
-import { assertVerified, verifyBacklog, verifyRange } from './verify.ts';
+import { assertVerified, trustedVerifyMode, verifyBacklog, verifyRange } from './verify.ts';
 import { signatureReasons } from './verify-state.ts';
 import { executeWrite } from './write.ts';
 
@@ -405,7 +405,7 @@ test('a missing anchor is rejected', async () => {
 
 test('since limits the range', async () => {
   const bad = await rawCommit(b.root, { files: { x: '1' }, actor: 'spw', op: 'manual' });
-  const good = await signed('spw', { x: '2' });
+  const good = await signed('spw', { y: '2' });
 
   const all = await verifyRange(b.root);
   expect(all.checked).toBe(3);
@@ -559,6 +559,210 @@ describe('after an invalid commit', () => {
 
     expect(r.invalid).toEqual([]);
     expect(r.quarantined.map((f) => f.sha)).toEqual([bad]);
+  });
+});
+
+describe('paths changed by an open invalid commit', () => {
+  let agentKey: TestKey;
+  let eveKey: TestKey;
+
+  beforeEach(async () => {
+    [agentKey, eveKey] = await Promise.all([testKey('claude-1'), testKey('eve')]);
+    await addUser('mallory');
+    await executeWrite(ctx, {
+      kind: 'op',
+      op: {
+        op: 'user.add',
+        handle: 'claude-1',
+        name: 'claude-1',
+        kind: 'agent',
+        operator: 'spw',
+        keys: [agentKey.line],
+      },
+    });
+  });
+
+  const agentFile = (operator: string, keys: TestKey[]) =>
+    serializeEntityFile(
+      'user',
+      { name: 'claude-1', kind: 'agent', operator, keys: keys.map((k) => k.line) },
+      '',
+    );
+
+  /** B (unsigniert) macht mallory zum Operator von claude-1. */
+  const takeOver = () =>
+    rawCommit(b.root, {
+      files: { [userFile('claude-1')]: agentFile('mallory', [agentKey]) },
+      actor: 'spw',
+      op: 'manual',
+      subject: 'B',
+    });
+
+  /** C (gültig signiert von spw) trägt einen weiteren Key bei claude-1 ein, auf B aufbauend. */
+  const addKey = () =>
+    signed('spw', { [userFile('claude-1')]: agentFile('mallory', [agentKey, eveKey]) }, 'C');
+
+  test('a commit building on a path changed by an open invalid commit is itself invalid', async () => {
+    const B = await takeOver();
+    const C = await addKey();
+
+    const r = await verifyRange(b.root);
+
+    expect(r.invalid.map((f) => f.sha)).toEqual([B, C]);
+    expect(r.invalid[1]?.reasons).toEqual([`baut auf ungültigem Commit ${short(B)} auf`]);
+  });
+
+  test('a commit on untouched paths after an invalid one stays valid', async () => {
+    const B = await takeOver();
+    await executeWrite(ctx, { kind: 'op', op: { op: 'issue.create', title: 'C' } });
+
+    const r = await verifyRange(b.root);
+
+    expect(r.checked).toBe(5);
+    expect(r.invalid.map((f) => f.sha)).toEqual([B]);
+  });
+
+  test('a path set back to the frozen content is still built on the invalid commit', async () => {
+    const B = await takeOver();
+    const C = await signed(
+      'spw',
+      { [userFile('claude-1')]: agentFile('spw', [agentKey]) },
+      'zurück',
+    );
+
+    const r = await verifyRange(b.root);
+
+    expect(r.invalid.map((f) => [f.sha, f.reasons])).toEqual([
+      [B, ['unsigniert']],
+      [C, [`baut auf ungültigem Commit ${short(B)} auf`]],
+    ]);
+  });
+
+  test('after a covering quarantine, paths are judged against their parent again', async () => {
+    const B = await takeOver();
+    await signed('spw', { [QUARANTINE]: quarantine(B, 'Operator-Wechsel war abgesprochen') });
+    await addKey();
+
+    const r = await verifyRange(b.root);
+
+    expect(r.invalid).toEqual([]);
+    expect(r.quarantined.map((f) => f.sha)).toEqual([B]);
+  });
+
+  test('a quarantine commit restoring paths of open invalid commits is not built on them', async () => {
+    const B = await takeOver();
+    const C = await rawCommit(b.root, {
+      files: {
+        [userFile('claude-1')]: agentFile('mallory', [agentKey, eveKey]),
+        [QUARANTINE]: quarantine(anchor, 'untergeschoben'),
+      },
+      actor: 'spw',
+      op: 'manual',
+      subject: 'C',
+    });
+    const entries = [
+      { sha: C, decision: 'reverted', reason: 'zurück auf B' },
+      { sha: B, decision: 'accepted', reason: 'abgesprochen' },
+    ];
+    await signed('spw', {
+      [userFile('claude-1')]: agentFile('mallory', [agentKey]),
+      [QUARANTINE]: JSON.stringify({ entries }),
+    });
+
+    const r = await verifyRange(b.root);
+
+    expect(r.invalid).toEqual([]);
+    expect(r.quarantined.map((f) => f.sha)).toEqual([B, C]);
+  });
+});
+
+test('ancestor overrides verified in the descent check', async () => {
+  const upstream = await signed('spw', { x: '1' });
+  await signed('spw', { x: '2' }, 'lokal');
+  await verifyRange(b.root, { record: true });
+  const tip = await rawCommit(b.root, {
+    files: { y: '1' },
+    key: KEYS.spw,
+    actor: 'spw',
+    op: 'manual',
+    parents: [upstream],
+  });
+
+  expect((await verifyRange(b.root, { to: tip, ancestor: upstream })).invalid).toEqual([]);
+  expect((await catchErrAsync(() => verifyRange(b.root, { to: tip }))).code).toBe('verify');
+  const err = await catchErrAsync(() => verifyRange(b.root, { to: upstream, ancestor: tip }));
+  expect(err.code).toBe('verify');
+  expect(err.message).toBe(
+    `${upstream} ist kein Nachfahre des zuletzt verifizierten Stands ${short(tip)}`,
+  );
+});
+
+describe('trustedVerifyMode', () => {
+  /** Config-Text mit `verify: <mode>`. */
+  async function withMode(mode: 'warn' | 'off'): Promise<string> {
+    const config = JSON.parse(await readFile(join(b.root, BACKLOG_CONFIG), 'utf8'));
+    return JSON.stringify({ ...config, verify: mode });
+  }
+
+  test('trustedVerifyMode reads the frozen state, not the parent of the first remaining invalid commit', async () => {
+    const A = await rawCommit(b.root, {
+      files: { [BACKLOG_CONFIG]: await withMode('off') },
+      actor: 'spw',
+      op: 'manual',
+    });
+    const B = await rawCommit(b.root, { files: { x: '1' }, actor: 'spw', op: 'manual' });
+    await signed('spw', { [QUARANTINE]: quarantine(A, 'nur A geprüft') });
+
+    const r = await verifyRange(b.root);
+    expect(r.invalid.map((f) => f.sha)).toEqual([B]);
+    expect(r.quarantined.map((f) => f.sha)).toEqual([A]);
+
+    expect(await trustedVerifyMode(b.root)).toBe('strict');
+  });
+
+  test('the mode of the trusted state counts, whatever the invalid commits set', async () => {
+    await signed('spw', { [BACKLOG_CONFIG]: await withMode('warn') });
+    const warned = await revParse(b.root, 'HEAD');
+    await rawCommit(b.root, {
+      files: { [BACKLOG_CONFIG]: await withMode('off') },
+      actor: 'spw',
+      op: 'manual',
+    });
+
+    expect(await trustedVerifyMode(b.root)).toBe('warn');
+    expect(await trustedVerifyMode(b.root, warned)).toBe('warn');
+  });
+
+  test('without invalid commits the mode of to counts', async () => {
+    expect(await trustedVerifyMode(b.root)).toBe('strict');
+    await signed('spw', { [BACKLOG_CONFIG]: await withMode('off') });
+    expect(await trustedVerifyMode(b.root)).toBe('off');
+  });
+
+  test.each([
+    ['unreadable', { [BACKLOG_CONFIG]: '{ "verify": "warn"' }],
+    ['missing', { x: '1' }],
+  ])('a %s config in the trusted state means strict', async (_, files) => {
+    const wc = await realpath(await tempDir());
+    await git(['init', '-q', '-b', 'main'], { cwd: wc });
+    const sha = await rawCommit(wc, { files, actor: 'spw', op: 'init' });
+    await writeLocalState(wc, 'anchor', sha);
+
+    expect(await trustedVerifyMode(wc)).toBe('strict');
+  });
+
+  test('the descent check is left to the caller', async () => {
+    const upstream = await signed('spw', { x: '1' });
+    await signed('spw', { x: '2' });
+    await verifyRange(b.root, { record: true });
+    const tip = await rawCommit(b.root, {
+      files: { y: '1' },
+      actor: 'spw',
+      op: 'manual',
+      parents: [upstream],
+    });
+
+    expect(await trustedVerifyMode(b.root, tip)).toBe('strict');
   });
 });
 

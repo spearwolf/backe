@@ -21,8 +21,9 @@ import { resolveContext } from '../context/resolve.ts';
 import { readUserConfig, userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
 import { git } from '../git/exec.ts';
-import { readLocalState, writeLocalState } from '../git/local-state.ts';
+import { clearLocalState, readLocalState, writeLocalState } from '../git/local-state.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
+import { verifyRange } from './verify.ts';
 import {
   addBacklog,
   cloneBacklog,
@@ -227,6 +228,98 @@ test('a remote rewritten behind the verified state is refused', async () => {
   );
   expect(await exists(managedClonePath(other.homes, 'acme', 'claude-1'))).toBe(false);
   expect(await tempEntries(other.homes)).toEqual([]);
+});
+
+describe('descent of a clone from a trusted copy with unpushed work', () => {
+  /** Klon von spw, darauf ein lokaler, ungepushter und verifizierter Commit. */
+  async function trustedWithUnpushed(): Promise<string> {
+    await push();
+    const first = await cloneBacklog({
+      homes: other.homes,
+      env: other.env,
+      url: b.remote as string,
+      handle: 'spw',
+    });
+    await rawCommit(first.root, {
+      files: { 'notes.md': 'lokal\n' },
+      key: b.key,
+      actor: 'spw',
+      op: 'manual',
+    });
+    await verifyRange(first.root, { record: true });
+    expect(await readLocalState(first.root, 'verified')).toBe(await revParse(first.root, 'HEAD'));
+    return first.root;
+  }
+
+  const agentContext = async () =>
+    resolveContext({
+      cwd: await tempDir(),
+      env: other.env,
+      flags: { as: 'claude-1', backlog: 'acme' },
+    });
+
+  test('clone checks descent against upstream of the trusted copy', async () => {
+    const trusted = await trustedWithUnpushed();
+    const upstream = await readLocalState(trusted, 'upstream');
+    expect(upstream).toBe(await revParse(b.root, 'HEAD'));
+
+    const { root } = await ensureWorkingCopy(await agentContext(), 'claude-1');
+
+    expect(await revParse(root, 'HEAD')).toBe(upstream);
+    expect(await readLocalState(root, 'verified')).toBe(upstream);
+  });
+
+  test('without upstream it checks against the merge base with the remote-tracking branch', async () => {
+    const trusted = await trustedWithUnpushed();
+    await clearLocalState(trusted, 'upstream');
+
+    const { root } = await ensureWorkingCopy(await agentContext(), 'claude-1');
+
+    expect(await revParse(root, 'HEAD')).toBe(await revParse(b.root, 'HEAD'));
+  });
+
+  test('a remote behind the upstream of the trusted copy is refused', async () => {
+    const trusted = await trustedWithUnpushed();
+    await executeWrite(await b.context(), { kind: 'op', op: { op: 'issue.create', title: 'B' } });
+    await push();
+    await git(['fetch', '-q', 'origin'], { cwd: trusted });
+    const ahead = await revParse(b.root, 'HEAD');
+    await writeLocalState(trusted, 'upstream', ahead);
+    await git(['push', '-q', '-f', 'origin', 'HEAD~1:main'], { cwd: b.root });
+
+    const err = await catchErrAsync(async () =>
+      ensureWorkingCopy(await agentContext(), 'claude-1'),
+    );
+
+    expect(err.code).toBe('verify');
+    expect(err.message).toBe(
+      `${b.remote} ist kein Nachfahre des zuletzt verifizierten Stands ${ahead.slice(0, 7)}`,
+    );
+  });
+});
+
+test('clone writes upstream for a remote clone', async () => {
+  await executeWrite(await b.context(), { kind: 'op', op: { op: 'issue.create', title: 'A' } });
+  await push();
+
+  const r = await cloneBacklog({
+    homes: other.homes,
+    env: other.env,
+    url: b.remote as string,
+    handle: 'spw',
+  });
+
+  expect(await readLocalState(r.root, 'upstream')).toBe(await revParse(b.root, 'HEAD'));
+});
+
+test('a clone from a working copy without remote writes no upstream', async () => {
+  const local = await testBacklog();
+  const ctx = await local.context({ as: 'claude-1' });
+
+  const { root } = await ensureWorkingCopy(ctx, 'claude-1');
+
+  expect(await revParse(root, 'HEAD')).toBe(await revParse(local.root, 'HEAD'));
+  expect(await readLocalState(root, 'upstream')).toBeUndefined();
 });
 
 test('a remote whose HEAD is another branch is checked out on the sync branch', async () => {

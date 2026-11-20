@@ -3,7 +3,11 @@ import { join } from 'node:path';
 import { writeFileAtomic } from '../store/files.ts';
 import { git } from './exec.ts';
 
-export type LocalStateName = 'anchor' | 'verified' | 'identity';
+/**
+ * `upstream` ist der zuletzt verifizierte Stand des Remotes; anders als `verified` zeigt er nie auf
+ * einen ungepushten lokalen Commit.
+ */
+export type LocalStateName = 'anchor' | 'verified' | 'identity' | 'upstream';
 
 /** Zustandsverzeichnis unter dem Git-Dir (auch hinter einer `.git`-Datei); wird bei Bedarf angelegt. */
 export async function stateDir(wc: string): Promise<string> {

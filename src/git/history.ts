@@ -240,6 +240,16 @@ export async function isAncestor(wc: string, a: string, b: string): Promise<bool
   return exitCode === 0;
 }
 
+/** Bester gemeinsamer Vorfahre von `a` und `b`; keiner oder eine Revision fehlt → `undefined`. */
+export async function mergeBase(wc: string, a: string, b: string): Promise<string | undefined> {
+  const { stdout, exitCode } = await git(['merge-base', '--end-of-options', a, b], {
+    cwd: wc,
+    env: ENV,
+    okExitCodes: [1, 128],
+  });
+  return exitCode === 0 ? stdout.trim() : undefined;
+}
+
 /** Wurzel-Commits der Historie von `rev`. */
 export async function rootCommits(wc: string, rev: string): Promise<string[]> {
   const { stdout } = await git(['rev-list', '--max-parents=0', '--end-of-options', rev, '--'], {

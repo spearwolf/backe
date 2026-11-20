@@ -33,14 +33,15 @@ import { shortSha } from '../core/ids.ts';
 import { isHandle } from '../core/names.ts';
 import { BACKLOG_FORMAT_VERSION, BacklogConfigSchema, type UserConfig } from '../core/schemas.ts';
 import { git, transportEnv } from '../git/exec.ts';
-import { isAncestor, readBlobs, resolveCommit, rootCommits } from '../git/history.ts';
+import { isAncestor, mergeBase, readBlobs, resolveCommit, rootCommits } from '../git/history.ts';
 import { clearLocalState, readLocalState, writeLocalState } from '../git/local-state.ts';
 import { branchesWithUnpushed, gitRemotes, gitToplevel } from '../git/query.ts';
 import { headState } from '../git/repo.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
 import { firstStderrLine } from './init.ts';
-import { assertVerified, verifyRange } from './verify.ts';
+import { assertVerified, trustedVerifyMode, verifyRange } from './verify.ts';
+import { parseJsoncAs } from './verify-state.ts';
 
 /** Nur für Tests: läuft zwischen Clone und Abschluss. */
 export type CloneHooks = { beforeFinish?: () => Promise<void> };
@@ -93,36 +94,44 @@ async function singleRoot(wc: string, source: string): Promise<string> {
 }
 
 /**
- * `verify`-Modus des letzten vertrauenswürdigen Stands: der Config im Parent von `sha`. Ein
- * ungültiger Commit darf den Modus, nach dem er beurteilt wird, nicht selbst setzen. Ohne Parent
- * (der Anker ist ungültig) oder ohne lesbare Config gilt `strict`.
- */
-async function trustedMode(wc: string, sha: string): Promise<CloneConfig['verify']> {
-  const spec = `${sha}^:${BACKLOG_CONFIG}`;
-  const blob = (await readBlobs(wc, [spec])).get(spec);
-  if (blob === null || blob === undefined) return 'strict';
-  try {
-    const result = CloneConfigSchema.safeParse(readJsonc(blob.toString('utf8'), BACKLOG_CONFIG));
-    return result.success ? result.data.verify : 'strict';
-  } catch (error) {
-    if (error instanceof BackeError) return 'strict';
-    throw error;
-  }
-}
-
-/**
  * Prüft den Clone und zeichnet den verifizierten Stand auf. Gibt es ungültige Commits, entscheidet
- * der Modus vor dem ersten davon: `strict` wirft, `warn` meldet die Gründe, `off` behält still.
+ * der Modus des letzten vertrauenswürdigen Stands (`trustedVerifyMode`): `strict` wirft, `warn`
+ * meldet die Gründe, `off` behält still.
  */
 async function verifyClone(wc: string): Promise<string[]> {
   const report = await verifyRange(wc, { record: true });
-  const first = report.invalid[0];
-  if (first === undefined) return report.notices;
-  const mode = await trustedMode(wc, first.sha);
+  if (report.invalid.length === 0) return report.notices;
+  const mode = await trustedVerifyMode(wc);
   if (mode === 'strict') assertVerified(report);
   if (mode === 'off') return [];
   const reasons = report.invalid.flatMap((f) => f.reasons.map((r) => `${shortSha(f.sha)}: ${r}`));
   return [...reasons, ...report.notices];
+}
+
+/** `sync` der Config in `rev` von `wc`; fehlt sie oder ist sie unlesbar, `undefined`. */
+async function syncAt(wc: string, rev: string): Promise<CloneConfig['sync'] | undefined> {
+  const spec = `${rev}:${BACKLOG_CONFIG}`;
+  const blob = (await readBlobs(wc, [spec])).get(spec);
+  if (blob === null || blob === undefined) return undefined;
+  const config = parseJsoncAs(CloneConfigSchema, blob.toString('utf8'), BACKLOG_CONFIG);
+  return typeof config === 'string' ? undefined : config.sync;
+}
+
+/**
+ * Der Stand der vertrauten Arbeitskopie, von dem ein frischer Clone abstammen muss: ihr `upstream`
+ * (zuletzt verifizierter Remote-Stand), sonst der gemeinsame Vorfahre von `verified` und ihrem
+ * Remote-Tracking-Branch, sonst `verified`. `verified` allein darf auf einen ungepushten lokalen
+ * Commit zeigen, den kein Remote kennt. Remote und Branch kommen aus der Config im `HEAD` der
+ * vertrauten Arbeitskopie, nicht aus dem noch ungeprüften Clone.
+ */
+async function descentBase(trusted: string): Promise<string | undefined> {
+  const upstream = await readLocalState(trusted, 'upstream');
+  if (upstream !== undefined) return upstream;
+  const verified = await readLocalState(trusted, 'verified');
+  if (verified === undefined) return undefined;
+  const sync = await syncAt(trusted, 'HEAD');
+  const tracking = sync && `refs/remotes/${sync.remote}/${sync.branch}`;
+  return (tracking && (await mergeBase(trusted, verified, tracking))) ?? verified;
 }
 
 /** `HEAD` von `wc` enthält `sha`; fehlt das Objekt in `wc`, ist es kein Vorfahre. */
@@ -170,13 +179,16 @@ async function gitClone(
 /**
  * Klont `source` nach `temp` (mit `--reference`, falls angegeben), steht danach auf dem
  * Sync-Branch und hat Anker, Identität und den verifizierten Stand. `trust` prüft den
- * Backlog-Namen und nennt eine vorhandene Arbeitskopie desselben Backlogs: Von ihr kommen Anker
- * und zuletzt verifizierter Stand, und der Clone muss davon abstammen. Ohne sie gilt die einzige
- * Wurzel als Anker.
+ * Backlog-Namen und nennt eine vorhandene Arbeitskopie desselben Backlogs: Von ihr kommt der
+ * Anker, und der Clone muss von ihrem `descentBase` abstammen, der sein erster verifizierter Stand
+ * wird. Ohne sie gilt die einzige Wurzel als Anker. `fromRemote`: `source` ist das registrierte
+ * Remote des Backlogs, nicht eine Arbeitskopie; dann ist `HEAD` des Clones nach bestandener Prüfung
+ * sein `upstream`.
  */
 async function cloneInto(input: {
   env: Env;
   source: string;
+  fromRemote: boolean;
   reference?: Reference;
   temp: string;
   handle: string;
@@ -194,18 +206,19 @@ async function cloneInto(input: {
     (trusted === undefined ? undefined : await readLocalState(trusted, 'anchor')) ??
     (await singleRoot(temp, source));
   await writeLocalState(temp, 'anchor', anchor);
-  const verified = trusted === undefined ? undefined : await readLocalState(trusted, 'verified');
-  if (verified !== undefined) {
-    if (!(await descendsFrom(temp, verified))) {
+  const base = trusted === undefined ? undefined : await descentBase(trusted);
+  if (base !== undefined) {
+    if (!(await descendsFrom(temp, base))) {
       throw new BackeError(
         'verify',
-        `${source} ist kein Nachfahre des zuletzt verifizierten Stands ${shortSha(verified)}`,
+        `${source} ist kein Nachfahre des zuletzt verifizierten Stands ${shortSha(base)}`,
       );
     }
-    await writeLocalState(temp, 'verified', verified);
+    await writeLocalState(temp, 'verified', base);
   }
   await writeLocalState(temp, 'identity', handle);
   const notices = await verifyClone(temp);
+  if (input.fromRemote) await writeLocalState(temp, 'upstream', await resolveCommit(temp, 'HEAD'));
   if (version > BACKLOG_FORMAT_VERSION) {
     notices.unshift(
       `Backlog-Format ${version} ist neuer als dieses backe (${BACKLOG_FORMAT_VERSION}); nur lesen`,
@@ -267,6 +280,7 @@ export async function cloneBacklog(
     const { name, notices } = await cloneInto({
       env,
       source: url,
+      fromRemote: true,
       temp,
       handle,
       trust: async (actual) => {
@@ -336,6 +350,7 @@ export async function ensureWorkingCopy(
     const { notices } = await cloneInto({
       env: ctx.env,
       source,
+      fromRemote: entry?.remote !== undefined,
       ...(reference === undefined ? {} : { reference: { path: reference, dissociate: !managed } }),
       temp,
       handle,

@@ -5,16 +5,20 @@
  *
  * Ein ungültiger Commit verleiht keine Rechte: Ab dem ersten ungültigen Commit gilt für alle
  * folgenden der Stand vor ihm (eingefroren), bis eine gültige Quarantäne alle bis dahin ungültigen
- * Commits deckt; danach zählt wieder der Stand des jeweiligen Parents.
+ * Commits deckt; danach zählt wieder der Stand des jeweiligen Parents. Solange der Stand
+ * eingefroren ist, baut eine Änderung an einem Pfad, dessen Inhalt vom eingefrorenen Stand abweicht,
+ * auf den ungültigen Commits auf und ist selbst ungültig (`taintReasons`).
  */
+import { z } from 'zod';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
 import { shortSha } from '../core/ids.ts';
-import { type Quarantine, QuarantineSchema } from '../core/schemas.ts';
+import { BacklogConfigSchema, type Quarantine, QuarantineSchema } from '../core/schemas.ts';
 import {
   type CommitInfo,
   isAncestor,
   listCommits,
+  objectInfo,
   type RawChange,
   readBlobs,
   removedHandles,
@@ -53,13 +57,21 @@ export type VerifyReport = {
   quarantined: QuarantinedFinding[];
   notices: string[];
 };
-export type VerifyOptions = { since?: string; to?: string; record?: boolean };
+/**
+ * `ancestor` ersetzt `verified` in der Abstammungsprüfung: Beim Sync ist das `upstream`, weil
+ * `verified` auf ungepushte lokale Commits zeigen darf, die dem Remote fehlen.
+ */
+export type VerifyOptions = { since?: string; to?: string; record?: boolean; ancestor?: string };
 
-type Checked = VerifyFinding & { notices: string[]; quarantine?: Quarantine };
+export type VerifyMode = z.infer<typeof BacklogConfigSchema.shape.verify>;
+
+/** `basis` ist der Commit, gegen dessen Stand der Commit beurteilt wurde. */
+type Checked = VerifyFinding & { notices: string[]; quarantine?: Quarantine; basis: string };
 
 // --- Bereich und Anker ----------------------------------------------------------------------
 
-async function resolveRange(wc: string, opts: VerifyOptions) {
+/** `descent: false` überlässt die Abstammungsprüfung dem Aufrufer, der den Bereich schon geprüft hat. */
+async function resolveRange(wc: string, opts: VerifyOptions, descent = true) {
   const anchor = await readLocalState(wc, 'anchor');
   if (anchor === undefined) throw new BackeError('verify', `Kein Vertrauensanker in ${wc}`);
   const toRev = opts.to ?? 'HEAD';
@@ -69,10 +81,11 @@ async function resolveRange(wc: string, opts: VerifyOptions) {
     throw new BackeError('verify', `Historie von ${toRev} passt nicht zum Vertrauensanker`);
   }
   const verified = await readLocalState(wc, 'verified');
-  if (verified !== undefined && !(await isAncestor(wc, verified, to))) {
+  const ancestor = opts.ancestor ?? verified;
+  if (descent && ancestor !== undefined && !(await isAncestor(wc, ancestor, to))) {
     throw new BackeError(
       'verify',
-      `${toRev} ist kein Nachfahre des zuletzt verifizierten Stands ${shortSha(verified)}`,
+      `${toRev} ist kein Nachfahre des zuletzt verifizierten Stands ${shortSha(ancestor)}`,
     );
   }
   const since = opts.since === undefined ? undefined : await resolveCommit(wc, opts.since);
@@ -215,16 +228,19 @@ async function contentReasons(
   return { reasons, quarantine };
 }
 
-/** Prüft `commit` gegen den Stand `before`; `after` ist der Stand seines eigenen Baums. */
+/**
+ * Prüft `commit` gegen den Stand `before` (der von `basis`); `after` ist der Stand seines eigenen
+ * Baums.
+ */
 async function checkCommit(
   wc: string,
   commit: CommitInfo,
   anchor: string,
-  states: { before: State; after: State },
+  states: { before: State; after: State; basis: string },
   sig: Signature | undefined,
 ): Promise<Checked> {
   const { subject, trailers } = parseCommitMessage(commit.message);
-  const base = { sha: commit.sha, subject, notices: [] as string[] };
+  const base = { sha: commit.sha, subject, notices: [] as string[], basis: states.basis };
   if (commit.parents.length > 1) return { ...base, reasons: ['Merge-Commit'] };
   const actors = trailers.get(TRAILER_ACTOR) ?? [];
   const ops = trailers.get(TRAILER_OP) ?? [];
@@ -246,6 +262,36 @@ async function checkCommit(
     notices,
     ...(content.quarantine && { quarantine: content.quarantine }),
   };
+}
+
+// --- Verseuchte Pfade -----------------------------------------------------------------------
+
+/**
+ * Ein Commit auf einem eingefrorenen Stand baut auf den offenen ungültigen Commits auf, sobald er
+ * einen Pfad ändert, dessen Blob im Parent von dem im eingefrorenen Stand `frozenAt` abweicht:
+ * Sonst trüge ein gültiger Commit den Inhalt eines ungültigen weiter. Ausgenommen ist ein Commit,
+ * der die Quarantäne-Datei ändert. Er ist die Entscheidung eines Admins über die offenen Commits
+ * (nur Admins ändern sie, beurteilt gegen den eingefrorenen Stand) und der einzige Weg, den Stand
+ * wieder aufzutauen; eine Umkehr setzt dabei Pfade zurück, die ungültige Commits geändert haben.
+ * Fiele er selbst unter die Regel, könnte keine Quarantäne einen solchen Commit je decken.
+ */
+async function taintReasons(
+  wc: string,
+  commit: CommitInfo,
+  frozen: { at: string; firstOpen: string },
+): Promise<string[]> {
+  const parent = commit.parents[0] as string;
+  if (parent === frozen.at) return [];
+  const paths = (await treeChanges(wc, parent, commit.sha)).map((c) => c.path);
+  if (paths.includes(QUARANTINE)) return [];
+  const info = await objectInfo(
+    wc,
+    paths.flatMap((p) => [`${parent}:${p}`, `${frozen.at}:${p}`]),
+  );
+  const tainted = paths.some(
+    (p) => info.get(`${parent}:${p}`)?.oid !== info.get(`${frozen.at}:${p}`)?.oid,
+  );
+  return tainted ? [`baut auf ungültigem Commit ${shortSha(frozen.firstOpen)} auf`] : [];
 }
 
 // --- Quarantäne -----------------------------------------------------------------------------
@@ -271,49 +317,70 @@ type Walk = {
   governing: { sha: string | undefined; entries: Quarantine['entries'] };
   /** Der Stand, gegen den `verify` einen Commit auf `to` beurteilen würde. */
   next: State;
+  /** Der erste offene ungültige Commit; ohne eingefrorenen Stand `undefined`. */
+  firstOpen: string | undefined;
+  /** Der Commit, dessen Stand eingefroren ist; ohne eingefrorenen Stand `undefined`. */
+  frozenAt: string | undefined;
 };
 
 /**
  * Ein Gang über den Bereich, älteste zuerst. Jeder Commit wird gegen den eingefrorenen Stand
  * beurteilt, sonst gegen den seines Parents (der Anker gegen sich selbst). Der erste ungültige
  * Commit friert den Stand ein, gegen den er beurteilt wurde; eine gültige Quarantäne, die alle bis
- * dahin ungültigen Commits deckt, taut ihn wieder auf. Maßgeblich ist die Quarantäne des letzten
- * gültigen Commits im Bereich, der sie ändert, sonst keine. Die Datei bei `since` kann keinen
- * Commit danach nennen: Er stammt von `since` ab, sein Hash hinge an ihrem Inhalt.
+ * dahin ungültigen Commits deckt, taut ihn wieder auf. Solange er eingefroren ist, gilt zusätzlich
+ * `taintReasons`. Maßgeblich ist die Quarantäne des letzten gültigen Commits im Bereich, der sie
+ * ändert, sonst keine. Die Datei bei `since` kann keinen Commit danach nennen: Er stammt von
+ * `since` ab, sein Hash hinge an ihrem Inhalt.
  */
-async function walk(wc: string, opts: VerifyOptions): Promise<Walk> {
-  const { anchor, to, since } = await resolveRange(wc, opts);
+async function walk(wc: string, opts: VerifyOptions, descent = true): Promise<Walk> {
+  const { anchor, to, since } = await resolveRange(wc, opts, descent);
   const commits = await listCommits(wc, { from: since, to });
   const parents = commits.flatMap((c) => c.parents.slice(0, 1));
   const states = await loadStates(wc, [...new Set([...commits.map((c) => c.sha), ...parents, to])]);
   const stateOf = (sha: string) => states.get(sha) as State;
-  const own = (c: CommitInfo) => stateOf(c.sha === anchor ? c.sha : (c.parents[0] as string));
+  const ownBasis = (c: CommitInfo) => (c.sha === anchor ? c.sha : (c.parents[0] as string));
+  const own = (c: CommitInfo) => stateOf(ownBasis(c));
   const sigs = signatureCache(wc);
   await sigs.prefetch(commits.map((commit) => ({ commit, state: own(commit) })));
 
   let governing: Walk['governing'] = { sha: undefined, entries: [] };
-  let frozen: State | undefined;
+  let frozenAt: string | undefined;
   let open: string[] = [];
   const checked: Checked[] = [];
   for (const commit of commits) {
-    const before = frozen ?? own(commit);
+    const basis = frozenAt ?? ownBasis(commit);
+    const before = stateOf(basis);
     const sig = await sigs.of(commit, before);
-    const c = await checkCommit(wc, commit, anchor, { before, after: stateOf(commit.sha) }, sig);
+    const states = { before, after: stateOf(commit.sha), basis };
+    const c = await checkCommit(wc, commit, anchor, states, sig);
+    if (frozenAt !== undefined && commit.parents.length === 1) {
+      c.reasons.push(
+        ...(await taintReasons(wc, commit, { at: frozenAt, firstOpen: open[0] as string })),
+      );
+    }
     checked.push(c);
     if (c.reasons.length > 0) {
       open.push(c.sha);
-      frozen ??= before;
+      frozenAt ??= basis;
     }
     if (governs(c)) {
       const entries = c.quarantine.entries;
       governing = { sha: c.sha, entries };
       if (open.every((sha) => entries.some((e) => e.sha === sha))) {
         open = [];
-        frozen = undefined;
+        frozenAt = undefined;
       }
     }
   }
-  return { anchor, to, checked, governing, next: frozen ?? stateOf(to) };
+  return {
+    anchor,
+    to,
+    checked,
+    governing,
+    next: stateOf(frozenAt ?? to),
+    firstOpen: open[0],
+    frozenAt,
+  };
 }
 
 // --- Einstieg -------------------------------------------------------------------------------
@@ -343,7 +410,7 @@ export async function verifyRange(wc: string, opts: VerifyOptions = {}): Promise
     quarantined: [],
     notices: [],
   };
-  for (const { notices, quarantine: _, ...finding } of checked) {
+  for (const { notices, quarantine: _, basis: __, ...finding } of checked) {
     report.notices.push(...notices);
     if (finding.reasons.length === 0) continue;
     const entry = governing.entries.find((e) => e.sha === finding.sha);
@@ -352,6 +419,28 @@ export async function verifyRange(wc: string, opts: VerifyOptions = {}): Promise
   }
   if (opts.record && report.invalid.length === 0) await writeLocalState(wc, 'verified', to);
   return report;
+}
+
+/** Nur der Modus; unbekannte Felder einer neueren Formatversion stören nicht. */
+const VerifyModeSchema = z.object({ verify: BacklogConfigSchema.shape.verify });
+
+/**
+ * `verify`-Modus des letzten vertrauenswürdigen Stands bis `to` (Default `HEAD`): der Config im
+ * Stand, gegen den der erste verbliebene ungültige Commit beurteilt wurde — der eingefrorene Stand,
+ * nicht der Parent dieses Commits, denn ein ungültiger Commit darf den Modus, nach dem er beurteilt
+ * wird, nicht selbst setzen. Ohne verbliebene ungültige Commits gilt der Stand von `to`; ohne
+ * lesbare Config `strict`. Die Abstammung prüft der Aufrufer, der den Bereich schon geprüft hat.
+ */
+export async function trustedVerifyMode(wc: string, to?: string): Promise<VerifyMode> {
+  const range = await walk(wc, to === undefined ? {} : { to }, false);
+  const first = range.checked.find(
+    (c) => c.reasons.length > 0 && !range.governing.entries.some((e) => e.sha === c.sha),
+  );
+  const spec = `${first?.basis ?? range.to}:${BACKLOG_CONFIG}`;
+  const blob = (await readBlobs(wc, [spec])).get(spec);
+  if (blob === null || blob === undefined) return 'strict';
+  const config = parseJsoncAs(VerifyModeSchema, blob.toString('utf8'), BACKLOG_CONFIG);
+  return typeof config === 'string' ? 'strict' : config.verify;
 }
 
 /** Eine Datei mit Top-Level-Keys, die das Schema nicht kennt (backe.md §2.3), in Dateireihenfolge. */
