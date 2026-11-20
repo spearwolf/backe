@@ -570,7 +570,7 @@ backe attach add   <id> --name <n> (<datei> | --url <u> | --json <json|->)
 
 ### 2.19 MCP-Modus
 
-`backe mcp [--backlog …]` startet einen MCP-Server über stdio (offizielles TypeScript-SDK `@modelcontextprotocol/sdk`).
+`backe mcp [--backlog …]` startet einen MCP-Server über stdio (offizielles TypeScript-SDK v2, Paket `@modelcontextprotocol/server`). Der Server bedient über `serveStdio` beide Protokoll-Generationen: Clients mit `initialize`-Handshake (Revisionen bis 2025-11-25) und Clients der Revision 2026-07-28.
 
 - Kontext-Auflösung wie beim CLI, ausgehend vom Arbeitsverzeichnis des Prozesses und dessen Env. Ohne auflösbare Identität mit Key startet der Server nicht.
 - Der Server ist ein dünner Adapter über denselben Service-Layer wie das CLI (§2.20); kein Feature existiert nur in einer der beiden Türen, außer den hier genannten Ausnahmen.
@@ -601,7 +601,7 @@ backe attach add   <id> --name <n> (<datei> | --url <u> | --json <json|->)
 - **Runtime:** Node.js, aktuelles LTS. Stand heute ist das Node 26 (LTS laut Release-Schema seit Oktober 2026, aktuell 26.13.1 laut `mise ls-remote node`). `engines.node: ">=26"`.
 - **Sprache:** TypeScript strict, ESM only, `module: nodenext`.
 - **Toolchain:** mise (`mise.toml`: Node-Version, pnpm, Tasks `lint`, `test`, `build`, `check`); pnpm als Package-Manager; Biome für Lint und Format; Vitest mit v8-Coverage; tsdown für das Bundle `dist/cli.js` mit Shebang.
-- **Runtime-Abhängigkeiten** (klein halten): `commander` (CLI), `zod` (Schemas, daraus JSON Schemas für die Configs), `yaml` (Frontmatter, Round-Trip), `jsonc-parser` (JSONC lesen und kommentarerhaltend schreiben), `@modelcontextprotocol/sdk`. Git über das System-`git` per `child_process` (eigener dünner Wrapper), kein isomorphic-git — SSH-Signing und LFS gibt es nur im echten Git.
+- **Runtime-Abhängigkeiten** (klein halten): `commander` (CLI), `zod` (Schemas, daraus JSON Schemas für die Configs), `yaml` (Frontmatter, Round-Trip), `jsonc-parser` (JSONC lesen und kommentarerhaltend schreiben), `@modelcontextprotocol/server` (MCP-SDK v2; `@modelcontextprotocol/core` kommt transitiv mit, `@modelcontextprotocol/client` nur für Tests). Git über das System-`git` per `child_process` (eigener dünner Wrapper), kein isomorphic-git — SSH-Signing und LFS gibt es nur im echten Git.
 - **Systemvoraussetzungen:** `git` mit SSH-Signing, `ssh-keygen`; optional `git-lfs`, `gh`. `backe doctor` prüft alle.
 - **Plattformen v1:** Linux und macOS. Windows folgt später (§4.2).
 - **Lizenz:** MIT.

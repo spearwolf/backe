@@ -6,7 +6,7 @@
 
 **Architecture:** Schichten nach `backe.md` §2.20 (`core` → `store` → `context`/`git` → `ops` → `services` → `cli`/`mcp`), Abhängigkeiten nur nach unten. Die Meilensteine bauen von innen nach außen; jeder endet mit grünem `mise run check` und einem abnehmbaren Stand.
 
-**Tech Stack:** Node.js ≥ 26, TypeScript strict (ESM, `nodenext`), pnpm, Biome, Vitest + v8-Coverage + fast-check, tsdown; Runtime: `commander`, `zod`, `yaml`, `jsonc-parser`, `@modelcontextprotocol/sdk`; System-`git`, `ssh-keygen`.
+**Tech Stack:** Node.js ≥ 26, TypeScript strict (ESM, `nodenext`), pnpm, Biome, Vitest + v8-Coverage + fast-check, tsdown; Runtime: `commander`, `zod`, `yaml`, `jsonc-parser`, `@modelcontextprotocol/server`; System-`git`, `ssh-keygen`.
 
 **Spec:** `docs/proposals/backe.md` (Status `spezifiziert`). Abschnittsverweise hier meinen diese Datei.
 
@@ -15,7 +15,7 @@
 Gelten für jeden Meilenstein und jeden Task.
 
 - `engines.node: ">=26"`; TypeScript strict, ESM only, `module: nodenext` (§2.20).
-- Runtime-Abhängigkeiten ausschließlich `commander`, `zod`, `yaml`, `jsonc-parser`, `@modelcontextprotocol/sdk` (§2.20). Jede weitere Runtime-Abhängigkeit braucht Freigabe des Users.
+- Runtime-Abhängigkeiten ausschließlich `commander`, `zod`, `yaml`, `jsonc-parser`, `@modelcontextprotocol/server` (§2.20; MCP-SDK v2, `@modelcontextprotocol/core` transitiv). Jede weitere Runtime-Abhängigkeit braucht Freigabe des Users.
 - Git nur über das System-`git` per `child_process`, kein isomorphic-git (§2.20). Die globale Git-Config wird nie verändert; Signier-Settings nur per `-c` pro Aufruf (§2.13).
 - Schichtregel: `core` ohne I/O; Abhängigkeiten nur nach unten (§2.20).
 - Dateien: LF, UTF-8, abschließender Newline (§2.3). Kanonischer Roundtrip byte-identisch (§2.3).
@@ -57,7 +57,7 @@ Eingaben, die der Spec impliziert, aber keine seiner Testlisten (§5) abdeckt. J
 | M5a | CLI-Kern (`services`, `cli`): Gerüst, Ausgabe, alle Befehle außer den M5b-Gruppen | §2.4–2.7, §2.9–2.12, §2.14, §2.17, §2.18, §2.22–2.24 | [`2026-11-19-backe-m5a-cli-kern.md`](./2026-11-19-backe-m5a-cli-kern.md) |
 | M5b | `attach *` samt Größenlimit und LFS, `repo check\|where\|scan`, `commit` und `issue edit` per `$EDITOR`, `batch`, `doctor`, `config get\|set\|edit` | §2.8, §2.11, §2.13 (Hand-Edits), §2.15.1, §2.16.6 | [`2026-11-19-backe-m5b-werkzeuge.md`](./2026-11-19-backe-m5b-werkzeuge.md) |
 | M6 | Sync, Replay, Claim | §2.16.2–2.16.5 | [`2026-11-19-backe-m6-sync.md`](./2026-11-19-backe-m6-sync.md) |
-| M7 | MCP-Modus (`mcp`) | §2.19 | nächster Detailplan (M6 abgenommen) |
+| M7 | MCP-Modus (`mcp`) | §2.19 | [`2026-11-20-backe-m7-mcp.md`](./2026-11-20-backe-m7-mcp.md) |
 | M8 | Release | §2.21, README | entsteht nach M7 |
 
 ### M1 — Gerüst, `core`, `store`
@@ -284,7 +284,7 @@ Offene Punkte aus den Reviews von M5b, die ein späterer Detailplan einlösen mu
 Offene Punkte aus den Reviews von M6, die ein späterer Detailplan einlösen muss. Abgehakt wird hier, sobald der jeweilige Detailplan sie aufgenommen hat.
 
 - **M7 — MCP-Modus:**
-  - `notices` hat im JSON zwei Formen (Strings bei `sync`, Objekte sonst); der MCP-Adapter braucht eine.
+  - ✓ `notices` hat im JSON zwei Formen (Strings bei `sync`, Objekte sonst); der MCP-Adapter braucht eine. → M7, Festlegung »`notices` (M6)«
 - **M8 — Aufräumen, Tests, Robustheit:**
   - ✓ Resign verwirft eine reine Claim-Einheit still (`claim_lost` wird ignoriert); `assertClaimed` sollte an `round.claimSha === undefined` hängen. → M6, Abschluss-Review
   - `taintKeys` nennt nur das primäre Subjekt (`project.mv.to`, `project.rm.reassign`; Projektlisten sind nicht belastet); `repo.add` ohne Name belastet `repo:<url>`.
@@ -486,3 +486,4 @@ Stellen, die der Spec offenlässt und die dieser Plan festlegt. Nach Abnahme des
 | Warten auf `sync.lock` | Vordergrund-Sync, `--sync`, `issue claim` und `next --claim` warten bis zu 300 s auf `sync.lock`; tote Halter werden wie bisher übernommen. Der Hintergrund-Lauf bleibt bei `timeoutMs: 0`. Ersetzt den Default-Timeout in der Festlegung »§2.16.2 Debounce«. | M6 |
 | Abstammung beim Sync ohne `upstream` | Ohne `upstream` prüft der Sync Eingehendes gegen dieselbe Basis wie der Clone: `merge-base(verified, refs/remotes/<remote>/<branch>)` mit dem Tracking-Ref vor dem Fetch, sonst `verified`, ohne beides den Anker. | M6 |
 | LFS-Timeouts | `git lfs fetch` und `git lfs push` laufen mit 300 s Timeout; ein gescheiterter oder abgelaufener `git lfs push` → `sync`, ein `git lfs fetch` bleibt ein Hinweis wie jeder LFS-Pull-Fehler. `setUpLfs` und `git lfs checkout` laufen im Sync unter dem Write-Lock. | M6 |
+| §2.19, §2.20 MCP-SDK | v2 (`@modelcontextprotocol/server`, Start über `serveStdio`) statt v1 (`@modelcontextprotocol/sdk`): v1 bekommt Fixes nur mindestens sechs Monate nach dem v2-Release vom 2026-07-27, und die Protokollrevision 2026-07-28 gibt es nur in v2. Vom User freigegeben am 2026-11-20. | M7 |
