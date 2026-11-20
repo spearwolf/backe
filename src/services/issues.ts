@@ -45,6 +45,8 @@ export type IssueEditInput = {
   addDeps?: string[];
   rmDeps?: string[];
   parent?: string | null;
+  /** Handle oder `me`; `null` entfernt den Assignee. */
+  assignee?: string | null;
   props?: string[];
   unsetProps?: string[];
   body?: string;
@@ -135,6 +137,11 @@ export async function editIssue(
         const to = input.parent === null ? null : resolveIssueRef(s, input.parent);
         const from = issue.parent ?? null;
         if (to !== from) set.parent = { from, to };
+      }
+      if (input.assignee !== undefined) {
+        const to = input.assignee === null ? null : resolveHandle(ctx, input.assignee);
+        const from = issue.assignee ?? null;
+        if (to !== from) set.assignee = { from, to };
       }
       if (Object.keys(set).length > 0) op.set = set;
 

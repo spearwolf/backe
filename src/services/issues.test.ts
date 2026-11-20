@@ -362,6 +362,23 @@ describe('assignIssue', () => {
   });
 });
 
+describe('editIssue with assignee', () => {
+  test('editIssue sets title and assignee in one operation', async () => {
+    await setup();
+    const id = await newIssue('T');
+    const before = await revParse(b.root, 'HEAD');
+    const out = await editIssue(ctx, id, { title: 'Neu', assignee: 'me' });
+    expect(out.op).toMatchObject({
+      op: 'issue.edit',
+      set: { title: { to: 'Neu' }, assignee: { from: null, to: 'spw' } },
+    });
+    expect(await revParse(b.root, 'HEAD~1')).toBe(before);
+    expect((await issueOf(id)).data.assignee).toBe('spw');
+    await editIssue(ctx, id, { assignee: null });
+    expect((await issueOf(id)).data.assignee).toBeUndefined();
+  });
+});
+
 describe('rankIssue', () => {
   test('rank before an anchor given as short id', async () => {
     await setup();

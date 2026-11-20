@@ -44,11 +44,20 @@ test('the server reports its identity and the instructions', async () => {
     const { tools } = await m.client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
+        'attachment_add',
         'attachment_get',
+        'batch',
+        'comment_add',
         'context_get',
+        'issue_create',
         'issue_get',
         'issue_list',
+        'issue_move',
         'issue_next',
+        'issue_rank',
+        'issue_reopen',
+        'issue_resume',
+        'issue_update',
         'project_list',
         'repo_locate',
         'sprint_get',

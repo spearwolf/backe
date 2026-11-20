@@ -15,6 +15,7 @@ import { contextJson } from '../services/views.ts';
 import type { WriteDeps } from '../services/write.ts';
 import { registerIssueResource, registerReadTools } from './read-tools.ts';
 import { defineTool, type ToolEnv, writeQueue } from './tool.ts';
+import { registerWriteTools } from './write-tools.ts';
 
 export type McpDeps = { sync?: SyncDeps; write?: WriteDeps; claim?: ClaimDeps };
 export type McpOptions = {
@@ -62,6 +63,7 @@ function registerTools(server: McpServer, env: ToolEnv): void {
     async (ctx, args) => contextJson(await contextInfo(ctx, { props: args.props === true })),
   );
   registerReadTools(server, env);
+  registerWriteTools(server, env);
   registerIssueResource(server, env);
 }
 
