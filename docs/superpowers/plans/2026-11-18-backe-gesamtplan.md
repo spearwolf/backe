@@ -117,6 +117,8 @@ Eingaben, die der Spec impliziert, aber keine seiner Testlisten (§5) abdeckt. J
 
 **Abnahme:** Integrationstests aus §5 zu parallelen Änderungen, Zyklen aus zwei sauberen Änderungen, `project.mv` im Replay, Re-Signatur, `manual`-Konflikt, parallelem Claim mit genau einem Gewinner, Debounce, `pull_interval` mit Fake Timers.
 
+**Abgenommen** am 2026-11-20: Abschluss-Review über den ganzen Meilenstein, seine Befunde (ein kritischer, zwei wichtige, dazu die LFS-Timeouts) in einer Fix-Welle behoben und nachgeprüft; 2513 Tests grün, Coverage 98,97 % Lines / 93,23 % Branches. Offene Kleinbefunde stehen unter »Übernommen aus M6«.
+
 ### M7 — MCP-Modus
 
 **Liefert:** `backe mcp` über stdio mit den Tools und der Resource aus §2.19, `--allow-delete`, periodischen Sync, Start nur mit auflösbarer Identität.
