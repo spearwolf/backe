@@ -50,6 +50,19 @@ describe('selectNext', () => {
     expect(selectNext(s, q)).toMatchObject({ id: I(1), resumed: false });
   });
 
+  test('excluded issues are skipped, own in_progress included', () => {
+    const s = snap({
+      issues: [
+        { id: I(1), rank: 1 },
+        { id: I(2), rank: 2 },
+        { id: I(3), state: 'in_progress', assignee: 'claude-1' },
+      ],
+    });
+    expect(selectNext(s, { ...q, exclude: [I(3)] })).toMatchObject({ id: I(1), resumed: false });
+    expect(selectNext(s, { ...q, exclude: [I(3), I(1)] })).toMatchObject({ id: I(2) });
+    expect(selectNext(s, { ...q, exclude: [I(1), I(2), I(3)] }).id).toBeUndefined();
+  });
+
   test('own in_progress comes first after a crash', () => {
     const s = snap({
       issues: [

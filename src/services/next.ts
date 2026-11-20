@@ -7,6 +7,7 @@ import { BackeError } from '../core/errors.ts';
 import type { Issue } from '../core/schemas.ts';
 import { selectNext } from '../ops/next.ts';
 import type { Notice } from '../ops/notice.ts';
+import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { hasOpenDeps } from './issue-list.ts';
 import { effectiveFilter, openSnapshot } from './read.ts';
 
@@ -25,16 +26,37 @@ export type NextQuery = {
   sprint?: string;
   repo?: string;
   all?: boolean;
+  /** Issues, die nicht gewählt werden: die Kandidaten verlorener Claims (`next --claim`). */
+  exclude?: readonly string[];
 };
 
-export async function nextIssue(ctx: ResolvedContext, q: NextQuery): Promise<NextOutcome> {
+/** Der Handle, für den `next` wählt; ohne Identität `usage`. */
+export function nextActor(ctx: ResolvedContext): string {
   const actor = ctx.user.value;
   if (actor === undefined) {
     throw new BackeError('usage', '»next« braucht eine Identität', {
       hint: 'mit --as <handle> angeben oder eine Identität setzen',
     });
   }
-  const { snapshot: s } = await openSnapshot(ctx);
+  return actor;
+}
+
+export async function nextIssue(ctx: ResolvedContext, q: NextQuery): Promise<NextOutcome> {
+  const actor = nextActor(ctx);
+  const { snapshot } = await openSnapshot(ctx);
+  return pickNext(ctx, snapshot, actor, q);
+}
+
+/**
+ * Die Auswahl von `next` auf dem Stand `s`, rein: das nächste Issue für `actor` im Kontextfilter,
+ * ohne die Issues aus `q.exclude`. Ohne Kandidat `not_found` mit dem Grund.
+ */
+export function pickNext(
+  ctx: ResolvedContext,
+  s: BacklogSnapshot,
+  actor: string,
+  q: NextQuery,
+): NextOutcome {
   const f = effectiveFilter(
     ctx,
     {
@@ -47,6 +69,7 @@ export async function nextIssue(ctx: ResolvedContext, q: NextQuery): Promise<Nex
   const result = selectNext(s, {
     actor,
     level: q.level ?? 'leaf',
+    ...(q.exclude === undefined ? {} : { exclude: q.exclude }),
     filter: {
       ...(f.project?.[0] === undefined ? {} : { project: f.project[0] }),
       ...(f.sprint?.[0] === undefined ? {} : { sprint: f.sprint[0] }),

@@ -34,7 +34,13 @@ export function matchesContext(issue: Issue, f: ContextFilter): boolean {
   return true;
 }
 
-export type NextQuery = { actor: string; level: 'leaf' | 'top'; filter: ContextFilter };
+export type NextQuery = {
+  actor: string;
+  level: 'leaf' | 'top';
+  filter: ContextFilter;
+  /** Issues, die nicht gewählt werden (etwa verlorene Claims); sie zählen sonst weiter mit. */
+  exclude?: readonly string[];
+};
 
 export type NextResult = {
   id?: string;
@@ -114,11 +120,13 @@ export function selectNext(s: BacklogSnapshot, q: NextQuery): NextResult {
     .filter((i) => (q.level === 'top' ? i.parent === undefined : true))
     .filter((i) => matchesContext(i, q.filter));
   const mine = (i: Issue): boolean => i.assignee === undefined || i.assignee === q.actor;
+  const excluded = new Set(q.exclude ?? []);
   const open = (i: Issue): boolean => i.state === 'todo' || i.state === 'backlog';
 
   const own = inContext
     .filter(
       (i) =>
+        !excluded.has(i.id) &&
         i.state === 'in_progress' &&
         i.assignee === q.actor &&
         !ancestors(s, i.id).some((a) => {
@@ -132,6 +140,7 @@ export function selectNext(s: BacklogSnapshot, q: NextQuery): NextResult {
   const candidates = inContext
     .filter(
       (i) =>
+        !excluded.has(i.id) &&
         isReady(s, i.id, { level: q.level }) &&
         mine(i) &&
         (q.level === 'top' || occupyingAncestor(s, i.id, q.actor) === undefined),

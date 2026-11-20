@@ -127,17 +127,20 @@ function isInitRoot(commit: CommitInfo): boolean {
   return parseCommitMessage(commit.message).trailers.get(TRAILER_OP)?.[0] === 'init';
 }
 
+/** Ein lokaler Commit und seine Einheit; ohne gültigen backe-Commit von `handle` keine. */
+export type LocalCommit = { commit: CommitInfo; unit: ReplayUnit | undefined };
+
 /**
- * Die Commits `base..head` als Einheiten, älteste zuerst (ohne `base`: ab der Wurzel; der
- * `init`-Commit an der Wurzel ist nie eine Einheit). Jeder Commit muss ein backe-Commit von
- * `handle` sein: gültig signiert mit einem aktiven Key von `handle` im Users-Stand seines Parents,
- * `Backe-Actor` ist `handle`, `Backe-Op` lesbar. Sonst `verify`; ein Merge-Commit ebenso.
+ * Die Commits `base..head`, älteste zuerst (ohne `base`: ab der Wurzel; der `init`-Commit an der
+ * Wurzel zählt nie), je mit ihrer Einheit, wenn der Commit ein backe-Commit von `handle` ist:
+ * gültig signiert mit einem aktiven Key von `handle` im Users-Stand seines Parents, `Backe-Actor`
+ * ist `handle`, `Backe-Op` lesbar. Ein Merge-Commit ist `verify`.
  */
-export async function readUnits(
+export async function localCommits(
   wc: string,
   range: { base: string | undefined; head: string },
   handle: string,
-): Promise<ReplayUnit[]> {
+): Promise<LocalCommit[]> {
   const commits = (await listCommits(wc, { from: range.base, to: range.head })).filter(
     (c) => !isInitRoot(c),
   );
@@ -156,14 +159,34 @@ export async function readUnits(
       return state === undefined ? [] : [{ commit, state }];
     }),
   );
-  const units: ReplayUnit[] = [];
+  const out: LocalCommit[] = [];
   for (const commit of commits) {
     const state = stateOf(commit);
     const unit = unitOf(commit, handle);
-    if (state === undefined || unit === undefined) throw foreign(commit.sha);
+    if (state === undefined || unit === undefined) {
+      out.push({ commit, unit: undefined });
+      continue;
+    }
     const sig = await sigs.of(commit, state);
     const reasons = signatureReasons(sig, commit.gpgsig, state.users);
-    if (reasons.length > 0 || sig?.principal !== handle) throw foreign(commit.sha);
+    const valid = reasons.length === 0 && sig?.principal === handle;
+    out.push({ commit, unit: valid ? unit : undefined });
+  }
+  return out;
+}
+
+/**
+ * Die Commits `base..head` als Einheiten (`localCommits`). Jeder Commit muss ein backe-Commit von
+ * `handle` sein, sonst `verify` mit dem Hinweis auf `backe commit --resign`.
+ */
+export async function readUnits(
+  wc: string,
+  range: { base: string | undefined; head: string },
+  handle: string,
+): Promise<ReplayUnit[]> {
+  const units: ReplayUnit[] = [];
+  for (const { commit, unit } of await localCommits(wc, range, handle)) {
+    if (unit === undefined) throw foreign(commit.sha);
     units.push(unit);
   }
   return units;

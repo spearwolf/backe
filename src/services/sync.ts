@@ -180,7 +180,7 @@ async function authorAt(wc: string, rev: string, handle: string) {
  * sich zwischen `from` und `to` unterscheiden, keine ungesicherten Änderungen tragen; sonst
  * bleibt alles, wie es ist. Hand-Edits auf anderen Pfaden überstehen den Reset.
  */
-async function resetKeep(wc: string, from: string, to: string): Promise<void> {
+export async function resetKeep(wc: string, from: string, to: string): Promise<void> {
   const { stdout } = await git(['diff', '--name-only', '-z', '--no-renames', from, to, '--'], {
     cwd: wc,
   });
@@ -293,7 +293,11 @@ async function localSection(r: Round, s: Section): Promise<Local> {
 }
 
 /** Läuft unter dem Write-Lock der Arbeitskopie; SIGINT/SIGTERM erst nach dessen Freigabe. */
-async function underWriteLock<T>(wc: string, fn: () => Promise<T>, lock?: LockOptions): Promise<T> {
+export async function underWriteLock<T>(
+  wc: string,
+  fn: () => Promise<T>,
+  lock?: LockOptions,
+): Promise<T> {
   let deferred: NodeJS.Signals | undefined;
   try {
     return await withFileLock(
