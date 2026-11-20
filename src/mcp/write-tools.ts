@@ -4,10 +4,10 @@
  * `defineTool` mit `kind: 'write'`.
  */
 import { readFile, stat } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { basename, isAbsolute, relative, sep } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { expandPath, isMissing } from '../context/paths.ts';
+import { expandPath, isMissing, physicalPath } from '../context/paths.ts';
 import { BackeError } from '../core/errors.ts';
 import { PROP_KEY_RE } from '../core/names.ts';
 import { type AttachSource, addAttachment } from '../services/attachments.ts';
@@ -94,6 +94,17 @@ type AttachArgs = {
   text?: string | undefined;
 };
 
+/** Liegt `path` in `root` oder ist es `root` selbst? Beide physisch; verglichen wird je Segment. */
+function within(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`));
+}
+
+/**
+ * Die Quelle eines Anhangs. `path` darf nur auf eine Datei im Arbeitsverzeichnis des Servers
+ * zeigen, auch über Symlinks hinweg: Ein Agent soll keine beliebige Datei, die der Prozess lesen
+ * kann, in den geteilten, signierten Backlog committen.
+ */
 async function attachSource(a: AttachArgs, home: string, cwd: string): Promise<AttachSource> {
   const given = [a.path, a.url, a.json, a.text].filter((v) => v !== undefined).length;
   if (given !== 1) {
@@ -104,16 +115,23 @@ async function attachSource(a: AttachArgs, home: string, cwd: string): Promise<A
   if (a.text !== undefined) {
     return { kind: 'file', fileName: a.name, content: new TextEncoder().encode(a.text) };
   }
-  const path = expandPath(a.path as string, { home, base: cwd });
+  const raw = a.path as string;
+  const path = expandPath(raw, { home, base: cwd });
+  const real = await physicalPath(path);
+  if (!within(await physicalPath(cwd), real)) {
+    throw new BackeError('validation', `Datei »${raw}« liegt außerhalb des Arbeitsverzeichnisses`, {
+      hint: 'Inhalt per text oder json übergeben',
+    });
+  }
   let info: Awaited<ReturnType<typeof stat>>;
   try {
-    info = await stat(path);
+    info = await stat(real);
   } catch (error) {
     if (isMissing(error)) throw new BackeError('not_found', `Datei »${a.path}« nicht gefunden`);
     throw new BackeError('unexpected', `»${path}«: ${(error as NodeJS.ErrnoException).code}`);
   }
   if (!info.isFile()) throw new BackeError('validation', `${path} ist keine Datei`);
-  return { kind: 'file', fileName: basename(path), content: await readFile(path) };
+  return { kind: 'file', fileName: basename(path), content: await readFile(real) };
 }
 
 /**
@@ -359,7 +377,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     'attachment_add',
     {
       description:
-        'Anhang hinzufügen (wie backe attach add); genau eins von path (relativ zum Arbeitsverzeichnis des Servers), url, json, text',
+        'Anhang hinzufügen (wie backe attach add); genau eins von path (Datei im Arbeitsverzeichnis des Servers, relativ dazu), url, json, text',
       input: z.strictObject({
         id: z.string(),
         name: z.string(),

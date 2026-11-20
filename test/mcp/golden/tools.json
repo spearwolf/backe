@@ -1,7 +1,7 @@
 [
   {
     "name": "attachment_add",
-    "description": "Anhang hinzufügen (wie backe attach add); genau eins von path (relativ zum Arbeitsverzeichnis des Servers), url, json, text",
+    "description": "Anhang hinzufügen (wie backe attach add); genau eins von path (Datei im Arbeitsverzeichnis des Servers, relativ dazu), url, json, text",
     "inputSchema": {
       "type": "object",
       "properties": {

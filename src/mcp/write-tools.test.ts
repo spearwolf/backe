@@ -1,5 +1,6 @@
-import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { join, relative } from 'node:path';
+import { tempDir } from '../../test/helpers/backlog.ts';
 import { revParse, testBacklog } from '../../test/helpers/git.ts';
 import { connectMcp } from '../../test/helpers/mcp.ts';
 import { git } from '../git/exec.ts';
@@ -265,6 +266,41 @@ test('attachment_add reads path relative to the server cwd', () =>
     expect(r.ok.op.op).toBe('attach.add');
     const missing = await m.call('attachment_add', { id, name: 'x', path: 'nope.md' });
     expect(missing).toMatchObject({ error: { code: 'not_found' } });
+  }));
+
+test('attachment_add reads files in subdirectories of the server cwd', () =>
+  withMcp(async (m, b) => {
+    await mkdir(join(b.root, 'docs', 'tief'), { recursive: true });
+    await writeFile(join(b.root, 'docs', 'tief', 'plan.md'), '# Plan\n');
+    const id = await create(m);
+    const paths = ['docs/tief/plan.md', join(b.root, 'docs', 'tief', 'plan.md')];
+    for (const [i, path] of paths.entries()) {
+      const r = await m.call('attachment_add', { id, name: `plan-${i}`, path });
+      expect(r).toMatchObject({ ok: { op: { op: 'attach.add' } } });
+    }
+  }));
+
+test('attachment_add refuses files outside the server cwd, also through symlinks', () =>
+  withMcp(async (m, b) => {
+    const outside = await tempDir();
+    const secret = join(outside, 'geheim.txt');
+    await writeFile(secret, 'geheim\n');
+    await symlink(secret, join(b.root, 'link.txt'));
+    const id = await create(m);
+    const head = await revParse(b.root, 'HEAD');
+    const climb = relative(b.root, secret);
+    for (const path of [secret, climb, 'link.txt']) {
+      const r = await m.call('attachment_add', { id, name: 'x', path });
+      expect(r).toEqual({
+        error: {
+          code: 'validation',
+          message: `Datei »${path}« liegt außerhalb des Arbeitsverzeichnisses`,
+          hint: 'Inhalt per text oder json übergeben',
+        },
+      });
+    }
+    expect(climb.startsWith('..')).toBe(true);
+    expect(await revParse(b.root, 'HEAD')).toBe(head);
   }));
 
 test('attachment_add takes text, json and url sources', () =>
