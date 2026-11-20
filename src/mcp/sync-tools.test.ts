@@ -128,6 +128,24 @@ test('issue_next with claim claims the chosen issue', async () => {
   });
 });
 
+test('issue_next with claim and an unknown field claims nothing', async () => {
+  const x = await shared('X');
+  const head = await remoteHead();
+  const local = await revParse(t.agent.wc, 'HEAD');
+  const m = await agentMcp();
+  await using([m], async () => {
+    const r = await m.call('issue_next', { claim: true, fields: ['id', 'bogus'] });
+    expect(r).toMatchObject({
+      error: { code: 'usage', message: 'Unbekannte Felder für --fields: »bogus«' },
+    });
+    expect(await remoteHead()).toBe(head);
+    expect(await revParse(t.agent.wc, 'HEAD')).toBe(local);
+    const after = await m.call('issue_get', { id: x });
+    expect(after).toHaveProperty('ok.state', 'backlog');
+    expect(after).not.toHaveProperty('ok.assignee');
+  });
+});
+
 test('issue_next without claim reports no commit', async () => {
   const x = await shared('X');
   const head = await remoteHead();

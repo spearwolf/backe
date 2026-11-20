@@ -17,8 +17,11 @@ import { locateRepo } from '../services/repo-local.ts';
 import { listSprints, showSprint } from '../services/sprints.ts';
 import {
   attachmentJson,
+  checkFields,
   issueDetailJson,
   issueListResultJson,
+  LIST_FIELDS,
+  NEXT_FIELDS,
   nextJson,
   pickFields,
   repoLocateJson,
@@ -73,6 +76,14 @@ function listQuery(a: {
   return q;
 }
 
+/**
+ * Prüft `fields` vor jedem Service-Aufruf: Ein unbekanntes Feld ist `usage`, bevor gelesen oder
+ * (bei `issue_next` mit `claim`) übernommen und gepusht wird.
+ */
+function checkFieldsFirst(fields: readonly string[] | undefined, allowed: readonly string[]): void {
+  if (fields !== undefined) checkFields(fields, allowed);
+}
+
 /** Der Inhalt einer Datei als Text, wenn sie klein und gültiges UTF-8 ist; sonst `undefined`. */
 async function textOf(path: string, size: number): Promise<string | undefined> {
   if (size > TEXT_LIMIT) return undefined;
@@ -113,7 +124,10 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
       }),
       kind: 'read',
     },
-    async (ctx, a) => issueListResultJson(await listIssues(ctx, listQuery(a)), a.fields),
+    async (ctx, a) => {
+      checkFieldsFirst(a.fields, LIST_FIELDS);
+      return issueListResultJson(await listIssues(ctx, listQuery(a)), a.fields);
+    },
   );
 
   defineTool(
@@ -130,6 +144,7 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
       kind: 'read',
     },
     async (ctx, a) => {
+      checkFieldsFirst(a.fields, SHOW_FIELDS);
       const comments = a.comments === 'last' ? 1 : a.comments === 'all' ? 'all' : undefined;
       const d = await showIssue(ctx, a.id, comments === undefined ? {} : { comments });
       const obj = issueDetailJson(d);
@@ -159,6 +174,7 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
       kind: (a) => (a.claim === true ? 'sync' : 'read'),
     },
     async (ctx, a) => {
+      checkFieldsFirst(a.fields, NEXT_FIELDS);
       const q: NextQuery = {
         ...(a.level === undefined ? {} : { level: a.level }),
         ...(a.project === undefined ? {} : { project: a.project }),

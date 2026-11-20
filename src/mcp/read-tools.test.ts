@@ -70,6 +70,19 @@ test('issue_list matches backe issue list --json', () =>
     for (const i of issues) expect(Object.keys(i).sort()).toEqual(['id', 'state']);
   }));
 
+test('unknown fields are usage before any service runs', () =>
+  withMcp(async (m, b) => {
+    const i = await id(createIssue(await b.context(), { title: 'A' }));
+    listSpy.mockClear();
+    nextSpy.mockClear();
+    const usage = { error: { code: 'usage', message: 'Unbekannte Felder für --fields: »bogus«' } };
+    expect(await m.call('issue_list', { fields: ['bogus'] })).toMatchObject(usage);
+    expect(await m.call('issue_next', { fields: ['bogus'] })).toMatchObject(usage);
+    expect(await m.call('issue_get', { id: i, fields: ['bogus'] })).toMatchObject(usage);
+    expect(listSpy).not.toHaveBeenCalled();
+    expect(nextSpy).not.toHaveBeenCalled();
+  }));
+
 test('issue_list sorts by rank then created', () =>
   withMcp(async (m, b) => {
     const ctx = await b.context();
