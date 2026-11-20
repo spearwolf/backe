@@ -8,7 +8,7 @@ import type { Env } from '../../src/context/paths.ts';
 // Helfer importiert.
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
-const CLI = fileURLToPath(new URL('../../dist/cli.js', import.meta.url));
+export const CLI = fileURLToPath(new URL('../../dist/cli.js', import.meta.url));
 
 /** Git-Isolation des Testlaufs, die jeder CLI-Aufruf erbt; `NO_COLOR` setzen die Tests selbst. */
 const INHERITED = ['PATH', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'XDG_CONFIG_HOME'] as const;
@@ -16,6 +16,19 @@ const INHERITED = ['PATH', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'XDG_CONF
 export type CliResult = { stdout: string; stderr: string; code: number };
 
 export type CliBytesResult = { stdout: Buffer; stderr: string; code: number };
+
+/** Genau `env` plus die Git-Isolation des Testlaufs, als Umgebung eines Kindprozesses. */
+export function childEnv(env: Env): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const name of INHERITED) {
+    const value = process.env[name];
+    if (value !== undefined) out[name] = value;
+  }
+  for (const [name, value] of Object.entries(env)) {
+    if (value !== undefined) out[name] = value;
+  }
+  return out;
+}
 
 /** Führt `node dist/cli.js` mit genau `opts.env` (plus Git-Isolation) in `opts.cwd` aus. */
 export async function cli(
@@ -31,16 +44,11 @@ export function cliBytes(
   args: string[],
   opts: { env: Env; cwd: string; input?: string },
 ): Promise<CliBytesResult> {
-  const env: Record<string, string> = {};
-  for (const name of INHERITED) {
-    const value = process.env[name];
-    if (value !== undefined) env[name] = value;
-  }
-  for (const [name, value] of Object.entries(opts.env)) {
-    if (value !== undefined) env[name] = value;
-  }
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [CLI, ...args], { cwd: opts.cwd, env });
+    const child = spawn(process.execPath, [CLI, ...args], {
+      cwd: opts.cwd,
+      env: childEnv(opts.env),
+    });
     const out: Buffer[] = [];
     let stderr = '';
     child.stdout.on('data', (chunk: Buffer) => {

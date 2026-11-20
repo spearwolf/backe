@@ -1,0 +1,637 @@
+[
+  {
+    "name": "attachment_add",
+    "description": "Anhang hinzufügen (wie backe attach add); genau eins von path (relativ zum Arbeitsverzeichnis des Servers), url, json, text",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "json": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "attachment_get",
+    "description": "Anhang eines Issues holen (wie backe attach get); kleine UTF-8-Dateien kommen als text mit",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "batch",
+    "description": "Mehrere Operationen in einem Commit (wie backe batch); ops sind Objekte im Format von backe.md §2.16.6, Platzhalter wie $a verbinden sie",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ops": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        }
+      },
+      "required": [
+        "ops"
+      ],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "comment_add",
+    "description": "Kommentar an ein Issue schreiben (wie backe comment add)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "body"
+      ],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "context_get",
+    "description": "Aufgelösten Kontext mit Herkunft jedes Werts zeigen (wie backe context); mit props die Property-Deklarationen des Backlogs",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "props": {
+          "type": "boolean"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "issue_claim",
+    "description": "Issue übernehmen, synchron mit dem Remote (wie backe issue claim); hat es inzwischen jemand anderes → conflict",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "issue_create",
+    "description": "Issue anlegen (wie backe issue create); props ist ein Objekt",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "projects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sprints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "repos": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "assignee": {
+          "type": "string"
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parent": {
+          "type": "string"
+        },
+        "props": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "issue_delete",
+    "description": "Issue endgültig löschen (wie backe issue delete); nur mit --allow-delete",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "force": {
+          "type": "boolean"
+        },
+        "children": {
+          "type": "string",
+          "enum": [
+            "orphan",
+            "recursive"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "issue_get",
+    "description": "Issue mit Beziehungen zeigen (wie backe issue show); Kurz-IDs sind erlaubt",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "comments": {
+          "type": "string",
+          "enum": [
+            "none",
+            "last",
+            "all"
+          ]
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "issue_list",
+    "description": "Issues listen und filtern (wie backe issue list); Standard: alle offenen im Kontextfilter",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "project": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exact": {
+          "type": "boolean"
+        },
+        "sprint": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "repo": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "assignee": {
+          "type": "string"
+        },
+        "creator": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "blocked",
+            "unblockable",
+            "ready"
+          ]
+        },
+        "parent": {
+          "type": "string"
+        },
+        "top_level": {
+          "type": "boolean"
+        },
+        "prop": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "has_prop": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "query": {
+          "type": "string"
+        },
+        "tree": {
+          "type": "boolean"
+        },
+        "sort": {
+          "type": "string",
+          "enum": [
+            "rank",
+            "created"
+          ]
+        },
+        "all": {
+          "type": "boolean"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "issue_move",
+    "description": "Issue in einen State verschieben (wie backe issue move)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "blocked_by": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "force": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "to"
+      ],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "issue_next",
+    "description": "Nächstes Issue für mich zeigen (wie backe next); mit claim gleich übernehmen, synchron mit dem Remote",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "leaf",
+            "top"
+          ]
+        },
+        "project": {
+          "type": "string"
+        },
+        "sprint": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "all": {
+          "type": "boolean"
+        },
+        "claim": {
+          "type": "boolean"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "issue_rank",
+    "description": "Issue neu einreihen (wie backe issue rank); genau eins von top, bottom, before, after, value",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "top": {
+          "type": "boolean"
+        },
+        "bottom": {
+          "type": "boolean"
+        },
+        "before": {
+          "type": "string"
+        },
+        "after": {
+          "type": "string"
+        },
+        "value": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "issue_reopen",
+    "description": "Abgeschlossenes Issue wieder öffnen (wie backe issue reopen)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "issue_resume",
+    "description": "Blockiertes Issue fortsetzen (wie backe issue resume)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "issue_update",
+    "description": "Issue ändern (wie backe issue edit / assign); parent und assignee: null entfernt, props: null entfernt den Key",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "add_projects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rm_projects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "add_sprints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rm_sprints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "add_deps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rm_deps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "assignee": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "props": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "project_list",
+    "description": "Projekte mit der Zahl offener Issues (wie backe project list)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "repo_locate",
+    "description": "Lokaler Pfad eines Repos aus der User-Config (wie backe repo where)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "sprint_get",
+    "description": "Issues eines Sprints, gruppiert nach State (wie backe sprint show)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slug": {
+          "type": "string"
+        },
+        "project": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "repo": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "all": {
+          "type": "boolean"
+        },
+        "sort": {
+          "type": "string",
+          "enum": [
+            "rank",
+            "created"
+          ]
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "sprint_list",
+    "description": "Sprints, offene zuerst, mit der Zahl offener Issues (wie backe sprint list)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  },
+  {
+    "name": "sync_now",
+    "description": "Eine Sync-Runde mit dem Remote jetzt, blockierend (wie backe sync)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    }
+  }
+]

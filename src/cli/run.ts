@@ -19,6 +19,7 @@ import { contextCommand } from './commands/context.ts';
 import { doctorCommand } from './commands/doctor.ts';
 import { initCommand } from './commands/init.ts';
 import { issueCommands } from './commands/issue.ts';
+import { mcpCommand } from './commands/mcp.ts';
 import { nextCommand } from './commands/next.ts';
 import { projectCommands } from './commands/project.ts';
 import { repoCommands } from './commands/repo.ts';
@@ -75,6 +76,7 @@ export function buildProgram(rt: Runtime): Command {
   userCommands(program, rt);
   verifyCommand(program, rt);
   doctorCommand(program, rt);
+  mcpCommand(program, rt);
   configCommands(program, rt);
   return program;
 }
