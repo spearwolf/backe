@@ -42,7 +42,19 @@ test('the server reports its identity and the instructions', async () => {
       'Ergebnisse sind kompaktes JSON. Fehler kommen als {"error":{code,message,hint}}; Hinweise nennen CLI-Befehle und -Flags von backe: ein Tool entspricht dem gleichnamigen Befehl (issue_move ↔ backe issue move), ein Flag dem Parameter in snake_case (--add-dep ↔ add_deps, --blocked-by ↔ blocked_by).',
     );
     const { tools } = await m.client.listTools();
-    expect(tools.map((t) => t.name)).toEqual(['context_get']);
+    expect(tools.map((t) => t.name).sort()).toEqual(
+      [
+        'attachment_get',
+        'context_get',
+        'issue_get',
+        'issue_list',
+        'issue_next',
+        'project_list',
+        'repo_locate',
+        'sprint_get',
+        'sprint_list',
+      ].sort(),
+    );
   } finally {
     await m.close();
   }

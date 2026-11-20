@@ -13,6 +13,7 @@ import { contextInfo } from '../services/context-info.ts';
 import type { SyncDeps } from '../services/sync.ts';
 import { contextJson } from '../services/views.ts';
 import type { WriteDeps } from '../services/write.ts';
+import { registerIssueResource, registerReadTools } from './read-tools.ts';
 import { defineTool, type ToolEnv, writeQueue } from './tool.ts';
 
 export type McpDeps = { sync?: SyncDeps; write?: WriteDeps; claim?: ClaimDeps };
@@ -60,6 +61,8 @@ function registerTools(server: McpServer, env: ToolEnv): void {
     },
     async (ctx, args) => contextJson(await contextInfo(ctx, { props: args.props === true })),
   );
+  registerReadTools(server, env);
+  registerIssueResource(server, env);
 }
 
 export function createBackeMcp(opts: McpOptions, _start: ResolvedContext): BackeMcp {
