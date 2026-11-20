@@ -19,18 +19,34 @@ function endOf(stdin: Readable): Promise<void> {
 }
 
 /**
+ * Löst auf, sobald der Transport sich schließt, etwa nach einem Fehler auf stdout oder einer zu
+ * großen Nachricht. Dann pausiert er stdin, und `end` kommt womöglich nie. Den Handler, den
+ * `serveStdio` gesetzt hat, ruft er weiterhin zuerst.
+ */
+function closeOf(transport: StdioServerTransport): Promise<void> {
+  return new Promise((resolve) => {
+    const sdk = transport.onclose;
+    transport.onclose = () => {
+      sdk?.();
+      resolve();
+    };
+  });
+}
+
+/**
  * Prüft den Start (wirft den `BackeError` der CLI, bevor ein Byte auf stdout geht), bedient dann
- * den Client und endet mit stdin: Verbindung zu, Timer weg, laufende Tool-Aufrufe zu Ende. Beendet
- * nie selbst den Prozess.
+ * den Client und endet mit stdin oder dem Transport: Verbindung zu, Timer weg, laufende
+ * Tool-Aufrufe zu Ende. Beendet nie selbst den Prozess.
  */
 export async function runStdio(opts: McpOptions, io: StdioIo): Promise<void> {
   const mcp = await createBackeMcp(opts, await prepareMcp(opts));
   const ended = endOf(io.stdin);
+  const transport = new StdioServerTransport(io.stdin, io.stdout);
   const handle = serveStdio(() => mcp.build(), {
-    transport: new StdioServerTransport(io.stdin, io.stdout),
+    transport,
     onerror: (error) => io.stderr(`backe mcp: ${error.message}\n`),
   });
-  await ended;
+  await Promise.race([ended, closeOf(transport)]);
   await handle.close();
   await mcp.close();
 }

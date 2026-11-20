@@ -5,6 +5,7 @@
 import { readFile } from 'node:fs/promises';
 import { type McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { BackeError } from '../core/errors.ts';
 import { getAttachment } from '../services/attachments.ts';
 import { scheduleSync } from '../services/background.ts';
 import { nextClaim } from '../services/claim.ts';
@@ -281,6 +282,15 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
   );
 }
 
+/** `{id}` aus der URI, prozent-dekodiert; eine kaputte Kodierung ist `validation`. */
+function decodeId(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    throw new BackeError('validation', `Ungültige Issue-ID in der URI: »${raw}«`);
+  }
+}
+
 /** `backe://issue/{id}`: die Issue-Datei als Markdown; `{id}` darf eine Kurz-ID sein. */
 export function registerIssueResource(server: McpServer, env: ToolEnv): void {
   server.registerResource(
@@ -295,7 +305,7 @@ export function registerIssueResource(server: McpServer, env: ToolEnv): void {
       const ctx = await env.context();
       await scheduleSync(ctx, 'read', env.opts.deps?.sync);
       const raw = variables.id;
-      const ref = decodeURIComponent(Array.isArray(raw) ? (raw[0] ?? '') : (raw ?? ''));
+      const ref = decodeId(Array.isArray(raw) ? (raw[0] ?? '') : (raw ?? ''));
       const f = await readIssueFile(ctx, ref);
       return {
         contents: [{ uri: `backe://issue/${f.id}`, mimeType: 'text/markdown', text: f.text }],

@@ -73,6 +73,19 @@ test('runStdio reports out-of-band errors on stderr and keeps serving', async ()
   expect(t.stderr[0]).toMatch(/^backe mcp: Discarded a JSON-RPC response .*\n$/);
 });
 
+test('runStdio ends when the transport closes itself after a stdout error', async () => {
+  const t = await setup();
+  const running = runStdio(t.opts, t.io);
+  const reply = nextLine(t.stdout);
+  t.stdin.write(`${JSON.stringify(INITIALIZE)}\n`);
+  await reply;
+  // stdin bleibt offen; der Transport schließt sich selbst und pausiert stdin.
+  t.stdout.emit('error', new Error('Broken pipe'));
+  await running;
+  expect(t.stdin.readableEnded).toBe(false);
+  expect(t.stderr).toEqual(['backe mcp: Broken pipe\n']);
+});
+
 test('runStdio ends at once when stdin is already gone', async () => {
   const t = await setup();
   t.stdin.destroy();

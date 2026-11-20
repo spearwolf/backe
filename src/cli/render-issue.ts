@@ -1,6 +1,7 @@
 /**
  * Darstellung von Issues (backe.md §2.18, §2.22, §2.23): Listenzeilen, Detailansicht als Text
- * und Markdown; das JSON steht in `services/views.ts`. Alles hier ist rein und liefert Text oder Objekte; geschrieben wird im Befehl.
+ * und Markdown; das JSON steht in `services/views.ts`. Alles hier ist rein und liefert Text oder
+ * Objekte; geschrieben wird im Befehl.
  */
 import type { State } from '../core/state.ts';
 import type { IssueListItem } from '../services/issue-list.ts';

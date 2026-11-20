@@ -191,6 +191,13 @@ test('the issue resource serves the file as markdown', () =>
     );
   }));
 
+test('a malformed percent encoding in the resource URI is a German validation error', () =>
+  withMcp(async (m) => {
+    await expect(m.client.readResource({ uri: 'backe://issue/bk-%E0%A4%A' })).rejects.toThrow(
+      'Ungültige Issue-ID in der URI: »bk-%E0%A4%A«',
+    );
+  }));
+
 test('reads schedule a background sync', async () => {
   const b = await testBacklog({ remote: true });
   const calls: unknown[] = [];
