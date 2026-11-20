@@ -33,7 +33,7 @@ const PROTECTED_DIRS: ReadonlySet<string> = new Set([
   '.backe',
 ]);
 
-function assertRelative(path: string): void {
+export function assertRelative(path: string): void {
   const segments = path.split('/');
   if (
     path === '' ||
@@ -68,7 +68,7 @@ export function isIssueDirPath(path: string): boolean {
   );
 }
 
-function assertRecursiveAllowed(change: FileChange): void {
+export function assertRecursiveAllowed(change: FileChange): void {
   if (change.recursive !== true) return;
   if (change.content !== null || !isIssueDirPath(change.path)) {
     throw new BackeError('validation', `Rekursives Löschen nicht erlaubt: »${change.path}«`, {

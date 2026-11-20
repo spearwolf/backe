@@ -2,7 +2,9 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { copyFixture, fixture, tempDir } from '../../test/helpers/backlog.ts';
 import { catchErr, catchErrAsync } from '../../test/helpers/catch.ts';
+import { testBacklog } from '../../test/helpers/git.ts';
 import { I, seqBytes, snap } from '../../test/helpers/snapshot.ts';
+import { gitTreeSource } from '../git/tree-source.ts';
 import { applyBatch } from '../ops/batch.ts';
 import { translateEdits } from '../ops/translate.ts';
 import { serializeEntityFile } from './frontmatter.ts';
@@ -10,12 +12,15 @@ import { readJsonc } from './jsonc.ts';
 import { BACKLOG_CONFIG, issueFile } from './layout.ts';
 import {
   listComments,
+  listCommentsFrom,
   listIssueIds,
   loadRepoRegistry,
   loadSnapshot,
+  loadSnapshotFrom,
   orphanedProjectPaths,
   snapshotAt,
 } from './snapshot.ts';
+import { fsSource } from './source.ts';
 
 const readHook = vi.hoisted(() => ({
   fn: undefined as undefined | ((path: unknown, ...rest: unknown[]) => Promise<unknown>),
@@ -496,4 +501,36 @@ test('loadSnapshot reads .gitattributes', async () => {
   expect((await loadSnapshot(root)).attributes).toBeUndefined();
   await put(root, '.gitattributes', '*.png binary\n');
   expect((await loadSnapshot(root)).attributes).toBe('*.png binary\n');
+});
+
+test('loadSnapshotFrom(gitTreeSource(HEAD)) equals loadSnapshot of a clean working copy', async () => {
+  const { root } = await testBacklog();
+  expect(await loadSnapshotFrom(await gitTreeSource(root, 'HEAD'))).toEqual(
+    await loadSnapshot(root),
+  );
+});
+
+test('a hand edit changes loadSnapshot but not the HEAD source', async () => {
+  const { root } = await testBacklog();
+  const file = join(root, 'users/spw.md');
+  await writeFile(file, `${await readFile(file, 'utf8')}Body\n`);
+  const fromHead = await loadSnapshotFrom(await gitTreeSource(root, 'HEAD'));
+  const fromDisk = await loadSnapshot(root);
+  expect(fromHead.users.get('spw')?.body).not.toBe(fromDisk.users.get('spw')?.body);
+  expect(fromDisk.users.get('spw')?.body).toBe('Body\n');
+});
+
+test('loadSnapshotFrom names its origin when the config is missing', async () => {
+  const err = await catchErrAsync(() =>
+    loadSnapshotFrom({ list: async () => [], read: async () => undefined }, 'Commit abc'),
+  );
+  expect(err).toMatchObject({ code: 'not_found' });
+  expect(err.message).toContain('fehlt in Commit abc');
+});
+
+test('listCommentsFrom reads comments from a commit source', async () => {
+  const root = fixture('backlog-basic');
+  const id = 'bk-7f3k2';
+  const direct = await listComments(root, id);
+  expect(await listCommentsFrom(fsSource(root), id)).toEqual(direct);
 });

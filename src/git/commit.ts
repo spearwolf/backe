@@ -35,6 +35,65 @@ function gitFailure(error: unknown): FailureDetails | undefined {
   return undefined;
 }
 
+/** Baum von `parent`; ohne Parent der leere Baum. */
+export async function treeOf(wc: string, parent: string | undefined): Promise<string> {
+  const { stdout } =
+    parent === undefined
+      ? await git(['hash-object', '-t', 'tree', '--stdin'], { cwd: wc })
+      : await git(['rev-parse', `${parent}^{tree}`], { cwd: wc });
+  return stdout.trim();
+}
+
+export type SignedCommitInput = {
+  tree: string;
+  parent: string | undefined;
+  message: string;
+  key: string;
+  author: { name: string; email: string };
+  env: GitEnv;
+};
+
+/**
+ * Erzeugt ein signiertes Commit-Objekt über `commit-tree -S` (SSH-Signatur mit `key`); weder Refs
+ * noch Index noch Arbeitsbaum ändern sich. Autor und Committer sind `author`.
+ */
+export async function signedCommit(wc: string, input: SignedCommitInput): Promise<string> {
+  const { tree, parent } = input;
+  const commitEnv = {
+    ...transportEnv(input.env),
+    GIT_AUTHOR_NAME: input.author.name,
+    GIT_AUTHOR_EMAIL: input.author.email,
+    GIT_COMMITTER_NAME: input.author.name,
+    GIT_COMMITTER_EMAIL: input.author.email,
+  };
+  const created = await git(
+    [
+      '-c',
+      'gpg.format=ssh',
+      '-c',
+      `user.signingkey=${input.key}`,
+      'commit-tree',
+      '-S',
+      tree,
+      ...(parent === undefined ? [] : ['-p', parent]),
+      '-F',
+      '-',
+    ],
+    { cwd: wc, env: commitEnv, input: input.message },
+  ).catch((error: unknown) => {
+    const failure = gitFailure(error);
+    if (failure) {
+      const first = (failure.stderr ?? '').split('\n')[0] ?? '';
+      throw new BackeError('usage', `Signieren mit ${input.key} fehlgeschlagen: ${first}`, {
+        hint: 'Key-Pfad in identities prüfen; ein Public Key braucht einen laufenden ssh-agent.',
+        details: failure,
+      });
+    }
+    throw error;
+  });
+  return created.stdout.trim();
+}
+
 /**
  * Committet genau `input.paths` (Löschungen inklusive) signiert über einen temporären Index;
  * Index und Arbeitsbaum des Aufrufers bleiben für alle anderen Pfade unberührt. Eine Kette
@@ -55,47 +114,11 @@ export async function commitPaths(wc: string, input: CommitInput): Promise<strin
     // `-f`: Die Pfade gehören backe; eine `.gitignore` im Backlog darf sie nicht aussperren.
     await git(['add', '-A', '-f', ...pathspec], { cwd: wc, env, input: pathList(input.paths) });
     const tree = (await git(['write-tree'], { cwd: wc, env })).stdout.trim();
-    const parentTree =
-      parent === undefined
-        ? (await git(['hash-object', '-t', 'tree', '--stdin'], { cwd: wc })).stdout.trim()
-        : (await git(['rev-parse', `${parent}^{tree}`], { cwd: wc })).stdout.trim();
-    if (tree === parentTree) {
+    if (tree === (await treeOf(wc, parent))) {
       throw new BackeError('unexpected', 'Write ohne Änderung am Baum');
     }
 
-    const commitEnv = {
-      ...transportEnv(input.env),
-      GIT_AUTHOR_NAME: input.author.name,
-      GIT_AUTHOR_EMAIL: input.author.email,
-      GIT_COMMITTER_NAME: input.author.name,
-      GIT_COMMITTER_EMAIL: input.author.email,
-    };
-    const created = await git(
-      [
-        '-c',
-        'gpg.format=ssh',
-        '-c',
-        `user.signingkey=${input.key}`,
-        'commit-tree',
-        '-S',
-        tree,
-        ...(parent === undefined ? [] : ['-p', parent]),
-        '-F',
-        '-',
-      ],
-      { cwd: wc, env: commitEnv, input: input.message },
-    ).catch((error: unknown) => {
-      const failure = gitFailure(error);
-      if (failure) {
-        const first = (failure.stderr ?? '').split('\n')[0] ?? '';
-        throw new BackeError('usage', `Signieren mit ${input.key} fehlgeschlagen: ${first}`, {
-          hint: 'Key-Pfad in identities prüfen; ein Public Key braucht einen laufenden ssh-agent.',
-          details: failure,
-        });
-      }
-      throw error;
-    });
-    const sha = created.stdout.trim();
+    const sha = await signedCommit(wc, { ...input, tree });
     const target = input.updateRef ?? { from: parent };
     if (target === false) return sha;
 

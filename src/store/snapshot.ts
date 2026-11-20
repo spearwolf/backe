@@ -2,9 +2,6 @@
  * Lädt ein Backlog vom Dateisystem in einen Snapshot (backe.md §2.2). Kaputte Entitätsdateien
  * landen als `Problem` im Snapshot und fehlen in den Maps; nur die Backlog-Config ist Pflicht.
  */
-import type { Dirent } from 'node:fs';
-import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { BackeError } from '../core/errors.ts';
 import { isIssueId, shardOf } from '../core/ids.ts';
 import { isHandle, isProjectPath, isRepoName, isSprintSlug } from '../core/names.ts';
@@ -23,6 +20,7 @@ import {
 import { entriesInFileOrder, parseEntityFile } from './frontmatter.ts';
 import { readJsonc } from './jsonc.ts';
 import { BACKLOG_CONFIG, commentsDir, GITATTRIBUTES } from './layout.ts';
+import { fsSource, type SourceEntry, type TreeSource } from './source.ts';
 
 /**
  * Eine geladene Entität. `extra` sind die unbekannten Top-Level-Keys samt Werten in
@@ -73,30 +71,26 @@ const PROBLEM_ORDER: readonly EntityKind[] = ['user', 'project', 'sprint', 'repo
 
 // --- Dateisystem-Helfer ------------------------------------------------------------------
 
-function isMissing(err: unknown): boolean {
-  const code = (err as NodeJS.ErrnoException | undefined)?.code;
-  return code === 'ENOENT' || code === 'ENOTDIR';
+/** Einträge eines Verzeichnisses (die Quelle sortiert sie nach Name); ein fehlendes ist leer. */
+function readDirSorted(src: TreeSource, dir: string): Promise<SourceEntry[]> {
+  return src.list(dir);
 }
 
-/** Einträge eines Verzeichnisses, nach Name sortiert; ein fehlendes Verzeichnis ist leer. */
-async function readDirSorted(abs: string): Promise<Dirent[]> {
-  try {
-    const entries = await readdir(abs, { withFileTypes: true });
-    return entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  } catch (err) {
-    if (isMissing(err)) return [];
-    throw err;
-  }
+/** Inhalt einer Datei, die die Quelle eben aufgelistet hat; fehlt sie doch, ist das ein Fehler. */
+async function readText(src: TreeSource, path: string): Promise<string> {
+  const bytes = await src.read(path);
+  if (bytes === undefined) throw new BackeError('not_found', `${path} fehlt`);
+  return bytes.toString('utf8');
 }
 
 /** Alle `*.md`-Dateien unter `dir` (rekursiv wenn `deep`), als Pfade relativ zur Wurzel. */
-async function listMarkdown(root: string, dir: string, deep: boolean): Promise<string[]> {
+async function listMarkdown(src: TreeSource, dir: string, deep: boolean): Promise<string[]> {
   const out: string[] = [];
-  for (const entry of await readDirSorted(join(root, dir))) {
+  for (const entry of await readDirSorted(src, dir)) {
     const rel = `${dir}/${entry.name}`;
-    if (entry.isDirectory()) {
-      if (deep) out.push(...(await listMarkdown(root, rel, deep)));
-    } else if (entry.isFile() && entry.name.endsWith('.md')) {
+    if (entry.dir) {
+      if (deep) out.push(...(await listMarkdown(src, rel, deep)));
+    } else if (entry.name.endsWith('.md')) {
       out.push(rel);
     }
   }
@@ -136,11 +130,11 @@ async function mapPool<T, R>(
 
 /** Liest, parst und validiert eine Entitätsdatei; wirft `BackeError('validation')`. */
 async function readEntity<T>(
-  root: string,
+  src: TreeSource,
   path: string,
   kind: EntityKind,
 ): Promise<StoredEntity<T>> {
-  return parseStored<T>(await readFile(join(root, path), 'utf8'), path, kind);
+  return parseStored<T>(await readText(src, path), path, kind);
 }
 
 function parseStored<T>(text: string, path: string, kind: EntityKind): StoredEntity<T> {
@@ -152,13 +146,13 @@ function parseStored<T>(text: string, path: string, kind: EntityKind): StoredEnt
 
 /** Wie `readEntity`, aber Prüffehler werden als Problem gesammelt statt geworfen. */
 async function tryEntity<T>(
-  root: string,
+  src: TreeSource,
   path: string,
   kind: EntityKind,
   key: string,
   problems: Problem[],
 ): Promise<StoredEntity<T> | undefined> {
-  const text = await readFile(join(root, path), 'utf8');
+  const text = await readText(src, path);
   return tryParse<T>(text, path, kind, key, problems);
 }
 
@@ -226,18 +220,18 @@ function namedKindOf(path: string): NamedKind | undefined {
 
 /** Lädt alle Dateien einer benannten Entitätsart, deren aus dem Pfad abgeleiteter Name gültig ist. */
 async function loadNamed<T>(
-  root: string,
+  src: TreeSource,
   kind: NamedKind,
   problems: Problem[],
 ): Promise<Map<string, StoredEntity<T>>> {
   const { dir, deep } = NAMED[kind];
   const candidates: { path: string; name: string }[] = [];
-  for (const path of await listMarkdown(root, dir, deep)) {
+  for (const path of await listMarkdown(src, dir, deep)) {
     const name = nameOf(kind, path, problems);
     if (name !== undefined) candidates.push({ path, name });
   }
   const loaded = await mapPool(candidates, MAX_CONCURRENT_READS, async ({ path, name }) => {
-    const entity = await tryEntity<T>(root, path, kind, name, problems);
+    const entity = await tryEntity<T>(src, path, kind, name, problems);
     return entity ? ([name, entity] as [string, StoredEntity<T>]) : undefined;
   });
   return sortedMap(loaded.filter((e) => e !== undefined));
@@ -271,10 +265,10 @@ function acceptProjects(
 }
 
 async function loadProjects(
-  root: string,
+  src: TreeSource,
   problems: Problem[],
 ): Promise<Map<string, StoredEntity<Project>>> {
-  return acceptProjects(await loadNamed<Project>(root, 'project', problems), problems);
+  return acceptProjects(await loadNamed<Project>(src, 'project', problems), problems);
 }
 
 /** Shard und Verzeichnisname, wenn `path` die Form `issues/<shard>/<dir>/issue.md` hat. */
@@ -328,17 +322,17 @@ function parseIssue(
 }
 
 async function loadIssues(
-  root: string,
+  src: TreeSource,
   problems: Problem[],
 ): Promise<Map<string, StoredEntity<Issue>>> {
   const candidates: { shard: string; id: string; path: string }[] = [];
-  const shards = (await readDirSorted(join(root, 'issues'))).filter((e) => e.isDirectory());
+  const shards = (await readDirSorted(src, 'issues')).filter((e) => e.dir);
   const listings = await mapPool(shards, MAX_CONCURRENT_READS, (shard) =>
-    readDirSorted(join(root, 'issues', shard.name)),
+    readDirSorted(src, `issues/${shard.name}`),
   );
   for (const [i, shard] of shards.entries()) {
     for (const dir of listings[i] ?? []) {
-      if (!dir.isDirectory()) continue;
+      if (!dir.dir) continue;
       candidates.push({
         shard: shard.name,
         id: dir.name,
@@ -352,17 +346,10 @@ async function loadIssues(
     MAX_CONCURRENT_READS,
     async ({ shard, id, path }): Promise<[string, StoredEntity<Issue>] | undefined> => {
       // Ohne issue.md ist das Verzeichnis kein Issue und bleibt unbeachtet.
-      let text: string;
-      try {
-        text = await readFile(join(root, path), 'utf8');
-      } catch (err) {
-        // Ein Verzeichnis namens issue.md (EISDIR) zählt wie eine fehlende Datei.
-        if (isMissing(err) || (err as NodeJS.ErrnoException | undefined)?.code === 'EISDIR') {
-          return undefined;
-        }
-        throw err;
-      }
-      return parseIssue(path, shard, id, text, problems);
+      // Ein Verzeichnis namens issue.md zählt wie eine fehlende Datei.
+      const bytes = await src.read(path);
+      if (bytes === undefined) return undefined;
+      return parseIssue(path, shard, id, bytes.toString('utf8'), problems);
     },
   );
   return sortedMap(loaded.filter((e) => e !== undefined));
@@ -370,19 +357,15 @@ async function loadIssues(
 
 // --- Öffentliche API ---------------------------------------------------------------------
 
-async function loadConfig(root: string): Promise<BacklogConfig> {
-  let text: string;
-  try {
-    text = await readFile(join(root, BACKLOG_CONFIG), 'utf8');
-  } catch (err) {
-    if (isMissing(err)) {
-      throw new BackeError(
-        'not_found',
-        `Kein Backlog gefunden: ${BACKLOG_CONFIG} fehlt in ${root}`,
-      );
-    }
-    throw err;
+async function loadConfig(src: TreeSource, origin: string): Promise<BacklogConfig> {
+  const bytes = await src.read(BACKLOG_CONFIG);
+  if (bytes === undefined) {
+    throw new BackeError(
+      'not_found',
+      `Kein Backlog gefunden: ${BACKLOG_CONFIG} fehlt in ${origin}`,
+    );
   }
+  const text = bytes.toString('utf8');
   const result = BacklogConfigSchema.safeParse(readJsonc(text, BACKLOG_CONFIG));
   if (!result.success) {
     const lines = result.error.issues.map((i) => {
@@ -394,27 +377,28 @@ async function loadConfig(root: string): Promise<BacklogConfig> {
   return result.data;
 }
 
-async function loadAttributes(root: string): Promise<string | undefined> {
-  try {
-    return await readFile(join(root, GITATTRIBUTES), 'utf8');
-  } catch (err) {
-    if (isMissing(err) || (err as NodeJS.ErrnoException | undefined)?.code === 'EISDIR') {
-      return undefined;
-    }
-    throw err;
-  }
+async function loadAttributes(src: TreeSource): Promise<string | undefined> {
+  return (await src.read(GITATTRIBUTES))?.toString('utf8');
 }
 
 /** Lädt Config, `.gitattributes` und alle Entitäten außer Kommentaren und Anhängen. */
 export async function loadSnapshot(root: string): Promise<BacklogSnapshot> {
-  const config = await loadConfig(root);
+  return loadSnapshotFrom(fsSource(root), root);
+}
+
+/** Wie `loadSnapshot` für eine beliebige Quelle; `origin` benennt sie in der Fehlermeldung. */
+export async function loadSnapshotFrom(
+  src: TreeSource,
+  origin = 'der Quelle',
+): Promise<BacklogSnapshot> {
+  const config = await loadConfig(src, origin);
   const problems: Problem[] = [];
-  const users = await withSortedProblems(problems, (p) => loadNamed<User>(root, 'user', p));
-  const projects = await withSortedProblems(problems, (p) => loadProjects(root, p));
-  const sprints = await withSortedProblems(problems, (p) => loadNamed<Sprint>(root, 'sprint', p));
-  const repos = await withSortedProblems(problems, (p) => loadNamed<Repo>(root, 'repo', p));
-  const issues = await withSortedProblems(problems, (p) => loadIssues(root, p));
-  const attributes = await loadAttributes(root);
+  const users = await withSortedProblems(problems, (p) => loadNamed<User>(src, 'user', p));
+  const projects = await withSortedProblems(problems, (p) => loadProjects(src, p));
+  const sprints = await withSortedProblems(problems, (p) => loadNamed<Sprint>(src, 'sprint', p));
+  const repos = await withSortedProblems(problems, (p) => loadNamed<Repo>(src, 'repo', p));
+  const issues = await withSortedProblems(problems, (p) => loadIssues(src, p));
+  const attributes = await loadAttributes(src);
   return { config, users, projects, sprints, repos, issues, problems, attributes };
 }
 
@@ -523,15 +507,23 @@ function parseNamedText(
 
 /** Lädt nur `repos/`, ohne die Backlog-Config zu verlangen; kaputte Dateien fehlen in der Map. */
 export async function loadRepoRegistry(root: string): Promise<Map<string, StoredEntity<Repo>>> {
-  return loadNamed<Repo>(root, 'repo', []);
+  return loadNamed<Repo>(fsSource(root), 'repo', []);
 }
 
 /** Kommentare eines Issues, chronologisch nach Dateiname; ein kaputter Kommentar wirft. */
 export async function listComments(root: string, id: string): Promise<StoredEntity<Comment>[]> {
+  return listCommentsFrom(fsSource(root), id);
+}
+
+/** Wie `listComments` für eine beliebige Quelle. */
+export async function listCommentsFrom(
+  src: TreeSource,
+  id: string,
+): Promise<StoredEntity<Comment>[]> {
   if (!isIssueId(id)) throw new BackeError('validation', `Ungültige Issue-ID »${id}«`);
   const out: StoredEntity<Comment>[] = [];
-  for (const path of await listMarkdown(root, commentsDir(id), false)) {
-    out.push(await readEntity<Comment>(root, path, 'comment'));
+  for (const path of await listMarkdown(src, commentsDir(id), false)) {
+    out.push(await readEntity<Comment>(src, path, 'comment'));
   }
   return out;
 }
@@ -543,16 +535,15 @@ export async function listIssueIds(root: string, shard?: string): Promise<string
   if (shard !== undefined && !SHARD_RE.test(shard)) {
     throw new BackeError('validation', `Ungültiger Shard »${shard}«`);
   }
+  const src = fsSource(root);
   const shards =
     shard !== undefined
       ? [shard]
-      : (await readDirSorted(join(root, 'issues')))
-          .filter((e) => e.isDirectory())
-          .map((e) => e.name);
+      : (await readDirSorted(src, 'issues')).filter((e) => e.dir).map((e) => e.name);
   const ids: string[] = [];
   for (const s of shards) {
-    for (const entry of await readDirSorted(join(root, 'issues', s))) {
-      if (entry.isDirectory() && isIssueId(entry.name) && shardOf(entry.name) === s) {
+    for (const entry of await readDirSorted(src, `issues/${s}`)) {
+      if (entry.dir && isIssueId(entry.name) && shardOf(entry.name) === s) {
         ids.push(entry.name);
       }
     }
