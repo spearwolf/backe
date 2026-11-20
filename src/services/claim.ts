@@ -27,7 +27,7 @@ import { requireHeadConfig, type WriteDeps } from './write.ts';
 
 export type ClaimOutcome = WriteOutcome & { local?: 'no_remote' | 'manual'; pushed?: string };
 
-type ClaimDeps = SyncDeps & WriteDeps;
+export type ClaimDeps = SyncDeps & WriteDeps;
 
 /** Versuche von `next --claim`, bis es aufgibt. */
 const MAX_ATTEMPTS = 5;

@@ -14,8 +14,9 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**'],
-      // Adapter-Code (CLI, MCP) wird über E2E abgedeckt, nicht über Unit-Coverage.
-      exclude: ['src/cli/**', 'src/mcp/**', 'src/**/*.test.ts'],
+      // CLI-Code wird über E2E abgedeckt, nicht über Unit-Coverage; der MCP-Adapter läuft in den
+      // Tests in-process über den In-Memory-Transport und zählt.
+      exclude: ['src/cli/**', 'src/**/*.test.ts'],
       thresholds: {
         lines: 85,
         branches: 85,
@@ -24,6 +25,7 @@ export default defineConfig({
         'src/ops/**': { lines: 90, branches: 90 },
         'src/context/**': { lines: 90, branches: 90 },
         'src/services/**': { lines: 90, branches: 90 },
+        'src/mcp/**': { lines: 90, branches: 85 },
       },
     },
   },

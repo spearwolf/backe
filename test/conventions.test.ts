@@ -59,6 +59,24 @@ test('CLI JSON keys are snake_case in every golden file', async () => {
   expect(hits).toEqual([]);
 });
 
+/** Schichten unter den Adaptern und der MCP-Adapter selbst: stdout gehört dort dem Protokoll. */
+const QUIET_LAYERS = ['core', 'store', 'context', 'git', 'ops', 'services', 'mcp'];
+const STDOUT_WRITE = /process\.stdout|console\.(log|info|debug)/;
+
+test('no layer below the adapters writes to stdout', async () => {
+  const hits: string[] = [];
+  for (const layer of QUIET_LAYERS) {
+    for (const file of await sources(join(SRC, layer))) {
+      const lines = (await readFile(file, 'utf8')).split('\n');
+      for (const [i, line] of lines.entries()) {
+        if (STDOUT_WRITE.test(line))
+          hits.push(`${file.slice(SRC.length + 1)}:${i + 1}: ${line.trim()}`);
+      }
+    }
+  }
+  expect(hits).toEqual([]);
+});
+
 test('flag names are not quoted', async () => {
   const hits: string[] = [];
   for (const file of await sources(SRC)) {

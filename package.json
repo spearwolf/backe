@@ -21,6 +21,7 @@
     "gen:schemas": "node scripts/gen-schemas.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "^2.4.0",
     "commander": "^15.1.0",
     "jsonc-parser": "^3.3.1",
     "yaml": "^2.9.1",
@@ -28,6 +29,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.8",
+    "@modelcontextprotocol/client": "^2.4.0",
     "@types/node": "^26.6.6",
     "@vitest/coverage-v8": "^5.1.0",
     "fast-check": "^4.10.2",
