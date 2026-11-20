@@ -1,4 +1,4 @@
-import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
+import { type ChildProcessWithoutNullStreams, execFileSync, spawn } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { BackeError } from '../core/errors.ts';
 
@@ -11,8 +11,9 @@ export type GitOptions = {
   input?: string | Uint8Array;
   okExitCodes?: readonly number[];
   /**
-   * Bricht den Aufruf nach so vielen Millisekunden ab und meldet `unexpected`. Der Prozess läuft
-   * dann in eigener Prozessgruppe; SIGKILL trifft die ganze Gruppe samt Enkeln (ssh, Remote-Helper).
+   * Bricht den Aufruf nach so vielen Millisekunden ab und meldet `unexpected`. SIGKILL trifft den
+   * Prozess samt allen Nachfahren (ssh, Remote-Helper); er bleibt in der Prozessgruppe von backe,
+   * damit Ctrl-C ihn erreicht und ssh sein Terminal für Rückfragen behält.
    */
   timeoutMs?: number;
 };
@@ -90,30 +91,68 @@ export async function forChunks<T>(
   for (let i = 0; i < items.length; i += size) await fn(items.slice(i, i + size));
 }
 
-/** Prozessgruppen laufender Aufrufe mit `timeoutMs`; beim Beenden von backe fallen sie mit. */
-const openGroups = new Set<number>();
+/**
+ * Alle Nachfahren von `root` (Kinder, Enkel, …) aus der Ausgabe von `ps -A -o pid=,ppid=`;
+ * `root` selbst gehört nicht dazu.
+ */
+export function descendantsOf(ps: string, root: number): number[] {
+  const children = new Map<number, number[]>();
+  for (const line of ps.split('\n')) {
+    const [pid, ppid] = line.trim().split(/\s+/).map(Number);
+    if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+    const list = children.get(ppid as number) ?? [];
+    list.push(pid as number);
+    children.set(ppid as number, list);
+  }
+  const out: number[] = [];
+  const queue = [root];
+  for (let pid = queue.shift(); pid !== undefined; pid = queue.shift()) {
+    for (const child of children.get(pid) ?? []) {
+      if (child === root || out.includes(child)) continue;
+      out.push(child);
+      queue.push(child);
+    }
+  }
+  return out;
+}
+
+/**
+ * SIGKILL an `pid` und alle seine Nachfahren. Der Baum wird vorher erfasst: Stirbt ein Elternteil,
+ * hängt init seine Kinder um, und sie wären über die PPID nicht mehr zu finden. Synchron, weil es
+ * auch im `exit`-Listener läuft; scheitert `ps`, trifft es nur `pid`.
+ */
+function killTree(pid: number): void {
+  let tree: number[] = [];
+  try {
+    tree = descendantsOf(execFileSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' }), pid);
+  } catch {
+    // ohne `ps` bleibt nur das Kind selbst
+  }
+  for (const target of [pid, ...tree]) {
+    try {
+      process.kill(target, 'SIGKILL');
+    } catch {
+      // schon beendet
+    }
+  }
+}
+
+/** Kinder laufender Aufrufe mit `timeoutMs`; beim Beenden von backe fallen sie mit. */
+const openChildren = new Set<number>();
 let exitHookInstalled = false;
 
-function killGroup(pid: number): void {
-  try {
-    process.kill(-pid, 'SIGKILL');
-  } catch {
-    // Gruppe schon leer.
-  }
+/** Beendet alle noch offenen Kinder samt Nachfahren; läuft als `exit`-Listener. */
+export function killOpenChildren(): void {
+  for (const pid of openChildren) killTree(pid);
+  openChildren.clear();
 }
 
-/** Beendet alle noch offenen Prozessgruppen; läuft als `exit`-Listener. */
-export function killOpenGroups(): void {
-  for (const pid of openGroups) killGroup(pid);
-  openGroups.clear();
-}
-
-function trackGroup(pid: number): void {
+function trackChild(pid: number): void {
   if (!exitHookInstalled) {
-    process.on('exit', killOpenGroups);
+    process.on('exit', killOpenChildren);
     exitHookInstalled = true;
   }
-  openGroups.add(pid);
+  openChildren.add(pid);
 }
 
 /** Führt das System-git aus; Ausgabe wird vollständig gepuffert (UTF-8). */
@@ -151,31 +190,25 @@ function run(bin: Bin, args: readonly string[], opts: GitOptions): Promise<GitBy
 
   return new Promise<GitBytesResult>((resolve, reject) => {
     let child: ChildProcessWithoutNullStreams;
-    // Eigene Gruppe nur mit Frist: Nur dann muss backe die Enkel selbst beenden können.
-    const detached = opts.timeoutMs !== undefined;
     try {
-      child = spawn(bin, [...args], {
-        cwd: opts.cwd,
-        env,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        detached,
-      });
+      child = spawn(bin, [...args], { cwd: opts.cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (error) {
       // spawn wirft manche Fehler (z. B. ENOTDIR) synchron statt per error-Event.
       reject(startFailure(bin, args, error));
       return;
     }
-    const group = detached ? child.pid : undefined;
-    if (group !== undefined) trackGroup(group);
+    // Nur Aufrufe mit Frist kann backe selbst abbrechen; nur sie räumt der `exit`-Listener ab.
+    const tracked = opts.timeoutMs === undefined ? undefined : child.pid;
+    if (tracked !== undefined) trackChild(tracked);
     const release = (): void => {
-      if (group !== undefined) openGroups.delete(group);
+      if (tracked !== undefined) openChildren.delete(tracked);
     };
     // Sofort ablehnen statt auf `close` zu warten: Enkelprozesse (ssh, Remote-Helper) halten die Pipes offen.
     const timer =
       opts.timeoutMs === undefined
         ? undefined
         : setTimeout(() => {
-            if (group !== undefined) killGroup(group);
+            if (tracked !== undefined) killTree(tracked);
             release();
             reject(
               new BackeError(

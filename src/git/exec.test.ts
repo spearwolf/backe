@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fixture, tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { forChunks, git, killOpenGroups, sshKeygen } from './exec.ts';
+import { descendantsOf, forChunks, git, killOpenChildren, sshKeygen } from './exec.ts';
 
 /** PATH mit den Fake-Binaries aus `test/fixtures/bin` vorn. */
 const FAKE_PATH = `${fixture('bin')}${delimiter}${process.env.PATH ?? ''}`;
@@ -66,25 +66,25 @@ describe('git', () => {
     const cwd = await tempDir();
     const pidFile = join(cwd, 'pid');
     const err = await catchErrAsync(() =>
-      git(['hang', pidFile], { cwd, env: { PATH: FAKE_PATH }, timeoutMs: 200 }),
+      git(['hang', pidFile], { cwd, env: { PATH: FAKE_PATH }, timeoutMs: 2000 }),
     );
     expect(err.code).toBe('unexpected');
-    expect(err.message).toBe('git hang: Zeitüberschreitung nach 200 ms');
+    expect(err.message).toBe('git hang: Zeitüberschreitung nach 2000 ms');
     await expectGone(await grandchild(pidFile));
   });
 
-  test('the exit hook kills the process groups of calls still running', async () => {
+  test('the exit hook kills the process trees of calls still running', async () => {
     const cwd = await tempDir();
     const pidFile = join(cwd, 'pid');
     const call = catchErrAsync(() =>
       git(['hang', pidFile], { cwd, env: { PATH: FAKE_PATH }, timeoutMs: 60_000 }),
     );
     const pid = await grandchild(pidFile);
-    killOpenGroups();
+    killOpenChildren();
     expect((await call).message).toBe('git hang durch Signal beendet (SIGKILL)');
     await expectGone(pid);
     // Ein zweiter Lauf findet nichts mehr offen.
-    killOpenGroups();
+    killOpenChildren();
   });
 
   test('git runs without optional locks unless the caller sets GIT_OPTIONAL_LOCKS', async () => {
@@ -200,6 +200,31 @@ describe('git', () => {
     expect((await git(show('LC_ALL'), { cwd, env: { LC_ALL: 'de_DE.UTF-8' } })).stdout).toBe('C');
     expect((await git(show('GIT_TERMINAL_PROMPT'), { cwd })).stdout).toBe('0');
     expect((await git(show('HOME'), { cwd, env: { HOME: undefined } })).stdout).toBe('unset');
+  });
+});
+
+describe('descendantsOf', () => {
+  const PS = [
+    '  1     0',
+    ' 10     1',
+    ' 11    10',
+    ' 12    11',
+    ' 13    11',
+    ' 20     1',
+    '',
+  ].join('\n');
+
+  test('collects children and grandchildren, not the root, siblings or ancestors', () => {
+    expect(descendantsOf(PS, 10).sort()).toEqual([11, 12, 13]);
+    expect(descendantsOf(PS, 12)).toEqual([]);
+  });
+
+  test('an unknown pid has no descendants, unreadable lines are skipped', () => {
+    expect(descendantsOf('garbage\n 5 x\n', 99)).toEqual([]);
+  });
+
+  test('a cycle in a racy ps snapshot terminates', () => {
+    expect(descendantsOf(' 10 11\n 11 10\n', 10)).toEqual([11]);
   });
 });
 
