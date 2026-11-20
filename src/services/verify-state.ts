@@ -5,7 +5,6 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { z } from 'zod';
-import { exists } from '../context/paths.ts';
 import { BackeError } from '../core/errors.ts';
 import {
   type BacklogConfig,
@@ -23,7 +22,7 @@ import {
   signatures,
 } from '../git/history.ts';
 import { stateDir } from '../git/local-state.ts';
-import { writeFileAtomic } from '../store/files.ts';
+import { exists, writeFileAtomic } from '../store/files.ts';
 import { parseEntityFile } from '../store/frontmatter.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG, classifyPath } from '../store/layout.ts';
@@ -105,9 +104,15 @@ export async function loadStates(wc: string, shas: readonly string[]): Promise<M
 
 // --- Signaturen -----------------------------------------------------------------------------
 
-/** `<stateDir>/allowed_signers/<users-tree>` aus den nicht widerrufenen Keys; einmal je Baum. */
+/**
+ * Cache-Verzeichnis der `allowed_signers`-Dateien; die Endung ist die Formatversion. Ändert sich,
+ * was in eine Datei gehört, steigt sie, und alte Caches unter anderem Namen liest niemand mehr.
+ */
+const ALLOWED_SIGNERS_CACHE = 'allowed_signers.v1';
+
+/** `<stateDir>/allowed_signers.v1/<users-tree>` aus den nicht widerrufenen Keys; einmal je Baum. */
 async function allowedSigners(wc: string, state: State): Promise<string> {
-  const dir = join(await stateDir(wc), 'allowed_signers');
+  const dir = join(await stateDir(wc), ALLOWED_SIGNERS_CACHE);
   const file = join(dir, state.usersTree);
   if (!(await exists(file))) {
     const lines: string[] = [];

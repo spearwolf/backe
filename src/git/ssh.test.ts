@@ -1,6 +1,6 @@
 import { copyFile, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { tempDir } from '../../test/helpers/backlog.ts';
+import { delimiter, dirname, join } from 'node:path';
+import { fixture, tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { testKey } from '../../test/helpers/git.ts';
 import { BackeError } from '../core/errors.ts';
@@ -44,6 +44,21 @@ describe('ssh keys', () => {
     expect(err.code).toBe('validation');
     expect(err.message).toMatch(new RegExp(`^Key »${broken}« ist nicht lesbar: \\S`));
     expect(err.message).not.toMatch(/verschlüsselt/);
+  });
+
+  test('an ssh-keygen failing without output names its exit code', async () => {
+    const dir = await tempDir();
+    const broken = join(dir, 'broken');
+    await writeFile(broken, 'müll\n');
+    const actual = await vi.importActual<typeof import('./exec.ts')>('./exec.ts');
+    // Das Fake-ssh-keygen aus test/fixtures/bin endet mit Exit 3, stdout und stderr leer.
+    const path = `${fixture('bin')}${delimiter}${process.env.PATH ?? ''}`;
+    vi.mocked(sshKeygen).mockImplementationOnce((args, opts) =>
+      actual.sshKeygen(args, { ...opts, env: { ...opts.env, PATH: path } }),
+    );
+    const err = await catchErrAsync(() => readPublicKey(broken));
+    expect(err.code).toBe('validation');
+    expect(err.message).toBe(`Key »${broken}« ist nicht lesbar (ssh-keygen ohne Ausgabe, Exit 3)`);
   });
 
   test('a missing ssh-keygen is an unexpected error, not an unreadable key', async () => {

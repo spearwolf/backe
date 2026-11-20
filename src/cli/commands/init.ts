@@ -1,9 +1,9 @@
 /** `backe init [pfad] --name n --prefix p [--remote url] [--key pfad] [--user-name name]` (backe.md §2.14). */
 import { join } from 'node:path';
 import type { Command } from 'commander';
-import { exists } from '../../context/paths.ts';
 import { BackeError } from '../../core/errors.ts';
 import { initBacklog } from '../../services/init.ts';
+import { exists } from '../../store/files.ts';
 import { absPath, action, type CommandEnv, emit, type Runtime, subcommand } from '../options.ts';
 import { safeText } from '../output.ts';
 

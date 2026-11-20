@@ -11,11 +11,11 @@ import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { revParse, setPullInterval, testBacklog, twoClones } from '../../test/helpers/git.ts';
 import { seqBytes } from '../../test/helpers/snapshot.ts';
-import { exists } from '../context/paths.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { git } from '../git/exec.ts';
 import { clearLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
 import type { Operation } from '../ops/operation.ts';
+import { exists } from '../store/files.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
 import {
   freshen,

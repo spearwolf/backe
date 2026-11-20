@@ -16,11 +16,11 @@ import {
   twoClones,
 } from '../../test/helpers/git.ts';
 import { seqBytes } from '../../test/helpers/snapshot.ts';
-import { exists } from '../context/paths.ts';
 import { setIdentity } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { git } from '../git/exec.ts';
 import { clearLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
+import { exists } from '../store/files.ts';
 import { issueFile } from '../store/layout.ts';
 import { loadSnapshot } from '../store/snapshot.ts';
 import { resignCommits } from './resign.ts';

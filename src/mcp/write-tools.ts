@@ -7,7 +7,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { basename, isAbsolute, relative, sep } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { expandPath, isMissing, physicalPath } from '../context/paths.ts';
+import { expandPath, physicalPath } from '../context/paths.ts';
 import { BackeError } from '../core/errors.ts';
 import { PROP_KEY_RE } from '../core/names.ts';
 import { type AttachSource, addAttachment } from '../services/attachments.ts';
@@ -24,6 +24,7 @@ import {
   resumeIssue,
 } from '../services/issues.ts';
 import { batchJson, outcomeJson } from '../services/views.ts';
+import { isMissing } from '../store/files.ts';
 import { defineTool, type ToolEnv } from './tool.ts';
 
 const strings = z.array(z.string());

@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { writeFileAtomic } from '../store/files.ts';
+import { isMissing, writeFileAtomic } from '../store/files.ts';
 import { git } from './exec.ts';
 
 /**
@@ -11,13 +11,19 @@ import { git } from './exec.ts';
  */
 export type LocalStateName = 'anchor' | 'verified' | 'clean' | 'identity' | 'upstream';
 
-/** Zustandsverzeichnis unter dem Git-Dir (auch hinter einer `.git`-Datei); wird bei Bedarf angelegt. */
-export async function stateDir(wc: string): Promise<string> {
+/**
+ * Zustandsverzeichnis unter dem Git-Dir (auch hinter einer `.git`-Datei). `create: true` (Default)
+ * legt es an; wer nur liest (`doctor`, `readLocalState`), lässt es mit `create: false` fehlen.
+ */
+export async function stateDir(
+  wc: string,
+  opts: { create: boolean } = { create: true },
+): Promise<string> {
   const { stdout } = await git(['rev-parse', '--path-format=absolute', '--git-path', 'backe'], {
     cwd: wc,
   });
   const dir = stdout.replace(/\n$/, '');
-  await mkdir(dir, { recursive: true });
+  if (opts.create) await mkdir(dir, { recursive: true });
   return dir;
 }
 
@@ -26,9 +32,12 @@ export async function readLocalState(
   name: LocalStateName,
 ): Promise<string | undefined> {
   try {
-    return (await readFile(join(await stateDir(wc), name), 'utf8')).replace(/\r?\n$/, '');
+    return (await readFile(join(await stateDir(wc, { create: false }), name), 'utf8')).replace(
+      /\r?\n$/,
+      '',
+    );
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    if (isMissing(err)) return undefined;
     throw err;
   }
 }
@@ -44,5 +53,5 @@ export async function writeLocalState(
 
 /** Entfernt einen Eintrag; ein fehlender ist kein Fehler. */
 export async function clearLocalState(wc: string, name: LocalStateName): Promise<void> {
-  await rm(join(await stateDir(wc), name), { force: true });
+  await rm(join(await stateDir(wc, { create: false }), name), { force: true });
 }

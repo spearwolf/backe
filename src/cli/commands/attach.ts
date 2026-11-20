@@ -2,7 +2,6 @@
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import type { Command } from 'commander';
-import { isMissing } from '../../context/paths.ts';
 import { BackeError } from '../../core/errors.ts';
 import {
   type AttachSource,
@@ -12,6 +11,7 @@ import {
   removeAttachment,
 } from '../../services/attachments.ts';
 import { attachmentJson } from '../../services/views.ts';
+import { isMissing } from '../../store/files.ts';
 import {
   absPath,
   action,

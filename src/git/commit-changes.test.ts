@@ -145,3 +145,18 @@ test('commitChanges reports a failing signature as usage', async () => {
   expect(err.code).toBe('usage');
   expect(err.message).toContain('Signieren mit /nonexistent/key fehlgeschlagen');
 });
+
+test('an executable change is committed with mode 100755, others with 100644', async () => {
+  const { root: wc, base } = await setup();
+  const sha = await commitChanges(wc, {
+    ...base,
+    changes: [
+      { path: 'notes/run.sh', content: 'echo\n', executable: true },
+      { path: 'notes/plain.txt', content: 'x\n', executable: false },
+    ],
+  });
+  const { stdout } = await git(['ls-tree', '-r', '--format=%(objectmode) %(path)', sha, 'notes/'], {
+    cwd: wc,
+  });
+  expect(stdout).toBe('100644 notes/plain.txt\n100755 notes/run.sh\n');
+});

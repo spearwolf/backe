@@ -1,9 +1,10 @@
 import { existsSync } from 'node:fs';
-import { lstat, mkdir, readdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { copyFixture, tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { applyFileChanges, writeFileAtomic } from './files.ts';
+import { BackeError } from '../core/errors.ts';
+import { applyFileChanges, exists, fsFailure, isMissing, writeFileAtomic } from './files.ts';
 import { issueFile } from './layout.ts';
 
 const rmFails = vi.hoisted(() => ({ on: false }));
@@ -245,4 +246,56 @@ test.each([
   expect(err.code).toBe('validation');
   expect(err.message).toContain('Symlink im Backlog');
   expect(await readdir(outside)).toEqual([]);
+});
+
+test('executable sets or clears the execute bits of a written file', async () => {
+  const root = await tempDir();
+  await applyFileChanges(root, [{ path: 'run.sh', content: 'a\n', executable: true }]);
+  expect((await stat(join(root, 'run.sh'))).mode & 0o111).toBe(0o111);
+  await applyFileChanges(root, [{ path: 'run.sh', content: 'b\n' }]);
+  expect((await stat(join(root, 'run.sh'))).mode & 0o111).toBe(0o111);
+  await applyFileChanges(root, [{ path: 'run.sh', content: 'c\n', executable: false }]);
+  expect((await stat(join(root, 'run.sh'))).mode & 0o111).toBe(0);
+});
+
+test('exists reports false for a missing path and for a path below a file', async () => {
+  const root = await tempDir();
+  await writeFile(join(root, 'f.txt'), 'x');
+  expect(await exists(join(root, 'f.txt'))).toBe(true);
+  expect(await exists(join(root, 'missing'))).toBe(false);
+  expect(await exists(join(root, 'f.txt/x'))).toBe(false);
+});
+
+test.skipIf(process.getuid?.() === 0)(
+  'exists throws on EACCES instead of reporting false',
+  async () => {
+    const root = await tempDir();
+    await mkdir(join(root, 'locked'));
+    await writeFile(join(root, 'locked/f.txt'), 'x');
+    await chmod(join(root, 'locked'), 0o000);
+    try {
+      const err = await catchErrAsync(() => exists(join(root, 'locked/f.txt')));
+      expect([err.code, err.message]).toEqual([
+        'unexpected',
+        `${join(root, 'locked/f.txt')}: EACCES`,
+      ]);
+    } finally {
+      await chmod(join(root, 'locked'), 0o700);
+    }
+  },
+);
+
+test('isMissing counts only ENOENT and ENOTDIR', () => {
+  const err = (code: string) => Object.assign(new Error(code), { code });
+  expect(isMissing(err('ENOENT'))).toBe(true);
+  expect(isMissing(err('ENOTDIR'))).toBe(true);
+  expect(isMissing(err('EACCES'))).toBe(false);
+  expect(isMissing(undefined)).toBe(false);
+});
+
+test('fsFailure keeps a BackeError and names path and code otherwise', () => {
+  const own = new BackeError('conflict', 'x');
+  expect(fsFailure('/p', own)).toBe(own);
+  expect(fsFailure('/p', Object.assign(new Error('e'), { code: 'EIO' })).message).toBe('/p: EIO');
+  expect(fsFailure('/p', 'kaputt').message).toBe('/p: kaputt');
 });

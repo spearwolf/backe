@@ -8,12 +8,13 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, rename, rm } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { withFileLock } from '../context/lock.ts';
-import { exists, type Homes } from '../context/paths.ts';
+import type { Homes } from '../context/paths.ts';
 import { configLockPath } from '../context/user-config.ts';
 import { git } from '../git/exec.ts';
 import { isAncestor, resolveCommit } from '../git/history.ts';
 import { readLocalState, writeLocalState } from '../git/local-state.ts';
 import { remoteUrl } from '../git/query.ts';
+import { exists } from '../store/files.ts';
 
 /** Nur für Tests: läuft zwischen dem Klonen ins Temp-Verzeichnis und dem Abschluss. */
 export type HubHooks = { beforeFinish?: () => Promise<void> };

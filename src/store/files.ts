@@ -19,9 +19,40 @@ import { isIssueId, shardOf } from '../core/ids.ts';
 
 /**
  * `recursive` gilt nur zusammen mit `content: null` und nur für ein Issue-Verzeichnis
- * `issues/<shard>/<id>`; es löscht das Verzeichnis samt Inhalt.
+ * `issues/<shard>/<id>`; es löscht das Verzeichnis samt Inhalt. `executable` setzt (oder löscht)
+ * die Ausführungsbits einer geschriebenen Datei, Git-Modus 100755 statt 100644; ohne bleibt der
+ * Modus einer bestehenden Datei, wie er ist.
  */
-export type FileChange = { path: string; content: string | Uint8Array | null; recursive?: true };
+export type FileChange = {
+  path: string;
+  content: string | Uint8Array | null;
+  recursive?: true;
+  executable?: boolean;
+};
+
+/** Fehlt der Pfad (oder ist ein Vorfahr kein Verzeichnis)? Nur `ENOENT` und `ENOTDIR` zählen so. */
+export function isMissing(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
+/** Macht aus einem unerwarteten Dateisystemfehler eine `unexpected`-Meldung `<pfad>: <code>`. */
+export function fsFailure(path: string, error: unknown): BackeError {
+  if (error instanceof BackeError) return error;
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return new BackeError('unexpected', `${path}: ${code ?? String(error)}`, { details: { path } });
+}
+
+/** Gibt es `path`? `false` nur bei `ENOENT`/`ENOTDIR`; jeder andere Fehler ist `unexpected`. */
+export async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (isMissing(error)) return false;
+    throw fsFailure(path, error);
+  }
+}
 
 /** Verzeichnisse, die beim Aufräumen nie entfernt werden. */
 const PROTECTED_DIRS: ReadonlySet<string> = new Set([
@@ -150,7 +181,7 @@ export async function applyFileChanges(
     assertRecursiveAllowed(change);
   }
   for (const change of changes) await assertNoSymlinks(root, change.path);
-  for (const { path, content, recursive } of changes) {
+  for (const { path, content, recursive, executable } of changes) {
     const abs = join(root, path);
     if (content === null) {
       await rm(abs, recursive ? { recursive: true, force: true } : { force: true });
@@ -158,6 +189,10 @@ export async function applyFileChanges(
     } else {
       await mkdir(dirname(abs), { recursive: true });
       await writeFileAtomic(abs, content);
+      if (executable !== undefined) {
+        const mode = (await stat(abs)).mode & 0o7777;
+        await chmod(abs, executable ? mode | 0o111 : mode & ~0o111);
+      }
     }
   }
 }

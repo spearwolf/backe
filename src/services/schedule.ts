@@ -7,11 +7,11 @@
 import { spawn } from 'node:child_process';
 import { appendFileSync, closeSync, openSync } from 'node:fs';
 import { join } from 'node:path';
-import { exists } from '../context/paths.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
 import type { BacklogConfig } from '../core/schemas.ts';
 import { remoteUrl } from '../git/query.ts';
+import { exists } from '../store/files.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
 import { isoNow } from './env.ts';
 import type { SyncDeps } from './sync.ts';

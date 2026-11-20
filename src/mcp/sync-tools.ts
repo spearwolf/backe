@@ -6,13 +6,13 @@
 import { join } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { exists } from '../context/paths.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { scheduleSync } from '../services/background.ts';
 import { claimIssue } from '../services/claim.ts';
 import { type SyncDeps, type SyncOutcome, syncNow } from '../services/sync.ts';
 import { nonEmpty, noticeJson, outcomeJson, syncJson } from '../services/views.ts';
 import { requireHeadConfig } from '../services/write.ts';
+import { exists } from '../store/files.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
 import { defineTool, type ToolEnv } from './tool.ts';
 

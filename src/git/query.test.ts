@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { git } from './exec.ts';
-import { gitRemotes, gitToplevel, unpushedCount } from './query.ts';
+import { branchesWithUnpushed, gitRemotes, gitToplevel } from './query.ts';
 
 describe('gitToplevel', () => {
   test('toplevel of a nested dir, undefined outside a repo', async () => {
@@ -60,7 +60,7 @@ test('a git error other than "not a git repository" is thrown', async () => {
   expect((await catchErrAsync(() => gitToplevel(dir))).code).toBe('unexpected');
 });
 
-describe('unpushedCount', () => {
+describe('branchesWithUnpushed', () => {
   async function commit(dir: string, name: string): Promise<void> {
     await writeFile(join(dir, name), name);
     await git(['add', name], { cwd: dir });
@@ -69,24 +69,34 @@ describe('unpushedCount', () => {
     });
   }
 
-  test('counts commits of the branch that no remote-tracking ref contains', async () => {
+  async function clone(): Promise<string> {
     const remote = join(await tempDir(), 'r.git');
     await git(['init', '--bare', '-q', '-b', 'main', remote], { cwd: await tempDir() });
     const dir = await tempDir();
     await git(['init', '-q', '-b', 'main'], { cwd: dir });
     await git(['remote', 'add', 'origin', remote], { cwd: dir });
+    return dir;
+  }
+
+  test('lists the branches with commits that no remote-tracking ref contains', async () => {
+    const dir = await clone();
     await commit(dir, 'a');
-    await commit(dir, 'b');
-    expect(await unpushedCount(dir, 'main')).toBe(2);
+    expect(await branchesWithUnpushed(dir)).toEqual(['main']);
     await git(['push', '-q', 'origin', 'main'], { cwd: dir });
-    expect(await unpushedCount(dir, 'main')).toBe(0);
-    await commit(dir, 'c');
-    expect(await unpushedCount(dir, 'main')).toBe(1);
+    expect(await branchesWithUnpushed(dir)).toEqual([]);
+    await git(['branch', 'side'], { cwd: dir });
+    await commit(dir, 'b');
+    expect(await branchesWithUnpushed(dir)).toEqual(['main']);
   });
 
-  test('a branch that does not exist counts zero', async () => {
-    const dir = await tempDir();
-    await git(['init', '-q', '-b', 'main'], { cwd: dir });
-    expect(await unpushedCount(dir, 'main')).toBe(0);
+  test('a tag with the name of a branch does not change the branch name', async () => {
+    const dir = await clone();
+    await commit(dir, 'a');
+    await git(['branch', 'x'], { cwd: dir });
+    await git(['tag', 'x'], { cwd: dir });
+    await git(['push', '-q', 'origin', 'main'], { cwd: dir });
+    await git(['switch', '-q', 'x'], { cwd: dir });
+    await commit(dir, 'b');
+    expect(await branchesWithUnpushed(dir)).toEqual(['x']);
   });
 });

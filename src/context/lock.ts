@@ -35,10 +35,15 @@ function parseHolder(content: string): Holder {
   };
 }
 
-/** Ein Lock ist übernehmbar: gleicher Host (fehlende Zeile = gleich) und von vor dem Boot oder Halter tot. */
+/** Stammt der Lock von einem anderen Host? Ein Lock ohne Host-Zeile (altes Format) zählt als eigener. */
+export function foreignHost(holder: Pick<Holder, 'host'>, host: string): boolean {
+  return holder.host !== undefined && holder.host !== host;
+}
+
+/** Ein Lock ist übernehmbar: gleicher Host und von vor dem Boot oder Halter tot. */
 function takeable(holder: Holder, id: Identity): boolean {
   if (holder.pid === undefined) return false;
-  if (holder.host !== undefined && holder.host !== id.host) return false;
+  if (foreignHost(holder, id.host)) return false;
   if (holder.time < id.bootTime - BOOT_TOLERANCE_MS) return true;
   return !id.isAlive(holder.pid);
 }
@@ -165,7 +170,7 @@ export async function withFileLock<T>(
           hint: `Falls kein backe-Prozess läuft: ${lockPath} löschen.`,
         });
       }
-      if (holder.host !== undefined && holder.host !== id.host) {
+      if (foreignHost(holder, id.host)) {
         throw new BackeError(
           'conflict',
           `Lock ${lockPath} gehalten von PID ${pid} auf ${holder.host}`,

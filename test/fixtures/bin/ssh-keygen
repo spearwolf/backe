@@ -1,0 +1,3 @@
+#!/bin/sh
+# Fake-ssh-keygen für src/git/ssh.test.ts: scheitert ohne jede Ausgabe.
+exit 3

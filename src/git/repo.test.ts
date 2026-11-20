@@ -123,6 +123,35 @@ describe('rollbackPaths', () => {
     expect(await stat(join(wc, 'issues/7f/notes.txt')).catch(() => null)).toBeNull();
   });
 
+  // 7 500 Dateien und je fünf Blöcke pro git-Aufruf: mit Coverage weit über den 5 s des Standards.
+  test('rollbackPaths handles 5000 paths', async () => {
+    // Lang genug, dass alle Pfade zusammen jedes übliche ARG_MAX sprengen (Linux 2–4 MiB, macOS 1 MiB).
+    const dir = ['a', 'b', 'c', 'd'].map((c) => c.repeat(210)).join('/');
+    const tracked = Array.from(
+      { length: 2500 },
+      (_, i) => `${dir}/old-${String(i).padStart(5, '0')}`,
+    );
+    const fresh = Array.from(
+      { length: 2500 },
+      (_, i) => `${dir}/new-${String(i).padStart(5, '0')}`,
+    );
+    const wc = await repo();
+    await mkdir(join(wc, dir), { recursive: true });
+    for (const path of tracked) await writeFile(join(wc, path), 'v1\n');
+    await git(['add', '.'], { cwd: wc });
+    await commit(wc);
+    for (const path of tracked) await writeFile(join(wc, path), 'v2\n');
+    for (const path of fresh) await writeFile(join(wc, path), 'n\n');
+    const all = [...tracked, ...fresh];
+    expect(await dirtyPaths(wc, all)).toHaveLength(5000);
+
+    await rollbackPaths(wc, all);
+
+    expect(await dirtyPaths(wc, all)).toEqual([]);
+    expect((await git(['status', '--porcelain'], { cwd: wc })).stdout).toBe('');
+    expect(await readFile(join(wc, tracked[2499] as string), 'utf8')).toBe('v1\n');
+  }, 60_000);
+
   test('without HEAD everything is removed', async () => {
     const wc = await repo();
     await writeFile(join(wc, 'a'), 'A\n');

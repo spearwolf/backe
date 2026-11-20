@@ -1,0 +1,19 @@
+#!/bin/sh
+# Fake-git für src/git/exec.test.ts; liegt nur im PATH, den ein Test ausdrücklich setzt.
+case "$1" in
+  status)
+    # Zeigt das Env, mit dem backe git startet.
+    env
+    ;;
+  hang)
+    # Ein Enkelprozess, der die Gruppe teilt; seine PID geht nach stdout und in "$2".
+    sleep 30 &
+    echo "$!"
+    echo "$!" > "$2"
+    wait
+    ;;
+  *)
+    echo "fake git: unbekannter Aufruf $*" >&2
+    exit 2
+    ;;
+esac

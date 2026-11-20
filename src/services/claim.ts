@@ -8,12 +8,12 @@
  */
 import { join } from 'node:path';
 import { withFileLock } from '../context/lock.ts';
-import { exists } from '../context/paths.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
 import { readLocalState } from '../git/local-state.ts';
 import { gitTreeSource } from '../git/tree-source.ts';
 import type { Notice } from '../ops/notice.ts';
+import { exists } from '../store/files.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
 import { type BacklogSnapshot, loadSnapshot, loadSnapshotFrom } from '../store/snapshot.ts';
 import { type NextOutcome, type NextQuery, nextActor, pickNext } from './next.ts';

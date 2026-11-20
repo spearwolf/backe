@@ -1,9 +1,47 @@
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { tempDir } from '../../test/helpers/backlog.ts';
+import { delimiter, join } from 'node:path';
+import { fixture, tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { git, sshKeygen } from './exec.ts';
+import { forChunks, git, killOpenGroups, sshKeygen } from './exec.ts';
+
+/** PATH mit den Fake-Binaries aus `test/fixtures/bin` vorn. */
+const FAKE_PATH = `${fixture('bin')}${delimiter}${process.env.PATH ?? ''}`;
+
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    throw error;
+  }
+};
+
+/** PIDs von Enkelprozessen, die ein Test womöglich überleben ließ. */
+const strays: number[] = [];
+afterEach(() => {
+  for (const pid of strays.splice(0)) {
+    if (alive(pid)) process.kill(pid, 'SIGKILL');
+  }
+});
+
+/** PID aus der Datei, die das Fake-git `hang` schreibt, sobald sie vollständig ist. */
+async function grandchild(pidFile: string): Promise<number> {
+  let pid = Number.NaN;
+  await vi.waitFor(async () => {
+    pid = Number((await readFile(pidFile, 'utf8')).trim());
+    expect(pid).toBeGreaterThan(0);
+  });
+  strays.push(pid);
+  return pid;
+}
+
+/** Ein gekillter Prozess verschwindet erst, wenn init ihn eingesammelt hat. */
+async function expectGone(pid: number): Promise<void> {
+  await vi.waitFor(() => expect(alive(pid)).toBe(false), { timeout: 2000 });
+  expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }));
+}
 
 describe('git', () => {
   test('runs git and returns its output', async () => {
@@ -22,6 +60,39 @@ describe('git', () => {
     expect(err.message).toBe('git hang: Zeitüberschreitung nach 200 ms');
     const ok = await git(['--version'], { cwd, timeoutMs: 20_000 });
     expect(ok.exitCode).toBe(0);
+  });
+
+  test('timeout kills grandchildren', async () => {
+    const cwd = await tempDir();
+    const pidFile = join(cwd, 'pid');
+    const err = await catchErrAsync(() =>
+      git(['hang', pidFile], { cwd, env: { PATH: FAKE_PATH }, timeoutMs: 200 }),
+    );
+    expect(err.code).toBe('unexpected');
+    expect(err.message).toBe('git hang: Zeitüberschreitung nach 200 ms');
+    await expectGone(await grandchild(pidFile));
+  });
+
+  test('the exit hook kills the process groups of calls still running', async () => {
+    const cwd = await tempDir();
+    const pidFile = join(cwd, 'pid');
+    const call = catchErrAsync(() =>
+      git(['hang', pidFile], { cwd, env: { PATH: FAKE_PATH }, timeoutMs: 60_000 }),
+    );
+    const pid = await grandchild(pidFile);
+    killOpenGroups();
+    expect((await call).message).toBe('git hang durch Signal beendet (SIGKILL)');
+    await expectGone(pid);
+    // Ein zweiter Lauf findet nichts mehr offen.
+    killOpenGroups();
+  });
+
+  test('git runs without optional locks unless the caller sets GIT_OPTIONAL_LOCKS', async () => {
+    const cwd = await tempDir();
+    const envOf = async (env: Record<string, string>) =>
+      (await git(['status'], { cwd, env: { PATH: FAKE_PATH, ...env } })).stdout.split('\n');
+    expect(await envOf({})).toContain('GIT_OPTIONAL_LOCKS=0');
+    expect(await envOf({ GIT_OPTIONAL_LOCKS: '1' })).toContain('GIT_OPTIONAL_LOCKS=1');
   });
 
   test('a failing command is an unexpected error with details', async () => {
@@ -129,6 +200,22 @@ describe('git', () => {
     expect((await git(show('LC_ALL'), { cwd, env: { LC_ALL: 'de_DE.UTF-8' } })).stdout).toBe('C');
     expect((await git(show('GIT_TERMINAL_PROMPT'), { cwd })).stdout).toBe('0');
     expect((await git(show('HOME'), { cwd, env: { HOME: undefined } })).stdout).toBe('unset');
+  });
+});
+
+describe('forChunks', () => {
+  test('hands the items over in order, in blocks of at most size', async () => {
+    const seen: number[][] = [];
+    await forChunks([1, 2, 3, 4, 5], 2, async (chunk) => {
+      seen.push(chunk);
+    });
+    expect(seen).toEqual([[1, 2], [3, 4], [5]]);
+  });
+
+  test('an empty list calls nothing', async () => {
+    const fn = vi.fn(async () => {});
+    await forChunks([], 1000, fn);
+    expect(fn).not.toHaveBeenCalled();
   });
 });
 

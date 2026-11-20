@@ -1,7 +1,8 @@
-import { realpath, stat } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { BackeError } from '../core/errors.ts';
+import { isMissing } from '../store/files.ts';
 
 export type Env = Readonly<Record<string, string | undefined>>;
 export type Homes = { home: string; backeHome: string };
@@ -37,30 +38,6 @@ export function resolveHomes(env: Env, cwd: string): Homes {
     throw new BackeError('validation', `BACKE_HOME: ${e.message}`, {
       ...(e.hint === undefined ? {} : { hint: e.hint }),
     });
-  }
-}
-
-/** Fehlt der Pfad (oder ist ein Vorfahr kein Verzeichnis)? Nur `ENOENT` und `ENOTDIR` zählen so. */
-export function isMissing(error: unknown): boolean {
-  const code = (error as NodeJS.ErrnoException | undefined)?.code;
-  return code === 'ENOENT' || code === 'ENOTDIR';
-}
-
-/** Macht aus einem unerwarteten Dateisystemfehler eine `unexpected`-Meldung `<pfad>: <code>`. */
-export function fsFailure(path: string, error: unknown): BackeError {
-  if (error instanceof BackeError) return error;
-  const code = (error as NodeJS.ErrnoException | undefined)?.code;
-  return new BackeError('unexpected', `${path}: ${code ?? String(error)}`, { details: { path } });
-}
-
-/** Gibt es `path`? `false` nur bei `ENOENT`/`ENOTDIR`; jeder andere Fehler ist `unexpected`. */
-export async function exists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch (error) {
-    if (isMissing(error)) return false;
-    throw fsFailure(path, error);
   }
 }
 

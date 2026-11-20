@@ -105,6 +105,7 @@ async function revertChanges(
     `${parent}:${path}`,
   ]);
   const blobs = await readBlobs(wc, specs);
+  const parentMode = new Map(raw.map((c) => [c.path, c.oldMode]));
   const changes: FileChange[] = paths.map((path) => {
     if (!sameBytes(blobs.get(`${checked}:${path}`), blobs.get(`${sha}:${path}`))) {
       throw new BackeError(
@@ -112,7 +113,11 @@ async function revertChanges(
         `${path} wurde nach ${shortSha(sha)} geändert; Umkehr von Hand`,
       );
     }
-    return { path, content: blobs.get(`${parent}:${path}`) ?? null };
+    const content = blobs.get(`${parent}:${path}`) ?? null;
+    // Auch der Modus kehrt um: Ein Commit, der nur 100644 → 100755 ändert, hat gleiche Bytes.
+    return content === null
+      ? { path, content }
+      : { path, content, executable: parentMode.get(path) === '100755' };
   });
   const planned = await treeChangesWithContent(
     changes.map((c) => {
@@ -122,7 +127,7 @@ async function revertChanges(
         path: c.path,
         status: before === null ? 'A' : gone ? 'D' : 'M',
         oldMode: before === null ? '000000' : '100644',
-        newMode: gone ? '000000' : '100644',
+        newMode: gone ? '000000' : c.executable === true ? '100755' : '100644',
       } satisfies RawChange;
     }),
     blobsAt(wc, checked),

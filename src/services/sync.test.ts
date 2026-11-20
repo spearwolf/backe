@@ -15,7 +15,6 @@ import {
   twoClones,
 } from '../../test/helpers/git.ts';
 import { seqBytes } from '../../test/helpers/snapshot.ts';
-import { exists } from '../context/paths.ts';
 import { managedClonePath, setIdentity } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { type BackeError, EXIT_CODES } from '../core/errors.ts';
@@ -24,6 +23,7 @@ import { sshFingerprint } from '../core/ssh.ts';
 import { git } from '../git/exec.ts';
 import { clearLocalState, readLocalState, stateDir } from '../git/local-state.ts';
 import type { Operation } from '../ops/operation.ts';
+import { exists } from '../store/files.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { attachmentsDir, BACKLOG_CONFIG, issueFile } from '../store/layout.ts';
 import { effectiveMode, type SyncDeps, syncNow, syncRemote } from './sync.ts';

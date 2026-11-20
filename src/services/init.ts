@@ -1,6 +1,6 @@
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
-import { type Env, exists, type Homes, physicalPath } from '../context/paths.ts';
+import { type Env, type Homes, physicalPath } from '../context/paths.ts';
 import { managedClonePath, registerBacklog, setIdentity } from '../context/registry.ts';
 import { readUserConfig } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
@@ -11,6 +11,7 @@ import { git, transportEnv } from '../git/exec.ts';
 import { writeLocalState } from '../git/local-state.ts';
 import { formatCommitMessage, TRAILER_ACTOR, TRAILER_OP } from '../git/message.ts';
 import { readPublicKey } from '../git/ssh.ts';
+import { exists } from '../store/files.ts';
 import { serializeEntityFile } from '../store/frontmatter.ts';
 import { JUNK_PATTERNS } from '../store/layout.ts';
 import { authorOf } from './env.ts';

@@ -34,26 +34,14 @@ export async function remoteUrl(cwd: string, name: string): Promise<string | und
 }
 
 /**
- * Commits von `refs/heads/<branch>`, die in keinem Remote-Tracking-Ref enthalten sind
- * (`git rev-list --count <branch> --not --remotes`); ein Branch, den es nicht gibt, zählt 0.
- */
-export async function unpushedCount(cwd: string, branch: string): Promise<number> {
-  const ref = `refs/heads/${branch}`;
-  const known = await git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], {
-    cwd,
-    okExitCodes: [1],
-  });
-  if (known.exitCode === 1) return 0;
-  const r = await git(['rev-list', '--count', ref, '--not', '--remotes', '--'], { cwd });
-  return Number(r.stdout.trim());
-}
-
-/**
  * Lokale Branches mit Commits, die in keinem Remote-Tracking-Ref stehen (`git rev-list --branches
  * --not --remotes` ist nicht leer), nach Name sortiert. Ohne Remotes zählt jeder Branch mit Commits.
  */
 export async function branchesWithUnpushed(cwd: string): Promise<string[]> {
-  const refs = await git(['for-each-ref', '--format=%(refname:short)', 'refs/heads/'], { cwd });
+  // `lstrip=2` statt `short`: Bei einem gleichnamigen Tag macht `short` aus `x` ein `heads/x`.
+  const refs = await git(['for-each-ref', '--format=%(refname:lstrip=2)', 'refs/heads/'], {
+    cwd,
+  });
   const names = refs.stdout.split('\n').filter((n) => n !== '');
   const out: string[] = [];
   for (const name of names.sort()) {

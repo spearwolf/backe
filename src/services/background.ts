@@ -5,13 +5,13 @@
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { lockHeld, withFileLock } from '../context/lock.ts';
-import { exists } from '../context/paths.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
 import { userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
 import { git } from '../git/exec.ts';
 import { resolveCommit } from '../git/history.ts';
 import { readLocalState } from '../git/local-state.ts';
+import { exists } from '../store/files.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
 import { isoNow } from './env.ts';
 import {

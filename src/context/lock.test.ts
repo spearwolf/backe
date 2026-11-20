@@ -3,7 +3,7 @@ import { chmod, mkdir, readdir, readFile, rm, utimes, writeFile } from 'node:fs/
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { lockHeld, withFileLock } from './lock.ts';
+import { foreignHost, lockHeld, withFileLock } from './lock.ts';
 
 let linkError: Error | undefined;
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -84,6 +84,34 @@ test('a lock from after the boot with a live pid is kept', async () => {
   );
   expect(err.code).toBe('conflict');
   expect(err.hint).toBe('Läuft noch ein anderer backe-Prozess?');
+});
+
+describe('the boot tolerance of 5 s', () => {
+  const BOOT = Date.parse('2026-06-01T00:00:00Z');
+  test.each([
+    ['6 s before the boot is taken over', -6000, true],
+    ['4 s before the boot is kept', -4000, false],
+    ['at the boot is kept', 0, false],
+  ])('a lock with a live pid stamped %s', async (_, offset, taken) => {
+    const lock = join(await tempDir(), 'x.lock');
+    await writeFile(lock, `${process.pid}\n${new Date(BOOT + offset).toISOString()}\nhost-a\n`);
+    const opts = { host: 'host-a', bootTime: BOOT, isAlive: () => true };
+    expect(await lockHeld(lock, opts)).toBe(!taken);
+    const run = withFileLock(lock, async () => 'ok', { ...opts, timeoutMs: 0 });
+    if (taken) expect(await run).toBe('ok');
+    else expect((await catchErrAsync(() => run)).code).toBe('conflict');
+  });
+});
+
+describe('foreignHost', () => {
+  test('the own host is not foreign, another one is', () => {
+    expect(foreignHost({ host: 'host-a' }, 'host-a')).toBe(false);
+    expect(foreignHost({ host: 'host-b' }, 'host-a')).toBe(true);
+  });
+
+  test('a lock without host line is not foreign', () => {
+    expect(foreignHost({ host: undefined }, 'host-a')).toBe(false);
+  });
 });
 
 test('a lock without host line from the previous format counts as the own host', async () => {

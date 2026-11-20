@@ -5,7 +5,6 @@
 import { lstat, readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { type LockOptions, withFileLock } from '../context/lock.ts';
-import { exists } from '../context/paths.ts';
 import { workingCopyPath } from '../context/registry.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
 import { userConfigPath } from '../context/user-config.ts';
@@ -51,6 +50,7 @@ import {
 import { checkCommitPolicy, type PolicyState, type TreeChange } from '../ops/verify-policy.ts';
 import {
   applyFileChanges,
+  exists,
   type FileChange,
   isIssueDirPath,
   writeFileAtomic,

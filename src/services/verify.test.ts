@@ -1,4 +1,4 @@
-import { readFile, realpath, rm } from 'node:fs/promises';
+import { mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErr, catchErrAsync } from '../../test/helpers/catch.ts';
@@ -117,6 +117,21 @@ test.each<[string, Spec, (string | RegExp)[]]>([
 function matcher(reason: string | RegExp) {
   return typeof reason === 'string' ? reason : expect.stringMatching(reason);
 }
+
+test('an allowed_signers cache under the unversioned name has no effect', async () => {
+  await addUser('bob');
+  const dir = await stateDir(b.root);
+  await rm(join(dir, 'allowed_signers'), { recursive: true, force: true });
+  await rm(join(dir, 'allowed_signers.v1'), { recursive: true, force: true });
+  // Ein leerer Cache im alten Namen ließe jede Signatur scheitern, würde er gelesen.
+  await mkdir(join(dir, 'allowed_signers'));
+  const shas = (await git(['rev-list', 'HEAD'], { cwd: b.root })).stdout.trim().split('\n');
+  for (const sha of shas)
+    await writeFile(join(dir, 'allowed_signers', await revParse(b.root, `${sha}:users`)), '');
+
+  expect((await verifyRange(b.root)).invalid).toEqual([]);
+  expect(await readdir(join(dir, 'allowed_signers.v1'))).not.toEqual([]);
+});
 
 test('several Backe-Actor trailers are invalid', async () => {
   const sha = await rawCommit(b.root, { files: { x: '1' }, key: KEYS.spw });

@@ -10,7 +10,10 @@ export type GitOptions = {
   /** Für stdin; Bytes etwa für `hash-object --stdin` mit Binärinhalt. */
   input?: string | Uint8Array;
   okExitCodes?: readonly number[];
-  /** Bricht den Aufruf nach so vielen Millisekunden ab (SIGKILL) und meldet `unexpected`. */
+  /**
+   * Bricht den Aufruf nach so vielen Millisekunden ab und meldet `unexpected`. Der Prozess läuft
+   * dann in eigener Prozessgruppe; SIGKILL trifft die ganze Gruppe samt Enkeln (ssh, Remote-Helper).
+   */
   timeoutMs?: number;
 };
 
@@ -75,6 +78,44 @@ export function transportEnv(env: GitEnv): Record<string, string | undefined> {
   };
 }
 
+/** Pfade je Aufruf, wenn eine Pfadliste als Argumente an git geht: weit unter jedem ARG_MAX. */
+export const PATH_CHUNK = 1000;
+
+/** Ruft `fn` nacheinander mit Blöcken von höchstens `size` Elementen auf, in Reihenfolge. */
+export async function forChunks<T>(
+  items: readonly T[],
+  size: number,
+  fn: (chunk: T[]) => Promise<void>,
+): Promise<void> {
+  for (let i = 0; i < items.length; i += size) await fn(items.slice(i, i + size));
+}
+
+/** Prozessgruppen laufender Aufrufe mit `timeoutMs`; beim Beenden von backe fallen sie mit. */
+const openGroups = new Set<number>();
+let exitHookInstalled = false;
+
+function killGroup(pid: number): void {
+  try {
+    process.kill(-pid, 'SIGKILL');
+  } catch {
+    // Gruppe schon leer.
+  }
+}
+
+/** Beendet alle noch offenen Prozessgruppen; läuft als `exit`-Listener. */
+export function killOpenGroups(): void {
+  for (const pid of openGroups) killGroup(pid);
+  openGroups.clear();
+}
+
+function trackGroup(pid: number): void {
+  if (!exitHookInstalled) {
+    process.on('exit', killOpenGroups);
+    exitHookInstalled = true;
+  }
+  openGroups.add(pid);
+}
+
 /** Führt das System-git aus; Ausgabe wird vollständig gepuffert (UTF-8). */
 export async function git(args: readonly string[], opts: GitOptions): Promise<GitResult> {
   return decoded(await run('git', args, opts));
@@ -97,7 +138,10 @@ function decoded(r: GitBytesResult): GitResult {
 function run(bin: Bin, args: readonly string[], opts: GitOptions): Promise<GitBytesResult> {
   const inherited: Record<string, string | undefined> = { ...process.env };
   for (const name of REPO_LOCAL_ENV) delete inherited[name];
-  const merged: Record<string, string | undefined> = { ...inherited, ...opts.env };
+  // Ohne optionale Locks frischt ein lesendes `status` den Index nicht auf und kollidiert so nicht
+  // mit einem parallelen Write; ein explizites `opts.env` darf es anders wollen.
+  const defaults = bin === 'git' ? { GIT_OPTIONAL_LOCKS: '0' } : {};
+  const merged: Record<string, string | undefined> = { ...inherited, ...defaults, ...opts.env };
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(merged)) {
     if (value !== undefined) env[key] = value;
@@ -107,19 +151,32 @@ function run(bin: Bin, args: readonly string[], opts: GitOptions): Promise<GitBy
 
   return new Promise<GitBytesResult>((resolve, reject) => {
     let child: ChildProcessWithoutNullStreams;
+    // Eigene Gruppe nur mit Frist: Nur dann muss backe die Enkel selbst beenden können.
+    const detached = opts.timeoutMs !== undefined;
     try {
-      child = spawn(bin, [...args], { cwd: opts.cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+      child = spawn(bin, [...args], {
+        cwd: opts.cwd,
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        detached,
+      });
     } catch (error) {
       // spawn wirft manche Fehler (z. B. ENOTDIR) synchron statt per error-Event.
       reject(startFailure(bin, args, error));
       return;
     }
+    const group = detached ? child.pid : undefined;
+    if (group !== undefined) trackGroup(group);
+    const release = (): void => {
+      if (group !== undefined) openGroups.delete(group);
+    };
     // Sofort ablehnen statt auf `close` zu warten: Enkelprozesse (ssh, Remote-Helper) halten die Pipes offen.
     const timer =
       opts.timeoutMs === undefined
         ? undefined
         : setTimeout(() => {
-            child.kill('SIGKILL');
+            if (group !== undefined) killGroup(group);
+            release();
             reject(
               new BackeError(
                 'unexpected',
@@ -139,6 +196,7 @@ function run(bin: Bin, args: readonly string[], opts: GitOptions): Promise<GitBy
     const onSpawnError = (error: NodeJS.ErrnoException): void => {
       spawnFailed = true;
       clearTimeout(timer);
+      release();
       if (error.code !== 'ENOENT') {
         reject(startFailure(bin, args, error));
         return;
@@ -164,6 +222,7 @@ function run(bin: Bin, args: readonly string[], opts: GitOptions): Promise<GitBy
 
     child.on('close', (code, signal) => {
       clearTimeout(timer);
+      release();
       // Nach einem Startfehler folgt close mit negativem Code; der Fehler gehört dem error-Handler.
       if (spawnFailed) return;
       const stdout = Buffer.concat(out);

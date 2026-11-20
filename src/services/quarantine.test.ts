@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import {
@@ -109,6 +109,19 @@ test('revert brings back a file the commit deleted', async () => {
   const bad = await badCommit({ 'notes/keep.txt': null });
   await quarantineCommit(await b.context(), { sha: bad, decision: 'reverted', reason: 'weg' });
   expect(await readFile(join(b.root, 'notes/keep.txt'), 'utf8')).toBe('keep\n');
+});
+
+test('revert restores the mode of the parent', async () => {
+  await rawCommit(b.root, { files: { 'notes/run.sh': 'echo\n' }, key: b.key, actor: 'spw' });
+  const bad = await rawCommit(b.root, { files: { 'notes/run.sh': { executable: 'echo\n' } } });
+  const mode = async () =>
+    (await git(['ls-tree', 'HEAD', '--', 'notes/run.sh'], { cwd: b.root })).stdout.split(' ')[0];
+  expect(await mode()).toBe('100755');
+  await quarantineCommit(await b.context(), { sha: bad, decision: 'reverted', reason: 'Modus' });
+  expect(await mode()).toBe('100644');
+  expect((await stat(join(b.root, 'notes/run.sh'))).mode & 0o111).toBe(0);
+  expect(await statusShort(b.root)).toEqual([]);
+  expect((await verifyRange(b.root)).invalid).toEqual([]);
 });
 
 test('revert of a path changed later is a conflict and writes nothing', async () => {

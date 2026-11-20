@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
-import { type Env, exists, expandPath, type Homes, resolveHomes } from '../context/paths.ts';
+import { type Env, expandPath, type Homes, resolveHomes } from '../context/paths.ts';
 import { listBacklogs } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { readUserConfig } from '../context/user-config.ts';
@@ -14,6 +14,7 @@ import { git } from '../git/exec.ts';
 import { readLocalState, stateDir } from '../git/local-state.ts';
 import { headState } from '../git/repo.ts';
 import { readPublicKey } from '../git/ssh.ts';
+import { exists } from '../store/files.ts';
 import { hasLfsRule, projectFile } from '../store/layout.ts';
 import { type BacklogSnapshot, loadSnapshot } from '../store/snapshot.ts';
 import { activeFingerprints } from './verify-state.ts';
@@ -223,7 +224,7 @@ async function backlogProblem(
       );
       hint = `git -C ${root} switch ${wanted}`;
     }
-    const journal = join(await stateDir(root), 'write.journal');
+    const journal = join(await stateDir(root, { create: false }), 'write.journal');
     if (await exists(journal)) {
       problems.push('liegengebliebenes write.journal');
       hint ??= `Der nächste Write setzt es zurück; sonst git -C ${root} status prüfen und ${journal} löschen`;

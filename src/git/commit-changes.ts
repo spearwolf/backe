@@ -17,14 +17,17 @@ export type CommitChangesInput = {
 };
 
 type Step =
-  | { kind: 'write'; entries: { path: string; content: string | Uint8Array }[] }
+  | {
+      kind: 'write';
+      entries: { path: string; content: string | Uint8Array; executable?: boolean }[];
+    }
   | { kind: 'remove'; paths: string[] }
   | { kind: 'remove-tree'; path: string };
 
 /** Fasst benachbarte Schreibvorgänge und Löschungen zusammen; die Reihenfolge bleibt erhalten. */
 function stepsOf(changes: readonly FileChange[]): Step[] {
   const steps: Step[] = [];
-  for (const { path, content, recursive } of changes) {
+  for (const { path, content, recursive, executable } of changes) {
     if (recursive === true) {
       steps.push({ kind: 'remove-tree', path });
       continue;
@@ -33,10 +36,10 @@ function stepsOf(changes: readonly FileChange[]): Step[] {
     if (content === null) {
       if (last?.kind === 'remove') last.paths.push(path);
       else steps.push({ kind: 'remove', paths: [path] });
-    } else if (last?.kind === 'write') {
-      last.entries.push({ path, content });
     } else {
-      steps.push({ kind: 'write', entries: [{ path, content }] });
+      const entry = executable === undefined ? { path, content } : { path, content, executable };
+      if (last?.kind === 'write') last.entries.push(entry);
+      else steps.push({ kind: 'write', entries: [entry] });
     }
   }
   return steps;
@@ -65,11 +68,11 @@ export async function commitChanges(wc: string, input: CommitChangesInput): Prom
     for (const step of stepsOf(input.changes)) {
       if (step.kind === 'write') {
         let info = '';
-        for (const { path, content } of step.entries) {
+        for (const { path, content, executable } of step.entries) {
           const oid = (
             await git(['hash-object', '-w', '--stdin'], { cwd: wc, input: content })
           ).stdout.trim();
-          info += `100644 ${oid}\t${path}\0`;
+          info += `${executable === true ? '100755' : '100644'} ${oid}\t${path}\0`;
         }
         await git(['update-index', '-z', '--index-info'], { cwd: wc, env, input: info });
       } else if (step.kind === 'remove') {

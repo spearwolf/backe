@@ -1,28 +1,20 @@
-import { access, chmod, mkdir, readFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { BackeError } from '../core/errors.ts';
 import { parseSshPublicKey } from '../core/ssh.ts';
+import { exists, isMissing } from '../store/files.ts';
 import { sshKeygen } from './exec.ts';
 
 async function readText(path: string): Promise<string | undefined> {
   try {
     return await readFile(path, 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    if (isMissing(error)) return undefined;
     throw error;
   }
 }
 
 const firstLine = (text: string): string => text.split('\n')[0]?.trim() ?? '';
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Leitet die Public-Key-Zeile per `ssh-keygen -y` ab. `-P ''`: Ein Key mit Passphrase scheitert
@@ -38,9 +30,17 @@ async function deriveFromPrivateKey(keyPath: string): Promise<string> {
   } catch (error) {
     // Ein fehlendes ssh-keygen (oder ein anderer Startfehler) trägt keinen stderr des Programms.
     const details =
-      error instanceof BackeError ? (error.details as { stderr?: unknown }) : undefined;
+      error instanceof BackeError
+        ? (error.details as { stderr?: unknown; exitCode?: unknown })
+        : undefined;
     const stderr = typeof details?.stderr === 'string' ? details.stderr : undefined;
     if (stderr === undefined) throw error;
+    if (firstLine(stderr) === '') {
+      throw new BackeError(
+        'validation',
+        `Key »${keyPath}« ist nicht lesbar (ssh-keygen ohne Ausgabe, Exit ${String(details?.exitCode)})`,
+      );
+    }
     if (/passphrase/i.test(stderr)) {
       throw new BackeError(
         'usage',

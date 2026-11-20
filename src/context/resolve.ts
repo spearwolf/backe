@@ -5,20 +5,11 @@ import { BACKLOG_NAME_RE, isHandle, isProjectPath, isSprintSlug } from '../core/
 import type { UserConfig } from '../core/schemas.ts';
 import { normalizeRepoUrl } from '../core/url.ts';
 import { gitRemotes, gitToplevel } from '../git/query.ts';
+import { exists, fsFailure, isMissing } from '../store/files.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
 import { loadRepoRegistry } from '../store/snapshot.ts';
-import {
-  type Env,
-  envValue,
-  exists,
-  expandPath,
-  fsFailure,
-  type Homes,
-  isMissing,
-  physicalPath,
-  resolveHomes,
-} from './paths.ts';
+import { type Env, envValue, expandPath, type Homes, physicalPath, resolveHomes } from './paths.ts';
 import { findProjectConfig, type ProjectConfigLevel } from './project-config.ts';
 import { findBacklogByRemote, managedClonePath, workingCopyPath } from './registry.ts';
 import { readUserConfig, userConfigPath } from './user-config.ts';

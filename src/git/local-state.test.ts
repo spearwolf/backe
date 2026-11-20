@@ -1,8 +1,8 @@
-import { readFile, realpath } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { git } from './exec.ts';
-import { readLocalState, stateDir, writeLocalState } from './local-state.ts';
+import { clearLocalState, readLocalState, stateDir, writeLocalState } from './local-state.ts';
 
 const IDENT = ['-c', 'user.name=t', '-c', 'user.email=t@example.test'];
 
@@ -31,6 +31,17 @@ describe('local state', () => {
 
   test('reading a missing state file yields undefined', async () => {
     expect(await readLocalState(await repo(), 'verified')).toBeUndefined();
+  });
+
+  test('reading and clearing leave a missing state dir missing, create: true makes it', async () => {
+    const wc = await repo();
+    const dir = join(wc, '.git', 'backe');
+    expect(await stateDir(wc, { create: false })).toBe(dir);
+    expect(await readLocalState(wc, 'verified')).toBeUndefined();
+    await clearLocalState(wc, 'verified');
+    expect(await stat(dir).catch(() => null)).toBeNull();
+    expect(await stateDir(wc, { create: true })).toBe(dir);
+    expect((await stat(dir)).isDirectory()).toBe(true);
   });
 
   test('a written value is read back and overwritten atomically', async () => {

@@ -177,8 +177,11 @@ export async function logTrailers(
 }
 
 export type RawCommitSpec = {
-  /** Pfad → Inhalt; `null` löscht den Pfad, `{ symlink }` legt einen Symlink (Modus 120000) an. */
-  files: Record<string, string | null | { symlink: string }>;
+  /**
+   * Pfad → Inhalt; `null` löscht den Pfad, `{ symlink }` legt einen Symlink (Modus 120000) an,
+   * `{ executable }` eine ausführbare Datei (Modus 100755).
+   */
+  files: Record<string, string | null | { symlink: string } | { executable: string }>;
   key?: TestKey;
   /** Author- und Committer-Datum (sonst jetzt). */
   date?: string;
@@ -208,6 +211,17 @@ export async function rawCommit(wc: string, spec: RawCommitSpec): Promise<string
     for (const [path, content] of Object.entries(spec.files)) {
       if (content === null) {
         await git(['update-index', '--force-remove', '--', path], { cwd: wc, env });
+        continue;
+      }
+      if (typeof content === 'object' && 'executable' in content) {
+        const blob = await git(['hash-object', '-w', '--stdin'], {
+          cwd: wc,
+          input: content.executable,
+        });
+        await git(
+          ['update-index', '--add', '--cacheinfo', `100755,${blob.stdout.trim()},${path}`],
+          { cwd: wc, env },
+        );
         continue;
       }
       if (typeof content === 'object') {

@@ -9,14 +9,7 @@ import { mkdir, readdir, readFile, rename, rm } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, sep } from 'node:path';
 import { z } from 'zod';
 import { withFileLock } from '../context/lock.ts';
-import {
-  type Env,
-  exists,
-  expandPath,
-  type Homes,
-  physicalPath,
-  samePath,
-} from '../context/paths.ts';
+import { type Env, expandPath, type Homes, physicalPath, samePath } from '../context/paths.ts';
 import {
   type BacklogEntry,
   listBacklogs,
@@ -38,6 +31,7 @@ import { clearLocalState, readLocalState, writeLocalState } from '../git/local-s
 import { branchesWithUnpushed, gitRemotes, gitToplevel } from '../git/query.ts';
 import { headState } from '../git/repo.ts';
 import type { Notice } from '../ops/notice.ts';
+import { exists } from '../store/files.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG, userFile } from '../store/layout.ts';
 import { ensureHub, hubPath } from './hub.ts';

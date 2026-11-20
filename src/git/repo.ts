@@ -1,7 +1,6 @@
-import { stat } from 'node:fs/promises';
 import { BackeError } from '../core/errors.ts';
-import { applyFileChanges, type FileChange, isIssueDirPath } from '../store/files.ts';
-import { git } from './exec.ts';
+import { applyFileChanges, exists, type FileChange, isIssueDirPath } from '../store/files.ts';
+import { forChunks, git, PATH_CHUNK } from './exec.ts';
 
 export type Operation = 'rebase' | 'merge' | 'cherry-pick' | 'revert';
 
@@ -24,13 +23,6 @@ async function gitPath(wc: string, name: string): Promise<string> {
     cwd: wc,
   });
   return stdout.replace(/\n$/, '');
-}
-
-async function exists(path: string): Promise<boolean> {
-  return stat(path).then(
-    () => true,
-    () => false,
-  );
 }
 
 export async function headState(wc: string): Promise<HeadState> {
@@ -77,44 +69,57 @@ export async function assertOnBranch(wc: string, branch: string): Promise<string
 /**
  * Setzt `paths` auf den Stand von HEAD zurück: Pfade, die in HEAD existieren, werden ausgecheckt,
  * alle übrigen aus dem Arbeitsbaum entfernt; danach wird der Index für diese Pfade angeglichen.
+ * Lange Listen gehen in Blöcken an git (ARG_MAX).
  */
 export async function rollbackPaths(wc: string, paths: readonly string[]): Promise<void> {
   if (paths.length === 0) return;
   const env = { GIT_LITERAL_PATHSPECS: '1' };
   const { head } = await headState(wc);
-  let inHead: string[] = [];
+  const inHead = new Set<string>();
   if (head !== undefined) {
-    const { stdout } = await git(['ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', ...paths], {
-      cwd: wc,
-      env,
+    await forChunks(paths, PATH_CHUNK, async (chunk) => {
+      const { stdout } = await git(['ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', ...chunk], {
+        cwd: wc,
+        env,
+      });
+      for (const file of stdout.split('\0')) if (file !== '') inHead.add(file);
     });
-    inHead = stdout.split('\0').filter((f) => f !== '');
-    if (inHead.length > 0) {
-      await git(['checkout', '-q', 'HEAD', '--', ...inHead], { cwd: wc, env });
+    await forChunks([...inHead], PATH_CHUNK, async (chunk) => {
+      await git(['checkout', '-q', 'HEAD', '--', ...chunk], { cwd: wc, env });
+    });
+  }
+  // Ein Pfad steht in HEAD, wenn er selbst oder ein Vorfahr einer Datei von dort ist.
+  const known = new Set(inHead);
+  for (const file of inHead) {
+    for (let i = file.lastIndexOf('/'); i > 0; i = file.lastIndexOf('/', i - 1)) {
+      known.add(file.slice(0, i));
     }
   }
   const removals = paths
-    .filter((p) => !inHead.some((f) => f === p || f.startsWith(`${p}/`)))
+    .filter((p) => !known.has(p))
     .map((path): FileChange => {
       return isIssueDirPath(path)
         ? { path, content: null, recursive: true }
         : { path, content: null };
     });
   await applyFileChanges(wc, removals);
-  await git(['reset', '-q', '--', ...paths], { cwd: wc, env });
+  await forChunks(paths, PATH_CHUNK, async (chunk) => {
+    await git(['reset', '-q', '--', ...chunk], { cwd: wc, env });
+  });
 }
 
 /** Pfade unter `paths` mit Änderungen in Index oder Arbeitsbaum gegenüber HEAD, sortiert. */
 export async function dirtyPaths(wc: string, paths: readonly string[]): Promise<string[]> {
-  // Ein leerer Pathspec würde den ganzen Baum meinen.
-  if (paths.length === 0) return [];
-  const { stdout } = await git(
-    ['status', '--porcelain=v1', '-z', '--no-renames', '--untracked-files=all', '--', ...paths],
-    { cwd: wc, env: { GIT_LITERAL_PATHSPECS: '1' } },
-  );
-  const out: string[] = [];
-  for (const entry of stdout.split('\0')) {
-    if (entry.length > 3) out.push(entry.slice(3));
-  }
-  return out.sort();
+  // Ein leerer Pathspec würde den ganzen Baum meinen; `forChunks` ruft für [] nichts auf.
+  const out = new Set<string>();
+  await forChunks(paths, PATH_CHUNK, async (chunk) => {
+    const { stdout } = await git(
+      ['status', '--porcelain=v1', '-z', '--no-renames', '--untracked-files=all', '--', ...chunk],
+      { cwd: wc, env: { GIT_LITERAL_PATHSPECS: '1' } },
+    );
+    for (const entry of stdout.split('\0')) {
+      if (entry.length > 3) out.add(entry.slice(3));
+    }
+  });
+  return [...out].sort();
 }

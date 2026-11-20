@@ -2,12 +2,13 @@
 import type { Dirent } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { exists, expandPath, physicalPath } from '../context/paths.ts';
+import { expandPath, physicalPath } from '../context/paths.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { updateUserConfig } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
 import { normalizeRepoUrl } from '../core/url.ts';
 import { gitRemotes } from '../git/query.ts';
+import { exists } from '../store/files.ts';
 import { openSnapshot } from './read.ts';
 
 const SCAN_DEPTH = 4;

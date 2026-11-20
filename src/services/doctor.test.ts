@@ -99,6 +99,14 @@ describe('runDoctor', () => {
     expect(checks.filter((c) => c.status !== 'ok')).toEqual([]);
   });
 
+  test('doctor on a working copy without .git/backe leaves it without', async () => {
+    const ctx = await b.context();
+    const state = join(b.root, '.git', 'backe');
+    await rm(state, { recursive: true, force: true });
+    await runDoctor({ env: b.env, cwd: b.root, ctx }, deps());
+    expect(await exists(state)).toBe(false);
+  });
+
   test('the default run finds the real git', async () => {
     const checks = await runDoctor(await input());
     expect(one(checks, 'git').status).toBe('ok');

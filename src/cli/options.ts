@@ -5,7 +5,7 @@
  */
 import { readFile } from 'node:fs/promises';
 import type { Command } from 'commander';
-import { envValue, expandPath, type Homes, isMissing, resolveHomes } from '../context/paths.ts';
+import { envValue, expandPath, type Homes, resolveHomes } from '../context/paths.ts';
 import { type ContextFlags, type ResolvedContext, resolveContext } from '../context/resolve.ts';
 import { readUserConfig, userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
@@ -14,6 +14,7 @@ import type { Notice } from '../ops/notice.ts';
 import { freshen, scheduleSync, statusLine, syncStatus } from '../services/background.ts';
 import type { WriteOpsOutcome, WriteOutcome } from '../services/outcome.ts';
 import { checkFields } from '../services/views.ts';
+import { isMissing } from '../store/files.ts';
 import type { CliIo } from './io.ts';
 import {
   type Format,

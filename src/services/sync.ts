@@ -7,7 +7,6 @@
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { type LockOptions, withFileLock } from '../context/lock.ts';
-import { exists } from '../context/paths.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
 import { userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
@@ -18,6 +17,7 @@ import { isAncestor, readBlobs, resolveCommit } from '../git/history.ts';
 import { readLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
 import { assertOnBranch, dirtyPaths } from '../git/repo.ts';
 import { readPublicKey } from '../git/ssh.ts';
+import { exists } from '../store/files.ts';
 import { parseEntityFile } from '../store/frontmatter.ts';
 import { BACKLOG_CONFIG, userFile } from '../store/layout.ts';
 import { authorOf, isoNow } from './env.ts';

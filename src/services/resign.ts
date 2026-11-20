@@ -5,7 +5,6 @@
  * Arbeitskopie springt danach einmal per `reset --keep`, unter dem Write-Lock.
  */
 import { join } from 'node:path';
-import { exists } from '../context/paths.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
 import { defaultRandomBytes } from '../core/ids.ts';
@@ -30,6 +29,7 @@ import type { Notice } from '../ops/notice.ts';
 import type { Operation } from '../ops/operation.ts';
 import { translateEdits } from '../ops/translate.ts';
 import type { FileChange } from '../store/files.ts';
+import { exists } from '../store/files.ts';
 import { BACKLOG_CONFIG, classifyPath } from '../store/layout.ts';
 import {
   type BacklogSnapshot,
