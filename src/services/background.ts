@@ -55,7 +55,8 @@ export async function runBackground(
   /** Eine Runde; liefert, ob sie gezählt wird (ohne Remote läuft keine). */
   const round = async (): Promise<number> => {
     try {
-      const out = await syncHeld(ctx, deps);
+      // Die Hinweise landen nur in `sync.log`: Warnungen bleiben für den Vordergrund offen.
+      const out = await syncHeld(ctx, deps, { unseen: true });
       for (const notice of out.notices) await record('notice', notice);
       return out.skipped === undefined ? 1 : 0;
     } catch (err) {

@@ -9,11 +9,17 @@ import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { revParse, setPullInterval, testBacklog, twoClones } from '../../test/helpers/git.ts';
+import {
+  rawCommit,
+  revParse,
+  setPullInterval,
+  testBacklog,
+  twoClones,
+} from '../../test/helpers/git.ts';
 import { seqBytes } from '../../test/helpers/snapshot.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { git } from '../git/exec.ts';
-import { clearLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
+import { clearLocalState, readLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
 import type { Operation } from '../ops/operation.ts';
 import { exists } from '../store/files.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
@@ -28,7 +34,13 @@ import {
   syncStatus,
 } from './background.ts';
 import { type SyncDeps, syncNow } from './sync.ts';
-import { type ConflictEntry, readSyncState, writeConflicts, writeSyncState } from './sync-state.ts';
+import {
+  type ConflictEntry,
+  readSyncState,
+  syncFile,
+  writeConflicts,
+  writeSyncState,
+} from './sync-state.ts';
 import { executeWrite } from './write.ts';
 
 type SpawnCall = Parameters<typeof ChildProcess.spawn>;
@@ -97,6 +109,42 @@ async function uncommittedBacklog(): Promise<string> {
 }
 
 describe('runBackground', () => {
+  test('a background round leaves the warn-mode warning for the foreground', async () => {
+    const config = await readFile(join(t.spw.root, BACKLOG_CONFIG), 'utf8');
+    await executeWrite(spw(), {
+      kind: 'manual',
+      subject: 'verify: warn',
+      changes: [
+        {
+          path: BACKLOG_CONFIG,
+          content: config.replace(/\n}\n$/, ',\n  "verify": "warn"\n}\n'),
+        },
+      ],
+    });
+    await git(['push', '-q', 'origin', 'main'], { cwd: t.spw.root });
+    await syncNow(agent(), deps());
+    const bad = await rawCommit(t.spw.root, {
+      files: { 'notes.md': 'x\n' },
+      actor: 'spw',
+      op: 'manual',
+    });
+    await git(['push', '-q', 'origin', 'main'], { cwd: t.spw.root });
+    const warning = `${bad.slice(0, 7)}: unsigniert`;
+
+    expect(await runBackground(agent(), deps())).toEqual({ rounds: 1, deferred: false });
+    expect(await readFile(await syncFile(agentWc(), 'sync.log'), 'utf8')).toContain(
+      `notice: ${warning}`,
+    );
+    expect(await readLocalState(agentWc(), 'warned')).toBeUndefined();
+
+    // Erst eine Runde im Vordergrund bringt die Warnung zum User, dann nicht noch einmal.
+    expect((await syncNow(agent(), deps())).notices).toEqual([warning]);
+    expect((await syncNow(agent(), deps())).notices).toEqual([]);
+    // Ein Hintergrund-Lauf danach schreibt weiter ins Log und lässt das Gedächtnis stehen.
+    await runBackground(agent(), deps());
+    expect(await readLocalState(agentWc(), 'warned')).toBe(bad);
+  });
+
   test('a second background run while one holds the lock only marks dirty', async () => {
     await create(agent(), 'B');
     let reached!: () => void;

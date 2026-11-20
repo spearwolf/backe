@@ -547,16 +547,24 @@ const skipped = (notices: string[]): SyncOutcome => ({
   notices,
 });
 
+/**
+ * Wie eine Runde aufgerufen wird: `claimSha` markiert die Claim-Einheit (backe.md §2.16.5).
+ * `unseen`: Die Hinweise erreichen keinen User (der Hintergrund-Sync schreibt sie nur nach
+ * `sync.log`); dann meldet die Runde jede Warnung im Modus `warn` und lässt das Gedächtnis
+ * `warned` unberührt, damit die nächste Runde im Vordergrund sie noch bringt.
+ */
+export type RoundOptions = { claimSha?: string; unseen?: boolean };
+
 /** Die Runde, während der Aufrufer `sync.lock` hält; `sync.json` hält Zeit und Ergebnis. */
-async function heldRound(p: Prepared, opts: { claimSha?: string }): Promise<SyncOutcome> {
+async function heldRound(p: Prepared, opts: RoundOptions): Promise<SyncOutcome> {
   const { wc, config, deps } = p;
   const now = deps.now ?? (() => new Date());
   const before = await readSyncState(wc);
   const attempt = isoNow(now());
   try {
-    const warned = await readWarned(wc);
+    const warned = opts.unseen === true ? new Set<string>() : await readWarned(wc);
     const out = await runRounds(p, config.sync.remote, config.sync.branch, warned, opts.claimSha);
-    await writeWarned(wc, warned);
+    if (opts.unseen !== true) await writeWarned(wc, warned);
     await writeSyncState(wc, { last_attempt: attempt, last_success: isoNow(now()) });
     return { ...out, notices: [...p.notices, ...out.notices] };
   } catch (err) {
@@ -598,12 +606,13 @@ export async function syncNow(
 
 /**
  * Wie `syncNow`, aber für einen Aufrufer, der `sync.lock` schon hält (der Hintergrund-Sync dreht
- * darunter mehrere Runden, der Claim hält ihn über Runde, Write und Push).
+ * darunter mehrere Runden, der Claim hält ihn über Runde, Write und Push). Der Hintergrund-Sync
+ * setzt `unseen` (`RoundOptions`).
  */
 export async function syncHeld(
   ctx: ResolvedContext,
   deps: SyncDeps = {},
-  opts: { claimSha?: string } = {},
+  opts: RoundOptions = {},
 ): Promise<SyncOutcome> {
   const p = await prepare(ctx, deps);
   if (p.remote) return heldRound(p, opts);
