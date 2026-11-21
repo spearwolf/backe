@@ -134,7 +134,7 @@ describe('nextJson', () => {
   test('with fields keeps only those', () => {
     const out = nextJson(r, { notices: [], warnings: [], fields: ['id'] });
     expect(wire(out)).toMatchObject({ issue: { id: 'bk-1' } });
-    expect((out.issue as object) && Object.keys(out.issue as object)).toEqual(['id']);
+    expect(Object.keys(out.issue as object)).toEqual(['id']);
   });
 });
 

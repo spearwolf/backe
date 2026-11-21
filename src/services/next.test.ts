@@ -1,6 +1,7 @@
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { type TestBacklog, testBacklog, testKey } from '../../test/helpers/git.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
+import type { Operation } from '../ops/operation.ts';
 import { nextIssue } from './next.ts';
 import { executeWrite } from './write.ts';
 
@@ -17,10 +18,12 @@ beforeEach(async () => {
   });
 });
 
-async function create(...ops: Record<string, unknown>[]): Promise<Record<string, string>> {
+type IssueCreate = Omit<Extract<Operation, { op: 'issue.create' }>, 'op'>;
+
+async function create(...ops: IssueCreate[]): Promise<Record<string, string>> {
   const r = await executeWrite(ctx, {
     kind: 'batch',
-    ops: ops.map((o) => ({ op: 'issue.create', ...o })) as never,
+    ops: ops.map((o): Operation => ({ op: 'issue.create', ...o })),
   });
   return r.refs;
 }

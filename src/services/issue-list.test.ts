@@ -61,22 +61,35 @@ beforeEach(async () => {
       {
         op: 'issue.create',
         ref: '$X',
+        // Feste IDs gegen die Anlegereihenfolge: X und Y teilen den Zeitstempel, die ID entscheidet.
+        id: 'bk-xxxx1',
         title: 'Ops-Ding',
         state: 'todo',
         rank: 4,
         projects: ['ops'],
+        created: '2026-11-19T10:00:04Z',
       },
       {
         op: 'issue.create',
         ref: '$Y',
+        id: 'bk-xxxx0',
         title: 'Folge',
         state: 'todo',
         rank: 5,
         depends_on: ['$X'],
         projects: ['ops'],
         props: { color: 'red' },
+        created: '2026-11-19T10:00:04Z',
       },
-      { op: 'issue.create', ref: '$D', title: 'Fertig', state: 'done', rank: 6, projects: ['web'] },
+      {
+        op: 'issue.create',
+        ref: '$D',
+        title: 'Fertig',
+        state: 'done',
+        rank: 6,
+        projects: ['web'],
+        created: '2026-11-19T10:00:06Z',
+      },
       {
         op: 'issue.create',
         ref: '$K',
@@ -86,6 +99,7 @@ beforeEach(async () => {
         blocked_by: ['$D'],
         rank: 7,
         projects: ['ops'],
+        created: '2026-11-19T10:00:05Z',
       },
     ],
   });
@@ -200,10 +214,10 @@ test('parent lists direct children, top-level the roots, both together are a usa
 });
 
 test('sort created orders by created, then id', async () => {
-  // C1, C2, P tragen aufsteigende Zeitstempel; X und Y haben die spätere Erzeugungszeit des Batches.
-  const r = await listIssues(ctx, { sort: 'created', states: ['all'] });
-  expect(r.items.slice(0, 3).map((i) => i.issue.id)).toEqual(names('C1', 'C2', 'P'));
-  expect(r.items).toHaveLength(7);
+  // Alle Zeitstempel fest: C1 < C2 < P < X = Y < K < D; Y steht vor X, weil seine ID kleiner ist.
+  expect(await ids({ sort: 'created', states: ['all'] })).toEqual(
+    names('C1', 'C2', 'P', 'Y', 'X', 'K', 'D'),
+  );
 });
 
 test('tree orders children under parents with depth', async () => {

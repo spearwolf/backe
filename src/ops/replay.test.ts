@@ -6,6 +6,7 @@
 import { catchErr } from '../../test/helpers/catch.ts';
 import { I, seqBytes, snap } from '../../test/helpers/snapshot.ts';
 import { BackeError } from '../core/errors.ts';
+import type { Comment } from '../core/schemas.ts';
 import { serializeEntityFile } from '../store/frontmatter.ts';
 import type { BacklogSnapshot, StoredEntity } from '../store/snapshot.ts';
 import { type ApplyContext, applyOperation } from './apply.ts';
@@ -366,7 +367,7 @@ describe('rebaseOp', () => {
   test('rebases comment.edit hash from the loaded comments', () => {
     const s = snap({ issues: [{ id: I(1) }] });
     const path = `issues/${I(1).slice(3, 5)}/${I(1)}/comments/${F}`;
-    const comments = new Map([
+    const comments = new Map<string, StoredEntity<Comment>[]>([
       [
         I(1),
         [
@@ -386,9 +387,9 @@ describe('rebaseOp', () => {
       from_hash: bodyHash('alt'),
       body: 'x',
     };
-    expect(rebaseOp(s, op, comments as never)).toEqual({ ...op, from_hash: bodyHash('jetzt') });
+    expect(rebaseOp(s, op, comments)).toEqual({ ...op, from_hash: bodyHash('jetzt') });
     expect(rebaseOp(s, op)).toBe(op);
-    expect(rebaseOp(s, { ...op, file: 'fehlt.md' }, comments as never)).toMatchObject({
+    expect(rebaseOp(s, { ...op, file: 'fehlt.md' }, comments)).toMatchObject({
       from_hash: bodyHash('alt'),
     });
   });

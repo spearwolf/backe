@@ -1,4 +1,3 @@
-import { readFileSync, writeFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
@@ -92,19 +91,17 @@ describe('comments', () => {
     await addComment(ctx, id, 'alt');
     const [stored] = await listComments(b.root, id);
     const path = join(b.root, (stored as { path: string }).path);
-    let changed = false;
-    // `now` läuft im Write nach dem Vorab-Lesen, aber vor dem Laden der Kommentare unter dem Lock.
-    const now = () => {
-      if (!changed) {
-        changed = true;
-        writeFileSync(path, readFileSync(path, 'utf8').replace('alt', 'zwischendurch'));
-      }
-      return new Date();
+    // Zwischen dem Vorab-Lesen des Kommentars und dem Write-Lock ändert ihn jemand anderes.
+    const beforeLock = async () => {
+      await writeFile(path, (await readFile(path, 'utf8')).replace('alt', 'zwischendurch'));
     };
-    const err = await catchErrAsync(() => editComment(ctx, id, '1', 'meins', { now }));
+    const err = await catchErrAsync(() =>
+      editComment(ctx, id, '1', 'meins', { hooks: { beforeLock } }),
+    );
     expect(err).toMatchObject({ code: 'conflict' });
     expect((err as Error).message).toContain('inzwischen geändert');
-    expect(readFileSync(path, 'utf8')).toContain('zwischendurch');
-    expect(readFileSync(path, 'utf8')).not.toContain('meins');
+    const after = await readFile(path, 'utf8');
+    expect(after).toContain('zwischendurch');
+    expect(after).not.toContain('meins');
   });
 });
