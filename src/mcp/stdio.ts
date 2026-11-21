@@ -9,6 +9,9 @@ import { createBackeMcp, type McpOptions, prepareMcp } from './server.ts';
 
 export type StdioIo = { stdin: Readable; stdout: Writable; stderr(s: string): void };
 
+/** Test-Hooks: `serveStdio` des SDK und die Server-Factory, etwa mit scheiterndem `close`. */
+export type StdioDeps = { serve?: typeof serveStdio; create?: typeof createBackeMcp };
+
 /** Löst auf, sobald `stdin` endet oder geschlossen wird, auch wenn das schon passiert ist. */
 function endOf(stdin: Readable): Promise<void> {
   return new Promise((resolve) => {
@@ -36,17 +39,17 @@ function closeOf(transport: StdioServerTransport): Promise<void> {
 /**
  * Prüft den Start (wirft den `BackeError` der CLI, bevor ein Byte auf stdout geht), bedient dann
  * den Client und endet mit stdin oder dem Transport: Verbindung zu, Timer weg, laufende
- * Tool-Aufrufe zu Ende. Beendet nie selbst den Prozess.
+ * Tool-Aufrufe zu Ende. Scheitert dabei das Schließen, steht das als `backe mcp: …` auf stderr;
+ * das Ende bleibt regulär (Exit 0), denn der Client ist schon weg. Beendet nie selbst den Prozess.
  */
-export async function runStdio(opts: McpOptions, io: StdioIo): Promise<void> {
-  const mcp = await createBackeMcp(opts, await prepareMcp(opts));
+export async function runStdio(opts: McpOptions, io: StdioIo, deps: StdioDeps = {}): Promise<void> {
+  const mcp = await (deps.create ?? createBackeMcp)(opts, await prepareMcp(opts));
+  const report = (error: unknown) =>
+    io.stderr(`backe mcp: ${error instanceof Error ? error.message : String(error)}\n`);
   const ended = endOf(io.stdin);
   const transport = new StdioServerTransport(io.stdin, io.stdout);
-  const handle = serveStdio(() => mcp.build(), {
-    transport,
-    onerror: (error) => io.stderr(`backe mcp: ${error.message}\n`),
-  });
+  const handle = (deps.serve ?? serveStdio)(() => mcp.build(), { transport, onerror: report });
   await Promise.race([ended, closeOf(transport)]);
-  await handle.close();
-  await mcp.close();
+  await handle.close().catch(report);
+  await mcp.close().catch(report);
 }

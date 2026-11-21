@@ -87,6 +87,12 @@ export function issueDetailJson(d: IssueDetail): Record<string, unknown> {
   };
 }
 
+/** `issue show --json` und `issue_get`: die Detailansicht, mit `fields` auf diese Felder gekürzt. */
+export function issueShowJson(d: IssueDetail, fields?: readonly string[]): Record<string, unknown> {
+  const obj = issueDetailJson(d);
+  return fields === undefined ? obj : pickFields(obj, fields, SHOW_FIELDS);
+}
+
 /** Ein Listeneintrag als JSON: das Issue, `depth` in der Baumansicht, `open_deps` nur wenn wahr. */
 export function issueListJson(item: IssueListItem): Record<string, unknown> {
   return {

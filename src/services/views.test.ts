@@ -9,6 +9,7 @@ import {
   errorJson,
   issueDetailJson,
   issueListResultJson,
+  issueShowJson,
   nextJson,
   noticeJson,
   outcomeJson,
@@ -236,6 +237,15 @@ describe('issueDetailJson', () => {
       issueDetailJson({ ...base, body: 'b', parents: [{ id: 'bk-0' }] as never }),
     ) as object;
     expect(out).toMatchObject({ body: 'b', parents: [{ id: 'bk-0' }] });
+  });
+
+  test('issueShowJson is the detail view, cut to the requested fields', () => {
+    expect(issueShowJson(base)).toEqual(issueDetailJson(base));
+    expect(wire(issueShowJson(base, ['state', 'id', 'body']))).toEqual({
+      state: 'open',
+      id: 'bk-1',
+    });
+    expect(() => issueShowJson(base, ['bogus'])).toThrow('Unbekannte Felder');
   });
 });
 

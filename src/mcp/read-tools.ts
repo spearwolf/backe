@@ -7,7 +7,6 @@ import { type McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { BackeError } from '../core/errors.ts';
 import { getAttachment } from '../services/attachments.ts';
-import { scheduleSync } from '../services/background.ts';
 import { nextClaim } from '../services/claim.ts';
 import { type IssueListQuery, listIssues } from '../services/issue-list.ts';
 import { showIssue } from '../services/issue-show.ts';
@@ -19,17 +18,16 @@ import { listSprints, showSprint } from '../services/sprints.ts';
 import {
   attachmentJson,
   checkFields,
-  issueDetailJson,
   issueListResultJson,
+  issueShowJson,
   LIST_FIELDS,
   NEXT_FIELDS,
   nextJson,
-  pickFields,
   repoLocateJson,
   SHOW_FIELDS,
   sprintShowJson,
 } from '../services/views.ts';
-import { defineTool, type ToolEnv } from './tool.ts';
+import { defineTool, runTool, type ToolEnv } from './tool.ts';
 
 /** Größte Datei, deren Inhalt `attachment_get` als `text` mitliefert. */
 const TEXT_LIMIT = 262_144;
@@ -77,12 +75,11 @@ function listQuery(a: {
   return q;
 }
 
-/**
- * Prüft `fields` vor jedem Service-Aufruf: Ein unbekanntes Feld ist `usage`, bevor gelesen oder
- * (bei `issue_next` mit `claim`) übernommen und gepusht wird.
- */
-function checkFieldsFirst(fields: readonly string[] | undefined, allowed: readonly string[]): void {
-  if (fields !== undefined) checkFields(fields, allowed);
+/** `check` für Tools mit `fields`: ein unbekanntes Feld ist `usage`, bevor irgendetwas läuft. */
+function fieldsCheck(allowed: readonly string[]) {
+  return (a: { fields?: readonly string[] | undefined }): void => {
+    if (a.fields !== undefined) checkFields(a.fields, allowed);
+  };
 }
 
 /** Der Inhalt einer Datei als Text, wenn sie klein und gültiges UTF-8 ist; sonst `undefined`. */
@@ -124,11 +121,9 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
         fields: strings.optional(),
       }),
       kind: 'read',
+      check: fieldsCheck(LIST_FIELDS),
     },
-    async (ctx, a) => {
-      checkFieldsFirst(a.fields, LIST_FIELDS);
-      return issueListResultJson(await listIssues(ctx, listQuery(a)), a.fields);
-    },
+    async (ctx, a) => issueListResultJson(await listIssues(ctx, listQuery(a)), a.fields),
   );
 
   defineTool(
@@ -143,13 +138,12 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
         fields: strings.optional(),
       }),
       kind: 'read',
+      check: fieldsCheck(SHOW_FIELDS),
     },
     async (ctx, a) => {
-      checkFieldsFirst(a.fields, SHOW_FIELDS);
       const comments = a.comments === 'last' ? 1 : a.comments === 'all' ? 'all' : undefined;
       const d = await showIssue(ctx, a.id, comments === undefined ? {} : { comments });
-      const obj = issueDetailJson(d);
-      return a.fields === undefined ? obj : pickFields(obj, a.fields, SHOW_FIELDS);
+      return issueShowJson(d, a.fields);
     },
   );
 
@@ -173,9 +167,9 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
       // Hintergrund-Sync könnte `sync.lock` vor dem Claim greifen und ihn eine ganze Runde
       // warten lassen. Der Claim synct selbst, neben der Warteschlange.
       kind: (a) => (a.claim === true ? 'sync' : 'read'),
+      check: fieldsCheck(NEXT_FIELDS),
     },
     async (ctx, a) => {
-      checkFieldsFirst(a.fields, NEXT_FIELDS);
       const q: NextQuery = {
         ...(a.level === undefined ? {} : { level: a.level }),
         ...(a.project === undefined ? {} : { project: a.project }),
@@ -302,11 +296,10 @@ export function registerIssueResource(server: McpServer, env: ToolEnv): void {
       mimeType: 'text/markdown',
     },
     async (_uri, variables) => {
-      const ctx = await env.context();
-      await scheduleSync(ctx, 'read', env.opts.deps?.sync);
       const raw = variables.id;
       const ref = decodeId(Array.isArray(raw) ? (raw[0] ?? '') : (raw ?? ''));
-      const f = await readIssueFile(ctx, ref);
+      const ctx = await env.context();
+      const f = await runTool(env, 'read', ctx, () => readIssueFile(ctx, ref));
       return {
         contents: [{ uri: `backe://issue/${f.id}`, mimeType: 'text/markdown', text: f.text }],
       };

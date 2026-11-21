@@ -25,10 +25,9 @@ import {
   unlinkIssue,
 } from '../../services/issues.ts';
 import {
-  issueDetailJson,
   issueListResultJson,
+  issueShowJson,
   LIST_FIELDS,
-  pickFields,
   SHOW_FIELDS,
 } from '../../services/views.ts';
 import { editorCommand, editText, noEditorError } from '../editor.ts';
@@ -259,10 +258,7 @@ function defineShow(parent: Command, name: string, rt: Runtime, description: str
             ...(comments === undefined ? {} : { comments }),
           });
           if (env.format === 'json') {
-            const obj = issueDetailJson(d);
-            env.out(
-              json(env.fields === undefined ? obj : pickFields(obj, env.fields, SHOW_FIELDS)),
-            );
+            env.out(json(issueShowJson(d, env.fields)));
             return;
           }
           env.out(env.format === 'md' ? issueDetailMd(d) : issueDetailText(d, env.color));

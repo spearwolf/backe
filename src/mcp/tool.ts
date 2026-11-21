@@ -67,9 +67,9 @@ export function pendingStarts(): Pending {
   };
 }
 
-/** Erfolg als ein Textblock mit kompaktem JSON; kein `structuredContent`. */
+/** Erfolg als ein Textblock mit kompaktem JSON; kein `structuredContent`. `undefined` wird `null`. */
 export function toolResult(value: unknown): CallToolResult {
-  return { content: [{ type: 'text', text: JSON.stringify(value) }] };
+  return { content: [{ type: 'text', text: JSON.stringify(value) ?? 'null' }] };
 }
 
 /** Fehler als `{"error":{code,message,hint?,details?}}` wie die CLI, ohne Stacktrace. */
@@ -86,12 +86,16 @@ function committed(value: unknown): boolean {
   );
 }
 
-async function execute(
+/**
+ * Führt `run` nach seiner Art aus (siehe {@link ToolKind}); derselbe Weg für Tools und die
+ * Resource, damit Frische, Warteschlange und Nachlauf nur hier stehen.
+ */
+export async function runTool<T>(
   env: ToolEnv,
   kind: ToolKind,
   ctx: ResolvedContext,
-  run: () => Promise<unknown>,
-): Promise<unknown> {
+  run: () => Promise<T>,
+): Promise<T> {
   const sync = env.opts.deps?.sync;
   if (kind === 'read') {
     await scheduleSync(ctx, 'read', sync);
@@ -117,12 +121,19 @@ async function execute(
 /**
  * Registriert ein Tool mit Fehlergrenze; `run` bekommt den frisch aufgelösten Kontext. `kind` darf
  * von den Argumenten abhängen (`issue_next` mit `claim` ist kein Read, sondern ein Sync-Tool).
+ * `check` prüft die Argumente vor allem anderen (etwa `fields`): Scheitert es, wird weder der
+ * Kontext aufgelöst noch ein Sync geplant — wie die CLI, die `--fields` vorab prüft.
  */
 export function defineTool<S extends z.ZodObject>(
   server: McpServer,
   env: ToolEnv,
   name: string,
-  spec: { description: string; input: S; kind: ToolKind | ((args: z.infer<S>) => ToolKind) },
+  spec: {
+    description: string;
+    input: S;
+    kind: ToolKind | ((args: z.infer<S>) => ToolKind);
+    check?: (args: z.infer<S>) => void;
+  },
   run: (ctx: ResolvedContext, args: z.infer<S>) => Promise<unknown>,
 ): void {
   // Mit generischem `S` löst TypeScript den Callback-Typ des SDK nicht auf; das Schema geht daher
@@ -134,9 +145,10 @@ export function defineTool<S extends z.ZodObject>(
     async (args): Promise<CallToolResult> => {
       try {
         const a = args as z.infer<S>;
+        spec.check?.(a);
         const kind = typeof spec.kind === 'function' ? spec.kind(a) : spec.kind;
         const ctx = await env.context();
-        return toolResult(await execute(env, kind, ctx, () => run(ctx, a)));
+        return toolResult(await runTool(env, kind, ctx, () => run(ctx, a)));
       } catch (err) {
         return toolError(err);
       }

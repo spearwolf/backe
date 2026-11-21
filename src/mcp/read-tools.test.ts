@@ -221,6 +221,36 @@ test('reads schedule a background sync', async () => {
   }
 });
 
+test('unknown fields and a malformed resource URI schedule no read sync', async () => {
+  const b = await testBacklog({ remote: true });
+  const calls: unknown[] = [];
+  const config = await readFile(join(b.root, BACKLOG_CONFIG), 'utf8');
+  await executeWrite(await b.context(), {
+    kind: 'manual',
+    subject: 'pull_interval: 0',
+    changes: [
+      {
+        path: BACKLOG_CONFIG,
+        content: config.replace(/\n}\n$/, `,\n  "sync": { "pull_interval": 0 }\n}\n`),
+      },
+    ],
+  });
+  const i = await id(createIssue(await b.context(), { title: 'A' }));
+  const m = await connectMcp(b, { deps: { sync: { spawn: (a) => void calls.push(a) } } });
+  try {
+    for (const tool of ['issue_list', 'issue_get', 'issue_next']) {
+      const r = await m.call(tool, { ...(tool === 'issue_get' ? { id: i } : {}), fields: ['x'] });
+      expect(r).toMatchObject({ error: { code: 'usage' } });
+    }
+    await expect(m.client.readResource({ uri: 'backe://issue/bk-%E0%A4%A' })).rejects.toThrow();
+    expect(calls).toHaveLength(0);
+    await m.client.readResource({ uri: `backe://issue/${i}` });
+    expect(calls).toHaveLength(1);
+  } finally {
+    await m.close();
+  }
+});
+
 test('issue_list maps every parameter onto its query field', () =>
   withMcp(async (m, b) => {
     await createIssue(await b.context(), { title: 'A' });

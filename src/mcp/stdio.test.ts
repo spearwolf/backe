@@ -4,8 +4,10 @@
  * `test/e2e/mcp.test.ts`.
  */
 import { PassThrough } from 'node:stream';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { testBacklog } from '../../test/helpers/git.ts';
+import { createBackeMcp } from './server.ts';
 import { runStdio } from './stdio.ts';
 
 const INITIALIZE = {
@@ -99,4 +101,33 @@ test('runStdio refuses to start before writing a byte', async () => {
   expect(err.code).toBe('usage');
   expect(err.message).toContain('Kein User aufgelöst');
   expect(t.stdout.read()).toBeNull();
+});
+
+test('errors from closing after stdin ended go to stderr, and runStdio still returns', async () => {
+  const t = await setup();
+  const running = runStdio(t.opts, t.io, {
+    serve: (factory, options) => {
+      const handle = serveStdio(factory, options);
+      return {
+        ...handle,
+        close: async () => {
+          await handle.close();
+          throw new Error('Verbindung klemmt');
+        },
+      };
+    },
+    create: async (opts, start) => {
+      const mcp = await createBackeMcp(opts, start);
+      return {
+        ...mcp,
+        close: async () => {
+          await mcp.close();
+          throw new Error('Timer klemmt');
+        },
+      };
+    },
+  });
+  t.stdin.end();
+  await running;
+  expect(t.stderr).toEqual(['backe mcp: Verbindung klemmt\n', 'backe mcp: Timer klemmt\n']);
 });

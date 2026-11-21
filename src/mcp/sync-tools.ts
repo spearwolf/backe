@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { ResolvedContext } from '../context/resolve.ts';
+import { BacklogConfigSchema } from '../core/schemas.ts';
 import { scheduleSync } from '../services/background.ts';
 import { claimIssue } from '../services/claim.ts';
 import { type SyncDeps, type SyncOutcome, syncNow } from '../services/sync.ts';
@@ -15,9 +16,6 @@ import { requireHeadConfig } from '../services/write.ts';
 import { exists } from '../store/files.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
 import { defineTool, type ToolEnv } from './tool.ts';
-
-/** `sync.pull_interval`, solange die Arbeitskopie noch nicht existiert (Default der Config). */
-const DEFAULT_PULL_INTERVAL = 60;
 
 /** Ergebnis von `sync_now`: wie `sync --json`, die Hinweise aber als Objekte `{message}`. */
 export function syncResult(out: SyncOutcome): Record<string, unknown> {
@@ -51,10 +49,12 @@ export function registerSyncTools(server: McpServer, env: ToolEnv): void {
   );
 }
 
-/** `sync.pull_interval` aus `HEAD` der Arbeitskopie; ohne Arbeitskopie der Default. */
+/** `sync.pull_interval` aus `HEAD` der Arbeitskopie; ohne Arbeitskopie der Default des Schemas. */
 async function pullInterval(ctx: ResolvedContext): Promise<number> {
   const wc = ctx.backlog.workingCopy;
-  if (wc === undefined || !(await exists(join(wc, BACKLOG_CONFIG)))) return DEFAULT_PULL_INTERVAL;
+  if (wc === undefined || !(await exists(join(wc, BACKLOG_CONFIG)))) {
+    return BacklogConfigSchema.shape.sync.parse(undefined).pull_interval;
+  }
   return (await requireHeadConfig(wc)).sync.pull_interval;
 }
 

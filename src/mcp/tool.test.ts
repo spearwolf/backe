@@ -8,6 +8,7 @@ import type { SyncDeps } from '../services/sync.ts';
 import {
   defineTool,
   pendingStarts,
+  runTool,
   type ToolEnv,
   toolError,
   toolResult,
@@ -120,6 +121,64 @@ test('a read tool schedules a read sync before it runs and gets parsed arguments
     await m.close();
     schedule.mockImplementation(async () => false);
   }
+});
+
+test('a check on the arguments runs before the read sync; a failing one schedules nothing', async () => {
+  const order: string[] = [];
+  schedule.mockImplementation(async (_ctx, reason) => {
+    order.push(`sync:${reason}`);
+    return false;
+  });
+  const m = await harness((server, env) => {
+    defineTool(
+      server,
+      env,
+      'checked',
+      {
+        description: 'checked',
+        input: z.object({ ok: z.boolean() }),
+        kind: 'read',
+        check: (a) => {
+          order.push('check');
+          if (!a.ok) throw new BackeError('usage', 'nicht ok');
+        },
+      },
+      async () => {
+        order.push('run');
+        return {};
+      },
+    );
+  });
+  try {
+    expect(await m.call('checked', { ok: false })).toEqual({
+      error: { code: 'usage', message: 'nicht ok' },
+    });
+    expect(order).toEqual(['check']);
+    await m.call('checked', { ok: true });
+    expect(order).toEqual(['check', 'check', 'sync:read', 'run']);
+  } finally {
+    await m.close();
+    schedule.mockImplementation(async () => false);
+  }
+});
+
+test('runTool plans the read sync like defineTool', async () => {
+  const b = await testBacklog();
+  const env: ToolEnv = {
+    context: () => b.context(),
+    opts: {
+      cwd: b.root,
+      env: b.env,
+      flags: { as: b.handle },
+      allowDelete: false,
+      deps: { sync: SYNC },
+    },
+    queue: writeQueue(),
+    pending: pendingStarts(),
+  };
+  const ctx = await b.context();
+  expect(await runTool(env, 'read', ctx, async () => 'gelesen')).toBe('gelesen');
+  expect(schedule).toHaveBeenCalledWith(ctx, 'read', SYNC);
 });
 
 test('a write tool schedules a write sync only after a commit', async () => {
@@ -271,6 +330,8 @@ test('toolResult and toolError carry compact JSON', () => {
   expect(toolResult({ a: 1, b: undefined })).toEqual({
     content: [{ type: 'text', text: '{"a":1}' }],
   });
+  // `JSON.stringify(undefined)` ist kein String; der Block trägt dann `null` wie JSON.
+  expect(toolResult(undefined)).toEqual({ content: [{ type: 'text', text: 'null' }] });
   expect(toolError(new BackeError('conflict', 'besetzt'))).toEqual({
     content: [{ type: 'text', text: '{"error":{"code":"conflict","message":"besetzt"}}' }],
     isError: true,
