@@ -1,6 +1,6 @@
-import { realpath } from 'node:fs/promises';
+import { access, constants, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { BackeError } from '../core/errors.ts';
 import { isMissing } from '../store/files.ts';
 
@@ -57,4 +57,23 @@ export async function physicalPath(p: string): Promise<string> {
 /** Zeigen beide Pfade (über Symlinks hinweg) auf dieselbe Stelle? */
 export async function samePath(a: string, b: string): Promise<boolean> {
   return (await physicalPath(a)) === (await physicalPath(b));
+}
+
+/**
+ * Das Programm `bin` aus den absoluten Einträgen von `PATH` in `env`. Leere und relative Einträge
+ * zählen nicht: Sie meinen das Arbeitsverzeichnis, und ein `git` dort soll das echte nicht
+ * überschatten.
+ */
+export async function findOnPath(env: Env, bin: string): Promise<string | undefined> {
+  for (const dir of (env.PATH ?? '').split(delimiter)) {
+    if (!isAbsolute(dir)) continue;
+    const file = join(dir, bin);
+    try {
+      await access(file, constants.X_OK);
+      if ((await stat(file)).isFile()) return file;
+    } catch {
+      // nicht in diesem Verzeichnis
+    }
+  }
+  return undefined;
 }

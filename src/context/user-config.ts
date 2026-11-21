@@ -18,7 +18,8 @@ export function configLockPath(backeHome: string): string {
   return join(backeHome, 'config.lock');
 }
 
-async function readText(file: string): Promise<string | undefined> {
+/** Text der Config-Datei; fehlt sie, `undefined`. */
+export async function readConfigText(file: string): Promise<string | undefined> {
   try {
     return await readFile(file, 'utf8');
   } catch (error) {
@@ -35,9 +36,16 @@ export function parseUserConfigText(text: string, file: string): UserConfig {
 }
 
 export async function readUserConfig(backeHome: string): Promise<UserConfig> {
+  return (await readUserConfigFile(backeHome)).config;
+}
+
+/** Text (falls die Datei existiert) und geparste Config aus genau einem Lesen. */
+export async function readUserConfigFile(
+  backeHome: string,
+): Promise<{ text?: string; config: UserConfig }> {
   const file = userConfigPath(backeHome);
-  const text = await readText(file);
-  return text === undefined ? {} : parseUserConfigText(text, file);
+  const text = await readConfigText(file);
+  return text === undefined ? { config: {} } : { text, config: parseUserConfigText(text, file) };
 }
 
 type Style = { unit: string; eol: string };
@@ -204,7 +212,7 @@ export async function updateUserConfig(
   await mkdir(backeHome, { recursive: true, mode: 0o700 });
   return withFileLock(configLockPath(backeHome), async () => {
     const file = userConfigPath(backeHome);
-    const text = (await readText(file)) ?? '{}\n';
+    const text = (await readConfigText(file)) ?? '{}\n';
     const current = parseUserConfigText(text, file);
     const edits = edit(current);
     if (edits.length === 0) return current;

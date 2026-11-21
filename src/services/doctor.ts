@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
-import { type Env, expandPath, type Homes, resolveHomes } from '../context/paths.ts';
+import { type Env, expandPath, findOnPath, type Homes, resolveHomes } from '../context/paths.ts';
 import { listBacklogs } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { readUserConfig } from '../context/user-config.ts';
@@ -26,12 +26,12 @@ export type DoctorCheck = {
   hint?: string;
 };
 
-type RunResult = { code: number; stdout: string } | 'missing';
+type RunResult = { code: number; stdout: string } | 'missing' | 'timeout';
 
 export type DoctorDeps = {
   now?: () => Date;
   host?: string;
-  /** Führt ein Programm aus; `'missing'`, wenn es nicht startet (ENOENT). */
+  /** Führt ein Programm aus; `'missing'`, wenn es nicht startet, `'timeout'` nach der Frist. */
   run?: (cmd: string, args: string[]) => Promise<RunResult>;
   isAlive?: (pid: number) => boolean;
   /** Node-Version (Default `process.versions.node`). */
@@ -52,19 +52,28 @@ const MIN_GIT: readonly [number, number] = [2, 38];
 const CLONE_TEMP_MAX_AGE_MS = 3_600_000;
 const LOCK_TEMP = /^(?:write|config)\.lock\.(\d+)\.[0-9a-f]{12}$/;
 
-function defaultRun(env: Env): NonNullable<DoctorDeps['run']> {
+/**
+ * Führt Programme für die Werkzeug-Prüfung aus: `cmd` nur aus absoluten `PATH`-Einträgen
+ * (`findOnPath`), damit ein `git` im Arbeitsverzeichnis nicht das echte überschattet. Nicht
+ * gefunden oder nicht startbar → `'missing'`; nach `timeoutMs` beendet → `'timeout'`.
+ */
+export function toolRunner(env: Env, timeoutMs = 10_000): NonNullable<DoctorDeps['run']> {
   const merged: Record<string, string> = { LC_ALL: 'C' };
   for (const [key, value] of Object.entries({ ...process.env, ...env })) {
     if (value !== undefined) merged[key] = value;
   }
-  return (cmd, args) =>
-    new Promise((done) => {
-      execFile(cmd, args, { env: merged, timeout: 10_000 }, (error, stdout) => {
+  return async (cmd, args) => {
+    const file = await findOnPath(merged, cmd);
+    if (file === undefined) return 'missing';
+    return new Promise((done) => {
+      execFile(file, args, { env: merged, timeout: timeoutMs }, (error, stdout) => {
         if (error === null) return done({ code: 0, stdout });
+        if (error.killed === true) return done('timeout');
         const code = (error as NodeJS.ErrnoException).code;
         done(typeof code === 'number' ? { code, stdout } : 'missing');
       });
     });
+  };
 }
 
 function processAlive(pid: number): boolean {
@@ -137,15 +146,20 @@ function checkNode(version: string): DoctorCheck {
       );
 }
 
+/** Ein Werkzeug, das nicht rechtzeitig antwortet, ist kaputt, nicht abwesend. */
+const timedOut = (id: string, label: string, hint: string): DoctorCheck =>
+  check(id, 'fail', `${label}: Zeitüberschreitung`, hint);
+
 async function checkTools(
   run: NonNullable<DoctorDeps['run']>,
   lfsRequired: boolean,
 ): Promise<DoctorCheck[]> {
   const out: DoctorCheck[] = [];
   const git = await run('git', ['--version']);
-  const m = git === 'missing' ? null : /git version (\d+)\.(\d+)/.exec(git.stdout);
+  const m = typeof git === 'string' ? null : /git version (\d+)\.(\d+)/.exec(git.stdout);
   if (git === 'missing')
     out.push(check('git', 'fail', 'git nicht gefunden', 'Git ≥ 2.38 installieren'));
+  else if (git === 'timeout') out.push(timedOut('git', 'git', 'git --version prüfen'));
   else if (m === null) {
     out.push(
       check(
@@ -168,10 +182,13 @@ async function checkTools(
   out.push(
     keygen === 'missing'
       ? check('ssh-keygen', 'fail', 'ssh-keygen nicht gefunden', 'OpenSSH installieren')
-      : check('ssh-keygen', 'ok', 'vorhanden'),
+      : keygen === 'timeout'
+        ? timedOut('ssh-keygen', 'ssh-keygen', 'ssh-keygen prüfen')
+        : check('ssh-keygen', 'ok', 'vorhanden'),
   );
   const lfs = await run('git', ['lfs', 'version']);
-  if (lfs !== 'missing' && lfs.code === 0) out.push(check('git-lfs', 'ok', lfs.stdout.trim()));
+  if (lfs === 'timeout') out.push(timedOut('git-lfs', 'git lfs', 'git lfs version prüfen'));
+  else if (lfs !== 'missing' && lfs.code === 0) out.push(check('git-lfs', 'ok', lfs.stdout.trim()));
   else if (lfsRequired) {
     out.push(
       check(
@@ -184,9 +201,11 @@ async function checkTools(
   } else out.push(check('git-lfs', 'warn', 'nicht gefunden (optional)'));
   const gh = await run('gh', ['--version']);
   out.push(
-    gh === 'missing' || gh.code !== 0
-      ? check('gh', 'warn', 'nicht gefunden (optional, für repo check --remote)')
-      : check('gh', 'ok', gh.stdout.split('\n')[0] ?? 'vorhanden'),
+    gh === 'timeout'
+      ? timedOut('gh', 'gh', 'gh --version prüfen')
+      : gh === 'missing' || gh.code !== 0
+        ? check('gh', 'warn', 'nicht gefunden (optional, für repo check --remote)')
+        : check('gh', 'ok', gh.stdout.split('\n')[0] ?? 'vorhanden'),
   );
   return out;
 }
@@ -427,7 +446,7 @@ function checkReferences(snapshot: BacklogSnapshot): DoctorCheck[] {
 export async function runDoctor(input: DoctorInput, deps: DoctorDeps = {}): Promise<DoctorCheck[]> {
   const { ctx } = input;
   const homes = ctx?.homes ?? resolveHomes(input.env, input.cwd);
-  const run = deps.run ?? defaultRun(input.env);
+  const run = deps.run ?? toolRunner(input.env);
   const now = (deps.now ?? (() => new Date()))();
   const host = deps.host ?? hostname();
   const isAlive = deps.isAlive ?? processAlive;

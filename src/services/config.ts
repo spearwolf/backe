@@ -1,11 +1,12 @@
-import { mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import type { z } from 'zod';
 import { withFileLock } from '../context/lock.ts';
 import type { Homes } from '../context/paths.ts';
 import {
   configLockPath,
   parseUserConfigText,
-  readUserConfig,
+  readConfigText,
+  readUserConfigFile,
   updateUserConfig,
   userConfigPath,
 } from '../context/user-config.ts';
@@ -22,7 +23,8 @@ import { writeFileAtomic } from '../store/files.ts';
 type Level =
   | { kind: 'object'; shape: Record<string, z.core.$ZodType> }
   | { kind: 'record'; value: z.core.$ZodType }
-  | { kind: 'leaf' };
+  | { kind: 'leaf' }
+  | { kind: 'unsupported'; type: string };
 
 /** Löst optional/default/nullable-Hüllen auf und beschreibt die Ebene dahinter. */
 function levelOf(schema: z.core.$ZodType): Level {
@@ -34,7 +36,8 @@ function levelOf(schema: z.core.$ZodType): Level {
     return { kind: 'object', shape: def.shape as Record<string, z.core.$ZodType> };
   if (def.type === 'record') return { kind: 'record', value: def.valueType };
   if (def.type === 'string' || def.type === 'enum') return { kind: 'leaf' };
-  throw new Error(`UserConfigSchema: Typ »${def.type}« wird von config nicht unterstützt`);
+  // Ein Blatt, das das Schema später bekommt (Zahl, Boolean, …): `config` setzt nur Strings.
+  return { kind: 'unsupported', type: def.type };
 }
 
 /** Top-Level-Keys der Config-Struktur (für den Abgleich mit dem Schema im Test). */
@@ -52,12 +55,15 @@ function splitKey(key: string): string[] {
   return ['repos', key.slice('repos.'.length)];
 }
 
-function resolveKey(key: string): Resolved {
+function resolveKey(key: string, schema: z.core.$ZodType = UserConfigSchema): Resolved {
   const segments = splitKey(key);
-  let level = levelOf(UserConfigSchema);
+  let level = levelOf(schema);
   const path: string[] = [];
+  const unsupported = (type: string) =>
+    new BackeError('validation', `»${path.join('.')}« (${type}) wird von config nicht unterstützt`);
   for (const [i, segment] of segments.entries()) {
     const prefix = path.length === 0 ? '' : ` (unter »${path.join('.')}«)`;
+    if (level.kind === 'unsupported') throw unsupported(level.type);
     if (level.kind === 'leaf') {
       throw new BackeError('validation', `»${path.join('.')}« hat keine Unterkeys`);
     }
@@ -79,23 +85,18 @@ function resolveKey(key: string): Resolved {
       level = levelOf(level.value);
     }
   }
+  if (level.kind === 'unsupported') throw unsupported(level.type);
   return { path, leaf: level.kind === 'leaf' };
 }
 
-/** Zerlegt einen Key in seinen Pfad; nur String-Blätter des Schemas sind setzbar. */
-export function parseConfigKey(key: string): string[] {
-  const { path, leaf } = resolveKey(key);
+/**
+ * Zerlegt einen Key in seinen Pfad; nur String-Blätter des Schemas sind setzbar. `schema` ist
+ * `UserConfigSchema`, im Test auch ein anderes (Schema-Drift).
+ */
+export function parseConfigKey(key: string, schema: z.core.$ZodType = UserConfigSchema): string[] {
+  const { path, leaf } = resolveKey(key, schema);
   if (!leaf) throw new BackeError('validation', `»${key}« ist kein setzbarer Wert`);
   return path;
-}
-
-async function readText(file: string): Promise<string | undefined> {
-  try {
-    return await readFile(file, 'utf8');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw error;
-  }
 }
 
 function lookup(config: UserConfig, path: readonly string[]): unknown {
@@ -113,11 +114,8 @@ export async function getConfig(
   homes: Homes,
   key?: string,
 ): Promise<{ text?: string; config: UserConfig; value?: unknown }> {
-  const config = await readUserConfig(homes.backeHome);
-  if (key === undefined) {
-    const text = await readText(userConfigPath(homes.backeHome));
-    return text === undefined ? { config } : { text, config };
-  }
+  const { text, config } = await readUserConfigFile(homes.backeHome);
+  if (key === undefined) return text === undefined ? { config } : { text, config };
   const { path } = resolveKey(key);
   const value = lookup(config, path);
   if (value === undefined) {
@@ -151,10 +149,14 @@ export async function editConfigText(
   const file = userConfigPath(homes.backeHome);
   const draft = `${file}.draft`;
   await mkdir(homes.backeHome, { recursive: true, mode: 0o700 });
-  const original = await readText(file);
+  const original = await readConfigText(file);
   const start = original ?? '{}\n';
   const edited = await edit(start);
-  if (edited === start) return { changed: false };
+  if (edited === start) {
+    // Ein Entwurf eines früheren, gescheiterten Edits ist mit dem unveränderten Speichern erledigt.
+    await rm(draft, { force: true });
+    return { changed: false };
+  }
 
   const keepDraft = async (): Promise<string> => {
     await writeFileAtomic(draft, edited);
@@ -169,7 +171,7 @@ export async function editConfigText(
   }
 
   await withFileLock(configLockPath(homes.backeHome), async () => {
-    if ((await readText(file)) !== original) {
+    if ((await readConfigText(file)) !== original) {
       throw new BackeError(
         'conflict',
         `${file} hat sich geändert, seit der Editor gestartet wurde`,

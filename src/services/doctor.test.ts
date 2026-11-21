@@ -1,12 +1,18 @@
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { delimiter, join, relative } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
 import { BackeError } from '../core/errors.ts';
 import { git } from '../git/exec.ts';
 import { LFS_RULE } from '../store/layout.ts';
-import { type DoctorCheck, type DoctorDeps, doctorFailure, runDoctor } from './doctor.ts';
+import {
+  type DoctorCheck,
+  type DoctorDeps,
+  doctorFailure,
+  runDoctor,
+  toolRunner,
+} from './doctor.ts';
 import { createIssue } from './issues.ts';
 
 type Tool = 'git' | 'ssh-keygen' | 'git-lfs' | 'gh';
@@ -25,6 +31,15 @@ function fakeRun(over: Partial<Record<Tool, string>> = {}): NonNullable<DoctorDe
     const out = tools[tool];
     return out === 'missing' ? 'missing' : { code: 0, stdout: out };
   };
+}
+
+/** Verzeichnis mit Fake-Programmen: je Name ein sh-Skript mit diesem Rumpf. */
+async function fakeBin(scripts: Record<string, string>): Promise<string> {
+  const dir = await tempDir();
+  for (const [name, body] of Object.entries(scripts)) {
+    await writeFile(join(dir, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  }
+  return dir;
 }
 
 const HOST = 'testhost';
@@ -111,6 +126,25 @@ describe('runDoctor', () => {
     const checks = await runDoctor(await input());
     expect(one(checks, 'git').status).toBe('ok');
     expect(one(checks, 'ssh-keygen').status).toBe('ok');
+  });
+
+  test('a tool that runs into the timeout fails with Zeitüberschreitung, not as missing', async () => {
+    const bin = await fakeBin({ git: 'PATH=/bin:/usr/bin exec sleep 30' });
+    const run = toolRunner({ PATH: bin }, 200);
+    const checks = await runDoctor(await input(), deps({ run }));
+    expect(one(checks, 'git')).toMatchObject({ status: 'fail', detail: 'git: Zeitüberschreitung' });
+    expect(one(checks, 'git-lfs')).toMatchObject({
+      status: 'fail',
+      detail: 'git lfs: Zeitüberschreitung',
+    });
+    expect(one(checks, 'ssh-keygen')).toMatchObject({ detail: 'ssh-keygen nicht gefunden' });
+  });
+
+  test('a git in a relative PATH entry does not shadow the real one', async () => {
+    const bin = await fakeBin({ git: 'echo "git version 1.0.0"' });
+    const PATH = [relative(process.cwd(), bin), '', process.env.PATH ?? ''].join(delimiter);
+    const checks = await runDoctor(await input(), deps({ run: toolRunner({ PATH }) }));
+    expect(one(checks, 'git').status).toBe('ok');
   });
 
   test('an Apple git version string is accepted', async () => {

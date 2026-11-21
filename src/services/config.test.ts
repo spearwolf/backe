@@ -2,11 +2,24 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'jsonc-parser';
+import { z } from 'zod';
 import { catchErr, catchErrAsync } from '../../test/helpers/catch.ts';
 import type { Homes } from '../context/paths.ts';
 import { userConfigPath } from '../context/user-config.ts';
 import { UserConfigSchema } from '../core/schemas.ts';
 import { configKeyShape, editConfigText, getConfig, parseConfigKey, setConfig } from './config.ts';
+
+const readSpy = vi.hoisted(() => vi.fn());
+vi.mock('node:fs/promises', async (orig) => {
+  const actual = await orig<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    readFile: (...a: Parameters<typeof actual.readFile>) => {
+      readSpy(a[0]);
+      return actual.readFile(...a);
+    },
+  };
+});
 
 let dir: string;
 let homes: Homes;
@@ -94,6 +107,21 @@ describe('parseConfigKey', () => {
     );
   });
 
+  test('a leaf of a type config cannot set is a validation error naming the path', () => {
+    const drifted = z.strictObject({
+      user: z.string().optional(),
+      sync: z.strictObject({ fast: z.boolean().optional() }).optional(),
+    });
+    expect(parseConfigKey('user', drifted)).toEqual(['user']);
+    for (const key of ['sync.fast', 'sync.fast.x']) {
+      const err = catchErr(() => parseConfigKey(key, drifted));
+      expect(err).toMatchObject({
+        code: 'validation',
+        message: '»sync.fast« (boolean) wird von config nicht unterstützt',
+      });
+    }
+  });
+
   test('the key table matches UserConfigSchema', () => {
     expect(Object.keys(UserConfigSchema.shape)).toEqual(Object.keys(configKeyShape()));
   });
@@ -105,6 +133,15 @@ describe('getConfig', () => {
     const text = '{\n  // c\n  "user": "spw"\n}\n';
     await writeFile(cfgPath, text);
     expect(await getConfig(homes)).toEqual({ text, config: { user: 'spw' } });
+  });
+
+  test('get reads the file once, with and without key', async () => {
+    await writeFile(cfgPath, '{"user":"spw"}\n');
+    for (const key of [undefined, 'user']) {
+      readSpy.mockClear();
+      await getConfig(homes, key);
+      expect(readSpy.mock.calls.filter(([f]) => f === cfgPath)).toHaveLength(1);
+    }
   });
 
   test('get with key returns a string or an object; a missing key is not_found', async () => {
@@ -138,6 +175,14 @@ describe('editConfigText', () => {
   test('an unchanged text writes nothing, also for a missing file', async () => {
     expect(await editConfigText(homes, async (t) => t)).toEqual({ changed: false });
     await expect(readFile(cfgPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  test('an unchanged text removes the draft of an earlier edit', async () => {
+    await writeFile(cfgPath, '{\n  "user": "spw"\n}\n');
+    await writeFile(`${cfgPath}.draft`, '{\n  "user": \n');
+    expect(await editConfigText(homes, async (t) => t)).toEqual({ changed: false });
+    await expect(readFile(`${cfgPath}.draft`, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(cfgPath, 'utf8')).toBe('{\n  "user": "spw"\n}\n');
   });
 
   test('a missing file is offered as an empty object and created on change', async () => {

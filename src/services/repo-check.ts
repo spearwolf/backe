@@ -1,10 +1,10 @@
 /** `repo check` (backe.md §2.11): lokale Prüfung, mit `remote` Erreichbarkeit, Refs und GitHub-Status. */
 import { execFile } from 'node:child_process';
-import { access, constants, mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import type { Env } from '../context/paths.ts';
+import { type Env, findOnPath } from '../context/paths.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
 import { isGitArg, isGitRef, parseRepoRef } from '../core/names.ts';
@@ -113,20 +113,6 @@ function defaultLsRemote(env: Env): NonNullable<RepoCheckDeps['lsRemote']> {
       return { ok: false, message };
     }
   };
-}
-
-async function findOnPath(env: Env, bin: string): Promise<string | undefined> {
-  for (const dir of (env.PATH ?? '').split(delimiter)) {
-    if (dir === '') continue;
-    const file = join(dir, bin);
-    try {
-      await access(file, constants.X_OK);
-      return file;
-    } catch {
-      // nicht in diesem Verzeichnis
-    }
-  }
-  return undefined;
 }
 
 function parseGithub(text: string): GithubInfo | undefined {
