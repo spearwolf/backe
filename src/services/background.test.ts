@@ -33,6 +33,7 @@ import {
   statusLine,
   syncStatus,
 } from './background.ts';
+import { scheduleDeferred } from './schedule.ts';
 import { type SyncDeps, syncNow } from './sync.ts';
 import {
   type ConflictEntry,
@@ -378,6 +379,35 @@ describe('deferred background runs', () => {
   test('in manual mode the deferred run waits for the next sync', async () => {
     await syncNow(manual(agent()), deferDuringFetch());
     expect(spawned).toEqual([]);
+  });
+});
+
+describe('scheduleDeferred', () => {
+  test('without sync.dirty nothing starts; with it the write start runs', async () => {
+    expect(await scheduleDeferred(agent(), agentWc(), deps())).toBe(false);
+    await writeFile(await state('sync.dirty'), '');
+    expect(await scheduleDeferred(agent(), agentWc(), deps())).toBe(true);
+    expect(spawned).toHaveLength(1);
+  });
+
+  test('a working copy without git dir is swallowed, not thrown into the finally', async () => {
+    const gone = await tempDir();
+    const ctx: ResolvedContext = { ...agent(), backlog: { ...agent().backlog, workingCopy: gone } };
+    expect(await scheduleDeferred(ctx, gone, deps())).toBe(false);
+    expect(spawned).toEqual([]);
+  });
+
+  test('a failing start with sync.dirty set is logged and reports false', async () => {
+    await writeFile(await state('sync.dirty'), '');
+    const failing = deps({
+      spawn: () => {
+        throw new Error('kein Prozess');
+      },
+    });
+    expect(await scheduleDeferred(agent(), agentWc(), failing)).toBe(false);
+    expect(await readFile(await state('sync.log'), 'utf8')).toBe(
+      '2026-11-20T08:00:00Z unexpected: kein Prozess\n',
+    );
   });
 });
 

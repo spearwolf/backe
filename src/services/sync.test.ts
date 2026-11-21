@@ -3,8 +3,10 @@
  * `claude-1` teilen ein bares Remote. Reihenfolge und Pausen steuern `SyncHooks` und ein
  * injiziertes `sleep`; gewartet wird nie wirklich.
  */
-import { chmod, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { writeOp } from '../../test/helpers/context.ts';
 import {
@@ -311,6 +313,57 @@ test('an unreachable remote fails with sync and keeps local writes', async () =>
   const state = await readSyncState(agentWc());
   expect(state.last_error).toBeUndefined();
   expect(state.last_success).toBe('2026-11-20T08:00:00Z');
+});
+
+describe('a hanging push', () => {
+  const alive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  let stray: number | undefined;
+  afterEach(() => {
+    vi.useRealTimers();
+    if (stray !== undefined && alive(stray)) process.kill(stray, 'SIGKILL');
+    stray = undefined;
+  });
+
+  test('a push that runs into the timeout fails with sync and kills the remote side', async () => {
+    await create(agent(), 'B');
+    const head = await revParse(agentWc(), 'HEAD');
+    const dir = await tempDir();
+    const pidFile = join(dir, 'pid');
+    const hang = join(dir, 'receive-pack');
+    // Statt git-receive-pack: PID merken und warten, ohne je zu antworten.
+    await writeFile(hang, `#!/bin/sh\necho $$ > ${pidFile}\nexec sleep 300\n`);
+    await chmod(hang, 0o755);
+    await git(['config', 'remote.origin.receivepack', hang], { cwd: agentWc() });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+    const running = catchErrAsync(() => syncNow(agent(), deps()));
+    let pid = Number.NaN;
+    await vi.waitFor(async () => {
+      pid = Number((await readFile(pidFile, 'utf8')).trim());
+      expect(pid).toBeGreaterThan(0);
+    });
+    stray = pid;
+    // Die Frist des Push ist der einzige offene Timer; ohne sie hinge die Runde.
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(120_000);
+    const err = await running;
+
+    expect(err.code).toBe('sync');
+    expect(err.message).toBe(
+      'Push nach origin fehlgeschlagen: git push: Zeitüberschreitung nach 120000 ms',
+    );
+    expect(sleeps).toEqual([]);
+    expect(await revParse(agentWc(), 'HEAD')).toBe(head);
+    vi.useRealTimers();
+    await vi.waitFor(() => expect(alive(pid)).toBe(false), { timeout: 2000 });
+  });
 });
 
 test('a failed push keeps the replayed commits for the next round', async () => {
@@ -927,12 +980,113 @@ test('a manual text conflict can be resolved by the resolver', async () => {
   expect(await readFile(join(agentWc(), 'notes.md'), 'utf8')).toBe('lokal\n');
 });
 
+test('SIGINT during the local section is raised once after the write lock is free', async () => {
+  const notes = (text: string) => ({ path: 'notes.md', content: text });
+  await executeWrite(spw(), { kind: 'manual', subject: 'notes', changes: [notes('a\n')] });
+  await pushSpw();
+  await syncNow(agent(), deps());
+  await executeWrite(spw(), { kind: 'manual', subject: 'remote', changes: [notes('remote\n')] });
+  await pushSpw();
+  await executeWrite(agent(), { kind: 'manual', subject: 'lokal', changes: [notes('lokal\n')] });
+  const lock = join(await stateDir(agentWc()), 'write.lock');
+  const raised: { signal: string; locked: boolean }[] = [];
+  const real = process.kill.bind(process);
+  const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (pid !== process.pid || signal !== 'SIGINT') return real(pid, signal);
+    raised.push({ signal, locked: existsSync(lock) });
+    return true;
+  });
+  try {
+    const r = await syncNow(
+      agent(),
+      deps({
+        // Läuft im Replay, also unter dem Write-Lock.
+        resolveManual: async () => {
+          expect(existsSync(lock)).toBe(true);
+          process.emit('SIGINT');
+          process.emit('SIGINT');
+          expect(raised).toEqual([]);
+          return { kind: 'local' };
+        },
+      }),
+    );
+    expect(r).toMatchObject({ replayed: 1, pushed: await remoteHead() });
+  } finally {
+    kill.mockRestore();
+  }
+  expect(raised).toEqual([{ signal: 'SIGINT', locked: false }]);
+});
+
 const lfs = (await git(['lfs', 'version'], { cwd: '/' }).then(
   () => true,
   () => false,
 )) as boolean;
 
 describe('with attachments.lfs', () => {
+  /** spw schaltet attachments.lfs an; beide Seiten haben den Stand danach. */
+  async function lfsOn(): Promise<void> {
+    const config = await readFile(join(t.spw.root, BACKLOG_CONFIG), 'utf8');
+    await executeWrite(spw(), {
+      kind: 'manual',
+      subject: 'lfs an',
+      changes: [
+        {
+          path: BACKLOG_CONFIG,
+          content: config.replace(/\n}\n$/, ',\n  "attachments": { "lfs": true }\n}\n'),
+        },
+      ],
+    });
+    await syncNow(spw(), deps());
+    await syncNow(agent(), deps());
+  }
+
+  const attach = (ctx: ResolvedContext, id: string) =>
+    writeOp(ctx, {
+      op: 'attach.add',
+      id,
+      name: 'log',
+      file: 'log.txt',
+      content: Buffer.from('viele Bytes\n'),
+    });
+
+  test.skipIf(!lfs)('a round whose lfs objects are missing on the remote reports it', async () => {
+    await lfsOn();
+    const id = await create(spw(), 'mit Anhang');
+    await attach(spw(), id);
+    // Ohne pre-push-Hook kommt der Commit an, das LFS-Objekt nicht; der Agent fände es sonst über
+    // die Alternates seines Clones bei spw.
+    await git(['push', '-q', '--no-verify', 'origin', 'main'], { cwd: t.spw.root });
+    await rm(join(t.spw.root, '.git', 'lfs', 'objects'), { recursive: true });
+
+    const r = await syncNow(agent(), deps());
+
+    expect(r.fetched).toBe(2);
+    expect(r.notices).toEqual([expect.stringMatching(/^git lfs pull fehlgeschlagen: \S/)]);
+    expect(await revParse(agentWc(), 'HEAD')).toBe(await remoteHead());
+    // Der Anhang liegt als Pointer da (attach get erkennt ihn), die Arbeitskopie ist sauber.
+    const stored = await readFile(join(agentWc(), attachmentsDir(id), 'log.txt'), 'utf8');
+    expect(stored).toMatch(/^version https:\/\/git-lfs\.github\.com\/spec\/v1\n/);
+    expect(await statusShort(agentWc())).toEqual([]);
+  });
+
+  test.skipIf(!lfs)('an lfs push that fails stops the round before the git push', async () => {
+    await lfsOn();
+    const id = await create(agent(), 'mit Anhang');
+    await attach(agent(), id);
+    const before = await remoteHead();
+    const store = join(t.remote, 'lfs');
+    await mkdir(store, { recursive: true });
+    await chmod(store, 0o555);
+    try {
+      const err = await catchErrAsync(() => syncNow(agent(), deps()));
+      expect(err.code).toBe('sync');
+      expect(err.message).toMatch(/^LFS-Push nach origin fehlgeschlagen: \S/);
+    } finally {
+      await chmod(store, 0o755);
+    }
+    expect(await remoteHead()).toBe(before);
+  });
+
   test.skipIf(!lfs)('a round that brings lfs pulls the attachment content', async () => {
     const config = await readFile(join(t.spw.root, BACKLOG_CONFIG), 'utf8');
     await executeWrite(spw(), {

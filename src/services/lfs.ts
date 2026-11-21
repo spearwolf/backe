@@ -41,6 +41,14 @@ export async function setUpLfs(wc: string): Promise<void> {
   );
 }
 
+/**
+ * Umgebung für git-Aufrufe, die den Arbeitsbaum aus fremden Commits füllen (Clone, Switch, Reset im
+ * Sync): LFS-Anhänge kommen als Pointer an, auch wenn ein global installierter LFS-Filter sie sonst
+ * herunterladen wollte. Der Aufruf braucht so kein Netz, und ein Objekt, das dem Remote fehlt,
+ * lässt ihn nicht scheitern; die Bytes holt danach `lfsPull`, dessen Scheitern nur ein Hinweis ist.
+ */
+export const SKIP_SMUDGE = { GIT_LFS_SKIP_SMUDGE: '1' } as const;
+
 /** Frist für `git lfs fetch` und `git lfs push`: Anhänge können groß sein, das Netz nicht. */
 export const LFS_TIMEOUT_MS = 300_000;
 

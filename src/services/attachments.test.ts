@@ -210,11 +210,20 @@ test('an lfs pointer is plain content while attachments.lfs is off', async () =>
   expect(await getAttachment(ctx, id, 'log')).toMatchObject({ name: 'log', file: 'log.txt' });
 });
 
-test('an lfs pointer that is not the whole file start is no pointer', async () => {
-  await setLfs(false);
-  await addAttachment(ctx, id, { name: 'log', source: file('log.txt', bytes(`x${POINTER}`)) });
-  expect(await getAttachment(ctx, id, 'log')).toMatchObject({ name: 'log' });
-});
+test.skipIf(!lfsInstalled)(
+  'with attachments.lfs a pointer text later in the file is no pointer',
+  async () => {
+    await setLfs(true);
+    await addAttachment(ctx, id, { name: 'log', source: file('log.txt', bytes(`x${POINTER}`)) });
+    expect(await getAttachment(ctx, id, 'log')).toMatchObject({ name: 'log', file: 'log.txt' });
+    // Gegenprobe: derselbe Text am Dateianfang ist ein Pointer.
+    const path = ((await getAttachment(ctx, id, 'log')) as { path: string }).path;
+    await writeFile(path, POINTER);
+    expect(await catchErrAsync(() => getAttachment(ctx, id, 'log'))).toMatchObject({
+      code: 'sync',
+    });
+  },
+);
 
 test('addAttachment rejects instead of throwing synchronously', async () => {
   let pending: Promise<unknown> | undefined;

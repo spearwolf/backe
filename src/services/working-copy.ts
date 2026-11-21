@@ -37,7 +37,7 @@ import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG, userFile } from '../store/layout.ts';
 import { ensureHub, hubPath } from './hub.ts';
 import { firstStderrLine } from './init.ts';
-import { lfsPull } from './lfs.ts';
+import { lfsPull, SKIP_SMUDGE } from './lfs.ts';
 import { assertVerified, trustedVerifyMode, type VerifyReport, verifyRange } from './verify.ts';
 import { parseJsoncAs } from './verify-state.ts';
 
@@ -194,7 +194,7 @@ async function gitClone(
   try {
     await git(['clone', '-q', ...ref, ...name, '--', source, temp], {
       cwd: dirname(temp),
-      env: transportEnv(env),
+      env: { ...transportEnv(env), ...SKIP_SMUDGE },
     });
   } catch (error) {
     const ran =
@@ -234,7 +234,7 @@ async function cloneInto(input: {
   );
   const { sync, version, attachments } = await readCloneConfig(temp, source);
   if ((await headState(temp)).branch !== sync.branch) {
-    await git(['switch', '-q', sync.branch], { cwd: temp });
+    await git(['switch', '-q', sync.branch], { cwd: temp, env: SKIP_SMUDGE });
   }
   const name = (await readBacklogName(temp)) as string;
   const trusted = await input.trust(name);
@@ -254,7 +254,7 @@ async function cloneInto(input: {
   }
   await writeLocalState(temp, 'identity', handle);
   const notices = await verifyClone(temp);
-  // Ein Clone hat bei `attachments.lfs` zunächst nur Pointer statt der Anhänge.
+  // Ein Clone hat bei `attachments.lfs` zunächst nur Pointer statt der Anhänge (`SKIP_SMUDGE`).
   if (attachments.lfs) {
     notices.push(...(await lfsPull(temp, input.origin ?? 'origin', env)));
   }

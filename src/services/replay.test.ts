@@ -18,7 +18,7 @@ import { BackeError } from '../core/errors.ts';
 import { git } from '../git/exec.ts';
 import { parseCommitMessage, TRAILER_ACTOR, TRAILER_OP } from '../git/message.ts';
 import { gitTreeSource } from '../git/tree-source.ts';
-import { bodyHash, encodeOp, type Operation } from '../ops/operation.ts';
+import { bodyHash, encodeOp, type Operation, summarizeOp } from '../ops/operation.ts';
 import { attachmentsDir } from '../store/layout.ts';
 import { listCommentsFrom, loadSnapshotFrom } from '../store/snapshot.ts';
 import { authorOf } from './env.ts';
@@ -522,6 +522,37 @@ test('readUnits accepts a raw commit signed like backe and refuses merges', asyn
   expect([err.code, err.message]).toEqual([
     'verify',
     `Lokaler Commit ${merge.slice(0, 7)} ist ein Merge-Commit`,
+  ]);
+});
+
+test('readUnits judges each commit by the keys of its parent, not of the range start', async () => {
+  // Der Agent widerruft seinen einzigen Key: gültig, denn im Parent ist er noch aktiv.
+  const revoke: Operation = {
+    op: 'user.revoke_key',
+    handle: 'claude-1',
+    key: agentKey.line,
+    revoked: '2026-11-20T08:00:00Z',
+  };
+  const revoked = await local(op(revoke));
+  expect(await readUnits(wc, { base, head: 'HEAD' }, 'claude-1')).toEqual([
+    {
+      sha: revoked.commit,
+      subject: summarizeOp(revoked.recorded[0] as Operation),
+      kind: 'op',
+      ops: revoked.recorded,
+    },
+  ]);
+  // Danach signiert derselbe Key nichts mehr, obwohl er beim Basis-Stand noch galt.
+  const late = await rawCommit(wc, {
+    files: { 'a.md': 'x\n' },
+    actor: 'claude-1',
+    op: 'manual',
+    key: agentKey,
+  });
+  const err = await catchErrAsync(() => readUnits(wc, { base, head: 'HEAD' }, 'claude-1'));
+  expect([err.code, err.message]).toEqual([
+    'verify',
+    `Lokaler Commit ${late.slice(0, 7)} ist nicht von backe signiert`,
   ]);
 });
 

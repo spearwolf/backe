@@ -1121,37 +1121,71 @@ const lfsInstalled = await git(['lfs', 'version'], { cwd: '/' }).then(
   () => false,
 );
 
+/** spw schaltet attachments.lfs an und legt ein Issue mit Anhang an; liefert dessen ID. */
+async function lfsAttachment(): Promise<string> {
+  const ctx = await b.context();
+  const config = await readFile(join(b.root, BACKLOG_CONFIG), 'utf8');
+  await executeWrite(ctx, {
+    kind: 'manual',
+    subject: 'lfs an',
+    changes: [
+      {
+        path: BACKLOG_CONFIG,
+        content: config.replace(/\n}\n$/, ',\n  "attachments": { "lfs": true }\n}\n'),
+      },
+    ],
+  });
+  const id = (await createIssue(ctx, { title: 'Mit Anhang' })).id as string;
+  await executeWrite(ctx, {
+    kind: 'op',
+    op: { op: 'attach.add', id, name: 'log', file: 'log.txt', content: Buffer.from('Bytes\n') },
+  });
+  return id;
+}
+
+const cloneOther = () =>
+  cloneBacklog({ homes: other.homes, env: other.env, url: b.remote as string, handle: 'spw' });
+
 test.skipIf(!lfsInstalled)(
   'a clone with attachments.lfs pulls the attachment content',
   async () => {
-    const ctx = await b.context();
-    const config = await readFile(join(b.root, BACKLOG_CONFIG), 'utf8');
-    await executeWrite(ctx, {
-      kind: 'manual',
-      subject: 'lfs an',
-      changes: [
-        {
-          path: BACKLOG_CONFIG,
-          content: config.replace(/\n}\n$/, ',\n  "attachments": { "lfs": true }\n}\n'),
-        },
-      ],
-    });
-    const id = (await createIssue(ctx, { title: 'Mit Anhang' })).id as string;
-    await executeWrite(ctx, {
-      kind: 'op',
-      op: { op: 'attach.add', id, name: 'log', file: 'log.txt', content: Buffer.from('Bytes\n') },
-    });
+    const id = await lfsAttachment();
     await git(['lfs', 'push', 'origin', 'main'], { cwd: b.root });
     await push();
 
-    const r = await cloneBacklog({
-      homes: other.homes,
-      env: other.env,
-      url: b.remote as string,
-      handle: 'spw',
-    });
+    const r = await cloneOther();
 
     expect(r.notices).toEqual([]);
     expect(await readFile(join(r.root, attachmentsDir(id), 'log.txt'), 'utf8')).toBe('Bytes\n');
   },
 );
+
+/** Was `git lfs install` global einträgt: Ein Checkout lädt LFS-Objekte dann selbst herunter. */
+const GLOBAL_LFS_FILTER =
+  '[filter "lfs"]\n\tclean = git-lfs clean -- %f\n\tsmudge = git-lfs smudge -- %f\n' +
+  '\tprocess = git-lfs filter-process\n\trequired = true\n';
+
+describe.skipIf(!lfsInstalled)('a clone whose lfs objects are missing on the remote', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test.each([false, true])('still lands with a notice (global lfs filter: %s)', async (global) => {
+    const id = await lfsAttachment();
+    // Ohne pre-push-Hook kommt der Commit an, das LFS-Objekt nicht.
+    await git(['push', '-q', '--no-verify', 'origin', 'main'], { cwd: b.root });
+    if (global) {
+      const file = join(await tempDir(), 'gitconfig');
+      await writeFile(file, GLOBAL_LFS_FILTER);
+      vi.stubEnv('GIT_CONFIG_GLOBAL', file);
+    }
+
+    const r = await cloneOther();
+
+    expect(r.notices).toEqual([expect.stringMatching(/^git lfs pull fehlgeschlagen: \S/)]);
+    expect(await readFile(join(r.root, attachmentsDir(id), 'log.txt'), 'utf8')).toMatch(
+      /^version https:\/\/git-lfs\.github\.com\/spec\/v1\n/,
+    );
+    expect(await readLocalState(r.root, 'identity')).toBe('spw');
+  });
+});

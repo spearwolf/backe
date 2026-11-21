@@ -22,7 +22,7 @@ import { parseEntityFile } from '../store/frontmatter.ts';
 import { BACKLOG_CONFIG, userFile } from '../store/layout.ts';
 import { authorOf, isoNow } from './env.ts';
 import { firstStderrLine } from './init.ts';
-import { LFS_TIMEOUT_MS, lfsPull, requireLfs } from './lfs.ts';
+import { LFS_TIMEOUT_MS, lfsPull, requireLfs, SKIP_SMUDGE } from './lfs.ts';
 import { type ManualResolver, readUnits, replayOnto } from './replay.ts';
 import { type SpawnFn, scheduleDeferred, syncRemote } from './schedule.ts';
 import { raiseSignal, withDeferredSignals } from './signals.ts';
@@ -200,7 +200,9 @@ async function authorAt(wc: string, rev: string, handle: string) {
 /**
  * Die einzige Änderung der Arbeitskopie: `git reset --keep <to>`. Vorher dürfen die Pfade, die
  * sich zwischen `from` und `to` unterscheiden, keine ungesicherten Änderungen tragen; sonst
- * bleibt alles, wie es ist. Hand-Edits auf anderen Pfaden überstehen den Reset.
+ * bleibt alles, wie es ist. Hand-Edits auf anderen Pfaden überstehen den Reset. LFS-Anhänge kommen
+ * dabei als Pointer an (`SKIP_SMUDGE`); ein Objekt, das dem Remote fehlt, hielte sonst jede Runde
+ * auf.
  */
 export async function resetKeep(wc: string, from: string, to: string): Promise<void> {
   const { stdout } = await git(['diff', '--name-only', '-z', '--no-renames', from, to, '--'], {
@@ -218,7 +220,7 @@ export async function resetKeep(wc: string, from: string, to: string): Promise<v
       },
     );
   }
-  await git(['reset', '-q', '--keep', to], { cwd: wc });
+  await git(['reset', '-q', '--keep', to], { cwd: wc, env: SKIP_SMUDGE });
 }
 
 type Local = {
