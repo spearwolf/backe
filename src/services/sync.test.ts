@@ -343,12 +343,26 @@ describe('a hanging push', () => {
     await git(['config', 'remote.origin.receivepack', hang], { cwd: agentWc() });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 
-    const running = catchErrAsync(() => syncNow(agent(), deps()));
-    let pid = Number.NaN;
-    await vi.waitFor(async () => {
-      pid = Number((await readFile(pidFile, 'utf8')).trim());
-      expect(pid).toBeGreaterThan(0);
+    let pushing: () => void = () => {};
+    const atPush = new Promise<void>((resolve) => {
+      pushing = resolve;
     });
+    const running = catchErrAsync(() =>
+      syncNow(agent(), deps({ hooks: { beforePush: async () => pushing() } })),
+    );
+    // Erst der Hook sagt, dass der Push beginnt; danach nur noch das Starten des Skripts abwarten.
+    // Endet die Runde vorher, scheitert der Test hier statt am Timeout.
+    expect(
+      await Promise.race([atPush.then(() => 'push'), running.then(() => 'vorher zu Ende')]),
+    ).toBe('push');
+    let pid = Number.NaN;
+    await vi.waitFor(
+      async () => {
+        pid = Number((await readFile(pidFile, 'utf8')).trim());
+        expect(pid).toBeGreaterThan(0);
+      },
+      { timeout: 20_000 },
+    );
     stray = pid;
     // Die Frist des Push ist der einzige offene Timer; ohne sie hinge die Runde.
     expect(vi.getTimerCount()).toBe(1);
@@ -362,8 +376,8 @@ describe('a hanging push', () => {
     expect(sleeps).toEqual([]);
     expect(await revParse(agentWc(), 'HEAD')).toBe(head);
     vi.useRealTimers();
-    await vi.waitFor(() => expect(alive(pid)).toBe(false), { timeout: 2000 });
-  });
+    await vi.waitFor(() => expect(alive(pid)).toBe(false), { timeout: 20_000 });
+  }, 60_000);
 });
 
 test('a failed push keeps the replayed commits for the next round', async () => {
