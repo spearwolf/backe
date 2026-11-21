@@ -14,10 +14,13 @@ import {
   type GlobalKey,
   globalKeysOf,
   globalOpts,
+  lastDispatched,
   type Runtime,
   stdinBody,
   subcommand,
   text,
+  trackAllDispatch,
+  trackDispatch,
 } from './options.ts';
 import { buildProgram } from './run.ts';
 
@@ -170,4 +173,15 @@ test('a rejected default context does not hide the status line of the context th
 test('the status line is printed for text only, not for md or json', async () => {
   expect(await statusLineOf(['--format', 'md'])).toBe('');
   expect(await statusLineOf(['--format', 'json'])).toBe('');
+});
+
+test('a group created without subcommand() is still tracked, so the hint keeps the full path', () => {
+  const program = trackDispatch(new Command('backe'));
+  const group = program.command('plain');
+  const leaf = group.command('leaf');
+  trackAllDispatch(program);
+  // Ein zweiter Lauf hängt keinen zweiten Hook an.
+  trackAllDispatch(program);
+  program.parse(['plain', 'leaf'], { from: 'user' });
+  expect(lastDispatched(program)).toBe(leaf);
 });

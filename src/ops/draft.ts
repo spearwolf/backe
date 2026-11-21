@@ -140,6 +140,11 @@ export class Draft {
     return this.#base.config;
   }
 
+  /** Inhalt der `.gitattributes` inklusive eigener Änderung; liest nicht den Snapshot und baut ihn nicht neu. */
+  get attributes(): string | undefined {
+    return this.#attributes;
+  }
+
   /** Anzahl wirksamer Änderungen; bleibt sie 0, war die Operation ein No-op. */
   get revision(): number {
     return this.#revision;

@@ -33,6 +33,7 @@ import {
   commandPath,
   lastDispatched,
   type Runtime,
+  trackAllDispatch,
   trackDispatch,
 } from './options.ts';
 import { exitCodeOf, type Format, renderError, resolveFormat } from './output.ts';
@@ -78,6 +79,7 @@ export function buildProgram(rt: Runtime): Command {
   doctorCommand(program, rt);
   mcpCommand(program, rt);
   configCommands(program, rt);
+  trackAllDispatch(program);
   return program;
 }
 

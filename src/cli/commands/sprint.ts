@@ -34,6 +34,33 @@ function range(start: string | undefined, end: string | undefined): string {
 
 const CLOSED = '(geschlossen)';
 
+type SprintShow = Awaited<ReturnType<typeof showSprint>>;
+
+/** Text von `sprint show`: Kopf, Filterzeile, Beschreibung, dann die Issues je State. */
+function renderSprintShow(slug: string, r: SprintShow, color: boolean): string {
+  const { title, start, end, closed } = r.sprint;
+  const when = range(start, end);
+  const head = [
+    safeText(slug),
+    paint(color, 'bold', title),
+    ...(when === '-' ? [] : [safeText(when)]),
+    ...(closed === true ? [CLOSED] : []),
+  ].join('  ');
+  const header = headerLine(r.header);
+  // Eine Spaltenbreite über alle Gruppen, damit die Gruppen untereinander fluchten.
+  const all = issueLines(
+    r.groups.flatMap((g) => g.items),
+    color,
+  );
+  const out = [head, ...(header === undefined ? [] : [header]), ...bodyBlock(r.body)];
+  let at = 0;
+  for (const g of r.groups) {
+    out.push('', `${g.state} (${g.items.length})`, ...all.slice(at, at + g.items.length));
+    at += g.items.length;
+  }
+  return lines(out);
+}
+
 export function sprintCommands(program: Command, rt: Runtime): void {
   const sprint = subcommand(program, 'sprint', 'Sprints anlegen, listen, zeigen und abschließen');
 
@@ -112,27 +139,7 @@ export function sprintCommands(program: Command, rt: Runtime): void {
             env.out(json(sprintShowJson(slug, r)));
             return;
           }
-          const { title, start, end, closed } = r.sprint;
-          const when = range(start, end);
-          const head = [
-            safeText(slug),
-            paint(env.color, 'bold', title),
-            ...(when === '-' ? [] : [safeText(when)]),
-            ...(closed === true ? [CLOSED] : []),
-          ].join('  ');
-          const header = headerLine(r.header);
-          // Eine Spaltenbreite über alle Gruppen, damit die Gruppen untereinander fluchten.
-          const all = issueLines(
-            r.groups.flatMap((g) => g.items),
-            env.color,
-          );
-          const out = [head, ...(header === undefined ? [] : [header]), ...bodyBlock(r.body)];
-          let at = 0;
-          for (const g of r.groups) {
-            out.push('', `${g.state} (${g.items.length})`, ...all.slice(at, at + g.items.length));
-            at += g.items.length;
-          }
-          env.out(lines(out));
+          env.out(renderSprintShow(slug, r, env.color));
         },
         { read: true },
       ),

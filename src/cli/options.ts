@@ -72,11 +72,26 @@ function rootOf(cmd: Command): Command {
   return c;
 }
 
-/** Merkt sich am Programm jeden Unterbefehl, den `cmd` betritt. */
+const tracking = new WeakSet<Command>();
+
+/** Merkt sich am Programm jeden Unterbefehl, den `cmd` betritt (je Befehl nur einmal). */
 export function trackDispatch(cmd: Command): Command {
+  if (tracking.has(cmd)) return cmd;
+  tracking.add(cmd);
   return cmd.hook('preSubcommand', (_self, sub) => {
     dispatched.set(rootOf(cmd), sub);
   });
+}
+
+/**
+ * `trackDispatch` für jede Gruppe unter `program`, auch für eine, die nicht über `subcommand()`
+ * entstand; sonst fiele der Hinweis bei fehlendem Unterbefehl auf eine höhere Ebene zurück.
+ */
+export function trackAllDispatch(program: Command): void {
+  for (const cmd of program.commands) {
+    if (cmd.commands.length > 0) trackDispatch(cmd);
+    trackAllDispatch(cmd);
+  }
 }
 
 /** Der zuletzt betretene Befehl unter `program`, sonst `program` selbst. */

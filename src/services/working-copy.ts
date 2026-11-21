@@ -709,7 +709,7 @@ export async function showBacklog(
     workingCopies.push({
       handle,
       path,
-      managed: path === managedClonePath(homes, name, handle),
+      managed: await samePath(path, managedClonePath(homes, name, handle)),
       exists: present,
       ...(identity === undefined ? {} : { identity }),
       ...(anchor === undefined ? {} : { anchor }),

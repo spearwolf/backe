@@ -67,7 +67,7 @@ export function commentDelete(d: Draft, op: OpOf<'comment.delete'>): OpOf<'comme
  * Schluss-Newline. Die schon roh committeten Anhänge legt der Schreibpfad im selben Commit neu ab.
  */
 function ensureLfsRule(d: Draft): void {
-  const current = d.snapshot.attributes ?? '';
+  const current = d.attributes ?? '';
   if (hasLfsRule(current)) return;
   const head = current === '' || current.endsWith('\n') ? current : `${current}\n`;
   d.putAttributes(`${head}${LFS_RULE}\n`);
