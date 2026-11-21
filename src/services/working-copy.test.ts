@@ -1062,6 +1062,27 @@ test('addBacklog writes nothing when verify fails', async () => {
   expect(await readLocalState(dir, 'upstream')).toBeUndefined();
 });
 
+test('a failed verify keeps the anchor and upstream that were already there', async () => {
+  await push();
+  const dir = await ownClone();
+  const known = (await readLocalState(b.root, 'anchor')) as string;
+  await writeLocalState(dir, 'anchor', known);
+  await writeLocalState(dir, 'upstream', known);
+  await rawCommit(dir, {
+    files: { 'notes.md': 'x\n' },
+    key: await testKey('mallory'),
+    actor: 'spw',
+    op: 'manual',
+  });
+  const err = await catchErrAsync(() =>
+    addBacklog({ homes: other.homes, env: other.env, name: 'acme', path: dir, handle: 'spw' }),
+  );
+  expect(err.code).toBe('verify');
+  expect(await readLocalState(dir, 'anchor')).toBe(known);
+  expect(await readLocalState(dir, 'upstream')).toBe(known);
+  expect(await readLocalState(dir, 'identity')).toBeUndefined();
+});
+
 describe('a failing identity write takes back what add registered', () => {
   const addSpw = (dir: string) =>
     addBacklog({ homes: other.homes, env: other.env, name: 'acme', path: dir, handle: 'spw' });

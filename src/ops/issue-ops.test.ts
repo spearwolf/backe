@@ -413,6 +413,34 @@ describe('issue.edit', () => {
     expect(err.details).toMatchObject({ ids: [I(3), I(1)] });
   });
 
+  test('reparenting a subtree whose grandchild depends on a new ancestor is a cycle', () => {
+    const s = snap({
+      issues: [
+        { id: I(1) },
+        { id: I(2) },
+        { id: I(3), parent: I(2) },
+        { id: I(4), parent: I(3), depends_on: [I(1)] },
+      ],
+    });
+    const err = editErr(s, { set: { parent: { from: null, to: I(1) } } }, I(2));
+    expect(reasonOf(err)).toBe('cycle');
+    expect(err.details).toMatchObject({ ids: [I(4), I(1)] });
+  });
+
+  test('reparenting under an issue that depends on a grandchild of the subtree is a cycle', () => {
+    const s = snap({
+      issues: [
+        { id: I(1), depends_on: [I(4)] },
+        { id: I(2) },
+        { id: I(3), parent: I(2) },
+        { id: I(4), parent: I(3) },
+      ],
+    });
+    const err = editErr(s, { set: { parent: { from: null, to: I(1) } } }, I(2));
+    expect(reasonOf(err)).toBe('cycle');
+    expect(err.details).toMatchObject({ ids: [I(1), I(4)] });
+  });
+
   test('reparenting under an issue that depends on the subtree is a cycle', () => {
     const s = snap({
       issues: [{ id: I(1), depends_on: [I(3)] }, { id: I(2) }, { id: I(3), parent: I(2) }],

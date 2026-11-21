@@ -36,6 +36,29 @@ describe('ssh keys', () => {
     expect(err.hint).toBe(`ssh-keygen -y -f ${locked} > ${locked}.pub`);
   });
 
+  test('an encrypted PEM key without .pub is a usage error with hint too', async () => {
+    const dir = await tempDir();
+    const pem = join(dir, 'pem');
+    await sshKeygen(['-q', '-t', 'ecdsa', '-m', 'PEM', '-N', 'geheim', '-f', pem], { cwd: dir });
+    await rm(`${pem}.pub`);
+    const err = await catchErrAsync(() => readPublicKey(pem));
+    expect(err).toMatchObject({
+      code: 'usage',
+      message: `Key »${pem}« ist verschlüsselt und hat keine ».pub« daneben`,
+      hint: `ssh-keygen -y -f ${pem} > ${pem}.pub`,
+    });
+  });
+
+  test('a readable PEM key of another type is derived and then refused', async () => {
+    const dir = await tempDir();
+    const pem = join(dir, 'pem');
+    await sshKeygen(['-q', '-t', 'ecdsa', '-m', 'PEM', '-N', '', '-f', pem], { cwd: dir });
+    await rm(`${pem}.pub`);
+    const err = await catchErrAsync(() => readPublicKey(pem));
+    expect(err.code).toBe('validation');
+    expect(err.message).toContain('Typ ecdsa-sha2-nistp256 nicht unterstützt');
+  });
+
   test('a broken key is not reported as encrypted', async () => {
     const dir = await tempDir();
     const broken = join(dir, 'broken');

@@ -228,6 +228,7 @@ test('create, list, show in text and json', async () => {
   await expect(
     await session(s, [
       ['show', s.id.C1, '--comments', 'all'],
+      ['show', s.id.C1, '--comments', '1'],
       ['issue', 'show', s.id.E],
       ['show', s.id.B],
       ['show', s.id.C2, '--comments', '1'],

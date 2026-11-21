@@ -1,9 +1,9 @@
-import { readFile } from 'node:fs/promises';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { rawCommit, type TestBacklog, testBacklog, testKey } from '../../test/helpers/git.ts';
+import { type TestBacklog, testBacklog, testKey } from '../../test/helpers/git.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { sshFingerprint } from '../core/ssh.ts';
 import { addUser, listUsers, removeUser, revokeKey, showUser } from './users.ts';
+import { executeWrite } from './write.ts';
 
 let b: TestBacklog;
 let ctx: ResolvedContext;
@@ -52,18 +52,17 @@ describe('users', () => {
     ]);
   });
 
-  /** Legt `handle` mit zwei Keys an (der Service kennt nur das Anlegen mit einem). */
-  async function userWithTwoKeys(handle: string): Promise<[string, string]> {
-    const k1 = await testKey(handle);
-    const k2 = await testKey(`${handle}-zweit`);
-    await addUser(ctx, { handle, keyFile: k1.priv });
-    const file = `users/${handle}.md`;
-    const text = await readFile(`${b.root}/${file}`, 'utf8');
-    await rawCommit(b.root, {
-      files: { [file]: text.replace(`[${k1.line}]`, `[${k1.line}, ${k2.line}]`) },
-      key: b.key,
-      actor: 'spw',
+  /** Legt `handle` mit zwei Keys an; der Service kennt nur das Anlegen mit einem. */
+  async function userWithKeys(handle: string, keys: string[]): Promise<void> {
+    await executeWrite(ctx, {
+      kind: 'op',
+      op: { op: 'user.add', handle, name: handle, kind: 'human', keys },
     });
+  }
+
+  async function userWithTwoKeys(handle: string): Promise<[string, string]> {
+    const [k1, k2] = await Promise.all([testKey(handle), testKey(`${handle}-zweit`)]);
+    await userWithKeys(handle, [k1.line, k2.line]);
     return [k1.line, k2.line];
   }
 
@@ -86,6 +85,22 @@ describe('users', () => {
     expect(await catchErrAsync(() => revokeKey(ctx, 'anna', sshFingerprint(k1)))).toMatchObject({
       code: 'not_found',
     });
+  });
+
+  test('a prefix matching several active keys is ambiguous and revokes nothing', async () => {
+    // Derselbe Key mit zwei Kommentaren: zwei Einträge, ein Fingerprint.
+    const k = await testKey('anna');
+    const [type, blob] = k.line.split(' ');
+    const twice = [`${type} ${blob} anna@laptop`, `${type} ${blob} anna@desktop`];
+    await userWithKeys('anna', twice);
+    const fp = sshFingerprint(k.line);
+    const err = await catchErrAsync(() => revokeKey(ctx, 'anna', fp.slice(0, 15)));
+    expect(err).toMatchObject({
+      code: 'ambiguous',
+      message: `»${fp.slice(0, 15)}« passt auf mehrere Keys von »anna«`,
+      details: { candidates: [fp, fp] },
+    });
+    expect((await showUser(ctx, 'anna')).revoked).toEqual([]);
   });
 
   test('revoking the only key leaves a user without active keys', async () => {

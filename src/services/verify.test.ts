@@ -31,6 +31,11 @@ import {
 import { signatureReasons } from './verify-state.ts';
 import { executeWrite } from './write.ts';
 
+vi.mock('../git/exec.ts', async (orig) => {
+  const actual = await orig<typeof import('../git/exec.ts')>();
+  return { ...actual, git: vi.fn(actual.git) };
+});
+
 const ID = I(1);
 const NAMES = ['spw', 'bob', 'mallory'] as const;
 type Name = (typeof NAMES)[number];
@@ -203,6 +208,79 @@ test.each(['-----BEGIN PGP SIGNATURE-----', '-----BEGIN FAKE SIGNATURE-----'])(
     ]);
   },
 );
+
+describe('signatures in a range', () => {
+  test('a signature that does not cover the commit content is invalid', async () => {
+    const sha = await signed('spw', { x: '1' });
+    const raw = (await git(['cat-file', 'commit', sha], { cwd: b.root })).stdout;
+    const tampered = raw.replace('\n\nraw\n', '\n\nverändert\n');
+    expect(tampered).not.toBe(raw);
+    const forged = (
+      await git(['hash-object', '-t', 'commit', '-w', '--stdin'], { cwd: b.root, input: tampered })
+    ).stdout.trim();
+    await git(['reset', '-q', '--hard', forged], { cwd: b.root });
+
+    const r = await verifyRange(b.root);
+
+    expect(r.invalid).toEqual([
+      { sha: forged, subject: 'verändert', reasons: ['Signatur ungültig'] },
+    ]);
+  });
+
+  test('a key added in a commit signs only the commits after it', async () => {
+    await addUser('bob');
+    const [spare, late] = await Promise.all([testKey('bob-spare'), testKey('bob-late')]);
+    const bobWith = (...keys: TestKey[]) =>
+      serializeEntityFile(
+        'user',
+        { name: 'bob', kind: 'human', keys: keys.map((k) => k.line) },
+        '',
+      );
+    await signed('bob', { [userFile('bob')]: bobWith(KEYS.bob, spare) });
+    await rawCommit(b.root, { files: { x: '1' }, key: spare, actor: 'bob', op: 'manual' });
+    const self = await rawCommit(b.root, {
+      files: { [userFile('bob')]: bobWith(KEYS.bob, spare, late) },
+      key: late,
+      actor: 'bob',
+      op: 'manual',
+    });
+
+    const r = await verifyRange(b.root);
+
+    expect(r.invalid).toEqual([
+      {
+        sha: self,
+        subject: 'raw',
+        reasons: [`Key ${sshFingerprint(late.line)} gehört zu keinem User`],
+      },
+    ]);
+  });
+
+  test('commits are checked in one git call per users state of their parent', async () => {
+    await signed('spw', { a: '1' });
+    await addUser('bob');
+    await signed('bob', { b: '1' });
+    await signed('spw', { c: '1' });
+    await addUser('mallory');
+    await signed('mallory', { d: '1' });
+    await signed('bob', { e: '1' });
+    const cache = join(await stateDir(b.root), 'allowed_signers.v1');
+    await rm(cache, { recursive: true, force: true });
+    const calls = vi.mocked(git).mock.calls;
+    const before = calls.length;
+
+    const r = await verifyRange(b.root);
+
+    expect(r).toMatchObject({ checked: 8, invalid: [] });
+    const signatureCalls = calls.slice(before).filter(([args]) => args.includes('--stdin'));
+    // Anker samt erstem Commit gegen T0, dann je ein Aufruf für T1 und T2.
+    expect(signatureCalls).toHaveLength(3);
+    const trees = await Promise.all(
+      ['HEAD~7', 'HEAD~4', 'HEAD~1'].map((rev) => revParse(b.root, `${rev}:users`)),
+    );
+    expect((await readdir(cache)).sort()).toEqual([...new Set(trees)].sort());
+  });
+});
 
 describe('signatureReasons', () => {
   const SSH = '-----BEGIN SSH SIGNATURE-----';

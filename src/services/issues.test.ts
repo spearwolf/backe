@@ -1,7 +1,13 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { logTrailers, revParse, type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
+import {
+  logTrailers,
+  revParse,
+  type TestBacklog,
+  testBacklog,
+  testKey,
+} from '../../test/helpers/git.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { bodyHash, type Operation, summarizeOp } from '../ops/operation.ts';
 import { issueFile } from '../store/layout.ts';
@@ -330,6 +336,19 @@ describe('resumeIssue and reopenIssue', () => {
     expect(err.code).toBe('validation');
   });
 
+  test('reopen to done is a validation error and writes nothing', async () => {
+    await setup();
+    const id = await newIssue('T', { state: 'cancelled' });
+    const head = await revParse(b.root, 'HEAD');
+    const err = await catchErrAsync(() => reopenIssue(ctx, id, { to: 'done' }));
+    expect(err.code).toBe('validation');
+    expect(err.message).toBe(
+      'reopen-Ziel muss ein Hauptlinien-Zustand außer done sein, nicht done',
+    );
+    expect(await revParse(b.root, 'HEAD')).toBe(head);
+    expect((await issueOf(id)).data.state).toBe('cancelled');
+  });
+
   test('reopen of an open issue is rejected and an empty reason is a validation error', async () => {
     await setup();
     const id = await newIssue('T', { state: 'todo' });
@@ -352,6 +371,34 @@ describe('assignIssue', () => {
     expect(handle.op).toMatchObject({ set: { assignee: { from: null, to: 'spw' } } });
     await assignIssue(ctx, id, 'none');
     expect((await issueOf(id)).data.assignee).toBeUndefined();
+  });
+
+  test('assign another user, and again without change', async () => {
+    await setup();
+    const id = await newIssue('T');
+    await executeWrite(ctx, {
+      kind: 'op',
+      op: {
+        op: 'user.add',
+        handle: 'bob',
+        name: 'Bob',
+        kind: 'human',
+        keys: [(await testKey('bob')).line],
+      },
+    });
+    const bob = await assignIssue(ctx, id, 'bob');
+    expect(bob.op).toMatchObject({ set: { assignee: { from: null, to: 'bob' } } });
+    expect(bob.commit).toBe(await revParse(b.root, 'HEAD'));
+    expect((await issueOf(id)).data.assignee).toBe('bob');
+    const head = await revParse(b.root, 'HEAD');
+    const again = await assignIssue(ctx, id, 'bob');
+    expect(again).toMatchObject({ commit: undefined, id });
+    expect(again.op).toMatchObject({ set: { assignee: { from: 'bob', to: 'bob' } } });
+    expect(await revParse(b.root, 'HEAD')).toBe(head);
+    const ghost = await catchErrAsync(() => assignIssue(ctx, id, 'ghost'));
+    expect(ghost.code).toBe('not_found');
+    expect(ghost.message).toContain('ghost');
+    expect((await issueOf(id)).data.assignee).toBe('bob');
   });
 
   test('an invalid handle is a validation error', async () => {

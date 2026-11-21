@@ -25,6 +25,29 @@ Zwischenstand: Refresh-Token wird jetzt rotiert.
 Noch offen: Tests.
 [stderr]
 
+$ backe show bk-56789 --comments 1
+[exit 0]
+[stdout]
+bk-56789  Token-Refresh reparieren
+state       in_progress
+reason      Fange mit dem Refresh an. — spw, <ts>
+assignee    claude-1
+creator     spw
+created     <ts>
+parent      bk-01234
+dependents  bk-abcde [todo]
+rank        1000
+projects    web/auth
+sprints     2026-w47
+repos       webapp
+comments    2
+
+--- 20260105T090700Z-spw-123.md (spw, <ts>)
+Zwischenstand: Refresh-Token wird jetzt rotiert.
+
+Noch offen: Tests.
+[stderr]
+
 $ backe issue show bk-01234
 [exit 0]
 [stdout]
