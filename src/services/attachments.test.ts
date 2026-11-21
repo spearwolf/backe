@@ -368,6 +368,26 @@ describe('loadAttachmentSource', () => {
     expect(err).toMatchObject({ code: 'validation' });
   });
 
+  test('a parent directory swapped for a symlink out of base is a validation error', async () => {
+    const outside = await tempDir();
+    await writeFile(join(outside, 'plan.md'), 'geheim\n');
+    await mkdir(join(base, 'sub'));
+    await writeFile(join(base, 'sub', 'plan.md'), 'echt\n');
+    const read = vi.fn((h: FileHandle) => h.readFile());
+    const afterConfine = async () => {
+      await rm(join(base, 'sub'), { recursive: true });
+      await symlink(outside, join(base, 'sub'));
+    };
+    const err = await catchErrAsync(() =>
+      loadAttachmentSource({ name: 'p', path: 'sub/plan.md' }, opts(), { afterConfine, read }),
+    );
+    expect(err).toMatchObject({
+      code: 'validation',
+      message: 'Datei »sub/plan.md« wurde während des Lesens ausgetauscht',
+    });
+    expect(read).not.toHaveBeenCalled();
+  });
+
   test('a missing file is not_found, a directory is no file', async () => {
     await mkdir(join(base, 'dir'));
     expect(

@@ -63,6 +63,8 @@ export type AttachmentLoadOptions = {
 };
 
 export type AttachmentLoadDeps = {
+  /** Läuft nach der Begrenzung, vor dem ersten `stat`; Test-Hook für den Austausch eines Verzeichnisses. */
+  afterConfine?: (real: string) => Promise<void>;
   /** Läuft nach Prüfung und `stat`, vor dem Öffnen; Test-Hook für den Austausch der Datei. */
   beforeOpen?: (real: string) => Promise<void>;
   /** Liest den Inhalt über das Handle (Default `handle.readFile()`). */
@@ -88,10 +90,16 @@ function fileError(raw: string, path: string, error: unknown): BackeError {
 }
 
 /**
- * Liest eine Quelldatei TOCTOU-fest: `realpath` und Begrenzung, `stat` des realen Pfads, Öffnen
- * ohne Symlink-Folgen, dann `fstat` am Handle. Zeigt das Handle auf eine andere Datei als die
- * geprüfte, ist das `validation`. Größe und Inhalt kommen nur über das Handle; über der Grenze
- * wird nichts gelesen.
+ * Liest eine Quelldatei mit Schutz gegen Austausch: `realpath` und Begrenzung, `stat` des realen
+ * Pfads, Öffnen ohne Symlink-Folgen in der letzten Komponente, `fstat` am Handle. Danach wird der
+ * Pfad erneut aufgelöst: Er muss derselbe reale Pfad sein, weiter in `base` liegen (`confine`), und
+ * `stat` dort muss die Inode des Handles liefern. Sonst ist das `validation`. Größe und Inhalt
+ * kommen nur über das Handle; über der Grenze wird nichts gelesen.
+ *
+ * Restfenster: Node hat kein `openat`/`O_BENEATH`, das Öffnen folgt daher Symlinks in
+ * Zwischenverzeichnissen. Ein Angreifer, der ein Zwischenverzeichnis zum Öffnen nach außen und
+ * zwischen der erneuten Auflösung und dem letzten `stat` wieder hin und her tauscht, kann die
+ * Prüfung noch schlagen; ein einmaliger Austausch nicht.
  */
 async function loadFile(
   name: string,
@@ -111,6 +119,7 @@ async function loadFile(
       hint: 'Inhalt per text oder json übergeben',
     });
   }
+  await deps.afterConfine?.(real);
   let checked: Awaited<ReturnType<typeof stat>>;
   try {
     checked = await stat(real);
@@ -128,10 +137,27 @@ async function loadFile(
   }
   try {
     const opened = await handle.stat();
-    if (opened.dev !== checked.dev || opened.ino !== checked.ino) {
-      throw new BackeError('validation', `Datei »${raw}« wurde während des Lesens ausgetauscht`, {
+    const swapped = () =>
+      new BackeError('validation', `Datei »${raw}« wurde während des Lesens ausgetauscht`, {
         details: { path },
       });
+    if (opened.dev !== checked.dev || opened.ino !== checked.ino) throw swapped();
+    // Ein Zwischenverzeichnis, das jetzt nach außen zeigt, ändert die Auflösung des Pfads.
+    let again: string;
+    let now: Awaited<ReturnType<typeof stat>>;
+    try {
+      again = await physicalPath(path);
+      now = await stat(real);
+    } catch {
+      throw swapped();
+    }
+    if (
+      again !== real ||
+      (opts.confine && !within(await physicalPath(opts.base), again)) ||
+      now.dev !== opened.dev ||
+      now.ino !== opened.ino
+    ) {
+      throw swapped();
     }
     const file = attachmentFileName(name, { kind: 'file', fileName, content: new Uint8Array() });
     const tooLarge = attachmentTooLarge(file, opened.size, {
