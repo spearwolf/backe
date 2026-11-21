@@ -203,11 +203,21 @@ test('config edit with an invalid result keeps the original', async () => {
   expect(await readFile(file, 'utf8')).toBe('{\n  "user": "spw"\n}\n');
   expect(await readFile(`${file}.draft`, 'utf8')).toBe('{ kaputt');
 
-  // Gültiges Ergebnis wird übernommen, unverändert meldet es.
-  const good = join(await tempDir(), 'gut.sh');
-  await writeFile(good, '#!/bin/sh\nsed "s/spw/anna/" "$1" > "$1.new" && mv "$1.new" "$1"\n');
+  // Der nächste Edit startet mit dem Entwurf; unverändert zurückgegeben scheitert er wieder.
+  const dir = await tempDir();
+  const peek = join(dir, 'peek.sh');
+  await writeFile(peek, `#!/bin/sh\ncp "$1" ${join(dir, 'seen')}\n`);
+  const again = await run(t, ['config', 'edit', '--json'], { env: { BACKE_EDITOR: `sh ${peek}` } });
+  expect(again.code).toBe(2);
+  expect(await readFile(join(dir, 'seen'), 'utf8')).toBe('{ kaputt');
+  expect(await readFile(`${file}.draft`, 'utf8')).toBe('{ kaputt');
+
+  // Gültiges Ergebnis wird übernommen und erledigt den Entwurf, unverändert meldet es.
+  const good = join(dir, 'gut.sh');
+  await writeFile(good, `#!/bin/sh\nprintf '{\\n  "user": "anna"\\n}\\n' > "$1"\n`);
   expect(ok(await run(t, ['config', 'edit'], { env: { BACKE_EDITOR: `sh ${good}` } }))).toBe('');
-  expect(await readFile(file, 'utf8')).toContain('anna');
+  expect(await readFile(file, 'utf8')).toBe('{\n  "user": "anna"\n}\n');
+  await expect(readFile(`${file}.draft`, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   expect(ok(await run(t, ['config', 'edit'], { env: { BACKE_EDITOR: 'true' } }))).toBe(
     'unverändert\n',
   );

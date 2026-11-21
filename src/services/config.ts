@@ -137,10 +137,14 @@ export async function setConfig(
 }
 
 /**
- * `edit` bekommt den Dateitext (fehlt die Datei: `{}`; ist er ungültig: so wie er ist) und liefert
- * den neuen. Ungültiges Ergebnis oder eine zwischenzeitlich geänderte Datei lassen das Original
- * unberührt; der Entwurf bleibt in `config.jsonc.draft`, und `datei:zeile` eines ungültigen
- * Ergebnisses nennt ihn.
+ * `edit` bekommt den Text zum Bearbeiten und liefert den neuen: den Entwurf eines früheren,
+ * gescheiterten Edits, falls es `config.jsonc.draft` gibt (darauf verweist dessen Hinweis), sonst
+ * den Dateitext (fehlt die Datei: `{}`; ist er ungültig: so wie er ist). Gleicht das Ergebnis der
+ * aktuellen Config, ist das »unverändert«, und ein Entwurf ist erledigt. Sonst wird es geprüft,
+ * auch ein unverändert zurückgegebener Entwurf. Ungültiges Ergebnis oder eine zwischenzeitlich
+ * geänderte Datei lassen das Original unberührt; der Entwurf bleibt in `config.jsonc.draft`, und
+ * `datei:zeile` eines ungültigen Ergebnisses nennt ihn. Gelöscht wird er nur nach einem
+ * erfolgreichen Schreiben oder bei »unverändert«.
  */
 export async function editConfigText(
   homes: Homes,
@@ -150,10 +154,9 @@ export async function editConfigText(
   const draft = `${file}.draft`;
   await mkdir(homes.backeHome, { recursive: true, mode: 0o700 });
   const original = await readConfigText(file);
-  const start = original ?? '{}\n';
-  const edited = await edit(start);
-  if (edited === start) {
-    // Ein Entwurf eines früheren, gescheiterten Edits ist mit dem unveränderten Speichern erledigt.
+  const current = original ?? '{}\n';
+  const edited = await edit((await readConfigText(draft)) ?? current);
+  if (edited === current) {
     await rm(draft, { force: true });
     return { changed: false };
   }

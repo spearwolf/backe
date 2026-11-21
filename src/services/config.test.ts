@@ -160,7 +160,6 @@ describe('getConfig', () => {
 describe('editConfigText', () => {
   test('writes a valid result and keeps nothing else behind', async () => {
     await writeFile(cfgPath, '{\n  "user": "spw"\n}\n');
-    await writeFile(`${cfgPath}.draft`, 'alt');
     const seen: string[] = [];
     const result = await editConfigText(homes, async (text) => {
       seen.push(text);
@@ -177,12 +176,46 @@ describe('editConfigText', () => {
     await expect(readFile(cfgPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  test('an unchanged text removes the draft of an earlier edit', async () => {
-    await writeFile(cfgPath, '{\n  "user": "spw"\n}\n');
-    await writeFile(`${cfgPath}.draft`, '{\n  "user": \n');
-    expect(await editConfigText(homes, async (t) => t)).toEqual({ changed: false });
-    await expect(readFile(`${cfgPath}.draft`, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(await readFile(cfgPath, 'utf8')).toBe('{\n  "user": "spw"\n}\n');
+  describe('with a draft of an earlier edit', () => {
+    const original = '{\n  "user": "spw"\n}\n';
+    const broken = '{\n  "user": \n';
+    const draftPath = () => `${cfgPath}.draft`;
+    beforeEach(async () => {
+      await writeFile(cfgPath, original);
+      await writeFile(draftPath(), broken);
+    });
+
+    test('the editor starts with the draft', async () => {
+      const seen: string[] = [];
+      await catchErrAsync(() =>
+        editConfigText(homes, async (t) => {
+          seen.push(t);
+          return t;
+        }),
+      );
+      expect(seen).toEqual([broken]);
+    });
+
+    test('a draft returned unchanged is validated, fails again and stays', async () => {
+      const err = await catchErrAsync(() => editConfigText(homes, async (t) => t));
+      expect(err.code).toBe('validation');
+      expect(err.hint).toContain(draftPath());
+      expect(await readFile(draftPath(), 'utf8')).toBe(broken);
+      expect(await readFile(cfgPath, 'utf8')).toBe(original);
+    });
+
+    test('a draft edited to a valid config is applied and removed', async () => {
+      const r = await editConfigText(homes, async () => '{\n  "user": "neu"\n}\n');
+      expect(r).toEqual({ changed: true });
+      expect(await readFile(cfgPath, 'utf8')).toBe('{\n  "user": "neu"\n}\n');
+      await expect(readFile(draftPath(), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    test('a draft edited back to the current config is unchanged and removed', async () => {
+      expect(await editConfigText(homes, async () => original)).toEqual({ changed: false });
+      await expect(readFile(draftPath(), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await readFile(cfgPath, 'utf8')).toBe(original);
+    });
   });
 
   test('a missing file is offered as an empty object and created on change', async () => {
