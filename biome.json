@@ -5,6 +5,7 @@
     "includes": [
       "**",
       "!pnpm-lock.yaml",
+      "!CHANGELOG.md",
       "!docs",
       "!.superpowers",
       "!schemas",

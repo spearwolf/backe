@@ -3,11 +3,20 @@ name: Release
 on:
   push:
     branches: [main]
+  # Rückweg, wenn build oder publish nach dem Tag scheiterte: baut und publisht
+  # genau diesen Tag noch einmal, ohne release-please.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Vorhandener Release-Tag, z. B. v0.1.0"
+        required: true
+        type: string
 
 permissions: {}
 
 jobs:
   release-please:
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -23,18 +32,61 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+  # Tag und Version aus release-please (push) oder aus der Eingabe (dispatch).
+  target:
+    needs: release-please
+    if: >-
+      ${{ !cancelled() && (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'push' && needs.release-please.outputs.release_created == 'true')
+      ) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.target.outputs.tag }}
+      version: ${{ steps.target.outputs.version }}
+    steps:
+      - id: target
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          RP_TAG: ${{ needs.release-please.outputs.tag_name }}
+          RP_VERSION: ${{ needs.release-please.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$EVENT" = workflow_dispatch ]; then
+            TAG="$INPUT_TAG"
+          else
+            TAG="$RP_TAG"
+          fi
+          if ! [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Kein gültiger Release-Tag: »$TAG« (erwartet vX.Y.Z)"
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          if [ "$EVENT" = push ] && [ "$VERSION" != "$RP_VERSION" ]; then
+            echo "::error::Tag $TAG passt nicht zur Version $RP_VERSION von release-please"
+            exit 1
+          fi
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null; then
+            echo "::error::Zum Tag $TAG gibt es kein GitHub-Release"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
   # Fremder Code (Dev-Abhängigkeiten, Tests) läuft nur hier, ohne Schreibrechte
   # und ohne OIDC; publish bekommt nur den fertigen Tarball.
   build:
-    needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    needs: target
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ needs.target.outputs.tag }}
           persist-credentials: false
       - uses: jdx/mise-action@v5
       - run: pnpm install --frozen-lockfile
@@ -58,14 +110,14 @@ jobs:
           TARBALL: ${{ steps.pack.outputs.tarball }}
         run: bash scripts/pack-smoke.sh "$TARBALL"
 
-      - name: Version gegen release-please prüfen
+      - name: Version gegen den Tag prüfen
         env:
           TARBALL: ${{ steps.pack.outputs.tarball }}
-          RELEASE_VERSION: ${{ needs.release-please.outputs.version }}
+          RELEASE_VERSION: ${{ needs.target.outputs.version }}
         run: |
           VERSION="$(tar -xOf "$TARBALL" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')"
           if [ "$VERSION" != "$RELEASE_VERSION" ]; then
-            echo "::error::Tarball hat $VERSION, release-please meldet $RELEASE_VERSION"
+            echo "::error::Tarball hat $VERSION, der Tag verlangt $RELEASE_VERSION"
             exit 1
           fi
 
@@ -77,19 +129,18 @@ jobs:
 
   # Kein Checkout, kein Projektcode: nur Node, der Tarball und npm.
   publish:
-    needs: [release-please, build]
+    needs: [target, build]
     runs-on: ubuntu-latest
     environment: npm
     permissions:
       contents: write
       id-token: write
     steps:
-      - uses: jdx/mise-action@v5
+      # Erstanbieter-Action: in diesem Job liegt das OIDC-Recht.
+      - uses: actions/setup-node@v7
         with:
-          mise_toml: |
-            [tools]
-            node = "26.13.1"
-          cache: false
+          node-version: 26.13.1
+          package-manager-cache: false
 
       - name: npm-Version prüfen
         run: |
@@ -121,13 +172,13 @@ jobs:
       - name: Publish idempotent
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          RELEASE_VERSION: ${{ needs.release-please.outputs.version }}
+          RELEASE_VERSION: ${{ needs.target.outputs.version }}
         run: |
           PKG_JSON="$(tar -xOf "$TARBALL" package/package.json)"
           NAME="$(printf '%s' "$PKG_JSON" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).name')"
           VERSION="$(printf '%s' "$PKG_JSON" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')"
           if [ "$VERSION" != "$RELEASE_VERSION" ]; then
-            echo "::error::Tarball hat $VERSION, release-please meldet $RELEASE_VERSION"
+            echo "::error::Tarball hat $VERSION, der Tag verlangt $RELEASE_VERSION"
             exit 1
           fi
           # Nur für die erste Veröffentlichung: danach läuft der Publish über OIDC,
@@ -146,5 +197,5 @@ jobs:
       - name: Tarball ans GitHub-Release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+          TAG: ${{ needs.target.outputs.tag }}
         run: gh release upload "$TAG" "$TARBALL" --clobber --repo "$GITHUB_REPOSITORY"
