@@ -159,7 +159,7 @@ Offene Punkte aus den Reviews von M2, die ein späterer Detailplan einlösen mus
 - ✓ **M5a:** CLI-Flags stehen in Hints der `ops`-Schicht. → M5a, Festlegung »Hints mit CLI-Flags in `ops`/`context`« (bleiben; die Übersetzung für MCP entscheidet M7)
 - ✓ **M5b:** Batch-Laufzeit wächst mit O(k·n) (jede Operation materialisiert `d.snapshot`; 1 000 Creates auf 20 000 Issues ≈ 2,5 s), dazu quadratisches `topoOrder` in `translate`; `backe commit` ersetzt die Arbeitskopie durch die kanonischen Changes (Mengen-Differenz ändert Listen-Reihenfolge) und legt die Commit-Strategie für gemischte Ergebnisse (`ops` + `manual`) fest — Ops, die auf `manual`-Dateien verweisen, scheitern sonst mit `missing_ref`; getauschte Parents zweier Issues in einem Hand-Edit scheitern ID-abhängig an `cycle`; `user.rm` lässt `lead`/`assignee` hängen (Hinweis in `doctor`). → M5b, Task 3, 4, 8
 - **M6:** `commentsNeeded` deckt vorgegebene Kommentarnamen (`comment.add.file`, `reason_file`, `blocker_comments`) nicht ab — beim Replay würde ein vorhandener Kommentar still überschrieben; `issue.resume` kennt kein »Ziel erreicht → No-op« (Scheinkonflikt bei zwei parallelen Resumes, Vorschlag: `to*` aufzeichnen); ein `move` nach `blocked` über eine bestehende Blockade verwirft neue Blocker still; `issue.link` mit `url` zeichnet den abgeleiteten Repo-Namen nicht auf; `substituteIds`/`referencedIds` schreiben nach Feldnamen um (Test über alle Varianten); Replay-Tests sollen `decodeOp(encodeOp(recorded))` anwenden statt der Operation im Speicher.
-- **Doku nach Abnahme:** `backe.md` §2.16.4 (Beispiele `issue.body`, `issue.rank` ohne `from`, `comment.add` ohne `body`), §2.24 (`issue.prop`) und §2.13 (Hand-Edits nennen `issue.body`) an den Operationskatalog angleichen; die M2-Planentscheidungen als Präzisierung übernehmen.
+- ✓ **Doku nach Abnahme:** `backe.md` §2.16.4 (Beispiele `issue.body`, `issue.rank` ohne `from`, `comment.add` ohne `body`), §2.24 (`issue.prop`) und §2.13 (Hand-Edits nennen `issue.body`) an den Operationskatalog angleichen; die M2-Planentscheidungen als Präzisierung übernehmen. → M8, Task 10
 
 ## Übernommen aus M3
 
@@ -214,7 +214,7 @@ Offene Punkte aus den Reviews von M4, die ein späterer Detailplan einlösen mus
   - Admin-Prädikat mehrfach;
   - `showBacklog` per `samePath` und nur Handles;
   - Testlücken (Status `B`, Key im selben Commit, Gruppierung).
-- **Doku nach Abnahme:**
+- ✓ **Doku nach Abnahme:** → M8, Task 10
   - `backe.md` §2.12 und §2.13 um die Identitätsregeln ergänzen:
     - Handle-Wiederverwendung nur durch Admins;
     - Keys eindeutig;
@@ -278,7 +278,7 @@ Offene Punkte aus den Reviews von M5b, die ein späterer Detailplan einlösen mu
   - `git()`-Timeout beendet nur das direkte Kind; gescheiterte GitHub-Abfragen werden nicht gecacht; `repo scan` ohne `--force` wendet »first-by-path« nicht an; ungültiger Issue-Ref auf ein nicht registriertes Repo fällt still weg.
   - `doctor`: `stateDir()` kann `.git/backe` anlegen; execFile-Timeout zählt als »fehlt«; lokales `git` überschattet den Import.
   - `config`: Schema-Drift (Nicht-String-Blatt) wirft einen rohen Fehler; alter Entwurf bleibt nach unverändertem Edit liegen; `readText` doppelt; `getConfig` liest zweimal.
-  - URL ohne Schema mit `.git` (`github.com/a/b.git`) behält `.git`; relativer Pfad `a/b` gilt als Repo-URL; Backlogs, die vor dem LFS-Fix schon roh committete Anhänge unter der Regel hatten, heilt nichts.
+  - URL ohne Schema mit `.git` (`github.com/a/b.git`) behält `.git`; relativer Pfad `a/b` gilt als Repo-URL (entfällt: `a/b` ist syntaktisch gleich der kanonischen Form `gitserver/repo` eines Hosts ohne Punkt, die Regel bräche die Idempotenz von `normalizeRepoUrl` und gültige Registrierungen; ein Tippfehler `a/b` gilt dafür weiter als Repo-URL); Backlogs, die vor dem LFS-Fix schon roh committete Anhänge unter der Regel hatten, heilt nichts (entfällt: vor dem ersten Release gibt es solche Backlogs nicht).
   - Testlücken: Identity-`fail` bei kaputter `.git/config`, `doctor --fix` per E2E, Golden für `repo scan` `differs`/`überschrieben`, Temp-Datei des Editors nach Erfolg und Modus `0o600`, Text-Ausgabe von `attach add --json`, `attach get -o` auf vorhandene Datei/Verzeichnis, vakuöse Zeilen in `tools.test.ts`.
 
 ## Übernommen aus M6
@@ -302,7 +302,7 @@ Offene Punkte aus den Reviews von M6, die ein späterer Detailplan einlösen mus
 
 Offene Punkte aus den Reviews von M7, die ein späterer Detailplan einlösen muss. Abgehakt wird hier, sobald der jeweilige Detailplan sie aufgenommen hat.
 
-- **M8 — Doku:**
+- ✓ **M8 — Doku:** → M8, Task 10
   - `backe.md` §2.19 »Ende« und die Planentscheidung dazu nennen nur das Ende von stdin; der Server endet auch, wenn der Transport sich selbst schließt (etwa nach einem stdout-Fehler).
 - **M8 — Aufräumen, Tests, Robustheit:**
   - Lesende Tools planen den Hintergrund-Sync vor der Prüfung von `fields`; die CLI prüft `--fields` vorher. Harmlos (kein Write), aber uneinheitlich.
