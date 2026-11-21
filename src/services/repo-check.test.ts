@@ -9,7 +9,7 @@ import { git } from '../git/exec.ts';
 import { issueFile } from '../store/layout.ts';
 import { createIssue, linkIssue } from './issues.ts';
 import {
-  checkRepos,
+  checkRepoResult,
   type RepoCheck,
   type RepoCheckDeps,
   repoCheckCachePath,
@@ -31,6 +31,10 @@ async function bareWithRefs(): Promise<string> {
   await git(['push', '-q', bare, 'main', 'v1'], { cwd: work });
   return bare;
 }
+
+/** Die Prüfungen ohne die Hinweise; die meisten Tests brauchen nur sie. */
+const checkRepos = async (...a: Parameters<typeof checkRepoResult>): Promise<RepoCheck[]> =>
+  (await checkRepoResult(...a)).repos;
 
 const neverCalled = (): never => {
   throw new Error('must not be called');
@@ -105,6 +109,35 @@ describe('checkRepos', () => {
     expect(msgs[0]?.message).toContain(id);
     expect(msgs[0]?.message).toContain('a:b');
     expect(repoCheckExit(checks)?.code).toBe('validation');
+  });
+
+  test('an invalid ref on an unregistered repo is a notice, not dropped', async () => {
+    const issue = await createIssue(ctx, { title: 'ghost' });
+    const id = issue.id as string;
+    const file = join(b.root, issueFile(id));
+    const text = await readFile(file, 'utf8');
+    await writeFile(file, text.replace('\n---\n', '\nrepos:\n  - ghost@a:b\n---\n'));
+    const r = await checkRepoResult(ctx, {}, { lsRemote: neverCalled, github: neverCalled });
+    expect(r.notices).toEqual([
+      {
+        code: 'unknown_repo',
+        message: `Issue »${id}« (${issueFile(id)}): Ref »a:b« ist ungültig, Repo »ghost« ist nicht registriert`,
+        ids: [id],
+      },
+    ]);
+    expect(r.repos.every((c) => c.findings.every((f) => !f.message.includes('ghost')))).toBe(true);
+    const clean = await checkRepoResult(ctx, { names: ['webapp'] }, { lsRemote: neverCalled });
+    expect(clean.notices).toEqual(r.notices);
+    // Ein Repo, dessen Datei selbst kaputt ist, ist registriert: Der Ref-Fehler gehört zu ihm.
+    await writeFile(
+      join(b.root, 'repos', 'ghost.md'),
+      '---\nurl: https://example.org/g\nx: 1\n---\n',
+    );
+    const broken = await checkRepoResult(ctx, {}, { lsRemote: neverCalled, github: neverCalled });
+    expect(broken.notices).toEqual([]);
+    expect(byName(broken.repos, 'ghost').findings.map((f) => f.message)).toContainEqual(
+      `Issue »${id}« (${issueFile(id)}): Ref »a:b« ist ungültig`,
+    );
   });
 
   test('remote: missing refs are errors, commit refs are info', async () => {

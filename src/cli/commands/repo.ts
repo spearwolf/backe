@@ -1,14 +1,15 @@
 /** `backe repo add | list | rm | check | where | scan` (backe.md §2.11, §2.17). */
 import type { Command } from 'commander';
-import { checkRepos, type RepoCheck, repoCheckExit } from '../../services/repo-check.ts';
+import { checkRepoResult, type RepoCheck, repoCheckExit } from '../../services/repo-check.ts';
 import { locateRepo, type ScanEntry, scanRepos } from '../../services/repo-local.ts';
 import { addRepo, listRepos, removeRepo } from '../../services/repos.ts';
-import { repoLocateJson } from '../../services/views.ts';
+import { nonEmpty, repoLocateJson } from '../../services/views.ts';
 import {
   absPath,
   action,
   bodyArg,
   emit,
+  emitNotices,
   emitOutcome,
   type Runtime,
   subcommand,
@@ -81,12 +82,15 @@ export function repoCommands(program: Command, rt: Runtime): void {
     .option('--fresh', 'den Cache der Remote-Ergebnisse umgehen')
     .action(
       action(rt, async (env, names: string[], opts: { remote?: boolean; fresh?: boolean }) => {
-        const checks = await checkRepos(await env.context(), {
+        const { repos: checks, notices } = await checkRepoResult(await env.context(), {
           names,
           ...(opts.remote === true ? { remote: true } : {}),
           ...(opts.fresh === true ? { fresh: true } : {}),
         });
-        emit(env, { repos: checks.map(checkJson) }, () => lines(checks.flatMap(checkLines)));
+        emit(env, { repos: checks.map(checkJson), notices: nonEmpty(notices) }, () =>
+          lines(checks.flatMap(checkLines)),
+        );
+        emitNotices(env, notices);
         const failure = repoCheckExit(checks);
         if (failure !== undefined) throw failure;
       }),

@@ -17,7 +17,9 @@ test.each([
   ['https://github.com/Acme/WebApp', 'github.com/acme/webapp'],
   ['git@gitlab.com:Group/Proj.git', 'gitlab.com/group/proj'],
   ['https://git.example.org/Team/Repo', 'git.example.org/Team/Repo'],
-  ['github.com/acme/a.git', 'github.com/acme/a.git'],
+  ['github.com/acme/a.git', 'github.com/acme/a'],
+  ['github.com/a/b.git', 'github.com/a/b'],
+  ['git.example.org/Team/Repo.git/', 'git.example.org/Team/Repo'],
   ['https://localhost/a/b', 'localhost/a/b'],
   ['ssh://git@gitserver/repo.git', 'gitserver/repo'],
   ['FILE:/srv/Git/A', 'file:/srv/Git/A'],
@@ -27,7 +29,8 @@ test.each([
   ['git@host.example:/x//y/', 'host.example/x/y'],
   ['/srv//git/backlog.git/', 'file:/srv/git/backlog'],
   ['gh:acme/webapp.git', 'github.com/acme/webapp'],
-  ['https://github.com/acme/a.git.git', 'github.com/acme/a.git'],
+  ['https://github.com/acme/a.git.git', 'github.com/acme/a'],
+  ['github.com/acme/a.git.git', 'github.com/acme/a'],
 ])('normalizeRepoUrl(%s)', (input, want) => {
   expect(normalizeRepoUrl(input)).toBe(want);
   expect(normalizeRepoUrl(want)).toBe(want);

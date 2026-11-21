@@ -62,6 +62,23 @@ describe('runBatch', () => {
     expect(await revParse(b.root, 'HEAD')).toBe(before);
   });
 
+  test('errors come in line order: a forbidden op on line 2 before a schema error on line 5', async () => {
+    const ctx = await b.context();
+    const lines = [
+      '{"op":"issue.create","title":"A","ref":"$a"}',
+      '{"op":"issue.claim","id":"$a"}',
+      '{"op":"issue.create","title":"B"}',
+      '{"op":"issue.create","title":"C"}',
+      '{"op":"issue.create"}',
+    ];
+    const err = await catchErrAsync(() => runBatch(ctx, `${lines.join('\n')}\n`));
+    expect(err).toMatchObject({
+      code: 'validation',
+      message: 'Zeile 2: issue.claim gibt es nicht im Batch',
+      details: { line: 2 },
+    });
+  });
+
   test('batch commit carries the operations as body', async () => {
     const ctx = await b.context();
     const out = await runBatch(

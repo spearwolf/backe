@@ -31,7 +31,7 @@ import { clearLocalState, readLocalState, writeLocalState } from '../git/local-s
 import { branchesWithUnpushed, gitRemotes, gitToplevel } from '../git/query.ts';
 import { headState } from '../git/repo.ts';
 import type { Notice } from '../ops/notice.ts';
-import { exists } from '../store/files.ts';
+import { exists, isMissing } from '../store/files.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG, userFile } from '../store/layout.ts';
 import { ensureHub, hubPath } from './hub.ts';
@@ -71,7 +71,7 @@ async function readCloneConfig(wc: string, source: string): Promise<CloneConfig>
   try {
     text = await readFile(join(wc, BACKLOG_CONFIG), 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if (!isMissing(error)) throw error;
     throw new BackeError('validation', `${source} ist kein Backlog: ${BACKLOG_CONFIG} fehlt`);
   }
   const result = CloneConfigSchema.safeParse(readJsonc(text, BACKLOG_CONFIG));
@@ -689,8 +689,8 @@ export async function showBacklog(
     });
   }
   const managedRoot = join(homes.backeHome, 'backlogs', name);
-  const dirs = await readdir(managedRoot).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === 'ENOENT') return [];
+  const dirs = await readdir(managedRoot).catch((error: unknown) => {
+    if (isMissing(error)) return [];
     throw error;
   });
   const handles = new Set([

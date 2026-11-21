@@ -37,14 +37,22 @@ function onLine(line: number, err: unknown): never {
 /**
  * Eine Operation je Zeile. Erlaubt sind ein abschließender Newline und leere Zeilen am Ende; eine
  * leere Zeile vor einer weiteren Operation ist ein Fehler. Zeilenfehler nennen die Zeile.
+ * `reject` liefert für eine gültige, aber hier verbotene Operation den Grund (`validation`); er
+ * läuft je Zeile direkt nach dem Dekodieren, damit der erste Fehler auch der in der ersten Zeile ist.
  */
-export function parseBatchInput(text: string): Operation[] {
+export function parseBatchInput(
+  text: string,
+  reject?: (op: Operation) => string | undefined,
+): Operation[] {
   const lines = text.split('\n').map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l));
   while (lines.at(-1) === '') lines.pop();
   return lines.map((line, i) => {
     try {
       if (line === '') throw violation('schema', 'leere Zeile zwischen Operationen');
-      return decodeOp(line);
+      const op = decodeOp(line);
+      const reason = reject?.(op);
+      if (reason !== undefined) throw new BackeError('validation', reason);
+      return op;
     } catch (err) {
       return onLine(i + 1, err);
     }

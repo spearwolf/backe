@@ -8,6 +8,7 @@ export type NoticeCode =
   | 'id_rewritten'
   | 'claim_local'
   | 'hub_created'
-  | 'claim_lost';
+  | 'claim_lost'
+  | 'unknown_repo';
 
 export type Notice = { code: NoticeCode; message: string; ids: string[] };

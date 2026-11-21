@@ -10,6 +10,7 @@ import { BackeError } from '../core/errors.ts';
 import { isGitArg, isGitRef, parseRepoRef } from '../core/names.ts';
 import { normalizeRepoUrl } from '../core/url.ts';
 import { git, transportEnv } from '../git/exec.ts';
+import type { Notice } from '../ops/notice.ts';
 import { writeFileAtomic } from '../store/files.ts';
 import { parseEntityFile } from '../store/frontmatter.ts';
 import type { Problem } from '../store/snapshot.ts';
@@ -173,12 +174,16 @@ type RepoItem = {
   cached?: string;
 };
 
-/** Prüft die Repos des Backlogs; `names` leer oder fehlend heißt alle. Unbekannter Name → `not_found`. */
-export async function checkRepos(
+/**
+ * Prüft die Repos des Backlogs; `names` leer oder fehlend heißt alle. Unbekannter Name → `not_found`.
+ * `notices` nennt, was keinem Repo zuzuordnen ist (ungültige Refs auf nicht registrierte Repos),
+ * unabhängig von `names`.
+ */
+export async function checkRepoResult(
   ctx: ResolvedContext,
   input: { names?: string[]; remote?: boolean; fresh?: boolean },
   deps: RepoCheckDeps = {},
-): Promise<RepoCheck[]> {
+): Promise<{ repos: RepoCheck[]; notices: Notice[] }> {
   const { root, snapshot: s } = await openSnapshot(ctx);
 
   const refsOf = new Map<string, Set<string>>();
@@ -230,7 +235,7 @@ export async function checkRepos(
       findings: [{ level: 'error', kind: 'local', message: p.message }],
     });
   }
-  await addInvalidIssueRefs(root, s.problems, items);
+  const notices = await addInvalidIssueRefs(root, s.problems, items);
   items.sort((a, b) => cmp(a.name, b.name));
 
   let selected = items;
@@ -248,7 +253,7 @@ export async function checkRepos(
 
   if (input.remote === true) await checkRemote(ctx, selected, input.fresh === true, deps);
 
-  return selected.map((i) => ({
+  const repos = selected.map((i) => ({
     name: i.name,
     url: i.url,
     ...(i.canonical === undefined ? {} : { canonical: i.canonical }),
@@ -256,17 +261,20 @@ export async function checkRepos(
     ...(i.github === undefined ? {} : { github: i.github }),
     ...(i.cached === undefined ? {} : { cached: i.cached }),
   }));
+  return { repos, notices };
 }
 
 /**
  * Issues mit ungültigem `name@ref` fallen aus dem Snapshot (sie stehen in `problems`). Ihre rohen
- * `repos` werden hier sicher gelesen und der Fehler dem Repo zugeordnet.
+ * `repos` werden hier sicher gelesen und der Fehler dem Repo zugeordnet; gibt es kein Repo dieses
+ * Namens, wird er ein Hinweis statt still zu verschwinden.
  */
 async function addInvalidIssueRefs(
   root: string,
   problems: readonly Problem[],
   items: readonly RepoItem[],
-): Promise<void> {
+): Promise<Notice[]> {
+  const notices: Notice[] = [];
   for (const p of problems) {
     if (p.kind !== 'issue' || p.key === undefined) continue;
     let repos: unknown;
@@ -281,15 +289,21 @@ async function addInvalidIssueRefs(
       const at = raw.indexOf('@');
       const ref = raw.slice(at + 1);
       if (isGitArg(ref) && isGitRef(ref)) continue;
-      items
-        .find((i) => i.name === raw.slice(0, at) && i.canonical !== undefined)
-        ?.findings.push({
-          level: 'error',
-          kind: 'local',
-          message: `Issue »${p.key}« (${p.path}): Ref »${ref}« ist ungültig`,
+      const name = raw.slice(0, at);
+      const message = `Issue »${p.key}« (${p.path}): Ref »${ref}« ist ungültig`;
+      const item = items.find((i) => i.name === name);
+      if (item === undefined) {
+        notices.push({
+          code: 'unknown_repo',
+          message: `${message}, Repo »${name}« ist nicht registriert`,
+          ids: [p.key],
         });
+      } else {
+        item.findings.push({ level: 'error', kind: 'local', message });
+      }
     }
   }
+  return notices;
 }
 
 type Remote = { refs: string[]; github?: GithubInfo; cached?: string; githubFinding?: RepoFinding };

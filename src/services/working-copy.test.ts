@@ -447,6 +447,32 @@ test('a remote without backlog is refused and leaves nothing', async () => {
   expect(await tempEntries(other.homes)).toEqual([]);
 });
 
+test('a remote whose .backe is a file is no backlog', async () => {
+  const dir = await tempDir();
+  const bare = join(dir, 'file.git');
+  const work = join(dir, 'work');
+  await git(['init', '--bare', '-q', '-b', 'main', bare], { cwd: dir });
+  await git(['init', '-q', '-b', 'main', work], { cwd: dir });
+  await writeFile(join(work, '.backe'), 'keine Config\n');
+  await git(['add', '.backe'], { cwd: work });
+  const ident = [
+    '-c',
+    'user.name=t',
+    '-c',
+    'user.email=t@example.org',
+    '-c',
+    'commit.gpgsign=false',
+  ];
+  await git([...ident, 'commit', '-q', '-m', 'init'], { cwd: work });
+  await git(['push', '-q', bare, 'main'], { cwd: work });
+  const err = await catchErrAsync(() =>
+    cloneBacklog({ homes: other.homes, env: other.env, url: bare, handle: 'spw' }),
+  );
+  expect(err.code).toBe('validation');
+  expect(err.message).toBe(`${bare} ist kein Backlog: ${BACKLOG_CONFIG} fehlt`);
+  expect(await tempEntries(other.homes)).toEqual([]);
+});
+
 test('an invalid handle is a validation error before cloning', async () => {
   const err = await catchErrAsync(() =>
     cloneBacklog({ homes: other.homes, env: other.env, url: b.remote as string, handle: '../x' }),
@@ -887,6 +913,14 @@ test('add of a clone without the sync remote registers no remote', async () => {
   });
   expect((await readUserConfig(other.homes.backeHome)).backlogs?.acme?.remote).toBeUndefined();
   expect(await readLocalState(dir, 'upstream')).toBeUndefined();
+});
+
+test('show treats a file in place of the clone directory as no managed clones', async () => {
+  await registerBacklog(other.homes, { name: 'zed' });
+  await mkdir(other.homes.backeHome, { recursive: true });
+  await writeFile(join(other.homes.backeHome, 'backlogs'), 'kein Verzeichnis\n');
+  const shown = await showBacklog(other.homes, await readUserConfig(other.homes.backeHome), 'zed');
+  expect(shown.workingCopies).toEqual([]);
 });
 
 test('purge and show of a backlog without managed clones', async () => {

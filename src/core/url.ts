@@ -20,15 +20,18 @@ function fail(input: string): never {
   throw new BackeError('validation', `Repo-URL nicht erkannt: »${input}«`, { hint: HINT });
 }
 
-/** Doppelte Slashes kollabieren, abschließende Slashes und ein `.git` entfernen. */
+/**
+ * Doppelte Slashes kollabieren, abschließende Slashes und jedes abschließende `.git` entfernen —
+ * alle, damit die kanonische Form nie auf `.git` endet und ein zweiter Durchlauf nichts ändert.
+ */
 function cleanPath(path: string, stripGit = true): string {
   let p = path.replace(/\/{2,}/g, '/').replace(/\/+$/, '');
-  if (stripGit && p.endsWith('.git')) p = p.slice(0, -'.git'.length).replace(/\/+$/, '');
+  while (stripGit && p.endsWith('.git')) p = p.slice(0, -'.git'.length).replace(/\/+$/, '');
   return p;
 }
 
-function remote(input: string, host: string, path: string, stripGit = true): string {
-  const p = cleanPath(path, stripGit).replace(/^\/+/, '');
+function remote(input: string, host: string, path: string): string {
+  const p = cleanPath(path).replace(/^\/+/, '');
   if (p === '') fail(input);
   const h = host.toLowerCase();
   return `${h}/${CASE_INSENSITIVE_HOSTS.has(h) ? p.toLowerCase() : p}`;
@@ -42,8 +45,8 @@ function local(input: string, path: string, stripGit = true): string {
 
 /**
  * Kanonische Form ohne Schema: `<host>/<pfad>` bzw. `file:<abs-pfad>`; kein I/O. Query und Fragment
- * sind ungültig. Die kanonische Form selbst wird unverändert wiedererkannt (idempotent), daher
- * entfernt sie kein weiteres `.git`.
+ * sind ungültig. Die kanonische Form selbst wird unverändert wiedererkannt (idempotent): `<host>/…`
+ * endet nie auf `.git`, und `file:/…` (ein Slash) behält seinen Pfad, wie er ist.
  */
 export function normalizeRepoUrl(input: string): string {
   if (input === '' || /\s/.test(input) || /[?#]/.test(input)) fail(input);
@@ -60,7 +63,7 @@ export function normalizeRepoUrl(input: string): string {
 
   if (!input.includes('://')) {
     const canonical = CANONICAL_RE.exec(input);
-    if (canonical) return remote(input, canonical[1] ?? '', canonical[2] ?? '', false);
+    if (canonical) return remote(input, canonical[1] ?? '', canonical[2] ?? '');
     const scp = SCP_RE.exec(input);
     if (scp) return remote(input, scp[1] ?? '', scp[2] ?? '');
   }
