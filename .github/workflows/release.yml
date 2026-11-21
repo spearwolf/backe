@@ -80,6 +80,9 @@ jobs:
   # und ohne OIDC; publish bekommt nur den fertigen Tarball.
   build:
     needs: target
+    # !cancelled() hebt das Überspringen auf, das ein übersprungener release-please
+    # (workflow_dispatch) sonst über target hinweg vererbt.
+    if: ${{ !cancelled() && needs.target.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -130,6 +133,7 @@ jobs:
   # Kein Checkout, kein Projektcode: nur Node, der Tarball und npm.
   publish:
     needs: [target, build]
+    if: ${{ !cancelled() && needs.target.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     environment: npm
     permissions:
