@@ -1,17 +1,18 @@
 /** `backe attach add | list | get | rm` (backe.md §2.8): Anhänge eines Issues. */
-import { readFile, stat, writeFile } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { readFile, writeFile } from 'node:fs/promises';
 import type { Command } from 'commander';
+import type { ResolvedContext } from '../../context/resolve.ts';
 import { BackeError } from '../../core/errors.ts';
 import {
-  type AttachSource,
+  type AttachmentSource,
   addAttachment,
+  attachmentLimits,
   getAttachment,
   listAttachments,
+  loadAttachmentSource,
   removeAttachment,
 } from '../../services/attachments.ts';
 import { attachmentJson } from '../../services/views.ts';
-import { isMissing } from '../../store/files.ts';
 import {
   absPath,
   action,
@@ -27,32 +28,31 @@ import { columns, json, lines } from '../output.ts';
 
 type AddOpts = { name: string; url?: string; json?: string };
 
-/** Die Quelle eines Anhangs: genau eine von Datei, `--url` und `--json`. */
+/**
+ * Die Quelle eines Anhangs: genau eine von Datei, `--url` und `--json`. Die Datei darf überall
+ * liegen, wo der User lesen kann (backe.md §2.8); nur der MCP-Modus begrenzt sie.
+ */
 async function sourceOf(
   env: CommandEnv,
+  ctx: ResolvedContext,
   file: string | undefined,
   opts: AddOpts,
-): Promise<AttachSource> {
+): Promise<AttachmentSource> {
+  const json = opts.json === undefined ? undefined : await text(opts.json, env.io, env.stdin);
+  return loadAttachmentSource(
+    { name: opts.name, path: file, url: opts.url, json },
+    { base: env.io.cwd, home: ctx.homes.home, ...(await attachmentLimits(ctx)), confine: false },
+  );
+}
+
+/** Genau eine Quelle, geprüft vor dem Kontext und vor stdin. */
+function checkOneSource(file: string | undefined, opts: AddOpts): void {
   const given = [file, opts.url, opts.json].filter((v) => v !== undefined).length;
   if (given !== 1) {
     throw new BackeError('usage', 'Genau eine Quelle angeben', {
       hint: '<datei>, --url <url> oder --json <json|->',
     });
   }
-  if (opts.url !== undefined) return { kind: 'url', url: opts.url };
-  if (opts.json !== undefined) {
-    return { kind: 'json', text: await text(opts.json, env.io, env.stdin) };
-  }
-  const path = absPath(file as string, env.io);
-  let info: Awaited<ReturnType<typeof stat>>;
-  try {
-    info = await stat(path);
-  } catch (error) {
-    if (isMissing(error)) throw new BackeError('not_found', `Datei »${file}« nicht gefunden`);
-    throw new BackeError('unexpected', `»${path}«: ${(error as NodeJS.ErrnoException).code}`);
-  }
-  if (!info.isFile()) throw new BackeError('validation', `${path} ist keine Datei`);
-  return { kind: 'file', fileName: basename(path), content: await readFile(path) };
 }
 
 export function attachCommands(program: Command, rt: Runtime): void {
@@ -67,8 +67,10 @@ export function attachCommands(program: Command, rt: Runtime): void {
       action(
         rt,
         async (env, ref: string, file: string | undefined, opts: AddOpts) => {
-          const source = await sourceOf(env, file, opts);
-          const r = await addAttachment(await env.context(), ref, { name: opts.name, source });
+          checkOneSource(file, opts);
+          const ctx = await env.context();
+          const source = await sourceOf(env, ctx, file, opts);
+          const r = await addAttachment(ctx, ref, { name: opts.name, source });
           emitOutcome(env, r, 'other');
         },
         { write: true },

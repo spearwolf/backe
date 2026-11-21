@@ -1,19 +1,22 @@
 /**
  * Anhänge eines Issues (backe.md §2.8): als Datei, URL oder JSON hinzufügen, auflisten, holen und
- * entfernen. Den Inhalt liest die CLI und reicht ihn hinein; der Service prüft nur Dateinamen.
+ * entfernen. `loadAttachmentSource` ist der einzige Lader für die Quelle, geteilt von CLI und MCP.
  */
-import { open, stat } from 'node:fs/promises';
-import { extname, join } from 'node:path';
+import { constants, type FileHandle, open, stat } from 'node:fs/promises';
+import { basename, extname, isAbsolute, join, relative, sep } from 'node:path';
+import { expandPath, physicalPath } from '../context/paths.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
 import { ATTACHMENT_NAME_RE } from '../core/names.ts';
-import { attachmentsDir } from '../store/layout.ts';
+import { attachmentTooLarge } from '../ops/comment-ops.ts';
+import { exists, fsFailure, isMissing } from '../store/files.ts';
+import { attachmentsDir, BACKLOG_CONFIG } from '../store/layout.ts';
 import { type WriteOutcome, writeOp } from './outcome.ts';
 import { openSnapshot, resolveIssueRef } from './read.ts';
 import { headConfig, type WriteDeps } from './write.ts';
 
 /** `fileName` ist der Basename der Quelle. */
-export type AttachSource =
+export type AttachmentSource =
   | { kind: 'file'; fileName: string; content: Uint8Array }
   | { kind: 'url'; url: string }
   | { kind: 'json'; text: string };
@@ -23,7 +26,7 @@ export type AttachSource =
  * kleingeschriebene Endung der Quelle. JSON heißt `<name>.json`, außer `name` endet schon darauf.
  * URL-Anhänge haben keine Datei; dort ist das Ergebnis `name`.
  */
-export function attachmentFileName(name: string, source: AttachSource): string {
+export function attachmentFileName(name: string, source: AttachmentSource): string {
   let file = name;
   if (source.kind === 'json') {
     file = name.endsWith('.json') ? name : `${name}.json`;
@@ -38,6 +41,146 @@ export function attachmentFileName(name: string, source: AttachSource): string {
   return file;
 }
 
+/** Genau eins von `path`, `url`, `json`, `text`; die Adapter prüfen das mit ihren eigenen Namen. */
+export type AttachmentInput = {
+  name: string;
+  path?: string | undefined;
+  url?: string | undefined;
+  json?: string | undefined;
+  text?: string | undefined;
+};
+
+/**
+ * `base`: Basis relativer Pfade. `confine`: nur Dateien, die physisch in `base` liegen (MCP,
+ * backe.md §2.19). `maxBytes`/`lfs`: `attachments.*` der Backlog-Config; `null` heißt ohne Grenze.
+ */
+export type AttachmentLoadOptions = {
+  base: string;
+  home: string;
+  maxBytes: number | null;
+  lfs: boolean;
+  confine: boolean;
+};
+
+export type AttachmentLoadDeps = {
+  /** Läuft nach Prüfung und `stat`, vor dem Öffnen; Test-Hook für den Austausch der Datei. */
+  beforeOpen?: (real: string) => Promise<void>;
+  /** Liest den Inhalt über das Handle (Default `handle.readFile()`). */
+  read?: (handle: FileHandle) => Promise<Uint8Array>;
+};
+
+/** Liegt `path` in `root` oder ist es `root` selbst? Beide physisch; verglichen wird je Segment. */
+function within(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`));
+}
+
+/** Fehler beim Zugriff auf die Quelldatei: fehlt → `not_found`, nicht lesbar → `validation`. */
+function fileError(raw: string, path: string, error: unknown): BackeError {
+  if (isMissing(error)) return new BackeError('not_found', `Datei »${raw}« nicht gefunden`);
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  if (code === 'EACCES' || code === 'EPERM' || code === 'ELOOP') {
+    return new BackeError('validation', `Datei »${raw}« lässt sich nicht lesen (${code})`, {
+      details: { path },
+    });
+  }
+  return fsFailure(path, error);
+}
+
+/**
+ * Liest eine Quelldatei TOCTOU-fest: `realpath` und Begrenzung, `stat` des realen Pfads, Öffnen
+ * ohne Symlink-Folgen, dann `fstat` am Handle. Zeigt das Handle auf eine andere Datei als die
+ * geprüfte, ist das `validation`. Größe und Inhalt kommen nur über das Handle; über der Grenze
+ * wird nichts gelesen.
+ */
+async function loadFile(
+  name: string,
+  raw: string,
+  opts: AttachmentLoadOptions,
+  deps: AttachmentLoadDeps,
+): Promise<AttachmentSource> {
+  const path = expandPath(raw, { home: opts.home, base: opts.base });
+  let real: string;
+  try {
+    real = await physicalPath(path);
+  } catch (error) {
+    throw fileError(raw, path, error);
+  }
+  if (opts.confine && !within(await physicalPath(opts.base), real)) {
+    throw new BackeError('validation', `Datei »${raw}« liegt außerhalb des Arbeitsverzeichnisses`, {
+      hint: 'Inhalt per text oder json übergeben',
+    });
+  }
+  let checked: Awaited<ReturnType<typeof stat>>;
+  try {
+    checked = await stat(real);
+  } catch (error) {
+    throw fileError(raw, path, error);
+  }
+  if (!checked.isFile()) throw new BackeError('validation', `${path} ist keine Datei`);
+  const fileName = basename(path);
+  await deps.beforeOpen?.(real);
+  let handle: FileHandle;
+  try {
+    handle = await open(real, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error) {
+    throw fileError(raw, path, error);
+  }
+  try {
+    const opened = await handle.stat();
+    if (opened.dev !== checked.dev || opened.ino !== checked.ino) {
+      throw new BackeError('validation', `Datei »${raw}« wurde während des Lesens ausgetauscht`, {
+        details: { path },
+      });
+    }
+    const file = attachmentFileName(name, { kind: 'file', fileName, content: new Uint8Array() });
+    const tooLarge = attachmentTooLarge(file, opened.size, {
+      max_bytes: opts.maxBytes,
+      lfs: opts.lfs,
+    });
+    if (tooLarge !== undefined) throw tooLarge;
+    const content = await (deps.read ?? ((h) => h.readFile()))(handle);
+    return { kind: 'file', fileName, content };
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Die Quelle eines Anhangs aus genau einer Angabe: `url`, `json` (Text, geprüft beim Schreiben),
+ * `text` (UTF-8-Inhalt, Dateiname ist `name`) oder `path` (Datei, siehe `loadFile`).
+ */
+export async function loadAttachmentSource(
+  input: AttachmentInput,
+  opts: AttachmentLoadOptions,
+  deps: AttachmentLoadDeps = {},
+): Promise<AttachmentSource> {
+  if (input.url !== undefined) return { kind: 'url', url: input.url };
+  if (input.json !== undefined) return { kind: 'json', text: input.json };
+  if (input.text !== undefined) {
+    return { kind: 'file', fileName: input.name, content: new TextEncoder().encode(input.text) };
+  }
+  if (input.path === undefined) throw new BackeError('usage', 'Keine Quelle für den Anhang');
+  return loadFile(input.name, input.path, opts, deps);
+}
+
+/**
+ * `attachments.max_bytes` und `.lfs` aus `HEAD` der Arbeitskopie für den Lader. Ohne Arbeitskopie
+ * (sie entsteht erst beim Write) ohne Grenze; der Write prüft die Größe dann selbst.
+ */
+export async function attachmentLimits(
+  ctx: ResolvedContext,
+): Promise<{ maxBytes: number | null; lfs: boolean }> {
+  const root = ctx.backlog.root;
+  const config =
+    root === undefined || !(await exists(join(root, BACKLOG_CONFIG)))
+      ? undefined
+      : await headConfig(root);
+  return config === undefined
+    ? { maxBytes: null, lfs: false }
+    : { maxBytes: config.attachments.max_bytes, lfs: config.attachments.lfs };
+}
+
 function jsonContent(text: string): Uint8Array<ArrayBuffer> {
   let parsed: unknown;
   try {
@@ -48,10 +191,10 @@ function jsonContent(text: string): Uint8Array<ArrayBuffer> {
   return new TextEncoder().encode(`${JSON.stringify(parsed, null, 2)}\n`);
 }
 
-export function addAttachment(
+export async function addAttachment(
   ctx: ResolvedContext,
   ref: string,
-  input: { name: string; source: AttachSource },
+  input: { name: string; source: AttachmentSource },
   deps?: WriteDeps,
 ): Promise<WriteOutcome> {
   const { name, source } = input;
@@ -132,7 +275,7 @@ export async function getAttachment(
   if (entry === undefined) {
     throw new BackeError('not_found', `${id}: Anhang »${name}« nicht gefunden`);
   }
-  if (entry.file === undefined) return { name, url: entry.url as string };
+  if (entry.url !== undefined) return { name, url: entry.url };
   const path = join(root, attachmentsDir(id), entry.file);
   const size = await sizeOf(path);
   if (size === undefined) {

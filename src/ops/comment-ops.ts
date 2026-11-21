@@ -73,6 +73,25 @@ function ensureLfsRule(d: Draft): void {
   d.putAttributes(`${head}${LFS_RULE}\n`);
 }
 
+/**
+ * Der Fehler für einen Anhang über `attachments.max_bytes` (backe.md §2.8), sonst `undefined`.
+ * Geteilt vom Write und vom Lader der Quelle, der die Größe schon vor dem Lesen kennt.
+ */
+export function attachmentTooLarge(
+  file: string,
+  size: number,
+  limits: { max_bytes: number | null; lfs: boolean },
+): BackeError | undefined {
+  const max = limits.max_bytes;
+  if (max === null || size <= max) return undefined;
+  return violation('too_large', `Anhang »${file}« hat ${size} Bytes, erlaubt sind ${max}`, {
+    // Die Grenze gilt auch mit LFS; ohne LFS ist LFS der Weg für große Dateien.
+    hint: limits.lfs
+      ? 'Grenze attachments.max_bytes anheben (backe.md §2.8).'
+      : 'Grenze attachments.max_bytes anheben; für große Dateien attachments.lfs aktivieren (backe.md §2.8).',
+  });
+}
+
 export function attachAdd(d: Draft, op: OpOf<'attach.add'>): OpOf<'attach.add'> {
   const issue = d.issue(op.id).data;
   const list = issue.attachments ?? [];
@@ -90,19 +109,8 @@ export function attachAdd(d: Draft, op: OpOf<'attach.add'>): OpOf<'attach.add'> 
         ids: [op.id],
       });
     }
-    const max = d.config.attachments.max_bytes;
-    if (max !== null && content.byteLength > max) {
-      throw violation(
-        'too_large',
-        `Anhang »${op.file}« hat ${content.byteLength} Bytes, erlaubt sind ${max}`,
-        {
-          // Die Grenze gilt auch mit LFS; ohne LFS ist LFS der Weg für große Dateien.
-          hint: d.config.attachments.lfs
-            ? 'Grenze attachments.max_bytes anheben (backe.md §2.8).'
-            : 'Grenze attachments.max_bytes anheben; für große Dateien attachments.lfs aktivieren (backe.md §2.8).',
-        },
-      );
-    }
+    const tooLarge = attachmentTooLarge(op.file, content.byteLength, d.config.attachments);
+    if (tooLarge !== undefined) throw tooLarge;
     d.putFile(`${attachmentsDir(op.id)}/${op.file}`, content);
     if (d.config.attachments.lfs) ensureLfsRule(d);
     entry = { name: op.name, file: op.file };

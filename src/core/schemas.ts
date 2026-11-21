@@ -156,7 +156,14 @@ const AttachmentSchema = z
     if ((a.file === undefined) === (a.url === undefined)) {
       ctx.addIssue({ code: 'custom', message: 'genau eines von "file" oder "url" erwartet' });
     }
-  });
+  })
+  // Die Prüfung davor garantiert genau eins von beiden; der Typ hält das fest.
+  .transform((a) => a as Attachment);
+
+/** Ein Anhang ist entweder eine Datei im Issue-Verzeichnis oder eine URL (backe.md §2.8). */
+export type Attachment =
+  | { name: string; file: string; url?: undefined }
+  | { name: string; url: string; file?: undefined };
 
 const Title = z
   .string()

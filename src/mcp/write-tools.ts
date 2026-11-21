@@ -3,14 +3,17 @@
  * (bzw. `batch` einen Batch) schreibt. Die Warteschlange und der Sync-Nachlauf stecken in
  * `defineTool` mit `kind: 'write'`.
  */
-import { readFile, stat } from 'node:fs/promises';
-import { basename, isAbsolute, relative, sep } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { expandPath, physicalPath } from '../context/paths.ts';
+import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
 import { PROP_KEY_RE } from '../core/names.ts';
-import { type AttachSource, addAttachment } from '../services/attachments.ts';
+import {
+  type AttachmentSource,
+  addAttachment,
+  attachmentLimits,
+  loadAttachmentSource,
+} from '../services/attachments.ts';
 import { runBatch } from '../services/batch.ts';
 import { addComment } from '../services/comments.ts';
 import {
@@ -24,7 +27,6 @@ import {
   resumeIssue,
 } from '../services/issues.ts';
 import { batchJson, outcomeJson } from '../services/views.ts';
-import { isMissing } from '../store/files.ts';
 import { defineTool, type ToolEnv } from './tool.ts';
 
 const strings = z.array(z.string());
@@ -95,44 +97,26 @@ type AttachArgs = {
   text?: string | undefined;
 };
 
-/** Liegt `path` in `root` oder ist es `root` selbst? Beide physisch; verglichen wird je Segment. */
-function within(root: string, path: string): boolean {
-  const rel = relative(root, path);
-  return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`));
-}
-
 /**
  * Die Quelle eines Anhangs. `path` darf nur auf eine Datei im Arbeitsverzeichnis des Servers
  * zeigen, auch über Symlinks hinweg: Ein Agent soll keine beliebige Datei, die der Prozess lesen
  * kann, in den geteilten, signierten Backlog committen.
  */
-async function attachSource(a: AttachArgs, home: string, cwd: string): Promise<AttachSource> {
+async function attachSource(
+  a: AttachArgs,
+  ctx: ResolvedContext,
+  cwd: string,
+): Promise<AttachmentSource> {
   const given = [a.path, a.url, a.json, a.text].filter((v) => v !== undefined).length;
   if (given !== 1) {
     throw new BackeError('usage', 'Genau eins von path, url, json, text angeben');
   }
-  if (a.url !== undefined) return { kind: 'url', url: a.url };
-  if (a.json !== undefined) return { kind: 'json', text: a.json };
-  if (a.text !== undefined) {
-    return { kind: 'file', fileName: a.name, content: new TextEncoder().encode(a.text) };
-  }
-  const raw = a.path as string;
-  const path = expandPath(raw, { home, base: cwd });
-  const real = await physicalPath(path);
-  if (!within(await physicalPath(cwd), real)) {
-    throw new BackeError('validation', `Datei »${raw}« liegt außerhalb des Arbeitsverzeichnisses`, {
-      hint: 'Inhalt per text oder json übergeben',
-    });
-  }
-  let info: Awaited<ReturnType<typeof stat>>;
-  try {
-    info = await stat(real);
-  } catch (error) {
-    if (isMissing(error)) throw new BackeError('not_found', `Datei »${a.path}« nicht gefunden`);
-    throw new BackeError('unexpected', `»${path}«: ${(error as NodeJS.ErrnoException).code}`);
-  }
-  if (!info.isFile()) throw new BackeError('validation', `${path} ist keine Datei`);
-  return { kind: 'file', fileName: basename(path), content: await readFile(real) };
+  return loadAttachmentSource(a, {
+    base: cwd,
+    home: ctx.homes.home,
+    ...(await attachmentLimits(ctx)),
+    confine: true,
+  });
 }
 
 /**
@@ -390,7 +374,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
       kind: 'write',
     },
     async (ctx, a) => {
-      const source = await attachSource(a, ctx.homes.home, env.opts.cwd);
+      const source = await attachSource(a, ctx, env.opts.cwd);
       return outcomeJson(
         await addAttachment(ctx, a.id, { name: a.name, source }, env.opts.deps?.write),
       );
