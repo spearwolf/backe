@@ -5,6 +5,7 @@
  */
 import { lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import { type Comment, type EntityKind, validateEntity } from '../core/schemas.ts';
 import { readBlobs } from '../git/history.ts';
@@ -210,7 +211,7 @@ export async function commentsAfterManual(
     }
     out.set(
       id,
-      list.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+      list.sort((a, b) => compareCodeUnits(a.path, b.path)),
     );
   }
   return out;

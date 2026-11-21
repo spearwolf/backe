@@ -11,6 +11,7 @@
  */
 import { z } from 'zod';
 import type { ResolvedContext } from '../context/resolve.ts';
+import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import { shortSha } from '../core/ids.ts';
 import { BacklogConfigSchema, type Quarantine, QuarantineSchema } from '../core/schemas.ts';
@@ -29,6 +30,7 @@ import {
 } from '../git/history.ts';
 import { readLocalState, writeLocalState } from '../git/local-state.ts';
 import { parseCommitMessage, TRAILER_ACTOR, TRAILER_OP } from '../git/message.ts';
+import { isAdmin } from '../ops/admin.ts';
 import { parseOpTrailer } from '../ops/operation.ts';
 import { propViolations } from '../ops/props.ts';
 import { checkCommitPolicy, type TreeChange } from '../ops/verify-policy.ts';
@@ -135,10 +137,7 @@ function anchorReasons(state: State, actor: string | undefined, ops: readonly st
   if (ops.length !== 1 || ops[0] !== 'init') reasons.push('Vertrauensanker ohne Backe-Op init');
   if (typeof state.config === 'string') {
     reasons.push(`nicht prüfbar: ${BACKLOG_CONFIG}: ${state.config}`);
-  } else if (
-    actor !== undefined &&
-    !(state.config.admins.includes(actor) && state.users.get(actor)?.kind === 'human')
-  ) {
+  } else if (actor !== undefined && !isAdmin(state.config, actor, state.users.get(actor))) {
     reasons.push(`Akteur ${actor} ist im Vertrauensanker kein Admin`);
   }
   return reasons;
@@ -607,7 +606,7 @@ export async function verifyBacklog(
     .concat(comments)
     .filter((e) => e.extra.length > 0)
     .map((e) => ({ path: e.path, keys: e.extra.map(([k]) => k) }))
-    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    .sort((a, b) => compareCodeUnits(a.path, b.path));
   return { ...report, propNotices, unknownKeys };
 }
 

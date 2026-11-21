@@ -190,7 +190,7 @@ async function withSortedProblems<R>(
   try {
     return await collect(local);
   } finally {
-    local.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    local.sort((a, b) => compareCodeUnits(a.path, b.path));
     problems.push(...local);
   }
 }
@@ -465,7 +465,7 @@ export function snapshotAt(
     return i < 0 ? PROBLEM_ORDER.length : i;
   };
   next.problems = [...s.problems.filter((p) => !reparsed.has(p.path)), ...fresh].sort(
-    (a, b) => rank(a) - rank(b) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0),
+    (a, b) => rank(a) - rank(b) || compareCodeUnits(a.path, b.path),
   );
   return next;
 }

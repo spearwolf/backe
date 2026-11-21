@@ -1,3 +1,4 @@
+import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import { git } from './exec.ts';
 
@@ -22,9 +23,7 @@ export async function gitRemotes(cwd: string): Promise<{ name: string; url: stri
     if (m?.[1] !== undefined && m[2] !== undefined) remotes.push({ name: m[1], url: m[2] });
   }
   const rank = (name: string): number => (name === 'origin' ? 0 : 1);
-  return remotes.sort(
-    (a, b) => rank(a.name) - rank(b.name) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
-  );
+  return remotes.sort((a, b) => rank(a.name) - rank(b.name) || compareCodeUnits(a.name, b.name));
 }
 
 /** URL des Git-Remotes `name`; `undefined`, wenn es ihn nicht gibt. */

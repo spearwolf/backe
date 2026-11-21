@@ -5,6 +5,7 @@
  */
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { compareCodeUnits } from '../core/compare.ts';
 import type { FileChange } from './files.ts';
 
 export type SourceEntry = { name: string; dir: boolean };
@@ -21,7 +22,7 @@ export type TreeSource = {
 const MISSING = new Set(['ENOENT', 'ENOTDIR', 'EISDIR']);
 
 function byName(a: SourceEntry, b: SourceEntry): number {
-  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  return compareCodeUnits(a.name, b.name);
 }
 
 /** Quelle über ein Verzeichnis im Dateisystem; Einträge, die weder Datei noch Verzeichnis sind, fehlen. */

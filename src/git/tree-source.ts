@@ -1,3 +1,4 @@
+import { compareCodeUnits } from '../core/compare.ts';
 import { parseIssuePath } from '../store/layout.ts';
 import type { SourceEntry, TreeSource } from '../store/source.ts';
 import { git } from './exec.ts';
@@ -64,7 +65,7 @@ export async function gitTreeSource(wc: string, rev: string): Promise<TreeSource
       if (!children) return [];
       return [...children]
         .map(([name, isDir]): SourceEntry => ({ name, dir: isDir }))
-        .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+        .sort((a, b) => compareCodeUnits(a.name, b.name));
     },
     async read(path) {
       if (!known.has(path)) return undefined;

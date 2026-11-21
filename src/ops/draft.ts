@@ -3,6 +3,7 @@
  * Snapshot sammeln, Invarianten beim Schreiben prüfen und am Ende in `FileChange`s übersetzen.
  * Ein Draft wird nach jedem geworfenen Fehler verworfen; er kennt kein Zurückrollen.
  */
+import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import { CROCKFORD, defaultRandomBytes } from '../core/ids.ts';
 import {
@@ -324,7 +325,7 @@ export class Draft {
     for (const [path, content] of this.#files) {
       if (!removedDirs.some((dir) => path.startsWith(dir))) changes.push({ path, content });
     }
-    changes.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    changes.sort((a, b) => compareCodeUnits(a.path, b.path));
     const snapshot = { ...this.#base, ...plain, attributes: this.#attributes } as BacklogSnapshot;
     return { snapshot, changes, notices: [...this.#notices] };
   }
