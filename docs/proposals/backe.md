@@ -1,7 +1,7 @@
 # backe — Git-basiertes Backlog für Menschen und Agents
 
-> **Status: spezifiziert.**
-> Verbindlicher Spec, nichts gebaut. Keine offenen Entscheidungen.
+> **Status: umgesetzt (M1–M8); erste Veröffentlichung steht aus.**
+> Verbindlicher Spec, beschreibt den gebauten Stand. Keine offenen Entscheidungen.
 > Bezug: — (erstes Proposal des Projekts)
 
 ## 0. Problem & Abgrenzung
@@ -44,7 +44,7 @@ Abgleich vor dem Bau lohnt sich (ungeprüft, aus dem Gedächtnis): **git-bug** (
 
 ## 1. Ist-Zustand
 
-Leeres Repository, keine Commits.
+`backe` ist nach diesem Spec gebaut, in den Meilensteinen M1–M8 des Gesamtplans; Gesamtplan und Detailpläne liegen unter `docs/superpowers/plans/`. Was der erste Release bewusst offen lässt, steht in §4.2.
 
 ## 2. Soll-Zustand
 
@@ -228,8 +228,9 @@ Warte auf Freigabe der Redirect-URIs durch das IdP-Team.
 - Größenlimit pro Datei `attachments.max_bytes` in `backlog.jsonc` (Default 10 MiB, `null` = kein Limit), auch mit LFS; darüber Abbruch mit Hinweis auf LFS. Das Limit schützt das Git-Repo vor versehentlich eingecheckten Riesendateien, nicht vor bestimmten Dateitypen.
 - `attachments.lfs: true` → `backe` pflegt `.gitattributes` (`issues/*/*/attachments/** filter=lfs diff=lfs merge=lfs -text`) und setzt `git lfs` voraus (`backe doctor` prüft das). Die Regel gilt als vorhanden, wenn eine Zeile ohne Leerraum am Rand genau so lautet.
   - **Einrichtung je Arbeitskopie:** `git lfs install --local` (Filter-Config und LFS-Hooks nur in deren `.git/config`; steht dort schon ein fremder Hook, ohne Hooks); die globale Git-Config bleibt unberührt. Der Commit, der die Regel einführt, nimmt alle schon roh committeten Anhänge mit auf; sie landen als Pointer.
-  - **Transport:** Vor jedem Push des Sync läuft `git lfs push`. Clone, Branch-Wechsel und das Zurücksetzen beim Sync laufen ohne LFS-Smudge; danach holt `git lfs pull` die Objekte (nach einem Clone und nach jedem Sync, der den Baum ändert). Scheitert das Holen, ist es ein Hinweis, kein Fehler. LFS-Aufrufe brechen nach 300 s ab; ein gescheitertes `git lfs push` ist ein Sync-Fehler.
-  - **Nicht geladene Anhänge:** Liegt statt der Datei ein LFS-Pointer in der Arbeitskopie, scheitert `attach get` mit Exit-Code 6 (`Anhang <name> ist nicht geladen (LFS)`, Hinweis `git -C <wc> lfs pull`).
+  - **Transport:** Vor jedem Push des Sync läuft `git lfs push`. Nach einem Clone und nach jedem Sync, der den Baum ändert, holt `git lfs pull` die Objekte; scheitert das Holen, ist es ein Hinweis, kein Fehler. LFS-Aufrufe brechen nach 300 s ab; ein gescheitertes `git lfs push` ist ein Sync-Fehler.
+  - **Nicht geladene Anhänge:** Liegt statt der Datei ein LFS-Pointer in der Arbeitskopie (erkannt nur bei `attachments.lfs: true`), scheitert `attach get` mit Exit-Code 6 (`Anhang <name> ist nicht geladen (LFS)`, Hinweis `git -C <wc> lfs pull`).
+- **Ohne LFS-Smudge**, unabhängig von `attachments.lfs`: Clone, Branch-Wechsel und das Zurücksetzen der Arbeitskopie beim Sync lassen den LFS-Filter keine Objekte laden; Dateien unter einer LFS-Regel kommen dabei als Pointer an. Nur bei `attachments.lfs: true` folgt `git lfs pull` (s. o.).
 - `backe attach get <id> <name> [-o pfad]`: Text ohne `-o` schreibt die Dateibytes roh nach stdout; `-o` schreibt die Datei (überschreibt) und druckt den Zielpfad; bei URL-Anhängen nur die URL. JSON: `{name, file?, url?, size?, path?}` (`path` ist das Ziel bzw. der absolute Pfad in der Arbeitskopie), nie der Inhalt.
 - **Replay** (§2.16.4): Den Inhalt eines Datei-Anhangs trägt die Operation nicht; das Replay übernimmt ihn als Blob unverändert aus dem Ursprungs-Commit, auch als LFS-Pointer.
 
@@ -520,8 +521,8 @@ Writes sind damit local-first und schnell; die Verteilung passiert danach.
   Läuft eine Frist ab, beendet `backe` den Git-Prozess samt seinen Kindprozessen (etwa `ssh`). Die Kindprozesse bleiben in der Prozessgruppe von `backe`: Ctrl-C erreicht sie, und `ssh` behält das Terminal für Passwortabfragen.
 - **`manual`-Commits** unter den lokalen werden an ihrer Stelle in der Reihe übernommen und neu signiert (Subject und `Backe-Op: manual` des Ursprungs-Commits, eigener Akteur). Je Pfad gilt ein Dreiwege-Vergleich zwischen Parent, lokalem Commit und aktuellem Stand: Hat nur eine Seite geändert, gewinnt sie; haben beide geändert und sind beide Text, führt `git merge-file` zusammen. Bleibt ein Konflikt (Konfliktmarker, Binärdatei, Löschen gegen Ändern), bricht der Sync die Runde ab (Exit-Code 4) und lässt die Arbeitskopie im Zustand vor der Runde — sauber, auf dem lokalen Stand, ohne laufenden Rebase. Lokale Writes gehen weiter (sie stapeln sich ungepusht), `backe sync status` meldet den Konflikt, und `backe sync --interactive` führt im Vordergrund durch die Auflösung.
 - **`backe sync --interactive`** fragt bei einem solchen Konflikt je Commit `[e]ditieren, [l]okal nehmen, [r]emote behalten, [a]bbrechen`: `e` öffnet je Konfliktpfad den Text mit Markern (`<<<<<<< remote` / `>>>>>>> lokal`) im Editor und fragt erneut, solange noch eine Markerzeile darin steht (eine Zeile, die mit `<<<<<<< ` oder `>>>>>>> ` beginnt, oder genau `=======`); `l` nimmt die lokale Fassung, `r` verwirft den ganzen lokalen Commit, `a` bricht ab wie die Hintergrund-Runde. Danach läuft die Runde weiter. Ohne Terminal auf stdin und stdout ist das `usage`.
-- **Fehler** (Netz weg, Verify fehlgeschlagen, manueller Konflikt) blockieren nie lokale Writes. `backe sync status` und ein Hinweis in der Kopfzeile jeder Text-Ausgabe zeigen ungepushte Commits, letzte Sync-Zeit und offene Konflikte.
-- **Kopfzeile:** Nach einem erfolgreichen Befehl mit aufgelöster Arbeitskopie schreibt der Text-Modus eine Zeile auf stderr, sobald etwas offen ist: `Sync: ` und mit ` · ` getrennt `<n> ungepusht` (wenn die letzte Runde fehlschlug oder der Modus `manual` ist), `<n> Konflikt(e)`, `letzter Sync fehlgeschlagen: <message>`; dahinter `Hinweis: backe sync status`. Nichts offen → keine Zeile; im JSON-Modus nie.
+- **Fehler** (Netz weg, Verify fehlgeschlagen, manueller Konflikt) blockieren nie lokale Writes. `backe sync status` zeigt ungepushte Commits, letzte Sync-Zeit und offene Konflikte; die Kopfzeile (unten) meldet nur, was offen ist.
+- **Kopfzeile:** Nach einem erfolgreichen Befehl mit aufgelöster Arbeitskopie schreibt der Text-Modus eine Zeile auf stderr, sobald etwas offen ist: `Sync: ` und mit ` · ` getrennt `<n> ungepusht` (nur mit Remote, und nur wenn die letzte Runde fehlschlug oder der Modus `manual` ist), `<n> Konflikt(e)`, `letzter Sync fehlgeschlagen: <message>`; dahinter `Hinweis: backe sync status`. Nichts offen → keine Zeile; im JSON-Modus nie.
 - **Ausgabe `backe sync`:** Text `aktuell` oder Zeilen `fetch: <n> neue Commits`, `replay: <n> Einheiten neu signiert`, `konflikt: <id>  <subject>`, `push: <sha7>`, ohne Remote `kein Remote`. JSON `{"fetched","replayed","conflicts":[…],"pushed":<sha|null>,"rounds","skipped"?:"no_remote","notices"?}`.
 - **Ausgabe `backe sync status`:** Zeilen `remote`, `modus`, `ungepusht`, `letzter Sync`, `fehler` (falls), `läuft  ja` (falls `sync.lock` gehalten), dann je Konflikt `<id>  <subject>  <grund>`; JSON `{"remote","mode","unpushed","last_attempt"?,"last_success"?,"last_error"?,"running","conflicts":[{id,created,subject,reason}]}`, Exit-Code 0. Ohne Arbeitskopie Exit-Code 3.
 
@@ -942,8 +943,11 @@ Bewusst offen gelassen im ersten Release, jeweils mit Grund:
 | Ein Backlog, das `attachments.lfs` erst an- und dann wieder ausschaltet, hat bei global installiertem LFS-Filter für alte Anhänge Pointer-Dateien in der Arbeitskopie; `attach get` gibt dann den Pointer-Text aus | Den Pointer erkennt `backe` nur bei `attachments.lfs: true` (§2.8). |
 | Der Graph-Patch baut betroffene Listen je Operation neu; die Statusabfrage von `HEAD` startet etwa 12 Git-Prozesse | Performance; Bedingung wie beim Volltext-Index: messbar langsam bei 10⁴ Issues. |
 | Gescheiterte GitHub-Abfragen von `repo check --remote` werden nicht gecacht | Kostet nur Latenz ohne Netz. |
+| `issue.link` mit `url` zeichnet den abgeleiteten Repo-Namen nicht auf (§2.16.4); das Replay leitet ihn neu ab | Er weicht nur ab, wenn beim Replay ein gleichnamiges Repo dazukam; aufgezeichnet wird er, sobald Replay-Konflikte im Realbetrieb das zeigen. |
 
-## 5. Tests *(Plan)*
+## 5. Tests
+
+Umgesetzt nach diesem Plan; Testzahlen und Coverage je Meilenstein stehen im Gesamtplan.
 
 **Isolation:** Jeder Test läuft mit eigenem `BACKE_HOME` im Temp-Verzeichnis, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`; Test-Keys erzeugt `ssh-keygen` einmal pro Suite.
 
