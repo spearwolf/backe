@@ -259,6 +259,14 @@ describe('runDoctor', () => {
     expect(one(checks, 'identity').status).toBe('warn');
   });
 
+  test('identity fails instead of aborting when the working copy git config is broken', async () => {
+    const start = await input();
+    await writeFile(join(b.root, '.git/config'), '[broken\n');
+    const checks = await runDoctor(start, deps());
+    expect(one(checks, 'identity')).toMatchObject({ status: 'fail' });
+    expect(one(checks, 'identity').detail).toMatch(/config/);
+  });
+
   test('lfs-rule warns about a missing rule and a missing local filter', async () => {
     await setLfs(true);
     let checks = await runDoctor(await input(), deps());

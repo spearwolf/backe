@@ -26,6 +26,23 @@ import {
 } from '../options.ts';
 import { columns, json, lines } from '../output.ts';
 
+/**
+ * Schreibt den Anhang nach `-o <pfad>` (eine vorhandene Datei wird überschrieben). Ein Verzeichnis
+ * oder ein fehlendes Elternverzeichnis ist ein Fehler des Aufrufs, kein unerwarteter.
+ */
+async function writeTarget(target: string, bytes: Uint8Array): Promise<void> {
+  try {
+    await writeFile(target, bytes);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EISDIR') throw new BackeError('validation', `${target} ist ein Verzeichnis`);
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      throw new BackeError('not_found', `Verzeichnis für ${target} existiert nicht`);
+    }
+    throw error;
+  }
+}
+
 type AddOpts = { name: string; url?: string; json?: string };
 
 /**
@@ -110,7 +127,7 @@ export function attachCommands(program: Command, rt: Runtime): void {
           const target = opts.output === undefined ? undefined : absPath(opts.output, env.io);
           const bytes =
             env.format === 'json' && target === undefined ? undefined : await readFile(a.path);
-          if (target !== undefined) await writeFile(target, bytes as Uint8Array);
+          if (target !== undefined) await writeTarget(target, bytes as Uint8Array);
           if (env.format === 'json') {
             env.out(json(attachmentJson(a, target)));
           } else if (target !== undefined) {

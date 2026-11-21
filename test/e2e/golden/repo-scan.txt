@@ -35,3 +35,33 @@ $ backe repo scan <src> --json
 {"entries":[{"name":"webapp","path":"<clone>","status":"unchanged"}]}
 [stderr]
 
+$ backe config set repos.<bare> <anderswo>
+[exit 0]
+[stdout]
+[stderr]
+
+$ backe repo scan <src>
+[exit 0]
+[stdout]
+webapp  <clone>  abweichend (<anderswo>)
+[stderr]
+
+$ backe repo where webapp
+[exit 3]
+[stdout]
+[stderr]
+Fehler: <anderswo> existiert nicht
+Hinweis: backe config set repos.file:<remote-dir>/webapp <pfad>
+
+$ backe repo scan <src> --force
+[exit 0]
+[stdout]
+webapp  <clone>  überschrieben
+[stderr]
+
+$ backe repo where webapp
+[exit 0]
+[stdout]
+<clone>
+[stderr]
+

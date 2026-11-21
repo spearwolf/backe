@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { git } from '../../src/git/exec.ts';
@@ -98,10 +98,12 @@ test('repo where prints the path; without path exits 3 with hint', async () => {
 
 test('repo scan registers a clone and repo where finds it', async () => {
   const t = await setupTools();
-  const { bare, clone, dir } = await remoteWithClone(t);
+  const { bare, dir } = await remoteWithClone(t);
   ok(await run(t, ['repo', 'add', bare, '--name', 'webapp']));
   const src = join(dir, 'src');
   t.names[src] = '<src>';
+  const elsewhere = join(dir, 'anderswo');
+  t.names[elsewhere] = '<anderswo>';
   await expect(
     await session(t, [
       ['repo', 'scan', src, '--dry-run'],
@@ -110,11 +112,14 @@ test('repo scan registers a clone and repo where finds it', async () => {
       ['repo', 'where', 'webapp'],
       ['repo', 'scan', src],
       ['repo', 'scan', src, '--json'],
+      ['config', 'set', `repos.${bare}`, elsewhere],
+      ['repo', 'scan', src],
+      ['repo', 'where', 'webapp'],
+      ['repo', 'scan', src, '--force'],
+      ['repo', 'where', 'webapp'],
     ]),
   ).toMatchFileSnapshot('golden/repo-scan.txt');
   expect((await run(t, ['repo', 'scan', join(dir, 'nope')])).code).toBe(3);
-  expect(norm(t, ok(await run(t, ['repo', 'where', 'webapp'])))).toBe(`${'<clone>'}\n`);
-  expect(clone).toContain('webapp');
 });
 
 const doctorLines = (t: Tools, text: string): string =>
@@ -162,6 +167,21 @@ test('doctor exits 2 after the report when a check fails', async () => {
   // Jeder Hint steht direkt unter seiner Zeile.
   const out = `$ backe doctor\n[exit ${r.code}]\n[stdout]\n${doctorLines(t, r.stdout)}[stderr]\n${norm(t, r.stderr)}`;
   await expect(out).toMatchFileSnapshot('golden/doctor-fail.txt');
+});
+
+test('doctor --fix removes leftover temp files that doctor only reports', async () => {
+  const t = await setupTools();
+  const leftover = join(t.env.BACKE_HOME as string, 'tmp', 'clone-alt');
+  await mkdir(leftover, { recursive: true });
+  const old = new Date(Date.now() - 2 * 3_600_000);
+  await utimes(leftover, old, old);
+  const temp = (out: string) => out.split('\n').find((l) => l.includes('  temp  '));
+
+  expect(temp(ok(await run(t, ['doctor'])))).toBe('warn  temp  1 Temp-Reste');
+  expect((await stat(leftover)).isDirectory()).toBe(true);
+  expect(temp(ok(await run(t, ['doctor', '--fix'])))).toBe('ok  temp  1 entfernt');
+  await expect(stat(leftover)).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(temp(ok(await run(t, ['doctor'])))).toBe('ok  temp  keine Temp-Reste');
 });
 
 test('config set, get and unset', async () => {

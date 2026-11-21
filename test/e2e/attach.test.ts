@@ -10,8 +10,27 @@ test('attach add from file, json and url; list; rm', async () => {
   await writeFile(join(t.cwd, 'Bericht Final.PDF'), 'pdf-bytes');
   const added = await run(t, ['attach', 'add', t.id, '--name', 'bericht', 'Bericht Final.PDF']);
   expect(norm(t, ok(added))).toBe('attach add <id>\n');
-  ok(await run(t, ['attach', 'add', t.id, '--name', 'trace', '--json', '{"b":1,"a":[1,2]}']));
-  ok(await run(t, ['attach', 'add', t.id, '--name', 'spec', '--url', 'https://example.com/spec']));
+  // `--json <wert>` ist die Quelle, nicht das Ausgabeformat: die Ausgabe bleibt Text.
+  const fromJson = await run(t, [
+    'attach',
+    'add',
+    t.id,
+    '--name',
+    'trace',
+    '--json',
+    '{"b":1,"a":[1,2]}',
+  ]);
+  expect(norm(t, ok(fromJson))).toBe('attach add <id>\n');
+  const fromUrl = await run(t, [
+    'attach',
+    'add',
+    t.id,
+    '--name',
+    'spec',
+    '--url',
+    'https://example.com/spec',
+  ]);
+  expect(norm(t, ok(fromUrl))).toBe('attach add <id>\n');
 
   const list = ok(await run(t, ['attach', 'list', t.id]));
   await expect(norm(t, list)).toMatchFileSnapshot('golden/attach-list.txt');
@@ -61,6 +80,30 @@ test('attach get -o writes the file and prints the path', async () => {
   const j = await run(t, ['attach', 'get', t.id, 'blob', '-o', 'out/copy.dat', '--json']);
   expect(JSON.parse(ok(j))).toMatchObject({ name: 'blob', path: join(t.cwd, 'out/copy.dat') });
   expect(errorOf(await run(t, ['attach', 'get', t.id, 'nope', '--json'])).code).toBe('not_found');
+});
+
+test('attach get -o overwrites an existing file and refuses a directory', async () => {
+  const t = await setupTools();
+  await writeFile(join(t.cwd, 'neu.txt'), 'neu\n');
+  ok(await run(t, ['attach', 'add', t.id, '--name', 'notiz', 'neu.txt']));
+  await writeFile(join(t.cwd, 'ziel.txt'), 'alter, längerer Inhalt\n');
+  expect(ok(await run(t, ['attach', 'get', t.id, 'notiz', '-o', 'ziel.txt']))).toBe(
+    `${join(t.cwd, 'ziel.txt')}\n`,
+  );
+  expect(await readFile(join(t.cwd, 'ziel.txt'), 'utf8')).toBe('neu\n');
+
+  await mkdir(join(t.cwd, 'ordner'));
+  const dir = await run(t, ['attach', 'get', t.id, 'notiz', '-o', 'ordner', '--json']);
+  expect({ code: dir.code, stdout: dir.stdout }).toEqual({ code: 2, stdout: '' });
+  expect(errorOf(dir)).toMatchObject({
+    code: 'validation',
+    message: `${join(t.cwd, 'ordner')} ist ein Verzeichnis`,
+  });
+  const missing = await run(t, ['attach', 'get', t.id, 'notiz', '-o', 'fehlt/x.txt', '--json']);
+  expect(missing.code).toBe(3);
+  expect(errorOf(missing).message).toBe(
+    `Verzeichnis für ${join(t.cwd, 'fehlt/x.txt')} existiert nicht`,
+  );
 });
 
 test('attach add --json - reads stdin; --format json prints the outcome', async () => {

@@ -1,8 +1,9 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { git } from '../../src/git/exec.ts';
 import { issueFile } from '../../src/store/layout.ts';
+import { tempDir } from '../helpers/backlog.ts';
 import { transcript } from './cli.ts';
 import { editor, errorOf, norm, ok, run, setupTools, type Tools } from './tools.ts';
 
@@ -67,6 +68,28 @@ test('an editor with arguments edits the issue', async () => {
   expect(norm(t, ok(r))).toBe('issue edit <id>\n');
   expect(ok(await run(t, ['issue', 'show', t.id]))).toContain('Neu');
   expect(await status(t)).toBe('');
+});
+
+test('the editor gets a file only the user can read, removed after success', async () => {
+  const t = await setupTools();
+  const tmp = await tempDir();
+  const seen = join(await tempDir(), 'seen');
+  const script = join(await tempDir(), 'record.sh');
+  // Merkt sich Pfad und Rechte der Temp-Datei, dann ändert es den Titel.
+  await writeFile(
+    script,
+    `#!/bin/sh\nprintf '%s\\n' "$1" > ${seen}\nls -l "$1" | cut -c1-10 >> ${seen}\n` +
+      `sh ${editor('retitle.sh')} --title Neu "$1"\n`,
+  );
+  const r = await run(t, ['issue', 'edit', t.id], {
+    env: { BACKE_EDITOR: `sh ${script}`, TMPDIR: tmp },
+  });
+  expect(norm(t, ok(r))).toBe('issue edit <id>\n');
+  const [file, mode] = (await readFile(seen, 'utf8')).trimEnd().split('\n');
+  expect(file).toMatch(new RegExp(`^${tmp}/backe-${t.id}-[0-9a-f]{6}\\.md$`));
+  expect(mode).toBe('-rw-------');
+  expect(await readdir(tmp)).toEqual([]);
+  expect(ok(await run(t, ['issue', 'show', t.id]))).toContain('Neu');
 });
 
 test('an editor that changes nothing reports unchanged', async () => {
