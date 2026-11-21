@@ -66,17 +66,52 @@ test('CLI JSON keys are snake_case in every golden file', async () => {
 
 /** Schichten unter den Adaptern und der MCP-Adapter selbst: stdout gehört dort dem Protokoll. */
 const QUIET_LAYERS = ['core', 'store', 'context', 'git', 'ops', 'services', 'mcp'];
-const STDOUT_WRITE = /process\.stdout|console\.(log|info|debug)/;
+/** Zeilenweise: `process.stdout` und jede `console`-Methode, die nach stdout schreibt. */
+const STDOUT_WRITE =
+  /process\.stdout|console\.(log|info|debug|dir|dirxml|table|group|groupCollapsed|count|timeLog|timeEnd)\b/;
+/** Über die ganze Datei, auch mehrzeilig: `stdout` aus `node:process` importiert. */
+const STDOUT_IMPORT = /import\s*\{[^}]*\bstdout\b[^}]*\}\s*from\s*['"](node:)?process['"]/;
+
+/** Fundstellen in einer Quelldatei, je `datei:zeile: text`. */
+function stdoutWrites(rel: string, text: string): string[] {
+  const hits: string[] = [];
+  const lines = text.split('\n');
+  for (const [i, line] of lines.entries()) {
+    if (STDOUT_WRITE.test(line)) hits.push(`${rel}:${i + 1}: ${line.trim()}`);
+  }
+  const imported = STDOUT_IMPORT.exec(text);
+  if (imported !== null) {
+    const line = text.slice(0, imported.index).split('\n').length;
+    hits.push(`${rel}:${line}: ${imported[0].replace(/\s+/g, ' ')}`);
+  }
+  return hits;
+}
+
+test('the stdout check catches every form it names', () => {
+  const caught = [
+    'process.stdout.write(x);',
+    'console.log(x);',
+    'console.dir(x);',
+    'console.table(rows);',
+    "import { stdout } from 'node:process';",
+    "import { argv, stdout as out } from 'process';",
+    "import {\n  env,\n  stdout,\n} from 'node:process';",
+  ];
+  for (const text of caught) expect(stdoutWrites('x.ts', text), text).toHaveLength(1);
+  const allowed = [
+    'console.error(x);',
+    'console.warn(x);',
+    "import { stderr } from 'node:process';",
+    "import { stdout } from './io.ts';",
+  ];
+  for (const text of allowed) expect(stdoutWrites('x.ts', text), text).toEqual([]);
+});
 
 test('no layer below the adapters writes to stdout', async () => {
   const hits: string[] = [];
   for (const layer of QUIET_LAYERS) {
     for (const file of await sources(join(SRC, layer))) {
-      const lines = (await readFile(file, 'utf8')).split('\n');
-      for (const [i, line] of lines.entries()) {
-        if (STDOUT_WRITE.test(line))
-          hits.push(`${file.slice(SRC.length + 1)}:${i + 1}: ${line.trim()}`);
-      }
+      hits.push(...stdoutWrites(file.slice(SRC.length + 1), await readFile(file, 'utf8')));
     }
   }
   expect(hits).toEqual([]);

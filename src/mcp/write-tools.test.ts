@@ -160,22 +160,19 @@ test('concurrent writes from one client all land', () =>
 test('writes with a commit schedule a background sync', async () => {
   const calls: unknown[] = [];
   const b = await testBacklog({ remote: true });
-  await withMcp(
-    async (m) => {
-      const id = await create(m);
-      await vi.waitFor(() => expect(calls).toHaveLength(1));
-      const same = await m.call('issue_move', { id, to: 'backlog' });
-      expect(same).toMatchObject({ ok: { commit: null } });
-      // Ein Schreib-Roundtrip der Warteschlange ohne Commit hat den Nachlauf schon durchlaufen.
-      await Promise.resolve();
-      expect(calls).toHaveLength(1);
-      // Der Nachlauf ist nicht abgewartet; ein Roundtrip danach macht ihn sichtbar.
-      await m.call('comment_add', { id: id, body: 'x' }).then(() => undefined);
-      await vi.waitFor(() => expect(calls).toHaveLength(2));
-    },
-    { deps: { sync: { spawn: (a) => void calls.push(a) } } },
-    b,
-  );
+  const m = await connectMcp(b, { deps: { sync: { spawn: (a) => void calls.push(a) } } });
+  try {
+    const id = await create(m);
+    expect(await m.call('issue_move', { id, to: 'backlog' })).toMatchObject({
+      ok: { commit: null },
+    });
+    await m.call('comment_add', { id, body: 'x' });
+  } finally {
+    // `close` wartet auf jeden noch laufenden Hintergrund-Start; danach ist die Zahl endgültig.
+    await m.close();
+  }
+  // Je ein Start für Anlegen und Kommentar, keiner für den wirkungslosen Move.
+  expect(calls).toHaveLength(2);
 });
 
 test('batch writes one commit and returns refs', () =>
@@ -339,6 +336,20 @@ test('move, resume, reopen and rank return outcomes', () =>
     await m.call('issue_move', { id, to: 'done' });
     expect(await m.call('issue_reopen', { id })).toMatchObject({
       ok: { op: { op: 'issue.reopen' } },
+    });
+  }));
+
+test('issue_rank counts top: false as no position', () =>
+  withMcp(async (m) => {
+    const id = await create(m);
+    expect(await m.call('issue_rank', { id, top: false })).toMatchObject({
+      error: { code: 'usage', message: 'Genau eine Position angeben' },
+    });
+    expect(await m.call('issue_rank', { id, top: false, bottom: false })).toMatchObject({
+      error: { code: 'usage' },
+    });
+    expect(await m.call('issue_rank', { id, top: false, bottom: true })).toMatchObject({
+      ok: { op: { op: 'issue.rank', bottom: true } },
     });
   }));
 

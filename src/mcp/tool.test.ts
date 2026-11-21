@@ -207,7 +207,12 @@ test('a write tool schedules a write sync only after a commit', async () => {
   }
 });
 
-test('a write tool runs through the queue, a sync tool beside it', async () => {
+test('a sync tool answers while a write waits in the queue', async () => {
+  const log: string[] = [];
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   let enqueued = 0;
   const m = await harness((server, env) => {
     const queue = env.queue;
@@ -216,23 +221,48 @@ test('a write tool runs through the queue, a sync tool beside it', async () => {
       queue: {
         run: (fn) => {
           enqueued += 1;
+          // Ein zweiter Job käme nie an die Reihe, solange der erste wartet: dann freigeben,
+          // damit der Test an der Reihenfolge scheitert statt zu hängen.
+          if (enqueued > 1) release();
           return queue.run(fn);
         },
       },
     };
-    defineTool(server, counting, 'w', { description: 'w', input: EMPTY, kind: 'write' }, () =>
-      Promise.resolve({ commit: 'abc1234' }),
+    defineTool(
+      server,
+      counting,
+      'w',
+      { description: 'w', input: EMPTY, kind: 'write' },
+      async () => {
+        log.push('w+');
+        await gate;
+        log.push('w-');
+        return { commit: 'abc1234' };
+      },
     );
-    defineTool(server, counting, 's', { description: 's', input: EMPTY, kind: 'sync' }, () =>
-      Promise.resolve({ commit: 'abc1234' }),
+    defineTool(
+      server,
+      counting,
+      's',
+      { description: 's', input: EMPTY, kind: 'sync' },
+      async () => {
+        log.push('s');
+        release();
+        return { commit: 'def5678' };
+      },
     );
   });
   try {
-    await m.call('w');
+    const write = m.call('w');
+    const sync = m.call('s');
+    expect(await sync).toEqual({ ok: { commit: 'def5678' } });
+    expect(await write).toEqual({ ok: { commit: 'abc1234' } });
+    // Der Write war noch nicht fertig, als das Sync-Tool lief; wann er anfing, ist offen.
+    expect(log.filter((e) => e !== 'w+')).toEqual(['s', 'w-']);
     expect(enqueued).toBe(1);
-    expect(await m.call('s')).toEqual({ ok: { commit: 'abc1234' } });
-    expect(enqueued).toBe(1);
+    // Nachlauf nur für den Write, nicht für das Sync-Tool.
     expect(schedule).toHaveBeenCalledTimes(1);
+    expect(schedule.mock.calls[0]?.[1]).toBe('write');
   } finally {
     await m.close();
   }

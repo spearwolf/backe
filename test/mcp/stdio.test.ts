@@ -5,10 +5,10 @@
  */
 import { PassThrough } from 'node:stream';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
-import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { testBacklog } from '../../test/helpers/git.ts';
-import { createBackeMcp } from './server.ts';
-import { runStdio } from './stdio.ts';
+import { createBackeMcp } from '../../src/mcp/server.ts';
+import { runStdio } from '../../src/mcp/stdio.ts';
+import { catchErrAsync } from '../helpers/catch.ts';
+import { testBacklog } from '../helpers/git.ts';
 
 const INITIALIZE = {
   jsonrpc: '2.0',
@@ -61,31 +61,52 @@ test('runStdio answers on stdout and ends with stdin', async () => {
   expect(t.stderr).toEqual([]);
 });
 
+/** Löst nach einer Runde der Event-Loop auf: Was bis dahin nur über Promises läuft, ist durch. */
+const nextTurn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
 test('runStdio reports out-of-band errors on stderr and keeps serving', async () => {
   const t = await setup();
   const running = runStdio(t.opts, t.io);
-  const reply = nextLine(t.stdout);
+  let reply = nextLine(t.stdout);
   // Eine Antwort, bevor die Generation feststeht, verwirft das SDK und meldet sie über `onerror`.
   t.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 99, result: {} })}\n`);
   t.stdin.write(`${JSON.stringify(INITIALIZE)}\n`);
   expect(JSON.parse(await reply)).toHaveProperty('id', 1);
+  // Ein Lesefehler auf stdin schließt den Transport nicht; er geht ebenso auf stderr.
+  t.stdin.emit('error', new Error('stdin wackelt'));
+  reply = nextLine(t.stdout);
+  t.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'ping' })}\n`);
+  expect(JSON.parse(await reply)).toMatchObject({ id: 2, result: {} });
   t.stdin.end();
   await running;
-  expect(t.stderr).toHaveLength(1);
-  expect(t.stderr[0]).toMatch(/^backe mcp: Discarded a JSON-RPC response .*\n$/);
+  expect(t.stderr).toHaveLength(2);
+  // Den Wortlaut der SDK-Meldung legt das SDK fest; geprüft wird nur die Form.
+  expect(t.stderr[0]).toMatch(/^backe mcp: \S[^\n]*\n$/);
+  expect(t.stderr[1]).toBe('backe mcp: stdin wackelt\n');
 });
 
 test('runStdio ends when the transport closes itself after a stdout error', async () => {
   const t = await setup();
-  const running = runStdio(t.opts, t.io);
+  let ended = false;
+  const running = runStdio(t.opts, t.io).then(() => {
+    ended = true;
+  });
   const reply = nextLine(t.stdout);
   t.stdin.write(`${JSON.stringify(INITIALIZE)}\n`);
   await reply;
-  // stdin bleibt offen; der Transport schließt sich selbst und pausiert stdin.
-  t.stdout.emit('error', new Error('Broken pipe'));
-  await running;
-  expect(t.stdin.readableEnded).toBe(false);
-  expect(t.stderr).toEqual(['backe mcp: Broken pipe\n']);
+  try {
+    // stdin bleibt offen; der Transport schließt sich selbst und pausiert stdin. Danach laufen nur
+    // noch Promises, kein I/O: Eine Runde der Event-Loop genügt, sonst hinge runStdio an stdin.
+    t.stdout.emit('error', new Error('Broken pipe'));
+    await nextTurn();
+    expect(ended).toBe(true);
+    expect(t.stdin.readableEnded).toBe(false);
+    expect(t.stderr).toEqual(['backe mcp: Broken pipe\n']);
+  } finally {
+    // Ein pausiertes stdin meldet `end` nie; `close` erreicht runStdio auch dann.
+    t.stdin.destroy();
+    await running;
+  }
 });
 
 test('runStdio ends at once when stdin is already gone', async () => {

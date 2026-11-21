@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { revParse, setPullInterval, statusShort, testBacklog } from '../../test/helpers/git.ts';
-import { connectMcp } from '../../test/helpers/mcp.ts';
+import { connectMcp, connectServer } from '../../test/helpers/mcp.ts';
 import { updateUserConfig, userConfigPath } from '../context/user-config.ts';
 import { contextInfo } from '../services/context-info.ts';
 import { contextJson } from '../services/views.ts';
@@ -148,4 +148,33 @@ test.each([
   expect(await revParse(b.root, 'HEAD')).toBe(head);
   expect(await statusShort(b.root)).toEqual([]);
   expect(await readFile(userConfigPath(b.homes.backeHome), 'utf8')).toBe(config);
+});
+
+test('build returns independent servers over the same backlog', async () => {
+  const b = await testBacklog();
+  const opts = { cwd: b.root, env: b.env, flags: { as: b.handle }, allowDelete: false };
+  const mcp = await createBackeMcp(opts, await prepareMcp(opts));
+  const first = mcp.build();
+  const second = mcp.build();
+  expect(second).not.toBe(first);
+  const one = await connectServer(first);
+  const two = await connectServer(second);
+  try {
+    const both = await Promise.all([
+      one.call('issue_create', { title: 'Über den ersten' }),
+      two.call('issue_create', { title: 'Über den zweiten' }),
+    ]);
+    const ids = both.map((r) => {
+      if (!('ok' in r)) throw new Error(JSON.stringify(r));
+      return r.ok.id as string;
+    });
+    // Geschlossen wird nur die erste Verbindung; die zweite sieht beide Writes und bleibt offen.
+    await one.close();
+    for (const [i, title] of ['Über den ersten', 'Über den zweiten'].entries()) {
+      expect(await two.call('issue_get', { id: ids[i] })).toHaveProperty('ok.title', title);
+    }
+  } finally {
+    await two.close();
+    await mcp.close();
+  }
 });

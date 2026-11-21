@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { testBacklog } from '../../test/helpers/git.ts';
 import { connectMcp } from '../../test/helpers/mcp.ts';
+import type { Operation } from '../ops/operation.ts';
 import { addAttachment } from '../services/attachments.ts';
 import { addComment } from '../services/comments.ts';
 import { listIssues } from '../services/issue-list.ts';
@@ -83,15 +84,21 @@ test('unknown fields are usage before any service runs', () =>
     expect(nextSpy).not.toHaveBeenCalled();
   }));
 
-test('issue_list sorts by rank then created', () =>
+test('issue_list sorts by rank, then by created', () =>
   withMcp(async (m, b) => {
     const ctx = await b.context();
-    await createIssue(ctx, { title: 'A' });
-    await createIssue(ctx, { title: 'B' });
-    const c = await id(createIssue(ctx, { title: 'C' }));
+    const at = (iso: string) => ({ now: () => new Date(iso) });
+    // Angelegt in der Reihenfolge A, B, C, D; erzeugt ist D vor B, beide vor A und C.
+    const a = await id(createIssue(ctx, { title: 'A' }, at('2026-11-20T10:00:03Z')));
+    const bb = await id(createIssue(ctx, { title: 'B' }, at('2026-11-20T10:00:02Z')));
+    const c = await id(createIssue(ctx, { title: 'C' }, at('2026-11-20T10:00:04Z')));
+    const d = await id(createIssue(ctx, { title: 'D' }, at('2026-11-20T10:00:01Z')));
     await rankIssue(ctx, c, { top: true });
+    await rankIssue(ctx, a, { top: true });
     const r = await m.call('issue_list');
-    expect((r as { ok: { issues: { id: string }[] } }).ok.issues[0]?.id).toBe(c);
+    const ids = (r as { ok: { issues: { id: string }[] } }).ok.issues.map((i) => i.id);
+    // Erst die eingereihten nach Rang, dann die übrigen nach Erzeugung.
+    expect(ids).toEqual([a, c, d, bb]);
   }));
 
 test('issue_get with comments last carries exactly one comment', () =>
@@ -142,7 +149,7 @@ test('project_list, sprint_list, sprint_get and repo_locate match the CLI views'
       ops: [
         { op: 'project.create', path: 'web', title: 'Web' },
         { op: 'sprint.create', slug: 's1', title: 'Eins' },
-      ] as never,
+      ] satisfies Operation[],
     });
     expect(await m.call('project_list')).toEqual({ ok: await listProjects(ctx) });
     expect(await m.call('sprint_list')).toEqual({ ok: await listSprints(ctx) });

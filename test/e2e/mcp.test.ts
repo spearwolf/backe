@@ -7,8 +7,11 @@ import type { ChildProcess } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import type { Env } from '../../src/context/paths.ts';
+import { managedClonePath, setIdentity } from '../../src/context/registry.ts';
+import { readSyncState } from '../../src/services/sync-state.ts';
+import { executeWrite } from '../../src/services/write.ts';
 import { tempDir } from '../helpers/backlog.ts';
-import { type TestBacklog, testBacklog } from '../helpers/git.ts';
+import { type TestBacklog, testBacklog, testKey } from '../helpers/git.ts';
 import { SPEC_TOOLS } from '../helpers/mcp.ts';
 import { CLI, childEnv, cli } from './cli.ts';
 
@@ -24,13 +27,30 @@ type Session = {
   stderr(): string;
 };
 
-/** `backe mcp` als `spw` im Backlog `b`, mit Default-Handshake oder fest auf `pin`. */
-async function serve(b: TestBacklog, opts: { pin?: string } = {}): Promise<Session> {
-  const env: Env = { ...b.env, BACKE_USER: 'spw', NO_COLOR: '1' };
+/**
+ * Der Kindprozess des Transports. Der Transport gibt den Exit-Code nicht heraus; der Kindprozess der
+ * Sitzung (beim Aushandeln nach der Probe auf dem Geschwisterprozess gestartet) steht in seinem
+ * privaten Feld `_process`. Fehlt es nach einem SDK-Update, scheitert der Test hier mit Grund.
+ */
+function childOf(transport: StdioClientTransport): ChildProcess {
+  const raw: object = transport;
+  const child = '_process' in raw ? raw._process : undefined;
+  if (child === undefined || child === null || typeof (child as ChildProcess).once !== 'function') {
+    throw new Error('StdioClientTransport hat kein Feld _process mehr; den Exit-Code anders holen');
+  }
+  return child as ChildProcess;
+}
+
+/**
+ * `backe mcp` im Backlog `b`, mit Default-Handshake oder fest auf `pin`; ohne `as` als `spw` in
+ * dessen Arbeitskopie, mit `as` aus einem fremden Verzeichnis mit `-B acme`.
+ */
+async function serve(b: TestBacklog, opts: { pin?: string; as?: string } = {}): Promise<Session> {
+  const env: Env = { ...b.env, BACKE_USER: opts.as ?? 'spw', NO_COLOR: '1' };
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [CLI, 'mcp'],
-    cwd: b.root,
+    args: opts.as === undefined ? [CLI, 'mcp'] : [CLI, '-B', 'acme', 'mcp'],
+    cwd: opts.as === undefined ? b.root : await tempDir(),
     env: childEnv(env),
     stderr: 'pipe',
   });
@@ -47,9 +67,7 @@ async function serve(b: TestBacklog, opts: { pin?: string } = {}): Promise<Sessi
     errors.push(error);
   };
   await client.connect(transport);
-  // Der Transport gibt den Exit-Code nicht heraus; der Kindprozess der Sitzung (beim Aushandeln
-  // nach der Probe auf dem Geschwisterprozess gestartet) steht in seinem privaten Feld.
-  const child = (transport as unknown as { _process: ChildProcess })._process;
+  const child = childOf(transport);
   const exited = new Promise<number | string | null>((resolve) => {
     child.once('exit', (code, signal) => resolve(code ?? signal));
   });
@@ -83,6 +101,43 @@ test('stdout carries only JSON-RPC over a full flow', async () => {
     code: 0,
     errors: [],
     stderr: '',
+  });
+});
+
+test('stdout carries only JSON-RPC when a write clones through the hub and starts a sync', async () => {
+  // Ohne Remote: Der erste Write des Agents legt den lokalen Hub an, klont seine Arbeitskopie
+  // daraus (git als Kindprozess) und startet danach den Hintergrund-Sync (ein eigener Prozess).
+  const b = await testBacklog();
+  const key = await testKey('claude-1');
+  await executeWrite(await b.context(), {
+    kind: 'op',
+    op: {
+      op: 'user.add',
+      handle: 'claude-1',
+      name: 'Claude',
+      kind: 'agent',
+      operator: 'spw',
+      keys: [key.line],
+    },
+  });
+  await setIdentity(b.homes, 'acme', 'claude-1', key.priv);
+  const s = await serve(b, { as: 'claude-1' });
+  const created = await s.call('issue_create', { title: 'Vom Agent' });
+  expect(created.notices).toEqual([expect.objectContaining({ code: 'hub_created' })]);
+  expect(await s.call('comment_add', { id: created.id, body: 'zweiter Write' })).toHaveProperty(
+    'id',
+    created.id,
+  );
+  const code = await s.close();
+  expect({ code, errors: s.errors, stderr: s.stderr() }).toEqual({
+    code: 0,
+    errors: [],
+    stderr: '',
+  });
+  // Der Hintergrund-Sync lief als eigener Prozess und hat seine Runde ins Log geschrieben.
+  const wc = managedClonePath(b.homes, 'acme', 'claude-1');
+  await vi.waitFor(async () => expect((await readSyncState(wc)).last_success).toBeDefined(), {
+    timeout: 20_000,
   });
 });
 
