@@ -2,6 +2,11 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const SRC = join(import.meta.dirname, '..', 'src');
+/**
+ * Grenze des Tests: Er sucht zeilenweise nach einem einzeiligen `"${…}"`. Ein Wert, der über
+ * mehrere Zeilen läuft, oder gerade Anführungszeichen um etwas anderes als eine Interpolation
+ * (etwa eine Konstante) bleiben ungeprüft.
+ */
 const STRAIGHT_QUOTED_VALUE = /"\$\{[^}]+\}"/;
 
 /** Dateien, in denen `"${…}"` gewollt ist, mit dem Grund. */

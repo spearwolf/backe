@@ -2,8 +2,8 @@ import type { ZodError } from 'zod';
 
 /**
  * Fehlercodes. `usage` heißt: der Aufruf passt nicht (fehlende oder sich ausschließende
- * Angaben, keine Identität). `validation` heißt: ein angegebener Wert oder Dateiinhalt verletzt
- * eine Regel (Format, Schema, Bereich).
+ * Angaben, keine Identität, stdin doppelt verlangt). `validation` heißt: ein angegebener Wert
+ * oder Dateiinhalt verletzt eine Regel (Format, Schema, Bereich).
  */
 export type ErrorCode =
   | 'usage'
