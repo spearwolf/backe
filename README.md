@@ -74,14 +74,13 @@ backe doctor            # checks the requirements below
 Requirements: Node.js ≥ 26, Git ≥ 2.38 with SSH signing support, `ssh-keygen`.
 Optional: `git-lfs` (large attachments) and `gh` (`repo check --remote`).
 
-backe is not on npm yet; the first release is pending. Until then, build from
-source (see [Development](#development)).
-
 ## Quickstart
 
 You need an SSH key (the default is `~/.ssh/id_ed25519.pub`; pass `--key` for
 another one) and an empty Git remote for the backlog. `backe init` signs the
-trust anchor with your key and pushes it.
+trust anchor with your key and pushes it. The default is a public key, so its
+private key has to be loaded in a running `ssh-agent` (`ssh-add`); otherwise
+pass `--key` with the path to the private key.
 
 ```sh
 backe config set user alice     # your handle (or BACKE_USER=alice, or --as alice per call)
@@ -180,7 +179,7 @@ It is also a working experiment in how far that combination carries.
 
 ## Development
 
-Requirements: Node.js ≥ 26, pnpm, Git with SSH signing support, `ssh-keygen`.
+Requirements: Node.js ≥ 26, pnpm, Git ≥ 2.38 with SSH signing support, `ssh-keygen`.
 [mise](https://mise.jdx.dev) installs the pinned Node and pnpm versions.
 
 ```sh
