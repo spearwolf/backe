@@ -212,12 +212,7 @@ function checkSettledParent(d: Draft, before: Issue | undefined, after: Issue): 
  * `repos`, berührte Properties passen zu ihrer Deklaration (backe.md §2.24). Der Draft enthält
  * `after` bereits, damit die Pfadsuche den neuen Stand sieht.
  */
-export function checkIssueInvariants(
-  d: Draft,
-  before: Issue | undefined,
-  after: Issue,
-  opts: { allowSettledParent?: boolean } = {},
-): void {
+export function checkIssueInvariants(d: Draft, before: Issue | undefined, after: Issue): void {
   const missing = missingRefs(d, before, after);
   if (missing.length > 0) {
     const list = missing.map(([label, key]) => `${label} ${key}`).join(', ');
@@ -238,7 +233,7 @@ export function checkIssueInvariants(
   }
 
   checkHierarchyCycles(d, before, after);
-  if (opts.allowSettledParent !== true) checkSettledParent(d, before, after);
+  checkSettledParent(d, before, after);
 
   const names = (after.repos ?? []).map((entry) => parseRepoRef(entry).name);
   for (const entry of added(before?.repos, after.repos)) {

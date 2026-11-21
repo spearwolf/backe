@@ -43,21 +43,15 @@ function commit(
   next: StateFields,
   extra: Partial<Issue>,
   reason: { text?: string; file?: string },
-  force = false,
 ): string | undefined {
-  d.putIssue(
-    cur.id,
-    {
-      ...cur,
-      ...extra,
-      state: next.state,
-      // `planTransition` setzt nur Hauptlinien-Zustände als Herkunft; das Schema prüft es erneut.
-      paused_from: next.paused_from as Issue['paused_from'],
-      blocked_by: next.blocked_by,
-    },
-    undefined,
-    { allowSettledParent: force },
-  );
+  d.putIssue(cur.id, {
+    ...cur,
+    ...extra,
+    state: next.state,
+    // `planTransition` setzt nur Hauptlinien-Zustände als Herkunft; das Schema prüft es erneut.
+    paused_from: next.paused_from as Issue['paused_from'],
+    blocked_by: next.blocked_by,
+  });
   if (reason.text === undefined) return undefined;
   return d.addComment(
     cur.id,
@@ -107,14 +101,7 @@ export function issueMove(d: Draft, op: OpOf<'issue.move'>): OpOf<'issue.move'> 
   });
   if (next === null) return op;
   checkOpenChildren(d, op.id, next.state, op.force === true);
-  const file = commit(
-    d,
-    cur,
-    next,
-    {},
-    { text: op.reason, file: op.reason_file },
-    op.force === true,
-  );
+  const file = commit(d, cur, next, {}, { text: op.reason, file: op.reason_file });
   return withReasonFile(op, file);
 }
 

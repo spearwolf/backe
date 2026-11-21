@@ -98,6 +98,15 @@ describe('issue.move', () => {
     ]);
   });
 
+  test('an open child under a force-closed parent moves on without force', () => {
+    const issues = [
+      { id: I(1), state: 'done' as const },
+      { id: I(2), parent: I(1), state: 'todo' as const },
+    ];
+    const r = run(issues, move('todo', 'in_progress', { id: I(2) }));
+    expect(data(r, I(2)).state).toBe('in_progress');
+  });
+
   test.each(['cancelled', 'rejected'] as const)('%s with open sub-issues warns only', (to) => {
     const issues = [{ id: I(1) }, { id: I(2), parent: I(1) }];
     const r = run(issues, move('todo', to));

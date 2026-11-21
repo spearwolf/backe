@@ -165,15 +165,9 @@ export class Draft {
 
   /**
    * Schreibt ein Issue. `body` fehlt → bisheriger Body (`''` bei neuen); unbekannte Keys bleiben.
-   * Identische Daten und Body ändern nichts. Danach gelten die Invarianten gegen den neuen Stand;
-   * `allowSettledParent` übergeht nur die Prüfung »kein offenes Kind unter einem done-Parent«.
+   * Identische Daten und Body ändern nichts. Danach gelten die Invarianten gegen den neuen Stand.
    */
-  putIssue(
-    id: string,
-    data: Issue,
-    body?: string,
-    opts: { allowSettledParent?: boolean } = {},
-  ): void {
+  putIssue(id: string, data: Issue, body?: string): void {
     const file = issueFile(id);
     const parsed = this.#validated('issue', data, file) as Issue;
     if (parsed.id !== id) {
@@ -181,7 +175,7 @@ export class Draft {
     }
     const before = this.findIssue(id);
     if (!this.#put('issues', id, file, before, parsed, body)) return;
-    checkIssueInvariants(this, before?.data, parsed, opts);
+    checkIssueInvariants(this, before?.data, parsed);
   }
 
   removeIssue(id: string): void {
