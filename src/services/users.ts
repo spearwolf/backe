@@ -66,7 +66,7 @@ export async function showUser(
   body: string;
   admin: boolean;
   fingerprints: string[];
-  revoked: { fingerprint: string; revoked?: string }[];
+  revoked: { fingerprint: string; revoked: string }[];
 }> {
   const handle = resolveHandle(ctx, who);
   const { snapshot: s } = await openSnapshot(ctx);

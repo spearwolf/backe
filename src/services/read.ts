@@ -82,7 +82,6 @@ export function normalizeStates(input: readonly string[]): State[] | 'all' {
   return parts.map((p) => normalizeStateInput(p));
 }
 
-export type FilterSource = 'context' | 'flag';
 type FilterValues = { project?: string[]; sprint?: string[]; repo?: string[] };
 
 const FILTER_KEYS = ['project', 'sprint', 'repo'] as const;
@@ -107,8 +106,7 @@ export function effectiveFilter(
     }
     const { value, source } = ctx[key];
     if (typeof value !== 'string') continue;
-    const kind: FilterSource = source.kind === 'flag' ? 'flag' : 'context';
-    if (kind === 'context') {
+    if (source.kind !== 'flag') {
       if (all) continue;
       fromContext[key] = value;
     }

@@ -10,7 +10,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
 import { isGitArg, isGitRef, parseRepoRef } from '../core/names.ts';
-import type { PropValue } from '../core/schemas.ts';
+import type { Issue, PropValue } from '../core/schemas.ts';
 import { normalizeStateInput } from '../core/state.ts';
 import { normalizeRepoUrl } from '../core/url.ts';
 import { bodyHash, type Operation, type OpOf } from '../ops/operation.ts';
@@ -123,10 +123,9 @@ export async function editIssue(
   return writeOp(
     ctx,
     (s) => {
-      const id = resolveIssueRef(s, ref);
-      const current = s.issues.get(id);
-      if (current === undefined) throw new BackeError('not_found', `Issue »${id}« nicht gefunden`);
+      const current = storedIssue(s, ref);
       const issue = current.data;
+      const { id } = issue;
       const op: OpOf<'issue.edit'> = { op: 'issue.edit', id };
 
       const set: NonNullable<OpOf<'issue.edit'>['set']> = {};
@@ -174,13 +173,12 @@ export async function editIssue(
 
       const changes: NonNullable<OpOf<'issue.edit'>['props']> = {};
       for (const [key, to] of Object.entries(props)) {
-        const from =
-          issue.props !== undefined && Object.hasOwn(issue.props, key) ? issue.props[key] : null;
-        if (!isDeepStrictEqual(from, to)) changes[key] = { from: from ?? null, to };
+        const from = currentProp(issue, key);
+        if (!isDeepStrictEqual(from, to)) changes[key] = { from, to };
       }
       for (const key of unset) {
         if (issue.props !== undefined && Object.hasOwn(issue.props, key)) {
-          changes[key] = { from: issue.props[key] ?? null, to: null };
+          changes[key] = { from: currentProp(issue, key), to: null };
         }
       }
       if (Object.keys(changes).length > 0) op.props = changes;
@@ -204,7 +202,6 @@ export async function readIssueFile(
 ): Promise<{ id: string; path: string; text: string }> {
   const { root, snapshot } = await openSnapshot(ctx);
   const id = resolveIssueRef(snapshot, ref);
-  if (!snapshot.issues.has(id)) throw new BackeError('not_found', `Issue »${id}« nicht gefunden`);
   const path = issueFile(id);
   return { id, path, text: await readFile(join(root, path), 'utf8') };
 }
@@ -243,11 +240,22 @@ export async function editIssueText(
   return writeOp(ctx, derive, deps);
 }
 
-function currentIssue(s: BacklogSnapshot, ref: string) {
+/** Wert der Property oder `null`, wenn sie nicht gesetzt ist (nur eigene Keys zählen). */
+function currentProp(issue: Issue, key: string) {
+  return (
+    (issue.props !== undefined && Object.hasOwn(issue.props, key) ? issue.props[key] : null) ?? null
+  );
+}
+
+function storedIssue(s: BacklogSnapshot, ref: string) {
   const id = resolveIssueRef(s, ref);
   const current = s.issues.get(id);
   if (current === undefined) throw new BackeError('not_found', `Issue »${id}« nicht gefunden`);
-  return current.data;
+  return current;
+}
+
+function currentIssue(s: BacklogSnapshot, ref: string) {
+  return storedIssue(s, ref).data;
 }
 
 /** Leerer oder nur aus Whitespace bestehender Grund ist ein Wertfehler; `undefined` ist erlaubt. */

@@ -4,6 +4,7 @@
  */
 import { lstat, readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { type LockOptions, withFileLock } from '../context/lock.ts';
 import { workingCopyPath } from '../context/registry.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
@@ -41,9 +42,11 @@ import {
 import { applyBatch } from '../ops/batch.ts';
 import type { Notice } from '../ops/notice.ts';
 import {
+  decodeBatchBody,
   encodeBatchBody,
   encodeOp,
   type Operation,
+  parseOpTrailer,
   summarizeBatch,
   summarizeOp,
 } from '../ops/operation.ts';
@@ -232,7 +235,26 @@ async function cleanBlobId(
 }
 
 /**
- * Ob `commit` Subject und `Backe-Actor` von `message` trägt und jeden Pfad wie geplant enthält.
+ * Die Operationen, die eine Commit-Message trägt (Trailer `Backe-Op`, bei `batch` der Body),
+ * dekodiert; `null` ohne Trailer, `undefined`, wenn er nicht lesbar ist.
+ */
+function decodedOps(message: ReturnType<typeof parseCommitMessage>) {
+  const values = message.trailers.get(TRAILER_OP);
+  if (values === undefined) return null;
+  try {
+    const trailer = parseOpTrailer(values[0] as string);
+    if (trailer.kind === 'op') return { kind: 'op', ops: [trailer.op] };
+    if (trailer.kind === 'batch')
+      return { kind: 'batch', ops: decodeBatchBody(message.body ?? '') };
+    return { kind: trailer.kind, ops: [] };
+  } catch (err) {
+    if (err instanceof BackeError) return undefined;
+    throw err;
+  }
+}
+
+/**
+ * Ob `commit` Subject, `Backe-Actor` und `Backe-Op` (dekodiert, nie als Bytes) von `message` trägt und jeden Pfad wie geplant enthält.
  * Anhänge unter der LFS-Regel des Commits liegen dort als Pointer; sie vergleicht die Blob-ID der
  * geplanten Bytes nach dem Clean-Filter, alle anderen Pfade die Bytes selbst.
  */
@@ -251,6 +273,9 @@ async function matchesStep(
   ) {
     return false;
   }
+  const [expectedOps, actualOps] = [decodedOps(expected), decodedOps(actual)];
+  if (expectedOps === undefined || actualOps === undefined) return false;
+  if (!isDeepStrictEqual(expectedOps, actualOps)) return false;
   const specs = step.changes.map((c) => `${commit}:${c.path}`);
   const attributes = `${commit}:${GITATTRIBUTES}`;
   const [info, blobs] = await Promise.all([
@@ -273,7 +298,7 @@ async function matchesStep(
 
 /**
  * Die Commits dieses Writes, falls sie trotz eines Fehlers danach auf HEAD gelandet sind: HEAD
- * und seine ersten Parents tragen, vom Ende her, Subject und `Backe-Actor` je Schritt und enthalten
+ * und seine ersten Parents tragen, vom Ende her, Subject, `Backe-Actor` und `Backe-Op` je Schritt und enthalten
  * jeden geschriebenen Pfad mit genau dem geplanten Inhalt; darunter liegt `head`. Ein fremder
  * Commit mit gleichem Baum zählt nicht.
  */

@@ -244,6 +244,64 @@ test('a foreign commit with the same tree but another actor or subject is not ta
   }
 });
 
+/** Ersetzt den Commit auf HEAD durch einen mit gleichem Baum und der Message, die `rewrite` liefert. */
+async function replaceHeadMessage(base: string, rewrite: (message: string) => string) {
+  const message = (await git(['log', '-1', '--format=%B'], { cwd: b.root })).stdout;
+  await git(['reset', '--soft', base], { cwd: b.root });
+  const tree = (await git(['write-tree'], { cwd: b.root })).stdout.trim();
+  const c = await git(['commit-tree', tree, '-p', base, '-m', rewrite(message)], {
+    cwd: b.root,
+    env: {
+      GIT_AUTHOR_NAME: 'x',
+      GIT_AUTHOR_EMAIL: 'x@x.invalid',
+      GIT_COMMITTER_NAME: 'x',
+      GIT_COMMITTER_EMAIL: 'x@x.invalid',
+    },
+  });
+  await git(['update-ref', 'HEAD', c.stdout.trim()], { cwd: b.root });
+  return c.stdout.trim();
+}
+
+const opTrailer = (message: string) => /^Backe-Op: (.*)$/m.exec(message)?.[1] as string;
+
+test('a commit with the same tree, subject and actor but another operation is not taken as landed', async () => {
+  const base = await revParse(b.root, 'HEAD');
+  const err = await catchErrAsync(() =>
+    executeWrite(ctx, CREATE, {
+      now: () => NOW,
+      randomBytes: seqBytes(),
+      hooks: {
+        afterCommit: async () => {
+          await replaceHeadMessage(base, (m) =>
+            m.replace(opTrailer(m), JSON.stringify({ op: 'issue.create', title: 'Anders' })),
+          );
+          throw new BackeError('unexpected', 'boom');
+        },
+      },
+    }),
+  );
+  expect(err.message).toBe('boom');
+});
+
+test('the operation of a landed commit is compared decoded, not as bytes', async () => {
+  const base = await revParse(b.root, 'HEAD');
+  let foreign = '';
+  const r = await executeWrite(ctx, CREATE, {
+    now: () => NOW,
+    randomBytes: seqBytes(),
+    hooks: {
+      afterCommit: async () => {
+        foreign = await replaceHeadMessage(base, (m) => {
+          const entries = Object.entries(JSON.parse(opTrailer(m)) as Record<string, unknown>);
+          return m.replace(opTrailer(m), JSON.stringify(Object.fromEntries(entries.reverse())));
+        });
+        throw new BackeError('unexpected', 'boom');
+      },
+    },
+  });
+  expect(r.commit).toBe(foreign);
+});
+
 test('derive builds the operation against the locked snapshot', async () => {
   const r = await executeWrite(ctx, {
     kind: 'derive',
