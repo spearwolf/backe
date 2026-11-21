@@ -7,7 +7,7 @@ import { rm } from 'node:fs/promises';
 import type { Command } from 'commander';
 import { BackeError } from '../../core/errors.ts';
 import { claimIssue } from '../../services/claim.ts';
-import { type IssueListQuery, listIssues } from '../../services/issue-list.ts';
+import { type IssueListQuery, listIssues, listSort } from '../../services/issue-list.ts';
 import { showIssue } from '../../services/issue-show.ts';
 import {
   assignIssue,
@@ -154,14 +154,6 @@ function listMode(opts: ListOpts): IssueListQuery['mode'] {
     throw new BackeError('usage', '--blocked, --unblockable und --ready schließen sich aus');
   }
   return modes[0];
-}
-
-/** `--sort rank|created` für `issue list` und `sprint show`; sonst `validation`. */
-export function listSort(value: string | undefined): IssueListQuery['sort'] {
-  if (value === undefined || value === 'rank' || value === 'created') return value;
-  throw new BackeError('validation', `Ungültige Sortierung: »${value}«`, {
-    hint: 'rank oder created',
-  });
 }
 
 function listQuery(opts: ListOpts): IssueListQuery {

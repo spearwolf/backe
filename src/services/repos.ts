@@ -1,5 +1,6 @@
 /** Repo-Registry (backe.md §2.11): registrieren, listen, entfernen. */
 import type { ResolvedContext } from '../context/resolve.ts';
+import { compareCodeUnits } from '../core/compare.ts';
 import { parseRepoRef } from '../core/names.ts';
 import { normalizeRepoUrl } from '../core/url.ts';
 import type { OpOf } from '../ops/operation.ts';
@@ -35,7 +36,7 @@ export async function listRepos(ctx: ResolvedContext): Promise<
     for (const name of names) linked.set(name, (linked.get(name) ?? 0) + 1);
   }
   return [...s.repos.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .sort(([a], [b]) => compareCodeUnits(a, b))
     .map(([name, { data }]) => ({
       name,
       url: data.url,

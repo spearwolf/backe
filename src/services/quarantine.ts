@@ -27,6 +27,7 @@ import {
   treeChanges,
 } from '../git/history.ts';
 import { readPublicKey } from '../git/ssh.ts';
+import { isAdmin } from '../ops/admin.ts';
 import { violation } from '../ops/invariants.ts';
 import { checkCommitPolicy, type PolicyState, type TreeChange } from '../ops/verify-policy.ts';
 import type { FileChange } from '../store/files.ts';
@@ -165,11 +166,7 @@ export async function quarantineCommit(
   // ungültige Commits ungedeckt sind, ist er der Stand vor dem ersten davon.
   const { state, quarantineText } = await nextCommitBasis(wc);
   const config = state.config;
-  if (
-    typeof config === 'string' ||
-    !config.admins.includes(handle) ||
-    state.users.get(handle)?.kind !== 'human'
-  ) {
+  if (typeof config === 'string' || !isAdmin(config, handle, state.users.get(handle))) {
     throw violation('policy', 'Quarantäne ändern nur Admins');
   }
   const pub = sshFingerprint(await readPublicKey(key));

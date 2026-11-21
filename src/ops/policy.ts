@@ -5,6 +5,7 @@
 import type { User } from '../core/schemas.ts';
 import { sameKey, sshFingerprint } from '../core/ssh.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
+import { isAdmin } from './admin.ts';
 import { violation } from './invariants.ts';
 
 /**
@@ -43,7 +44,7 @@ export function checkUserChange(
   after: User | undefined,
   opts: { removedBefore?: boolean; admin?: boolean } = {},
 ): void {
-  const admin = opts.admin ?? isAdmin(s, actor, handle, before);
+  const admin = opts.admin ?? actorIsAdmin(s, actor, handle, before);
   checkRights(s, actor, handle, before, after, {
     admin,
     removedBefore: opts.removedBefore === true,
@@ -162,10 +163,8 @@ function checkOperator(s: BacklogSnapshot, before: User | undefined, after: User
  * bei einer Änderung am eigenen User der Stand davor, sonst der im Snapshot; fehlt er oder ist er
  * ein Agent, gilt der Akteur als Nicht-Admin.
  */
-function isAdmin(s: BacklogSnapshot, actor: string, handle: string, before: User | undefined) {
-  if (!s.config.admins.includes(actor)) return false;
-  const record = actor === handle ? before : s.users.get(actor)?.data;
-  return record?.kind === 'human';
+function actorIsAdmin(s: BacklogSnapshot, actor: string, handle: string, before: User | undefined) {
+  return isAdmin(s.config, actor, actor === handle ? before : s.users.get(actor)?.data);
 }
 
 function checkRights(

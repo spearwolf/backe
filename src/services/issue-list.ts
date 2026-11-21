@@ -3,6 +3,7 @@
  * Sortierung, Baumansicht und Limit. Liest nur; der Snapshot kommt aus der Arbeitskopie.
  */
 import type { ResolvedContext } from '../context/resolve.ts';
+import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import type { Issue } from '../core/schemas.ts';
 import { isSettled } from '../core/state.ts';
@@ -49,9 +50,16 @@ export type IssueListResult = {
   problems: Problem[];
 };
 
+/** `--sort rank|created` für `issue list` und `sprint show`; sonst `validation`. */
+export function listSort(value: string | undefined): IssueListQuery['sort'] {
+  if (value === undefined || value === 'rank' || value === 'created') return value;
+  throw new BackeError('validation', `Ungültige Sortierung: »${value}«`, {
+    hint: 'rank oder created',
+  });
+}
+
 export function compareCreated(a: Issue, b: Issue): number {
-  if (a.created !== b.created) return a.created < b.created ? -1 : 1;
-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  return compareCodeUnits(a.created, b.created) || compareCodeUnits(a.id, b.id);
 }
 
 /** Wurzeln (Parent nicht in der Menge), darunter die Kinder rekursiv, je Ebene nach `compare`. */

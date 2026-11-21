@@ -138,15 +138,23 @@ function classifyIssuePath(parts: readonly string[]): PathClass {
   return { kind: 'other' };
 }
 
+/** Shard und Verzeichnisname, wenn `path` die Form `issues/<shard>/<dir>/issue.md` hat (beide nicht leer). */
+export function parseIssuePath(path: string): { shard: string; dir: string } | undefined {
+  const [top, shard, dir, file, ...rest] = path.split('/');
+  if (top !== 'issues' || file !== 'issue.md' || rest.length > 0) return undefined;
+  if (shard === undefined || shard === '' || dir === undefined || dir === '') return undefined;
+  return { shard, dir };
+}
+
 /**
  * Für ein `issues/<x>/<id>/issue.md`, das nicht dem Layout entspricht: `expected` ist der Pfad,
  * an den das Issue gehört, oder `undefined`, wenn `<id>` keine Issue-ID ist. Für jeden anderen
  * Pfad, auch ein richtig liegendes Issue, `undefined`.
  */
 export function misplacedIssueFile(path: string): { expected: string | undefined } | undefined {
-  const parts = path.split('/');
-  if (parts.length !== 4 || parts[0] !== 'issues' || parts[3] !== 'issue.md') return undefined;
-  const [, shard, id = ''] = parts;
+  const parsed = parseIssuePath(path);
+  if (parsed === undefined) return undefined;
+  const { shard, dir: id } = parsed;
   if (!isIssueId(id)) return { expected: undefined };
   return shardOf(id) === shard ? undefined : { expected: issueFile(id) };
 }

@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import type { UserConfig } from '../core/schemas.ts';
 import { normalizeRepoUrl } from '../core/url.ts';
@@ -16,7 +17,7 @@ export type BacklogEntry = {
 /** Alle registrierten Backlogs nach Name sortiert; `current` markiert den Eintrag aus `cfg.current`. */
 export function listBacklogs(cfg: UserConfig): BacklogEntry[] {
   return Object.entries(cfg.backlogs ?? {})
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .sort(([a], [b]) => compareCodeUnits(a, b))
     .map(([name, entry]) => ({
       name,
       ...(entry.remote === undefined ? {} : { remote: entry.remote }),

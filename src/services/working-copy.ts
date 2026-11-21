@@ -21,6 +21,7 @@ import {
 } from '../context/registry.ts';
 import { fallbackRoot, type ResolvedContext, readBacklogName } from '../context/resolve.ts';
 import { configLockPath, readUserConfig, userConfigPath } from '../context/user-config.ts';
+import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError, schemaError } from '../core/errors.ts';
 import { shortSha } from '../core/ids.ts';
 import { isHandle } from '../core/names.ts';
@@ -699,9 +700,8 @@ export async function showBacklog(
     // Der lokale Hub `hub.git` ist keine Arbeitskopie; sein Name ist kein Handle.
     ...dirs.filter(isHandle),
   ]);
-  const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
   const workingCopies: WorkingCopyInfo[] = [];
-  for (const handle of [...handles].sort(byCodeUnit)) {
+  for (const handle of [...handles].sort(compareCodeUnits)) {
     const path = workingCopyPath(cfg, homes, name, handle);
     const present = await exists(join(path, BACKLOG_CONFIG));
     const identity = present ? await readLocalState(path, 'identity') : undefined;

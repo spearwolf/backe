@@ -1,5 +1,6 @@
 /** `backe sprint create | list | show | close` (backe.md §2.10, §2.17, §2.18). */
 import type { Command } from 'commander';
+import { listSort } from '../../services/issue-list.ts';
 import { closeSprint, createSprint, listSprints, showSprint } from '../../services/sprints.ts';
 import { sprintShowJson } from '../../services/views.ts';
 import {
@@ -14,7 +15,6 @@ import {
 } from '../options.ts';
 import { bodyBlock, columns, headerLine, json, lines, paint, safeText } from '../output.ts';
 import { issueLines } from '../render-issue.ts';
-import { listSort } from './issue.ts';
 
 type CreateOpts = {
   title: string;

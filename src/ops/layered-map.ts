@@ -3,6 +3,7 @@
  * Draft gibt nach jeder Änderung eine neue Sicht aus und zahlt dafür nur die Zahl seiner
  * Änderungen, nicht die Größe des Backlogs (backe.md §2.16.6, Batch-Tempo).
  */
+import { compareCodeUnits } from '../core/compare.ts';
 
 /**
  * `changes` hält je Schlüssel den neuen Wert, `undefined` heißt entfernt. Die Iteration folgt
@@ -93,7 +94,7 @@ export class LayeredMap<V> implements Map<string, V> {
         if (value !== undefined && !this.base.has(key)) list.push([key, value]);
       }
       // Die Basis ist ein sortierter Lauf; die Sortierung fügt im Wesentlichen den Rest ein.
-      list.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+      list.sort(([a], [b]) => compareCodeUnits(a, b));
     }
     this.#entries = list;
     return list;

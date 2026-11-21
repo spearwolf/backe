@@ -2,6 +2,7 @@
  * Lädt ein Backlog vom Dateisystem in einen Snapshot (backe.md §2.2). Kaputte Entitätsdateien
  * landen als `Problem` im Snapshot und fehlen in den Maps; nur die Backlog-Config ist Pflicht.
  */
+import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import { isIssueId, shardOf } from '../core/ids.ts';
 import { isHandle, isProjectPath, isRepoName, isSprintSlug } from '../core/names.ts';
@@ -19,7 +20,7 @@ import {
 } from '../core/schemas.ts';
 import { entriesInFileOrder, parseEntityFile } from './frontmatter.ts';
 import { readJsonc } from './jsonc.ts';
-import { BACKLOG_CONFIG, commentsDir, GITATTRIBUTES } from './layout.ts';
+import { BACKLOG_CONFIG, commentsDir, GITATTRIBUTES, parseIssuePath } from './layout.ts';
 import { fsSource, type SourceEntry, type TreeSource } from './source.ts';
 
 /**
@@ -195,7 +196,7 @@ async function withSortedProblems<R>(
 }
 
 function sortedMap<T>(entries: Iterable<[string, T]>): Map<string, T> {
-  return new Map([...entries].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  return new Map([...entries].sort(([a], [b]) => compareCodeUnits(a, b)));
 }
 
 /**
@@ -270,14 +271,6 @@ async function loadProjects(
   problems: Problem[],
 ): Promise<Map<string, StoredEntity<Project>>> {
   return acceptProjects(await loadNamed<Project>(src, 'project', problems), problems);
-}
-
-/** Shard und Verzeichnisname, wenn `path` die Form `issues/<shard>/<dir>/issue.md` hat. */
-function issueCandidate(path: string): { shard: string; id: string } | undefined {
-  const [top, shard, id, file, ...rest] = path.split('/');
-  if (top !== 'issues' || file !== 'issue.md' || rest.length > 0) return undefined;
-  if (shard === undefined || shard === '' || id === undefined || id === '') return undefined;
-  return { shard, id };
 }
 
 /**
@@ -437,15 +430,15 @@ export function snapshotAt(
       continue;
     }
     const named = namedKindOf(path);
-    const issue = named === undefined ? issueCandidate(path) : undefined;
+    const issue = named === undefined ? parseIssuePath(path) : undefined;
     let key: string;
     let parse: (text: string) => [string, StoredEntity<unknown>] | undefined;
     if (named !== undefined) {
       key = path.slice(NAMED[named].dir.length + 1, -'.md'.length);
       parse = (text) => parseNamedText(named, path, text, fresh);
     } else if (issue !== undefined) {
-      key = issue.id;
-      parse = (text) => parseIssue(path, issue.shard, issue.id, text, fresh);
+      key = issue.dir;
+      parse = (text) => parseIssue(path, issue.shard, issue.dir, text, fresh);
     } else {
       continue;
     }

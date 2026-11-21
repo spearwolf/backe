@@ -17,6 +17,7 @@ import {
   LFS_RULE,
   localStateDir,
   parseCommentFileName,
+  parseIssuePath,
   projectFile,
   QUARANTINE,
   repoFile,
@@ -170,4 +171,16 @@ test('isLfsPath and hasLfsRule follow LFS_RULE', () => {
   expect(hasLfsRule(undefined)).toBe(false);
   expect(hasLfsRule(`* text=auto\r\n ${LFS_RULE}\r\n`)).toBe(true);
   expect(hasLfsRule(`#${LFS_RULE}\n`)).toBe(false);
+});
+
+describe('parseIssuePath', () => {
+  it('splits issues/<shard>/<dir>/issue.md and nothing else', () => {
+    expect(parseIssuePath('issues/ab/ab-123/issue.md')).toEqual({ shard: 'ab', dir: 'ab-123' });
+    expect(parseIssuePath('issues/ab/ab-123/comments/x.md')).toBeUndefined();
+    expect(parseIssuePath('issues/ab/ab-123/issue.md/x')).toBeUndefined();
+    expect(parseIssuePath('issues/ab/issue.md')).toBeUndefined();
+    expect(parseIssuePath('issues//ab-123/issue.md')).toBeUndefined();
+    expect(parseIssuePath('issues/ab//issue.md')).toBeUndefined();
+    expect(parseIssuePath('users/ab/ab-123/issue.md')).toBeUndefined();
+  });
 });

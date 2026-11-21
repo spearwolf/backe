@@ -1,5 +1,6 @@
 /** Projekte (backe.md §2.9): anlegen, listen, zeigen, verschieben, entfernen. */
 import type { ResolvedContext } from '../context/resolve.ts';
+import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import type { Project } from '../core/schemas.ts';
 import { isSettled, type State } from '../core/state.ts';
@@ -35,7 +36,7 @@ export async function listProjects(
     for (const path of counted) open.set(path, (open.get(path) ?? 0) + 1);
   }
   return [...s.projects.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .sort(([a], [b]) => compareCodeUnits(a, b))
     .map(([path, { data }]) => ({
       path,
       title: data.title,

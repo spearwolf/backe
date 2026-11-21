@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { type Env, findOnPath } from '../context/paths.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
+import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import { isGitArg, isGitRef, parseRepoRef } from '../core/names.ts';
 import { normalizeRepoUrl } from '../core/url.ts';
@@ -161,8 +162,6 @@ function defaultGithub(env: Env): NonNullable<RepoCheckDeps['github']> {
   };
 }
 
-const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-
 type RepoItem = {
   name: string;
   url: string;
@@ -221,7 +220,7 @@ export async function checkRepoResult(
       url: data.url,
       canonical,
       ...(data.default_ref === undefined ? {} : { defaultRef: data.default_ref }),
-      refs: [...(refsOf.get(name) ?? [])].sort(cmp),
+      refs: [...(refsOf.get(name) ?? [])].sort(compareCodeUnits),
       findings,
     });
   }
@@ -236,7 +235,7 @@ export async function checkRepoResult(
     });
   }
   const notices = await addInvalidIssueRefs(root, s.problems, items);
-  items.sort((a, b) => cmp(a.name, b.name));
+  items.sort((a, b) => compareCodeUnits(a.name, b.name));
 
   let selected = items;
   if (input.names !== undefined && input.names.length > 0) {

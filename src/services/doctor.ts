@@ -7,6 +7,7 @@ import { type Env, expandPath, findOnPath, type Homes, resolveHomes } from '../c
 import { listBacklogs } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { readUserConfig } from '../context/user-config.ts';
+import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import type { UserConfig } from '../core/schemas.ts';
 import { sshFingerprint } from '../core/ssh.ts';
@@ -119,7 +120,9 @@ function boundPaths(
 ): { backlog: string; handle: string; path: string }[] {
   const out: { backlog: string; handle: string; path: string }[] = [];
   for (const entry of listBacklogs(cfg)) {
-    for (const [handle, raw] of Object.entries(entry.paths).sort(([a], [b]) => (a < b ? -1 : 1))) {
+    for (const [handle, raw] of Object.entries(entry.paths).sort(([a], [b]) =>
+      compareCodeUnits(a, b),
+    )) {
       try {
         out.push({
           backlog: entry.name,
@@ -415,7 +418,7 @@ async function checkTemp(leftovers: string[], fix: boolean): Promise<DoctorCheck
 
 function checkReferences(snapshot: BacklogSnapshot): DoctorCheck[] {
   const out: DoctorCheck[] = [];
-  const byKey = <T>(m: Map<string, T>) => [...m].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const byKey = <T>(m: Map<string, T>) => [...m].sort(([a], [b]) => compareCodeUnits(a, b));
   for (const [id, { data }] of byKey(snapshot.issues)) {
     if (data.assignee !== undefined && !snapshot.users.has(data.assignee)) {
       out.push(

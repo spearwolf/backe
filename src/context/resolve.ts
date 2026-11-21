@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import { BACKLOG_NAME_RE, isHandle, isProjectPath, isSprintSlug } from '../core/names.ts';
 import type { UserConfig } from '../core/schemas.ts';
@@ -334,8 +335,6 @@ async function findRepo(
   return none;
 }
 
-const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-
 /**
  * Erste vorhandene Arbeitskopie des Backlogs, die nicht `handle` gehört (ohne `handle`: jede):
  * gebundene Pfade, dann verwaltete Klone.
@@ -348,13 +347,13 @@ export async function fallbackRoot(
 ): Promise<string | undefined> {
   const bound = Object.keys(cfg.backlogs?.[backlog]?.paths ?? {})
     .filter((h) => h !== handle)
-    .sort(byCodeUnit)
+    .sort(compareCodeUnits)
     .map((h) => workingCopyPath(cfg, homes, backlog, h));
   let managed: string[] = [];
   try {
     managed = (await readdir(join(homes.backeHome, 'backlogs', backlog)))
       .filter((h) => h !== handle)
-      .sort(byCodeUnit)
+      .sort(compareCodeUnits)
       .map((h) => managedClonePath(homes, backlog, h));
   } catch (error) {
     if (!isMissing(error)) throw fsFailure(join(homes.backeHome, 'backlogs', backlog), error);
@@ -385,7 +384,7 @@ async function ownerOf(
   };
   const target = await physical(bound);
   const owners: string[] = [];
-  for (const h of Object.keys(cfg.backlogs?.[backlog]?.paths ?? {}).sort(byCodeUnit)) {
+  for (const h of Object.keys(cfg.backlogs?.[backlog]?.paths ?? {}).sort(compareCodeUnits)) {
     if ((await physical(workingCopyPath(cfg, homes, backlog, h))) === target) owners.push(h);
   }
   if (dirname(target) === (await physical(join(homes.backeHome, 'backlogs', backlog)))) {

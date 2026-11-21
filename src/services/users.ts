@@ -1,5 +1,6 @@
 /** Users und Keys (backe.md §2.12): anlegen, listen, zeigen, Key widerrufen, entfernen. */
 import type { ResolvedContext } from '../context/resolve.ts';
+import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import type { User } from '../core/schemas.ts';
 import { sshFingerprint } from '../core/ssh.ts';
@@ -46,7 +47,7 @@ export async function listUsers(
 > {
   const { snapshot: s } = await openSnapshot(ctx);
   return [...s.users.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .sort(([a], [b]) => compareCodeUnits(a, b))
     .map(([handle, { data }]) => ({
       handle,
       name: data.name,

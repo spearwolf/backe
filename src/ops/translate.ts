@@ -3,6 +3,7 @@
  * gegen Arbeitskopie) werden zu Operationen, die sich gegen den `HEAD`-Snapshot anwenden und
  * replayen lassen. Eine Datei wird ganz übersetzt oder ganz als `manual` gemeldet.
  */
+import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import {
   type Comment,
@@ -45,10 +46,6 @@ type Outcome = Operation[] | typeof MANUAL;
 
 const LIST_FIELDS = ['projects', 'sprints', 'repos', 'depends_on', 'blocked_by'] as const;
 type ListField = (typeof LIST_FIELDS)[number];
-
-function compare(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
 
 /** Kopie ohne Keys mit `undefined`, damit die Operation keine leeren Felder trägt. */
 function defined<T extends object>(o: T): T {
@@ -453,7 +450,7 @@ function topoOrder(
     }
   }
   const done = new Set(order);
-  return { order, stuck: [...members].filter((id) => !done.has(id)).sort(compare) };
+  return { order, stuck: [...members].filter((id) => !done.has(id)).sort(compareCodeUnits) };
 }
 
 /** Neue Issues so, dass `parent`, `depends_on` und `blocked_by` unter ihnen vorher entstehen. */
@@ -530,7 +527,7 @@ function orderChanges(
   return [...order, ...stuck];
 }
 
-const byPath = (a: Item, b: Item) => compare(a.path, b.path);
+const byPath = (a: Item, b: Item) => compareCodeUnits(a.path, b.path);
 const depth = (path: string) => path.split('/').length;
 
 const byTier = (a: Item, b: Item) => (a.tier ?? 0) - (b.tier ?? 0) || byPath(a, b);
@@ -703,7 +700,7 @@ export function translateEdits(
   ];
   return {
     ops,
-    manual: manual.sort(compare),
-    warnings: warnings.sort((a, b) => compare(a.path, b.path)),
+    manual: manual.sort(compareCodeUnits),
+    warnings: warnings.sort((a, b) => compareCodeUnits(a.path, b.path)),
   };
 }

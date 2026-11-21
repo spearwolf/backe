@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { expandPath, physicalPath } from '../context/paths.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { updateUserConfig } from '../context/user-config.ts';
+import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import { normalizeRepoUrl } from '../core/url.ts';
 import { gitRemotes } from '../git/query.ts';
@@ -97,8 +98,6 @@ async function canonicalRemotes(path: string): Promise<Set<string>> {
   return out;
 }
 
-const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-
 /**
  * Sucht Clones registrierter Repos unter `dir` und trägt ihren Pfad in `repos` der User-Config ein
  * (eine Änderung je Lauf). Ein abweichender Eintrag bleibt, außer mit `force`; `dryRun` schreibt nichts.
@@ -110,7 +109,9 @@ export async function scanRepos(
 ): Promise<ScanEntry[]> {
   const { snapshot: s } = await openSnapshot(ctx);
   const registered = new Map<string, string>(); // kanonisch → erster Name
-  for (const [name, { data }] of [...s.repos.entries()].sort(([a], [b]) => cmp(a, b))) {
+  for (const [name, { data }] of [...s.repos.entries()].sort(([a], [b]) =>
+    compareCodeUnits(a, b),
+  )) {
     const canonical = normalizeRepoUrl(data.url);
     if (!registered.has(canonical)) registered.set(canonical, name);
   }
@@ -123,7 +124,7 @@ export async function scanRepos(
       if (name !== undefined) matches.push({ name, canonical, path });
     }
   }
-  matches.sort((a, b) => cmp(a.name, b.name) || cmp(a.path, b.path));
+  matches.sort((a, b) => compareCodeUnits(a.name, b.name) || compareCodeUnits(a.path, b.path));
 
   const current = new Map<string, string>(Object.entries(ctx.userConfig.repos ?? {}));
   const home = ctx.homes.home;

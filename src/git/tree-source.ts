@@ -1,3 +1,4 @@
+import { parseIssuePath } from '../store/layout.ts';
 import type { SourceEntry, TreeSource } from '../store/source.ts';
 import { git } from './exec.ts';
 import { readBlobs } from './history.ts';
@@ -6,13 +7,12 @@ import { readBlobs } from './history.ts';
 const PRELOAD_DIRS = ['.backe/', 'users/', 'projects/', 'sprints/', 'repos/'];
 /** Wie `readBlobs`: Replace-Refs schieben keine anderen Objekte unter. */
 const ENV = { GIT_NO_REPLACE_OBJECTS: '1' } as const;
-const ISSUE_FILE = /^issues\/[^/]+\/[^/]+\/issue\.md$/;
 
 function wanted(path: string): boolean {
   return (
     path === '.gitattributes' ||
     PRELOAD_DIRS.some((d) => path.startsWith(d)) ||
-    ISSUE_FILE.test(path)
+    parseIssuePath(path) !== undefined
   );
 }
 

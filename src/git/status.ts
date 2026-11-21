@@ -1,3 +1,4 @@
+import { compareCodeUnits } from '../core/compare.ts';
 import { git } from './exec.ts';
 
 /**
@@ -18,7 +19,7 @@ export async function changedEntries(wc: string): Promise<{ path: string; untrac
     out.set(path, entry.startsWith('??'));
   }
   return [...out]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .sort(([a], [b]) => compareCodeUnits(a, b))
     .map(([path, untracked]) => ({ path, untracked }));
 }
 

@@ -1,5 +1,6 @@
 /** Sprints (backe.md §2.10, §2.14, §2.18): anlegen, listen, zeigen, abschließen. */
 import type { ResolvedContext } from '../context/resolve.ts';
+import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import type { Issue, Sprint } from '../core/schemas.ts';
 import { isSettled, type State } from '../core/state.ts';
@@ -59,15 +60,14 @@ export async function listSprints(ctx: ResolvedContext): Promise<
     closed: data.closed === true,
     open: open.get(slug) ?? 0,
   }));
-  const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
   return rows.sort((a, b) => {
     if (a.closed !== b.closed) return a.closed ? 1 : -1;
     if (a.start !== b.start) {
       if (a.start === undefined) return 1;
       if (b.start === undefined) return -1;
-      return cmp(a.start, b.start);
+      return compareCodeUnits(a.start, b.start);
     }
-    return cmp(a.slug, b.slug);
+    return compareCodeUnits(a.slug, b.slug);
   });
 }
 

@@ -8,6 +8,7 @@ import { type BacklogConfig, type Issue, type User, validateEntity } from '../co
 import { parseEntityFile } from '../store/frontmatter.ts';
 import { classifyPath, issueFile, parseCommentFileName, userFile } from '../store/layout.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
+import { isAdmin } from './admin.ts';
 import { checkUserChange } from './policy.ts';
 
 /** Eine Änderung im Tree; `before`/`after` sind nur für Users, Issues, Kommentare und die Config gefüllt. */
@@ -33,7 +34,7 @@ export type CommitPolicyInput = {
 /** Gründe, aus denen der Commit gegen den Identitätsschutz verstößt; leer heißt gültig. */
 export function checkCommitPolicy(input: CommitPolicyInput): string[] {
   const { actor, parent, changes } = input;
-  const admin = parent.config.admins.includes(actor) && parent.users.get(actor)?.kind === 'human';
+  const admin = isAdmin(parent.config, actor, parent.users.get(actor));
   const deletedIssues = new Set(changes.filter((c) => c.status === 'D').map((c) => c.path));
   const reasons: string[] = [];
   for (const change of changes) {
