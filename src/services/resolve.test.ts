@@ -6,9 +6,9 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
+import { writeOp } from '../../test/helpers/context.ts';
 import { logTrailers, revParse, twoClones } from '../../test/helpers/git.ts';
 import { seqBytes } from '../../test/helpers/snapshot.ts';
-import type { ResolvedContext } from '../context/resolve.ts';
 import { stateDir } from '../git/local-state.ts';
 import { bodyHash, type Operation } from '../ops/operation.ts';
 import { attachmentsDir } from '../store/layout.ts';
@@ -29,11 +29,6 @@ const spw = () => t.spw.ctx;
 const agent = () => t.agent.ctx;
 const wc = () => t.agent.wc;
 
-async function write(ctx: ResolvedContext, op: Operation): Promise<string> {
-  const r = await executeWrite(ctx, { kind: 'op', op });
-  return (r.recorded[0] as { id: string }).id;
-}
-
 const setTitle = (id: string, from: string, to: string): Operation => ({
   op: 'issue.edit',
   id,
@@ -42,7 +37,7 @@ const setTitle = (id: string, from: string, to: string): Operation => ({
 
 async function shared(...titles: string[]): Promise<string[]> {
   const ids: string[] = [];
-  for (const title of titles) ids.push(await write(spw(), { op: 'issue.create', title }));
+  for (const title of titles) ids.push(await writeOp(spw(), { op: 'issue.create', title }));
   await syncNow(spw(), noSleep);
   await syncNow(agent(), noSleep);
   return ids;
@@ -50,9 +45,9 @@ async function shared(...titles: string[]): Promise<string[]> {
 
 /** `spw` ändert den Titel von `x` und pusht; der Agent ändert ihn lokal anders. */
 async function titleConflict(x: string, ...followers: Operation[]): Promise<ConflictEntry> {
-  await write(spw(), setTitle(x, 'X', 'Remote'));
+  await writeOp(spw(), setTitle(x, 'X', 'Remote'));
   await syncNow(spw(), noSleep);
-  await write(agent(), setTitle(x, 'X', 'Lokal'));
+  await writeOp(agent(), setTitle(x, 'X', 'Lokal'));
   for (const op of followers) await executeWrite(agent(), { kind: 'op', op });
   const r = await syncNow(agent(), noSleep);
   expect(r.conflicts).toHaveLength(1);
@@ -145,9 +140,9 @@ test('apply with a lost attachment source is validation and keeps the entry', as
 
 test('apply that still violates an invariant keeps the entry', async () => {
   const [x, y] = (await shared('X', 'Y')) as [string, string];
-  await write(spw(), { op: 'issue.delete', id: y });
+  await writeOp(spw(), { op: 'issue.delete', id: y });
   await syncNow(spw(), noSleep);
-  await write(agent(), { op: 'issue.edit', id: x, add: { depends_on: [y] } });
+  await writeOp(agent(), { op: 'issue.edit', id: x, add: { depends_on: [y] } });
   const r = await syncNow(agent(), noSleep);
   expect(r.conflicts).toHaveLength(1);
   const [entry] = (await listConflicts(wc())) as [ConflictEntry];
@@ -220,7 +215,7 @@ test('apply without a recorded attachment source is validation', async () => {
 test('apply without effect writes nothing and removes the entry', async () => {
   const [x] = (await shared('X')) as [string];
   const entry = await titleConflict(x);
-  await write(spw(), setTitle(x, 'Remote', 'Lokal'));
+  await writeOp(spw(), setTitle(x, 'Remote', 'Lokal'));
   await syncNow(spw(), noSleep);
   await syncNow(agent(), noSleep);
   const head = await revParse(wc(), 'HEAD');

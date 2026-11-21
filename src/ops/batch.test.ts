@@ -1,4 +1,4 @@
-import { catchErr } from '../../test/helpers/catch.ts';
+import { catchErr, reasonOf } from '../../test/helpers/catch.ts';
 import { I, seqBytes, snap } from '../../test/helpers/snapshot.ts';
 import type { BackeError } from '../core/errors.ts';
 import type { ApplyContext } from './apply.ts';
@@ -14,7 +14,6 @@ const ctx = (extra: Partial<ApplyContext> = {}): ApplyContext => ({
 
 const create = (title: string): Operation => ({ op: 'issue.create', title });
 const lineOf = (err: BackeError) => (err.details as { line?: number }).line;
-const reasonOf = (err: BackeError) => (err.details as { reason?: string }).reason;
 
 describe('applyBatch', () => {
   test('placeholders resolve in later lines and map to ids', () => {

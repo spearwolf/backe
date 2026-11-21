@@ -6,6 +6,7 @@
 import { chmod, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
+import { writeOp } from '../../test/helpers/context.ts';
 import {
   rawCommit,
   revParse,
@@ -54,12 +55,7 @@ const spw = () => t.spw.ctx;
 const agent = () => t.agent.ctx;
 const agentWc = () => t.agent.wc;
 
-async function write(ctx: ResolvedContext, op: Operation): Promise<string> {
-  const r = await executeWrite(ctx, { kind: 'op', op });
-  return (r.recorded[0] as { id: string }).id;
-}
-
-const create = (ctx: ResolvedContext, title: string) => write(ctx, { op: 'issue.create', title });
+const create = (ctx: ResolvedContext, title: string) => writeOp(ctx, { op: 'issue.create', title });
 
 const setTitle = (id: string, from: string, to: string): Operation => ({
   op: 'issue.edit',
@@ -151,7 +147,7 @@ test('hand edits on untouched paths survive a round', async () => {
   await writeFile(path, edited);
   // Ein lokaler Commit erzwingt das Replay; der Hand-Edit liegt daneben.
   await create(agent(), 'Z');
-  await write(spw(), setTitle(y, 'Y', 'Y2'));
+  await writeOp(spw(), setTitle(y, 'Y', 'Y2'));
   await pushSpw();
 
   const r = await syncNow(agent(), deps());
@@ -167,7 +163,7 @@ test('a hand edit on an incoming path stops the round untouched', async () => {
   const path = issueFile(x);
   const edited = `${await readFile(join(agentWc(), path), 'utf8')}\nvon Hand\n`;
   await writeFile(join(agentWc(), path), edited);
-  await write(spw(), setTitle(x, 'X', 'X2'));
+  await writeOp(spw(), setTitle(x, 'X', 'X2'));
   await pushSpw();
   const headBefore = await revParse(agentWc(), 'HEAD');
   const recorded = {
@@ -197,7 +193,7 @@ test('a hand edit on an incoming path stops the round untouched', async () => {
 test('aborted local phase keeps upstream', async () => {
   const x = await sharedIssue('X');
   const upstream = await readLocalState(agentWc(), 'upstream');
-  await write(spw(), setTitle(x, 'X', 'X2'));
+  await writeOp(spw(), setTitle(x, 'X', 'X2'));
   await pushSpw();
   const tip = await remoteHead();
   const path = join(agentWc(), issueFile(x));
@@ -223,7 +219,7 @@ test('a hand edit on an incoming path stops a replaying round untouched', async 
   const edited = `${await readFile(join(agentWc(), path), 'utf8')}\nvon Hand\n`;
   await writeFile(join(agentWc(), path), edited);
   await create(agent(), 'Z');
-  await write(spw(), setTitle(x, 'X', 'X2'));
+  await writeOp(spw(), setTitle(x, 'X', 'X2'));
   await pushSpw();
   const headBefore = await revParse(agentWc(), 'HEAD');
 
@@ -550,7 +546,7 @@ describe('a replay verify would reject', () => {
     await rawCommit(t.spw.root, { files: { [path]: `${text}Fremd.\n` }, actor: 'spw' });
     await pushSpw();
     const tip = await remoteHead();
-    await write(agent(), setTitle(x, 'X', 'Lokal'));
+    await writeOp(agent(), setTitle(x, 'X', 'Lokal'));
     const head = await revParse(agentWc(), 'HEAD');
 
     const err = await catchErrAsync(() => syncNow(agent(), deps()));
@@ -666,9 +662,9 @@ test('a manual text conflict stops the round and records the commit', async () =
 
 test('a violated unit goes to the conflict store and the rest is pushed', async () => {
   const x = await sharedIssue('X');
-  await write(spw(), setTitle(x, 'X', 'Remote'));
+  await writeOp(spw(), setTitle(x, 'X', 'Remote'));
   await pushSpw();
-  await write(agent(), setTitle(x, 'X', 'Lokal'));
+  await writeOp(agent(), setTitle(x, 'X', 'Lokal'));
   await create(agent(), 'B');
 
   const r = await syncNow(agent(), deps({ randomBytes: (n) => new Uint8Array(n).fill(1) }));
@@ -681,9 +677,9 @@ test('a violated unit goes to the conflict store and the rest is pushed', async 
 
 test('the claim unit lost in replay comes back as claimLost', async () => {
   const x = await sharedIssue('X');
-  await write(spw(), { op: 'issue.claim', id: x });
+  await writeOp(spw(), { op: 'issue.claim', id: x });
   await pushSpw();
-  await write(agent(), { op: 'issue.claim', id: x });
+  await writeOp(agent(), { op: 'issue.claim', id: x });
   const claimSha = await revParse(agentWc(), 'HEAD');
 
   const r = await syncNow(agent(), deps(), { claimSha });
@@ -696,9 +692,9 @@ test('the claim unit lost in replay comes back as claimLost', async () => {
 
 test('an unpushed claim lost in a plain round is dropped with a notice', async () => {
   const x = await sharedIssue('X');
-  await write(spw(), { op: 'issue.claim', id: x });
+  await writeOp(spw(), { op: 'issue.claim', id: x });
   await pushSpw();
-  await write(agent(), { op: 'issue.claim', id: x });
+  await writeOp(agent(), { op: 'issue.claim', id: x });
 
   const r = await syncNow(agent(), deps());
 
@@ -711,10 +707,10 @@ test('an unpushed claim lost in a plain round is dropped with a notice', async (
 
 test('a claim after a shelved unit on the same issue is no follower', async () => {
   const x = await sharedIssue('X');
-  await write(spw(), setTitle(x, 'X', 'Remote'));
+  await writeOp(spw(), setTitle(x, 'X', 'Remote'));
   await pushSpw();
-  await write(agent(), setTitle(x, 'X', 'Lokal'));
-  await write(agent(), { op: 'issue.claim', id: x });
+  await writeOp(agent(), setTitle(x, 'X', 'Lokal'));
+  await writeOp(agent(), { op: 'issue.claim', id: x });
 
   const r = await syncNow(agent(), deps());
 
@@ -727,7 +723,7 @@ test('a claim re-signed in rejected rounds is still recognised when it is lost',
   const x = await sharedIssue('X');
   await create(spw(), 'Y');
   await pushSpw();
-  await write(agent(), { op: 'issue.claim', id: x });
+  await writeOp(agent(), { op: 'issue.claim', id: x });
   const claimSha = await revParse(agentWc(), 'HEAD');
 
   const r = await syncNow(
@@ -736,7 +732,7 @@ test('a claim re-signed in rejected rounds is still recognised when it is lost',
       hooks: {
         beforePush: async (round) => {
           if (round === 1) await create(spw(), 'Y2');
-          if (round === 2) await write(spw(), { op: 'issue.claim', id: x });
+          if (round === 2) await writeOp(spw(), { op: 'issue.claim', id: x });
           if (round <= 2) await pushSpw();
         },
       },
@@ -874,7 +870,7 @@ test('without upstream a rewritten remote must still descend from the last known
 
 test('an identity without working copy is cloned first', async () => {
   const key = await testKey('claude-2');
-  await write(spw(), {
+  await writeOp(spw(), {
     op: 'user.add',
     handle: 'claude-2',
     name: 'Claude 2',
@@ -951,7 +947,7 @@ describe('with attachments.lfs', () => {
     });
     const id = await create(spw(), 'mit Anhang');
     const bytes = 'viele Bytes\n';
-    await write(spw(), {
+    await writeOp(spw(), {
       op: 'attach.add',
       id,
       name: 'log',

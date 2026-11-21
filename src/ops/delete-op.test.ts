@@ -1,4 +1,4 @@
-import { catchErr } from '../../test/helpers/catch.ts';
+import { catchErr, reasonOf } from '../../test/helpers/catch.ts';
 import { I, seqBytes, snap } from '../../test/helpers/snapshot.ts';
 import type { Issue } from '../core/schemas.ts';
 import { commentFileName, commentsDir, issueDir, issueFile } from '../store/layout.ts';
@@ -23,8 +23,6 @@ const data = (r: { snapshot: { issues: Map<string, { data: Issue }> } }, id: str
 
 const del = (extra: Record<string, unknown> = {}, id = I(1)): Operation =>
   ({ op: 'issue.delete', id, ...extra }) as Operation;
-
-const reasonOf = (err: { details?: unknown }) => (err.details as { reason: string }).reason;
 
 describe('issue.delete', () => {
   test('removes the issue directory with one recursive change', () => {

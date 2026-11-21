@@ -21,3 +21,8 @@ export async function catchErrAsync(fn: () => Promise<unknown>): Promise<BackeEr
   }
   throw new Error('expected function to throw a BackeError, but it did not throw');
 }
+
+/** `details.reason` einer Verletzung (z. B. aus `catchErr`). */
+export function reasonOf(err: { details?: unknown }): string | undefined {
+  return (err.details as { reason?: string } | undefined)?.reason;
+}

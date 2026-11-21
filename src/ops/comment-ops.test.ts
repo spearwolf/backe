@@ -1,4 +1,4 @@
-import { catchErr } from '../../test/helpers/catch.ts';
+import { catchErr, reasonOf } from '../../test/helpers/catch.ts';
 import { I, seqBytes, snap } from '../../test/helpers/snapshot.ts';
 import type { Comment, Issue } from '../core/schemas.ts';
 import { serializeEntityFile } from '../store/frontmatter.ts';
@@ -43,7 +43,6 @@ const base = (issue: Partial<Issue> = {}) => snap({ issues: [{ id: I(1), ...issu
 const run = (op: Operation, actor = 'spw', s = base()) => applyOperation(s, op, ctx(actor));
 const fail = (op: Operation, actor = 'spw', c = ctx(actor)) =>
   catchErr(() => applyOperation(base(), op, c));
-const reasonOf = (err: { details?: unknown }) => (err.details as { reason: string }).reason;
 
 describe('comment.add', () => {
   test('writes a plain comment by the actor', () => {

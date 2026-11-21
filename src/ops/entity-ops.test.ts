@@ -1,4 +1,4 @@
-import { catchErr } from '../../test/helpers/catch.ts';
+import { catchErr, reasonOf } from '../../test/helpers/catch.ts';
 import { I, seqBytes, snap, testKey } from '../../test/helpers/snapshot.ts';
 import { type Sprint, type User, validateEntity } from '../core/schemas.ts';
 import { parseEntityFile, serializeEntityFile } from '../store/frontmatter.ts';
@@ -12,7 +12,6 @@ const ctx = (actor = 'spw'): ApplyContext => ({ actor, now: NOW, randomBytes: se
 const run = (s: BacklogSnapshot, op: Operation, actor = 'spw') => applyOperation(s, op, ctx(actor));
 const fail = (s: BacklogSnapshot, op: Operation, actor = 'spw') =>
   catchErr(() => run(s, op, actor));
-const reasonOf = (err: { details?: unknown }) => (err.details as { reason: string }).reason;
 const paths = (r: { changes: { path: string }[] }) => r.changes.map((c) => c.path);
 
 /** Snapshot, in dem eine Entität unbekannte Keys und einen Body trägt. */

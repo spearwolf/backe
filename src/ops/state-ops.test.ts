@@ -1,4 +1,4 @@
-import { catchErr } from '../../test/helpers/catch.ts';
+import { catchErr, reasonOf } from '../../test/helpers/catch.ts';
 import { I, seqBytes, snap } from '../../test/helpers/snapshot.ts';
 import type { Issue } from '../core/schemas.ts';
 import type { State } from '../core/state.ts';
@@ -22,8 +22,6 @@ const fail = (issues: SnapIssues, op: Operation, actor = 'spw', config = {}) =>
 
 const data = (r: { snapshot: { issues: Map<string, { data: Issue }> } }, id = I(1)): Issue =>
   (r.snapshot.issues.get(id) as { data: Issue }).data;
-
-const reasonOf = (err: { details?: unknown }) => (err.details as { reason: string }).reason;
 
 const move = (from: State, to: State, extra: Partial<OpOf<'issue.move'>> = {}): Operation => ({
   op: 'issue.move',

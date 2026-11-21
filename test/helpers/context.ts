@@ -1,6 +1,9 @@
 import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import type { ResolvedContext } from '../../src/context/resolve.ts';
 import { git } from '../../src/git/exec.ts';
+import type { Operation } from '../../src/ops/operation.ts';
+import { executeWrite } from '../../src/services/write.ts';
 import { tempDir } from './backlog.ts';
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -25,4 +28,10 @@ export async function gitInit(dir: string, remotes: Record<string, string> = {})
   for (const [name, url] of Object.entries(remotes)) {
     await git(['remote', 'add', name, url], { cwd: dir });
   }
+}
+
+/** Führt eine Operation aus und gibt die erste aufgezeichnete `id` zurück (bei `issue.create` die neue ID). */
+export async function writeOp(ctx: ResolvedContext, op: Operation): Promise<string> {
+  const r = await executeWrite(ctx, { kind: 'op', op });
+  return (r.recorded[0] as { id: string }).id;
 }

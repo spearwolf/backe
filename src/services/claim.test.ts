@@ -6,12 +6,12 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
+import { writeOp } from '../../test/helpers/context.ts';
 import { revParse, testBacklog, testKey, twoClones } from '../../test/helpers/git.ts';
 import { setIdentity } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { git } from '../git/exec.ts';
 import { parseCommitMessage, TRAILER_OP } from '../git/message.ts';
-import type { Operation } from '../ops/operation.ts';
 import { exists } from '../store/files.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
 import { loadSnapshot } from '../store/snapshot.ts';
@@ -32,12 +32,7 @@ const noSleep: SyncDeps = { sleep: async () => {} };
 const spw = () => t.spw.ctx;
 const agent = () => t.agent.ctx;
 
-async function write(ctx: ResolvedContext, op: Operation): Promise<string> {
-  const r = await executeWrite(ctx, { kind: 'op', op });
-  return (r.recorded[0] as { id: string }).id;
-}
-
-const create = (ctx: ResolvedContext, title: string) => write(ctx, { op: 'issue.create', title });
+const create = (ctx: ResolvedContext, title: string) => writeOp(ctx, { op: 'issue.create', title });
 
 /** Issues, die beide Arbeitskopien schon haben. */
 async function shared(...titles: string[]): Promise<string[]> {
@@ -249,7 +244,7 @@ describe('claimIssue', () => {
 
   test('the blocking sync brings a claim of someone else first', async () => {
     const [x] = (await shared('X')) as [string];
-    await write(spw(), { op: 'issue.claim', id: x });
+    await writeOp(spw(), { op: 'issue.claim', id: x });
     await syncNow(spw(), noSleep);
 
     const err = await catchErrAsync(() => claimIssue(agent(), x, noSleep));
@@ -351,7 +346,7 @@ describe('claimIssue', () => {
 
   test('a non-claimable issue exits with conflict', async () => {
     const [x] = (await shared('X')) as [string];
-    const y = await write(agent(), { op: 'issue.create', title: 'Y', depends_on: [x] });
+    const y = await writeOp(agent(), { op: 'issue.create', title: 'Y', depends_on: [x] });
     const head = await revParse(t.agent.wc, 'HEAD');
 
     const err = await catchErrAsync(() => claimIssue(agent(), y, noSleep));
@@ -435,7 +430,7 @@ describe('claimIssue edge cases', () => {
           afterCommit: async () => {
             await git(['push', '-q', 'origin', 'HEAD:main'], { cwd: t.agent.wc });
             await syncNow(spw(), noSleep);
-            await write(spw(), {
+            await writeOp(spw(), {
               op: 'issue.edit',
               id: x,
               set: { assignee: { from: 'claude-1', to: 'spw' } },
@@ -463,7 +458,7 @@ describe('claimIssue edge cases', () => {
           beforePush: async (_round, sha) => {
             if (deleted || (await claimOf(t.agent.wc, sha)) === undefined) return;
             deleted = true;
-            await write(spw(), { op: 'issue.delete', id: x });
+            await writeOp(spw(), { op: 'issue.delete', id: x });
             await syncNow(spw(), noSleep);
           },
         },

@@ -1,4 +1,4 @@
-import { catchErr } from '../../test/helpers/catch.ts';
+import { catchErr, reasonOf } from '../../test/helpers/catch.ts';
 import { I, seqBytes, snap } from '../../test/helpers/snapshot.ts';
 import type { Issue, Project } from '../core/schemas.ts';
 import { serializeEntityFile } from '../store/frontmatter.ts';
@@ -15,8 +15,6 @@ const ctx = (actor = 'spw', extra: Partial<ApplyContext> = {}): ApplyContext => 
   randomBytes: seqBytes(),
   ...extra,
 });
-
-const reasonOf = (err: { details?: unknown }) => (err.details as { reason?: string }).reason;
 
 const issueData = (id: string, extra: Partial<Issue> = {}): Issue => ({
   id,
