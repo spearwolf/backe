@@ -133,6 +133,8 @@ Eingaben, die der Spec impliziert, aber keine seiner Testlisten (§5) abdeckt. J
 
 **Abnahme:** CI grün inklusive Pack-Smoke-Test. Der erste `npm publish` ist nach außen gerichtet und läuft erst nach Freigabe durch den User; scheitert der unscoped Name, greift `@spearwolf/backe` (§2.20).
 
+**Abgenommen** am 2026-11-21: Abschluss-Review über den ganzen Meilenstein, seine Befunde (ein kritischer, drei wichtige) in einer Fix-Welle behoben, der Rückweg per `workflow_dispatch` im Abnahme-Commit nachgezogen; 2727 Tests grün, Coverage 99,04 % Lines / 94,11 % Branches. CI auf `ubuntu-latest` und `macos-latest` und der erste Release-Lauf stehen nach der Freigabe aus. Offene Kleinbefunde stehen unter »Übernommen aus M8«.
+
 ## Übernommen aus M1
 
 Ergebnisse der M1-Reviews, die ein späterer Detailplan einlösen muss. Abgehakt wird hier, sobald der jeweilige Detailplan sie aufgenommen hat.
@@ -146,7 +148,7 @@ Ergebnisse der M1-Reviews, die ein späterer Detailplan einlösen muss. Abgehakt
 - ✓ **M4:** Symlinks schreib- und leseseitig; `rm(tmp)` im Fehlerpfad darf den Originalfehler nicht maskieren; Major-`version` der Backlog-Config → Writes verweigern (§2.15.3). → M4, Task 1 und 8
 - ✓ **M5a:** `resolveShortId` — exakter Suffix-Treffer vor Mehrdeutigkeit, Groß-/Kleinschreibung ignorieren, volle ID ohne Treffer sauber melden; Fehlercodes `usage` vs. `validation` vereinheitlichen. → M5a, Task 1
 - ✓ **M5b:** Groß-/Kleinschreibung im URL-Pfad (`github.com/Acme/WebApp`) entscheiden; Git-Argv immer mit `--`; Query/Fragment in Repo-URLs; `listIssueIds`/`listComments` Eingabeform prüfen; Ref-Validierung nach `git check-ref-format`. → M5b, Task 1
-- **M8:** `ci.yml` mit `permissions: contents: read`; `packageManager`-Feld.
+- ✓ **M8:** `ci.yml` mit `permissions: contents: read`; `packageManager`-Feld → M8, Task 1.
 
 ## Übernommen aus M2
 
@@ -171,7 +173,7 @@ Offene Punkte aus den Reviews von M3, die ein späterer Detailplan einlösen mus
 - ✓ **M5a:** `findProjectConfig` liest beide Dateien per `Promise.all` — Fehlerreihenfolge nichtdeterministisch (Golden Files); rohe Node-Fehler statt `BackeError` (`physicalPath` mit ENOTDIR, `exists()` schluckt EACCES, `readBacklogName`/`readdir`, `ownerOf` bei kaputten fremden `paths`); `gitToplevel(cwd)` zweimal; Anführungszeichen uneinheitlich (`»…«` vs. `"…"`); `schemaError` gehört nicht nach `user-config.ts`. → M5a, Task 1
 - ✓ **M5a:** Meldungen der `context`-Schicht nennen CLI-Flags (`--path`, `--user`). → M5a, Festlegung »Hints mit CLI-Flags in `ops`/`context`« (bleiben; die Übersetzung für MCP entscheidet M7)
 - ✓ **M5b:** JSONC-Edit, dessen Ergebnis ungültig ist (Komma am Zeilenanfang), als `unexpected` »Edit konnte nicht angewendet werden« melden statt die Datei zu beschuldigen (`config set`); `normalizeRepoUrl` ist auf der kanonischen Form nicht idempotent (Falle für `repo where`/`scan`); `loadRepoRegistry` läuft bei jeder Auflösung; der Hint `backe backlog list` erscheint auch bei einem Pfad. → M5b, Task 1
-- **M8:** Biome meldet 9 `noNonNullAssertion`-Warnungen in `resolve.test.ts` (`s.env.HOME!`) — durch `s.at('home/…')` ersetzen.
+- ✓ **M8:** Biome meldet 9 `noNonNullAssertion`-Warnungen in `resolve.test.ts` (`s.env.HOME!`) — durch `s.at('home/…')` ersetzen → M8, Task 9 (beim Aufräumen schon vorab erledigt: `resolve.test.ts` kennt kein `HOME!` mehr).
 
 ## Übernommen aus M4
 
@@ -202,18 +204,18 @@ Offene Punkte aus den Reviews von M4, die ein späterer Detailplan einlösen mus
   - ✓ Liegengebliebene `tmp/clone-*` und Lock-Temp-Dateien abgestürzter Prozesse. → M5b, Task 8
   - ✓ Kaputte Alternates von Clones, die mit `--reference` angelegt wurden. → M5b, Task 8
   - ✓ Gebundene Pfade, die nicht mehr existieren. → M5b, Task 8
-- **M8:** Biome meldet weiter 9 `noNonNullAssertion` in `resolve.test.ts`. Offene Kleinigkeiten aus den Task-Reviews:
-  - `foreignHost()` herausziehen;
-  - Test für die Boot-Toleranz;
-  - `headState` startet etwa 12 Prozesse;
-  - `GIT_OPTIONAL_LOCKS=0`;
-  - Hooks bei `update-ref`;
-  - doppelte Test-Helfer;
-  - Cache-Version für `allowed_signers`;
-  - Mode-Bits bei der Umkehr;
-  - Admin-Prädikat mehrfach;
-  - `showBacklog` per `samePath` und nur Handles;
-  - Testlücken (Status `B`, Key im selben Commit, Gruppierung).
+- ✓ **M8:** Biome meldet weiter 9 `noNonNullAssertion` in `resolve.test.ts` (→ M8, Task 9, vorab erledigt). Offene Kleinigkeiten aus den Task-Reviews:
+  - ✓ `foreignHost()` herausziehen → M8, Task 5;
+  - ✓ Test für die Boot-Toleranz → M8, Task 5;
+  - ✓ `headState` startet etwa 12 Prozesse → backe.md §4.2;
+  - ✓ `GIT_OPTIONAL_LOCKS=0` → M8, Task 5;
+  - ✓ Hooks bei `update-ref` → backe.md §2.16.1 (M8, Task 10; Festlegung: kein Eingriff);
+  - ✓ doppelte Test-Helfer → M8, Task 8;
+  - ✓ Cache-Version für `allowed_signers` → M8, Task 5;
+  - ✓ Mode-Bits bei der Umkehr → M8, Task 5;
+  - ✓ Admin-Prädikat mehrfach → M8, Task 8;
+  - ✓ `showBacklog` per `samePath` und nur Handles → M8, Task 8;
+  - ✓ Testlücken (Status `B`, Key im selben Commit, Gruppierung) → M8, Task 9.
 - ✓ **Doku nach Abnahme:** → M8, Task 10
   - `backe.md` §2.12 und §2.13 um die Identitätsregeln ergänzen:
     - Handle-Wiederverwendung nur durch Admins;
@@ -249,13 +251,13 @@ Offene Punkte aus den Reviews von M5a, die ein späterer Detailplan einlösen mu
   - ✓ `checkPropFilter` nennt in Meldungen `f.value` statt `f.raw` (`level>=1` statt `level>=01`). → M5b, Task 2
   - ✓ Fehlermeldungen der CLI setzen Flag-Namen uneinheitlich in `»…«`. → M5b, Task 2
 - **M8 — Aufräumen und Testlücken:**
-  - Doppelte Helfer: `isMissing` in `store/snapshot.ts` und `context/project-config.ts`; eigenes `exists` in `git/repo.ts` und `git/ssh.ts` (Schichtgrenze); Code-Unit-Comparatoren in mehreren Services statt `byCodeUnit`; Notice-Helfer liegen in `ops/next.ts` statt `ops/notice.ts`; `listSort` und `STATE_ORDER` an neutralere Orte.
-  - `working-copy.ts` prüft an zwei Stellen nur `ENOENT`, `ENOTDIR` kommt roh durch.
-  - Doc-Kommentar in `core/errors.ts` ohne »stdin doppelt verlangt«; `test/conventions.test.ts` prüft nur einzeilige `"${…}"` (Scope-Kommentar fehlt).
-  - Der Zweig `allowSettledParent` ist über echte Operationen nicht erreichbar, sein Test beweist den Bypass nicht.
-  - Testlücken: Reparent mit Enkel; `derive` mit No-op und Hinweisen; vorhandener Anker überlebt gescheitertes `verify`; `assign` mit fremdem Handle und ohne Änderung; `reopen --to done`; der `ambiguous`-Zweig in `revokeKey`; Rethrow-Zweig in `readPublicKey` (PEM); `--comments <n>`-Kürzung im Golden.
-  - Testhygiene: `as never` statt typisierter `Operation[]` in mehreren Tests; feste Zeitstempel neben Echtzeit im `sort created`-Test; `userWithTwoKeys` baut den zweiten Key per String-Ersetzung; der Kommentar-Konflikttest hängt an der Aufrufreihenfolge von `deps.now` in `plan()`.
-  - Kleinigkeiten: redundantes `from ?? null` und toter `not_found`-Zweig in `issues.ts`; `FilterSource` ohne Konsument; `landedCommit` vergleicht `Backe-Op` nicht; `fromCommander`-Hint fällt auf `backe` zurück, wenn eine Gruppe ohne `subcommand()` entsteht; `parentFlags` in `defineEdit` wird je Programminstanz nicht zurückgesetzt; `sprint show` ist eine lange Aktion.
+  - ✓ Doppelte Helfer: `isMissing` in `store/snapshot.ts` und `context/project-config.ts`; eigenes `exists` in `git/repo.ts` und `git/ssh.ts` (Schichtgrenze); Code-Unit-Comparatoren in mehreren Services statt `byCodeUnit`; Notice-Helfer liegen in `ops/next.ts` statt `ops/notice.ts`; `listSort` und `STATE_ORDER` an neutralere Orte → M8: `isMissing` und `exists` Task 5 (zentral in `store/files.ts`); Comparatoren (`compareCodeUnits`), Notice-Helfer und `listSort` Task 8; `STATE_ORDER` bleibt vorerst in `services/sprints.ts` → nach 0.1.0, siehe »Übernommen aus M8«.
+  - ✓ `working-copy.ts` prüft an zwei Stellen nur `ENOENT`, `ENOTDIR` kommt roh durch → M8, Task 7.
+  - ✓ Doc-Kommentar in `core/errors.ts` ohne »stdin doppelt verlangt«; `test/conventions.test.ts` prüft nur einzeilige `"${…}"` (Scope-Kommentar fehlt) → M8, Task 8.
+  - ✓ Der Zweig `allowSettledParent` ist über echte Operationen nicht erreichbar, sein Test beweist den Bypass nicht → M8, Task 8 (Zweig samt Option entfernt, über echte Operationen unerreichbar).
+  - ✓ Testlücken: Reparent mit Enkel; `derive` mit No-op und Hinweisen; vorhandener Anker überlebt gescheitertes `verify`; `assign` mit fremdem Handle und ohne Änderung; `reopen --to done`; der `ambiguous`-Zweig in `revokeKey`; Rethrow-Zweig in `readPublicKey` (PEM); `--comments <n>`-Kürzung im Golden → M8, Task 9.
+  - ✓ Testhygiene: `as never` statt typisierter `Operation[]` in mehreren Tests; feste Zeitstempel neben Echtzeit im `sort created`-Test; `userWithTwoKeys` baut den zweiten Key per String-Ersetzung; der Kommentar-Konflikttest hängt an der Aufrufreihenfolge von `deps.now` in `plan()` → M8, Task 9.
+  - ✓ Kleinigkeiten: redundantes `from ?? null` und toter `not_found`-Zweig in `issues.ts`; `FilterSource` ohne Konsument; `landedCommit` vergleicht `Backe-Op` nicht; `fromCommander`-Hint fällt auf `backe` zurück, wenn eine Gruppe ohne `subcommand()` entsteht; `parentFlags` in `defineEdit` wird je Programminstanz nicht zurückgesetzt; `sprint show` ist eine lange Aktion → M8, Task 8 (`parentFlags` war vorab erledigt).
 
 ## Übernommen aus M5b
 
@@ -269,17 +271,17 @@ Offene Punkte aus den Reviews von M5b, die ein späterer Detailplan einlösen mu
   - ✓ Hand-Edits werden gegen `HEAD` auf Policy geprüft, `verify` gegen seinen ggf. eingefrorenen Stand; beide können dann abweichen. → M6, Task 2
   - ✓ `checkFormatVersion` liest bei `edits` die Config der Arbeitskopie statt der aus `HEAD`. → M6, Task 2
 - **M8 — Aufräumen und Testlücken:**
-  - `%(refname:short)` beim Purge kann bei gleichnamigem Tag `heads/<b>` liefern (`%(refname:lstrip=2)`); `unpushedCount` ohne Produktions-Aufrufer; toter Zweig für `revoked` ohne Zeitstempel in `user show`.
-  - `readPublicKey` mit leerem stderr endet auf »nicht lesbar: «; `verify` prüft unbekannte Keys nicht in Kommentaren; JSON von `verify` lässt `unknown_keys` leer weg, `prop_notices` nicht.
-  - Pfadmuster `issues/<x>/<id>/issue.md` an drei Stellen zerlegt; Graph-Patch baut betroffene Listen je Operation neu; `ensureLfsRule` liest `d.snapshot`.
-  - Journal-Recovery einer gelandeten `edits`-Kette setzt `no_effect`-Pfade nicht zurück; Journal trägt Vorher-Bytes base64 (groß bei Anhängen); LFS-Idempotenz nur über `filter.lfs.process`; `unsettled.paths` nennt alle Pfade.
-  - `dirtyPaths`/`rollbackPaths` übergeben Pfade als argv (ARG_MAX bei sehr vielen Anhängen); `attach add` liest die ganze Quelle vor der Größenprüfung und kopiert sie.
-  - `addAttachment` nicht `async`; `entry.url as string`; Batch meldet einen Schemafehler einer späten Zeile vor einer verbotenen Operation einer früheren.
-  - `git()`-Timeout beendet nur das direkte Kind; gescheiterte GitHub-Abfragen werden nicht gecacht; `repo scan` ohne `--force` wendet »first-by-path« nicht an; ungültiger Issue-Ref auf ein nicht registriertes Repo fällt still weg.
-  - `doctor`: `stateDir()` kann `.git/backe` anlegen; execFile-Timeout zählt als »fehlt«; lokales `git` überschattet den Import.
-  - `config`: Schema-Drift (Nicht-String-Blatt) wirft einen rohen Fehler; alter Entwurf bleibt nach unverändertem Edit liegen; `readText` doppelt; `getConfig` liest zweimal.
-  - URL ohne Schema mit `.git` (`github.com/a/b.git`) behält `.git`; relativer Pfad `a/b` gilt als Repo-URL (entfällt: `a/b` ist syntaktisch gleich der kanonischen Form `gitserver/repo` eines Hosts ohne Punkt, die Regel bräche die Idempotenz von `normalizeRepoUrl` und gültige Registrierungen; ein Tippfehler `a/b` gilt dafür weiter als Repo-URL); Backlogs, die vor dem LFS-Fix schon roh committete Anhänge unter der Regel hatten, heilt nichts (entfällt: vor dem ersten Release gibt es solche Backlogs nicht).
-  - Testlücken: Identity-`fail` bei kaputter `.git/config`, `doctor --fix` per E2E, Golden für `repo scan` `differs`/`überschrieben`, Temp-Datei des Editors nach Erfolg und Modus `0o600`, Text-Ausgabe von `attach add --json`, `attach get -o` auf vorhandene Datei/Verzeichnis, vakuöse Zeilen in `tools.test.ts`.
+  - ✓ `%(refname:short)` beim Purge kann bei gleichnamigem Tag `heads/<b>` liefern (`%(refname:lstrip=2)`); `unpushedCount` ohne Produktions-Aufrufer; toter Zweig für `revoked` ohne Zeitstempel in `user show` → M8: Purge und `unpushedCount` Task 5, toter `revoked`-Zweig Task 8.
+  - ✓ `readPublicKey` mit leerem stderr endet auf »nicht lesbar: «; `verify` prüft unbekannte Keys nicht in Kommentaren; JSON von `verify` lässt `unknown_keys` leer weg, `prop_notices` nicht → M8: `readPublicKey` Task 5; unbekannte Keys in Kommentaren und die Auslassung leerer `prop_notices` Task 6 (weitere leere Felder → nach 0.1.0, siehe »Übernommen aus M8«).
+  - ✓ Pfadmuster `issues/<x>/<id>/issue.md` an drei Stellen zerlegt; Graph-Patch baut betroffene Listen je Operation neu; `ensureLfsRule` liest `d.snapshot` → M8: Pfadmuster und `ensureLfsRule` Task 8; Graph-Patch → backe.md §4.2.
+  - ✓ Journal-Recovery einer gelandeten `edits`-Kette setzt `no_effect`-Pfade nicht zurück; Journal trägt Vorher-Bytes base64 (groß bei Anhängen); LFS-Idempotenz nur über `filter.lfs.process`; `unsettled.paths` nennt alle Pfade → M8: Recovery und `unsettled.paths` Task 6; Vorher-Bytes im Journal und LFS-Idempotenz → backe.md §4.2.
+  - ✓ `dirtyPaths`/`rollbackPaths` übergeben Pfade als argv (ARG_MAX bei sehr vielen Anhängen); `attach add` liest die ganze Quelle vor der Größenprüfung und kopiert sie → M8: Pfadlisten Task 5; Größenprüfung von `attach add` Task 7.
+  - ✓ `addAttachment` nicht `async`; `entry.url as string`; Batch meldet einen Schemafehler einer späten Zeile vor einer verbotenen Operation einer früheren → M8, Task 7.
+  - ✓ `git()`-Timeout beendet nur das direkte Kind; gescheiterte GitHub-Abfragen werden nicht gecacht; `repo scan` ohne `--force` wendet »first-by-path« nicht an; ungültiger Issue-Ref auf ein nicht registriertes Repo fällt still weg → M8: Timeout (Prozessbaum) Task 5; GitHub-Abfragen → backe.md §4.2; `repo scan` war vorab erledigt (Task 7); Issue-Ref auf nicht registriertes Repo Task 7.
+  - ✓ `doctor`: `stateDir()` kann `.git/backe` anlegen; execFile-Timeout zählt als »fehlt«; lokales `git` überschattet den Import → M8: `stateDir()` Task 5; Timeout und lokales `git` Task 7.
+  - ✓ `config`: Schema-Drift (Nicht-String-Blatt) wirft einen rohen Fehler; alter Entwurf bleibt nach unverändertem Edit liegen; `readText` doppelt; `getConfig` liest zweimal → M8, Task 7 (Entwurf: der Editor startet mit ihm).
+  - ✓ URL ohne Schema mit `.git` (`github.com/a/b.git`) behält `.git`; relativer Pfad `a/b` gilt als Repo-URL (entfällt: `a/b` ist syntaktisch gleich der kanonischen Form `gitserver/repo` eines Hosts ohne Punkt, die Regel bräche die Idempotenz von `normalizeRepoUrl` und gültige Registrierungen; ein Tippfehler `a/b` gilt dafür weiter als Repo-URL); Backlogs, die vor dem LFS-Fix schon roh committete Anhänge unter der Regel hatten, heilt nichts (entfällt: vor dem ersten Release gibt es solche Backlogs nicht) → M8, Task 7 (`.git` ohne Schema; die beiden »entfällt«-Punkte siehe oben).
+  - ✓ Testlücken: Identity-`fail` bei kaputter `.git/config`, `doctor --fix` per E2E, Golden für `repo scan` `differs`/`überschrieben`, Temp-Datei des Editors nach Erfolg und Modus `0o600`, Text-Ausgabe von `attach add --json`, `attach get -o` auf vorhandene Datei/Verzeichnis, vakuöse Zeilen in `tools.test.ts` → M8, Task 9.
 
 ## Übernommen aus M6
 
@@ -289,14 +291,14 @@ Offene Punkte aus den Reviews von M6, die ein späterer Detailplan einlösen mus
   - ✓ `notices` hat im JSON zwei Formen (Strings bei `sync`, Objekte sonst); der MCP-Adapter braucht eine. → M7, Festlegung »`notices` (M6)«
 - **M8 — Aufräumen, Tests, Robustheit:**
   - ✓ Resign verwirft eine reine Claim-Einheit still (`claim_lost` wird ignoriert); `assertClaimed` sollte an `round.claimSha === undefined` hängen. → M6, Abschluss-Review
-  - `taintKeys` nennt nur das primäre Subjekt (`project.mv.to`, `project.rm.reassign`; Projektlisten sind nicht belastet); `repo.add` ohne Name belastet `repo:<url>`.
-  - Hub auf ein später ergänztes echtes Remote umhängen (Roadmap-Punkt aus dem Detailplan; bisher hängt `backe` nichts automatisch um).
-  - `verify` prüft nicht, ob ein Quarantäne-Eintrag `reverted` die Änderungen tatsächlich umgekehrt hat (bestehende Lücke).
-  - Im Modus `warn` mit ungültigem eingehendem Commit prüft jede Runde erneut und wiederholt die Warnungen.
+  - ✓ `taintKeys` nennt nur das primäre Subjekt (`project.mv.to`, `project.rm.reassign`; Projektlisten sind nicht belastet); `repo.add` ohne Name belastet `repo:<url>` → M8, Task 6.
+  - ✓ Hub auf ein später ergänztes echtes Remote umhängen (Roadmap-Punkt aus dem Detailplan; bisher hängt `backe` nichts automatisch um) → backe.md §4.2 (M8, Task 10).
+  - ✓ `verify` prüft nicht, ob ein Quarantäne-Eintrag `reverted` die Änderungen tatsächlich umgekehrt hat (bestehende Lücke) → backe.md §2.13 (M8, Task 10; Admins sind vertraut, nicht gebaut).
+  - ✓ Im Modus `warn` mit ungültigem eingehendem Commit prüft jede Runde erneut und wiederholt die Warnungen → M8, Task 6 (Warnungen zu ungültigen Commits einmal je SHA, im Vordergrund; die `notices` zu gültigen Commits wiederholen sich weiter → nach 0.1.0, siehe »Übernommen aus M8«).
   - ✓ `git lfs push` läuft ohne Timeout; `setUpLfs` im LFS-Pull läuft außerhalb des Write-Locks. → M6, Abschluss-Review
-  - Bricht der Sync im lokalen Abschnitt ab (auch mit `verify`), steht `upstream` schon auf `tip`.
-  - `ClaimOutcome.commit` kann auf einen weggefallenen Commit zeigen, wenn ein Claim im Replay ohne Wirkung entfällt.
-  - Testlücken: Push-Timeout, LFS-Fehlerpfade, Signal-Aufschub im Sync, `scheduleDeferred`-Guard, LFS-Pull-Fehler nach Clone, Pointer-Präfix-Test mit `lfs: on`, Taint über erzeugte IDs, Widerruf im Parent-Stand bei `readUnits`.
+  - ✓ Bricht der Sync im lokalen Abschnitt ab (auch mit `verify`), steht `upstream` schon auf `tip` → M8, Task 6.
+  - ✓ `ClaimOutcome.commit` kann auf einen weggefallenen Commit zeigen, wenn ein Claim im Replay ohne Wirkung entfällt → M8, Task 6.
+  - ✓ Testlücken: Push-Timeout, LFS-Fehlerpfade, Signal-Aufschub im Sync, `scheduleDeferred`-Guard, LFS-Pull-Fehler nach Clone, Pointer-Präfix-Test mit `lfs: on`, Taint über erzeugte IDs, Widerruf im Parent-Stand bei `readUnits` → M8: Taint über erzeugte IDs Task 6; alle übrigen Task 9.
 
 ## Übernommen aus M7
 
@@ -305,13 +307,27 @@ Offene Punkte aus den Reviews von M7, die ein späterer Detailplan einlösen mus
 - ✓ **M8 — Doku:** → M8, Task 10
   - `backe.md` §2.19 »Ende« und die Planentscheidung dazu nennen nur das Ende von stdin; der Server endet auch, wenn der Transport sich selbst schließt (etwa nach einem stdout-Fehler).
 - **M8 — Aufräumen, Tests, Robustheit:**
-  - Lesende Tools planen den Hintergrund-Sync vor der Prüfung von `fields`; die CLI prüft `--fields` vorher. Harmlos (kein Write), aber uneinheitlich.
-  - `attachment_add`: kleines TOCTOU-Fenster zwischen Pfadprüfung und `readFile`; `EACCES`/`ELOOP` aus `physicalPath` enden als `unexpected` statt mit Meldung. `attachSource` dupliziert etwa 15 Zeilen von `sourceOf` der CLI — beide in einen gemeinsamen Lader in `services/attachments.ts` ziehen, samt Pfadbegrenzung.
-  - Resource `backe://issue/{id}` plant den Read-Sync selbst statt über `defineTool`; `issue show` ruft `pickFields(…, SHOW_FIELDS)` inline statt einer Ansicht `issueShowJson`.
-  - `DEFAULT_PULL_INTERVAL` in `src/mcp/sync-tools.ts` dupliziert den Schema-Default; `toolResult(undefined)` ergäbe einen Content-Block ohne `text` (kein Tool liefert `undefined`).
-  - Fehler aus `handle.close()`/`mcp.close()` nach dem Ende von stdin sind weder getestet noch dokumentiert.
-  - Testlücken und -härte: der stdout-E2E fährt keinen Pfad mit Kindprozess (Backlog ohne Remote); der E2E liest das private Feld `_process` von `StdioClientTransport` ohne Guard; der `onerror`-Test hängt am Wortlaut einer SDK-Meldung; die Gegenproben für den Zwei-Takt-Sync und das stdio-Ende scheitern nur per Timeout; die Spawn-Zählung nach einem wirkungslosen `issue_move` ist nur einen Microtask stark; der Test »sync neben der Warteschlange« zählt nur Enqueues; der `build`-Test zeigt nicht, dass zwei Instanzen unabhängig arbeiten; der Sortier-Test prüft nur das erste Issue; `issue_rank` mit `top: false` allein ist ungetestet; `as never` in `read-tools.test.ts`; überflüssiger `&&`-Guard im `nextJson`-Test.
-  - Der Konventionstest für stdout fängt `import { stdout } from 'node:process'` und `console.dir`/`console.table` nicht; `stdio.test.ts` liegt unter `src/mcp/` statt unter `test/`.
+  - ✓ Lesende Tools planen den Hintergrund-Sync vor der Prüfung von `fields`; die CLI prüft `--fields` vorher. Harmlos (kein Write), aber uneinheitlich → M8, Task 7.
+  - ✓ `attachment_add`: kleines TOCTOU-Fenster zwischen Pfadprüfung und `readFile`; `EACCES`/`ELOOP` aus `physicalPath` enden als `unexpected` statt mit Meldung. `attachSource` dupliziert etwa 15 Zeilen von `sourceOf` der CLI — beide in einen gemeinsamen Lader in `services/attachments.ts` ziehen, samt Pfadbegrenzung → M8, Task 7.
+  - ✓ Resource `backe://issue/{id}` plant den Read-Sync selbst statt über `defineTool`; `issue show` ruft `pickFields(…, SHOW_FIELDS)` inline statt einer Ansicht `issueShowJson` → M8, Task 7.
+  - ✓ `DEFAULT_PULL_INTERVAL` in `src/mcp/sync-tools.ts` dupliziert den Schema-Default; `toolResult(undefined)` ergäbe einen Content-Block ohne `text` (kein Tool liefert `undefined`) → M8, Task 7.
+  - ✓ Fehler aus `handle.close()`/`mcp.close()` nach dem Ende von stdin sind weder getestet noch dokumentiert → M8, Task 7.
+  - ✓ Testlücken und -härte: der stdout-E2E fährt keinen Pfad mit Kindprozess (Backlog ohne Remote); der E2E liest das private Feld `_process` von `StdioClientTransport` ohne Guard; der `onerror`-Test hängt am Wortlaut einer SDK-Meldung; die Gegenproben für den Zwei-Takt-Sync und das stdio-Ende scheitern nur per Timeout; die Spawn-Zählung nach einem wirkungslosen `issue_move` ist nur einen Microtask stark; der Test »sync neben der Warteschlange« zählt nur Enqueues; der `build`-Test zeigt nicht, dass zwei Instanzen unabhängig arbeiten; der Sortier-Test prüft nur das erste Issue; `issue_rank` mit `top: false` allein ist ungetestet; `as never` in `read-tools.test.ts`; überflüssiger `&&`-Guard im `nextJson`-Test → M8, Task 9.
+  - ✓ Der Konventionstest für stdout fängt `import { stdout } from 'node:process'` und `console.dir`/`console.table` nicht; `stdio.test.ts` liegt unter `src/mcp/` statt unter `test/` → M8, Task 9.
+
+## Übernommen aus M8
+
+Offene Punkte aus den Reviews von M8, die bewusst nicht vor 0.1.0 gebaut werden. Ziel ist jeweils »nach 0.1.0«, sofern nichts anderes steht.
+
+- **Release-Workflow:** kein `concurrency:` in `release.yml`; die Idempotenz des Publish hängt am Exit-Code von `npm view`, nicht an einem Ausgabevergleich; Node 26.13.1 steht im `publish`-Job inline und noch einmal in `mise.toml` (Renovate hebt den Inline-Pin nicht mit); Actions sind per Major statt per SHA gepinnt; der `mise_toml`-Input von `jdx/mise-action@v5` und die Kompatibilität von `upload-artifact@v7` mit `download-artifact@v8` zeigen sich erst im echten Release-Lauf, ebenso das Zusammenspiel der `if:`-Bedingungen im Dispatch-Pfad; ein Randfall der PATH-Auflösung in `doctor`.
+- **Git-Schicht:** `quarantine.ts` setzt den alten Modus fest auf `100644`, die Konfliktprüfung vor der Umkehr vergleicht keinen Modus; der Exit-Hook-Test prüft die Registrierung des Listeners nicht; `working-copy.test.ts` hat eine eigene `exists`-Kopie; das alte Verzeichnis `allowed_signers/` bleibt in bestehenden Arbeitskopien liegen; die ARG_MAX-Reserve im 5000-Pfade-Test ist auf macOS eng; `execFileSync('ps')` erbt stderr, und ein Fork zwischen Prozess-Snapshot und Kill entkommt; `STATE_ORDER` liegt weiter in `services/sprints.ts`.
+- **Sync und Verify:** im JSON von `verify` bleiben `notices`, `invalid` und `quarantined` auch leer stehen; im Modus `warn` wiederholen sich die `notices` zu gültigen Commits hinter einem ungültigen je Runde; `unsettled` kann mit leerer `paths`-Liste auftreten; der Doc-Kommentar zu `readableComments` überzeichnet (Race bei verschwindender Datei).
+- **Anhang-Lader und Adapter:** `open` ohne `O_NONBLOCK` (ein getauschtes FIFO blockiert die MCP-Warteschlange); `readFile` ohne Obergrenze bei wachsender Datei; der Symlink-Test sichert `O_NOFOLLOW` nicht ab (die `ELOOP`-Meldung bleibt ungeprüft); `${path} ist keine Datei` ohne `»…«`; der `.transform`-Cast am `AttachmentSchema`.
+- **Aufräumen:** `?? null` ist in `currentProp` verschoben statt entfernt; `misplacedIssueFile` liefert bei leeren Segmenten jetzt `undefined`.
+- **Tests:** `git switch` mit `GIT_LFS_SKIP_SMUDGE` ist ungetestet; `writeTarget` in `attach get -o` kennt kein `EACCES`/`EROFS`/`ENOTDIR`; der losgelöste Prozess im stdout-E2E kann nach `afterEach` weiterlaufen; ein unescapter RegExp in `handedit.test.ts`.
+- **Spec:** `backe.md` kürzt an einigen Stellen (temporärer Index/`commit-tree`, Backoff-Formel, `openat`-Begründung); die Parent-Vererbung steht dreifach, die Anhangsinhalte im Replay doppelt.
+- **Geparkt, Spec-Frage:** `backe.md` §2.13 verlangt für einen Public Key einen laufenden `ssh-agent`, tatsächlich signiert `ssh-keygen` auch mit dem unverschlüsselten Private Key neben der `.pub`. Die Spec bleibt, das README folgt ihr; ob die Spec den Fallback übernimmt, ist eine Entscheidung für nach 0.1.0.
+- **Geparkt, Repo-Einstellung:** `workflow_dispatch` ist von jedem Branch aus startbar und erreicht das Environment `npm` → die Deployment-Branches des Environments `npm` auf `main` beschränken; das ist keine Code-Änderung und steht in der Freigabeliste von Task 11, Schritt 4.
 
 ## Planentscheidungen
 
@@ -522,3 +538,19 @@ Stellen, die der Spec offenlässt und die dieser Plan festlegt. Nach Abnahme des
 | §2.19 `batch`, erlaubte Operationen | Der MCP-Adapter prüft jede Operation mit String-`op` vor `runBatch` gegen eine feste Liste: `issue.create`, `issue.edit`, `issue.move`, `issue.resume`, `issue.reopen`, `issue.rank`, `comment.add`, `attach.add`, dazu `issue.delete` nur mit `--allow-delete`. Alles andere → `validation` `Zeile <n>: »<op>« gibt es im MCP-Modus nicht` (`details.line`, ab 1 wie bei `runBatch`), ohne Commit. Einträge ohne String-`op` meldet `runBatch` selbst. | M7 |
 | §2.16.2 Periodischer Sync im MCP | Der Timer ruft `scheduleSync(…, 'periodic')`: Modus `auto`, Arbeitskopie und Git-Remote wie bei `'read'`, aber ohne `pullDue` gegen `last_attempt` — der gestartete Prozess schreibt `last_attempt` kurz nach dem Tick, ein Takt genau `pull_interval` später hielte ihn sonst für zu frisch. Das Debounce über `sync.lock` bleibt. | M7 |
 | §2.19 `attachment_add.path` | `path` wird gegen `cwd` aufgelöst (`~` expandiert) und physisch aufgelöst (`physicalPath`); es muss `realpath(cwd)` sein oder darunter liegen, verglichen je Pfadsegment (`relative`, nicht String-Präfix), Symlinks nach außen eingeschlossen. Sonst `validation` `Datei »<path>« liegt außerhalb des Arbeitsverzeichnisses`, Hint `Inhalt per text oder json übergeben`; eine fehlende Datei im Arbeitsverzeichnis bleibt `not_found`. | M7 |
+| §2.21 Pack-Smoke-Test | `scripts/pack-smoke.sh <tarball>` installiert den Tarball wie ein Nutzer (nur Prod-Abhängigkeiten) und fährt `init → new → issue claim → mv review → sync → verify` gegen ein Bare-Remote in einer isolierten Umgebung; `ci.yml` ruft ihn in beiden Matrix-Zeilen, `prepack` baut vor jedem Tarball; das Paket enthält genau `LICENSE`, `README.md`, `dist/cli.js`, `package.json` | M8 |
+| §2.20 Node-Version beim Start | `checkNodeVersion` meldet `backe braucht Node.js ≥ 26 (gefunden <v>)` und beendet mit Exit 1; ein Node, der schon das Bundle nicht lädt, sieht die Meldung nicht — dafür stehen `engines` und das README | M8 |
+| §2.21 Versionierung | release-please im Manifest-Modus; `bootstrap-sha` = Plan-Commit, damit der erste Changelog nur M8-Arbeit nennt; `release-as: 0.1.0` nur für den ersten Release | M8 |
+| §2.21 Job-Split `release.yml` | `release-please`, `target`, `build`, `publish`: Projektcode (Install, Tests, Pack, Smoke) läuft nur in `build` ohne Schreibrechte und ohne OIDC, `publish` (Environment `npm`, `id-token: write`) lädt nur den Tarball und führt keinen Projektcode aus | M8 |
+| §2.21 Publish | idempotent: liegt `name@version` schon auf npm, wird der Publish übersprungen und nur der Tarball ans GitHub-Release gehängt; der Name kommt aus dem Tarball | M8 |
+| §2.21 Erstveröffentlichung | einmalig per granularem `NPM_TOKEN` im Environment `npm` (für ein noch nicht vorhandenes Paket gibt es keinen Trusted Publisher); danach Trusted Publisher einrichten und das Secret löschen; Ausweichname `@spearwolf/backe` nur nach Rückfrage | M8 |
+| §2.21 Rückweg | `workflow_dispatch` mit Pflicht-Eingabe `tag` baut und publisht einen vorhandenen Release-Tag ohne release-please noch einmal; `build` und `publish` laufen nur bei `target.result == 'success'` (`publish` zusätzlich nach erfolgreichem `build`) | M8 |
+| §2.21 Renovate | Renovate statt Dependabot, weil es auch die Versionen in `mise.toml` pflegt | M8 |
+| §2.16.1 Hooks bei `update-ref` | kein Eingriff: `update-ref` ruft nur `reference-transaction`, den eine verwaltete Arbeitskopie nicht hat | M8 |
+| §2.13 `verify` und `reverted` | `verify` prüft nicht nach, ob ein Quarantäne-Eintrag `reverted` die Änderungen umkehrt; die Quarantäne ändern nur Admins, und Admins sind vertraut | M8 |
+| §2.16.2 Timeout bei Git-Aufrufen | die Frist beendet den Prozessbaum (Nachfahren über `ps -A -o pid=,ppid=`), keine eigene Prozessgruppe — Ctrl-C und ssh-Prompts am Terminal bleiben intakt | M8 |
+| §2.13 Modus `warn` | warnt einmal je SHA, gemerkt in der lokalen Sync-State-Datei und nur im Vordergrund; der Hintergrund-Sync loggt jedes Mal und verbraucht die Warnung nicht | M8 |
+| §2.8 LFS-Smudge | Clone, Branch-Wechsel und Sync-Reset überspringen den Smudge (`GIT_LFS_SKIP_SMUDGE`); die Bytes holt danach `git lfs pull`, dessen Scheitern ist nur ein Hinweis | M8 |
+| §2.15 `config edit` | ein Entwurf nach gescheitertem Edit öffnet wieder im Editor; gelöscht wird er nach erfolgreichem Anwenden oder wenn das Ergebnis der aktuellen Config gleicht | M8 |
+| §2.11 Repo-URL `a/b` | bleibt eine gültige Repo-URL: syntaktisch gleich der kanonischen Form `gitserver/repo` eines Hosts ohne Punkt, die Regel bräche die Idempotenz von `normalizeRepoUrl` | M8 |
+| §2.11 Repo-URL mit `.git` | jedes abschließende `.git` entfällt (`…/a.git.git` → `…/a`), auch ohne Schema; ein Repo, das wirklich `a.git` heißt, verliert die Endung | M8 |
