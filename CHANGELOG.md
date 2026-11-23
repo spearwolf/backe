@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.3.0](https://github.com/spearwolf/backe/compare/v0.2.0...v0.3.0) (2026-11-23)
+
+
+### Neu
+
+* **i18n:** CLI-Befehle zweisprachig ([46a0202](https://github.com/spearwolf/backe/commit/46a0202153316dccc11e42df4a0220ff3de8850b))
+* **i18n:** CLI-Kern und Hilfe-Infrastruktur zweisprachig ([46ff215](https://github.com/spearwolf/backe/commit/46ff215b4fb71c9cb93e1197019bf988ef977f6e))
+* **i18n:** context und git zweisprachig ([d53ce4b](https://github.com/spearwolf/backe/commit/d53ce4b468c37cebd73a0c8c8202c2a2269dd91a))
+* **i18n:** Locale-Erkennung, Kataloge und zweisprachige Präfixe ([0e42d84](https://github.com/spearwolf/backe/commit/0e42d8412e07166a2b5c0e6477a1ef5e0bc4f1dd))
+* **i18n:** ops, core, store zweisprachig ([332cf9b](https://github.com/spearwolf/backe/commit/332cf9be9aacd2e35dca6beda3c410b97932089e))
+* **i18n:** services (Sync, Repos, Verwaltung) zweisprachig ([5b87f77](https://github.com/spearwolf/backe/commit/5b87f77d52d6f945db3265b16ae445788bc6bbbb))
+* **i18n:** Services der Issue-Domäne zweisprachig ([042445e](https://github.com/spearwolf/backe/commit/042445eb1bb399e11aac8f5821c1d1a08fdad4dc))
+* **mcp:** Ausgabe immer englisch ([64224fa](https://github.com/spearwolf/backe/commit/64224fab960bbc9c4098c6759b0eaf6c15665eb0))
+
+
+### Behoben
+
+* **i18n:** Restliteral, Wächter und Spec nach dem Gesamt-Review ([02017d8](https://github.com/spearwolf/backe/commit/02017d876e9816f973fe162807ff7971cd02395f))
+
 ## [0.2.0](https://github.com/spearwolf/backe/compare/v0.1.1...v0.2.0) (2026-11-23)
 
 
