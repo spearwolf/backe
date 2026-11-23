@@ -1,4 +1,5 @@
 import { BackeError } from '../core/errors.ts';
+import { m } from './message.messages.ts';
 
 export const TRAILER_ACTOR = 'Backe-Actor';
 export const TRAILER_OP = 'Backe-Op';
@@ -12,23 +13,23 @@ export type CommitMessage = {
 const TRAILER_LINE = /^([A-Za-z0-9-]+): (.*)$/;
 
 /** `<subject>\n\n[<body>\n\n]<Key>: <value>\n…`; Subject und Trailer-Werte bleiben einzeilig. */
-export function formatCommitMessage(m: CommitMessage): string {
-  if (m.subject.trim() === '' || /[\r\n]/.test(m.subject)) {
-    throw new BackeError('unexpected', 'Commit-Subject muss genau eine nicht leere Zeile sein', {
-      details: { subject: m.subject },
+export function formatCommitMessage(message: CommitMessage): string {
+  if (message.subject.trim() === '' || /[\r\n]/.test(message.subject)) {
+    throw new BackeError('unexpected', m.subjectNotSingleLine, {
+      details: { subject: message.subject },
     });
   }
   const lines: string[] = [];
-  for (const [key, value] of m.trailers) {
+  for (const [key, value] of message.trailers) {
     if (!/^[A-Za-z0-9-]+$/.test(key) || /[\r\n]/.test(value)) {
-      throw new BackeError('unexpected', `Ungültiger Commit-Trailer »${key}«`, {
+      throw new BackeError('unexpected', m.invalidTrailer(key), {
         details: { key, value },
       });
     }
     lines.push(`${key}: ${value}`);
   }
-  const body = m.body?.replace(/\n+$/, '');
-  let out = `${m.subject}\n\n`;
+  const body = message.body?.replace(/\n+$/, '');
+  let out = `${message.subject}\n\n`;
   if (body) out += `${body}\n\n`;
   if (lines.length > 0) out += `${lines.join('\n')}\n`;
   return out;

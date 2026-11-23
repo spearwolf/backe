@@ -9,6 +9,7 @@ import {
 } from '../core/schemas.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { physicalPath } from './paths.ts';
+import { m } from './project-config.messages.ts';
 
 export type ProjectConfigLevel = {
   dir: string;
@@ -18,7 +19,6 @@ export type ProjectConfigLevel = {
 
 const SHARED_NAME = '.backlog.jsonc';
 const LOCAL_NAME = '.backlog.local.jsonc';
-const USER_HINT = 'user gehört in .backlog.local.jsonc (backe.md §2.15.2).';
 
 /** Nur `ENOENT`/`ENOTDIR` heißen »keine Datei«; alles andere (z. B. `EACCES`, `EISDIR`) wird weitergereicht. */
 async function readOptional(file: string): Promise<string | undefined> {
@@ -40,11 +40,7 @@ async function readShared(file: string): Promise<ProjectConfigLevel['shared']> {
   if (text === undefined) return undefined;
   const raw = readJsonc(text, file);
   if (hasUserKey(raw)) {
-    throw new BackeError(
-      'validation',
-      `${file}: user: in der geteilten Projekt-Config nicht erlaubt`,
-      { hint: USER_HINT },
-    );
+    throw new BackeError('validation', m.userKeyInSharedConfig(file), { hint: m.userKeyHint });
   }
   const result = ProjectConfigSchema.safeParse(raw);
   if (!result.success) throw schemaError(file, result.error);

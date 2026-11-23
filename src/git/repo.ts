@@ -1,6 +1,7 @@
 import { BackeError } from '../core/errors.ts';
 import { applyFileChanges, exists, type FileChange, isIssueDirPath } from '../store/files.ts';
 import { forChunks, git, PATH_CHUNK } from './exec.ts';
+import { m } from './repo.messages.ts';
 
 export type Operation = 'rebase' | 'merge' | 'cherry-pick' | 'revert';
 
@@ -47,22 +48,22 @@ export async function headState(wc: string): Promise<HeadState> {
 export async function assertOnBranch(wc: string, branch: string): Promise<string> {
   const state = await headState(wc);
   if (state.operation) {
-    throw new BackeError('conflict', `In ${wc} läuft ein ${state.operation}`, {
+    throw new BackeError('conflict', m.operationRunning(wc, state.operation), {
       hint: `git -C ${wc} ${state.operation} --abort`,
     });
   }
   if (state.branch === undefined) {
-    throw new BackeError('conflict', `${wc} steht auf keinem Branch (detached HEAD)`, {
+    throw new BackeError('conflict', m.detachedHead(wc), {
       hint: `git -C ${wc} switch ${branch}`,
     });
   }
   if (state.branch !== branch) {
-    throw new BackeError('conflict', `${wc} steht auf ${state.branch}, erwartet ${branch}`, {
+    throw new BackeError('conflict', m.wrongBranch(wc, state.branch, branch), {
       hint: `git -C ${wc} switch ${branch}`,
     });
   }
   if (state.head === undefined) {
-    throw new BackeError('conflict', `${wc} hat noch keinen Commit`);
+    throw new BackeError('conflict', m.noCommitYet(wc));
   }
   return state.head;
 }
