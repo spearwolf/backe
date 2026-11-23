@@ -2,6 +2,7 @@
  * `issue.create` und `issue.edit` (Operationskatalog, backe.md §2.16.4): neue Issues mit
  * Vorgaben und Vererbung vom Parent anlegen, Felder mit Vorbedingung setzen und Listen ändern.
  */
+
 import { BackeError } from '../core/errors.ts';
 import { defaultRandomBytes, generateIssueId } from '../core/ids.ts';
 import { parseRepoRef } from '../core/names.ts';
@@ -10,6 +11,7 @@ import { deriveRepoName, normalizeRepoUrl } from '../core/url.ts';
 import { canonicalBody } from '../store/frontmatter.ts';
 import type { Draft } from './draft.ts';
 import { sameValue, violation } from './invariants.ts';
+import { m } from './issue-ops.messages.ts';
 import { bodyHash, type OpOf } from './operation.ts';
 import { type RankPosition, rankPlacement } from './rank.ts';
 
@@ -29,7 +31,7 @@ export function issueCreate(d: Draft, op: OpOf<'issue.create'>): OpOf<'issue.cre
   const { ctx } = d;
   const s = d.snapshot;
   if (op.id !== undefined && d.findIssue(op.id) !== undefined) {
-    throw violation('id_collision', `Issue ${op.id} existiert bereits`, { ids: [op.id] });
+    throw violation('id_collision', m.issueExists(op.id), { ids: [op.id] });
   }
   const id =
     op.id ??
@@ -75,13 +77,13 @@ export function issueCreate(d: Draft, op: OpOf<'issue.create'>): OpOf<'issue.cre
 }
 
 function show(value: unknown): string {
-  return value === null ? 'nicht gesetzt' : JSON.stringify(value);
+  return value === null ? m.notSet : JSON.stringify(value);
 }
 
 /** Ist-Wert ≠ `from` → `precondition`. */
 export function expectFrom<T>(id: string, field: string, current: T | null, from: T | null): void {
   if (sameValue(current, from)) return;
-  throw violation('precondition', `${id}: ${field} ist ${show(current)}, erwartet ${show(from)}`, {
+  throw violation('precondition', m.fieldMismatch(id, field, show(current), show(from)), {
     ids: [id],
   });
 }
@@ -151,13 +153,9 @@ export function issueEdit(d: Draft, op: OpOf<'issue.edit'>): OpOf<'issue.edit'> 
 
   if (op.add?.blocked_by !== undefined || op.remove?.blocked_by !== undefined) {
     if (before.state !== 'blocked') {
-      throw violation(
-        'transition',
-        `${op.id}: blocked_by ist nur im State »blocked« änderbar, State ist »${before.state}«`,
-        {
-          ids: [op.id],
-        },
-      );
+      throw violation('transition', m.blockedByOnlyWhenBlocked(op.id, before.state), {
+        ids: [op.id],
+      });
     }
   }
   for (const field of LIST_FIELDS) {
@@ -167,14 +165,10 @@ export function issueEdit(d: Draft, op: OpOf<'issue.edit'>): OpOf<'issue.edit'> 
       next[field] = editList(before[field], add, remove);
   }
   if (before.state === 'blocked' && next.blocked_by === undefined) {
-    throw violation(
-      'transition',
-      `${op.id}: ein blockiertes Issue braucht mindestens einen Blocker`,
-      {
-        ids: [op.id],
-        hint: `Zum Aufheben der Blockade: backe issue resume ${op.id}`,
-      },
-    );
+    throw violation('transition', m.blockedNeedsBlocker(op.id), {
+      ids: [op.id],
+      hint: m.resumeHint(op.id),
+    });
   }
 
   if (op.props !== undefined) next.props = editProps(op.id, before.props, op.props);
@@ -182,7 +176,7 @@ export function issueEdit(d: Draft, op: OpOf<'issue.edit'>): OpOf<'issue.edit'> 
   let body: string | undefined;
   if (op.body !== undefined && current.body !== canonicalBody(op.body.to)) {
     if (bodyHash(current.body) !== op.body.from_hash) {
-      throw violation('precondition', `${op.id}: Body wurde inzwischen geändert`, { ids: [op.id] });
+      throw violation('precondition', m.bodyChanged(op.id), { ids: [op.id] });
     }
     body = op.body.to;
   }

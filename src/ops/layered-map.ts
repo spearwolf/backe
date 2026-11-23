@@ -3,7 +3,9 @@
  * Draft gibt nach jeder Änderung eine neue Sicht aus und zahlt dafür nur die Zahl seiner
  * Änderungen, nicht die Größe des Backlogs (backe.md §2.16.6, Batch-Tempo).
  */
+
 import { compareCodeUnits } from '../core/compare.ts';
+import { m } from './layered-map.messages.ts';
 
 /**
  * `changes` hält je Schlüssel den neuen Wert, `undefined` heißt entfernt. Die Iteration folgt
@@ -68,15 +70,15 @@ export class LayeredMap<V> implements Map<string, V> {
   }
 
   set(): this {
-    throw new TypeError('LayeredMap ist unveränderlich');
+    throw new TypeError(m.immutable);
   }
 
   delete(): boolean {
-    throw new TypeError('LayeredMap ist unveränderlich');
+    throw new TypeError(m.immutable);
   }
 
   clear(): void {
-    throw new TypeError('LayeredMap ist unveränderlich');
+    throw new TypeError(m.immutable);
   }
 
   #list(): [string, V][] {

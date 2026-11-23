@@ -3,6 +3,7 @@
  * abgelegten Einheit benennen und Vorbedingungen für »trotzdem anwenden« auf den aktuellen
  * Stand setzen. Rein, ohne I/O.
  */
+
 import { BackeError } from '../core/errors.ts';
 import { defaultRandomBytes, generateIssueId } from '../core/ids.ts';
 import type { Comment } from '../core/schemas.ts';
@@ -12,6 +13,7 @@ import type { BacklogSnapshot, StoredEntity } from '../store/snapshot.ts';
 import type { ApplyContext } from './apply.ts';
 import type { Notice } from './notice.ts';
 import { bodyHash, type Operation, referencedIds, substituteIds } from './operation.ts';
+import { m } from './replay.messages.ts';
 
 /**
  * Schreibt `issue.create`s um, deren ID im Stand schon vergeben ist. Erst gilt `map` (alt → neu
@@ -43,7 +45,7 @@ export function rewriteCollisions(
       current = { ...current, id: fresh };
       notices.push({
         code: 'id_rewritten',
-        message: `ID-Kollision: ${old} heißt jetzt ${fresh}`,
+        message: m.idCollision(old, fresh),
         ids: [old, fresh],
       });
     }

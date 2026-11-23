@@ -3,10 +3,12 @@
  * Stand ihrer Vorgänger, geschrieben wird erst, wenn alle durch sind; scheitert eine, scheitert
  * der ganze Batch (auch beim Replay, backe.md §2.16.4).
  */
+
 import { BackeError } from '../core/errors.ts';
 import type { FileChange } from '../store/files.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { type ApplyContext, applyStep } from './apply.ts';
+import { m } from './batch.messages.ts';
 import { Draft } from './draft.ts';
 import { violation } from './invariants.ts';
 import type { Notice } from './notice.ts';
@@ -28,7 +30,7 @@ export type BatchResult = {
 function onLine(line: number, err: unknown): never {
   if (!(err instanceof BackeError)) throw err;
   const details = { ...(err.details as object | undefined), line };
-  throw new BackeError(err.code, `Zeile ${line}: ${err.message}`, {
+  throw new BackeError(err.code, m.lineError(line, err.message), {
     details,
     ...(err.hint === undefined ? {} : { hint: err.hint }),
   });
@@ -48,7 +50,7 @@ export function parseBatchInput(
   while (lines.at(-1) === '') lines.pop();
   return lines.map((line, i) => {
     try {
-      if (line === '') throw violation('schema', 'leere Zeile zwischen Operationen');
+      if (line === '') throw violation('schema', m.emptyLine);
       const op = decodeOp(line);
       const reason = reject?.(op);
       if (reason !== undefined) throw new BackeError('validation', reason);
@@ -70,10 +72,10 @@ export function applyBatch(
   ops: readonly Operation[],
   ctx: ApplyContext,
 ): BatchResult {
-  if (ops.length === 0) throw new BackeError('validation', 'Der Batch enthält keine Operation');
+  if (ops.length === 0) throw new BackeError('validation', m.emptyBatch);
   if (ops.length > MAX_BATCH) {
-    throw new BackeError('validation', `Ein Batch umfasst höchstens ${MAX_BATCH} Operationen`, {
-      hint: `${ops.length} Operationen auf mehrere Batches verteilen.`,
+    throw new BackeError('validation', m.batchTooLarge(MAX_BATCH), {
+      hint: m.batchTooLargeHint(ops.length),
     });
   }
   const d = new Draft(s, ctx);
@@ -82,7 +84,7 @@ export function applyBatch(
   ops.forEach((raw, i) => {
     try {
       if (raw.op === 'issue.create' && raw.ref !== undefined && refs.has(raw.ref)) {
-        throw violation('schema', `Platzhalter ${raw.ref} ist schon vergeben`);
+        throw violation('schema', m.placeholderTaken(raw.ref));
       }
       const before = d.revision;
       const done = applyStep(d, substituteIds(raw, refs));

@@ -2,11 +2,13 @@
  * Identitätsschutz für `users/` (backe.md §2.13 Punkt 4): wer welchen User anlegen, ändern oder
  * entfernen darf. Die Regel gilt für `applyOperation` und für die Prüfung fremder Commits.
  */
+
 import type { User } from '../core/schemas.ts';
 import { sameKey, sshFingerprint } from '../core/ssh.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { isAdmin } from './admin.ts';
 import { violation } from './invariants.ts';
+import { m } from './policy.messages.ts';
 
 /**
  * Prüft jede Änderung an `users/<handle>.md`; sie muss bei jedem Schreiben dieser Datei aufgerufen
@@ -71,8 +73,8 @@ function checkKeysUnique(
       if (other === handle) continue;
       const taken = [...(data.keys ?? []), ...(data.revoked_keys ?? []).map((r) => r.key)];
       if (taken.some((k) => sameKey(k, key))) {
-        throw violation('policy', `Key ${sshFingerprint(key)} gehört schon ${other}`, {
-          hint: 'Jeder Key gehört genau einem User.',
+        throw violation('policy', m.keyTaken(sshFingerprint(key), other), {
+          hint: m.keyTakenHint,
         });
       }
     }
@@ -87,8 +89,8 @@ function checkRevocations(before: User | undefined, after: User): void {
   for (const { key } of after.revoked_keys ?? []) {
     if ((before?.revoked_keys ?? []).some((r) => sameKey(r.key, key))) continue;
     if (!(before?.keys ?? []).some((k) => sameKey(k, key))) {
-      throw violation('policy', `Widerrufen werden nur eigene Keys: ${sshFingerprint(key)}`, {
-        hint: 'Einen Key widerruft der User, dem er gehört, oder ein Admin für ihn.',
+      throw violation('policy', m.revokeOnlyOwn(sshFingerprint(key)), {
+        hint: m.revokeOnlyOwnHint,
       });
     }
   }
@@ -96,8 +98,8 @@ function checkRevocations(before: User | undefined, after: User): void {
     const stays = (after.revoked_keys ?? []).some((r) => sameKey(r.key, key));
     const active = (after.keys ?? []).some((k) => sameKey(k, key));
     if (!stays || active) {
-      throw violation('policy', `Der Widerruf von ${sshFingerprint(key)} ist endgültig`, {
-        hint: 'Einen widerrufenen Key neu zu vergeben ist nicht möglich; einen neuen Key anlegen.',
+      throw violation('policy', m.revocationFinal(sshFingerprint(key)), {
+        hint: m.revocationFinalHint,
       });
     }
   }
@@ -107,14 +109,10 @@ function checkRevocations(before: User | undefined, after: User): void {
 function checkOperatorStaysHuman(s: BacklogSnapshot, handle: string): void {
   const agents = agentsOf(s, handle);
   if (agents.length > 0) {
-    throw violation(
-      'references',
-      `${handle} ist Operator von ${agents.join(', ')}; ein Operator bleibt Mensch`,
-      {
-        ids: agents,
-        hint: 'Erst die Agents entfernen oder ihren Operator ändern.',
-      },
-    );
+    throw violation('references', m.operatorStaysHuman(handle, agents.join(', ')), {
+      ids: agents,
+      hint: m.removeAgentsHint,
+    });
   }
 }
 
@@ -130,9 +128,9 @@ function agentsOf(s: BacklogSnapshot, handle: string): string[] {
 function checkNoAgents(s: BacklogSnapshot, handle: string): void {
   const agents = agentsOf(s, handle);
   if (agents.length > 0) {
-    throw violation('references', `${handle} ist Operator von ${agents.join(', ')}`, {
+    throw violation('references', m.operatorOf(handle, agents.join(', ')), {
       ids: agents,
-      hint: 'Erst die Agents entfernen oder ihren Operator ändern.',
+      hint: m.removeAgentsHint,
     });
   }
 }
@@ -146,13 +144,13 @@ function checkOperator(s: BacklogSnapshot, before: User | undefined, after: User
   ) {
     const operator = s.users.get(after.operator)?.data;
     if (operator === undefined) {
-      throw violation('missing_ref', `Operator ${after.operator} nicht gefunden`, {
+      throw violation('missing_ref', m.operatorNotFound(after.operator), {
         ids: [after.operator],
       });
     }
     if (operator.kind !== 'human') {
-      throw violation('schema', `Operator ${after.operator} ist kein Mensch`, {
-        hint: 'Ein Agent hat einen verantwortlichen Menschen als operator.',
+      throw violation('schema', m.operatorNotHuman(after.operator), {
+        hint: m.operatorNotHumanHint,
       });
     }
   }
@@ -183,46 +181,46 @@ function checkRights(
       s.users.get(actor)?.data.kind === 'human';
     const allowed = actor === handle || operates;
     if (!allowed) {
-      throw violation('policy', `${actor} darf den User ${handle} nicht ändern`, {
-        hint: 'Ändern dürfen den User er selbst, bei einem Agent sein Operator und Admins.',
+      throw violation('policy', m.mayNotChangeUser(actor, handle), {
+        hint: m.mayNotChangeUserHint,
       });
     }
     if (before.kind !== after.kind) {
-      throw violation('policy', `${actor} darf die Art von ${handle} nicht ändern`, {
-        hint: 'Die Art (human/agent) ändern nur Admins.',
+      throw violation('policy', m.mayNotChangeKind(actor, handle), {
+        hint: m.mayNotChangeKindHint,
       });
     }
     if (before.operator !== after.operator) {
-      throw violation('policy', `${actor} darf den Operator von ${handle} nicht ändern`, {
-        hint: 'Den Operator ändern nur Admins.',
+      throw violation('policy', m.mayNotChangeOperator(actor, handle), {
+        hint: m.mayNotChangeOperatorHint,
       });
     }
     return;
   }
   if (before === undefined && after !== undefined) {
     if (removedBefore) {
-      throw violation('policy', `${actor} darf den User ${handle} nicht neu anlegen`, {
-        hint: `${handle} wurde früher entfernt; neu anlegen darf ihn nur ein Admin.`,
+      throw violation('policy', m.mayNotRecreate(actor, handle), {
+        hint: m.mayNotRecreateHint(handle),
       });
     }
     if (s.config.admins.includes(handle)) {
-      throw violation('policy', `${actor} darf den User ${handle} nicht anlegen`, {
-        hint: `${handle} ist als Admin eingetragen; anlegen darf ihn nur ein Admin.`,
+      throw violation('policy', m.mayNotCreate(actor, handle), {
+        hint: m.mayNotCreateAdminHint(handle),
       });
     }
     if (after.kind === 'agent' && after.operator === actor) {
       const agents = agentsOf(s, handle);
       if (agents.length === 0) return;
-      throw violation('policy', `${actor} darf den User ${handle} nicht anlegen`, {
+      throw violation('policy', m.mayNotCreate(actor, handle), {
         ids: agents,
-        hint: `${handle} ist als Operator von ${agents.join(', ')} eingetragen; anlegen darf ihn nur ein Admin.`,
+        hint: m.mayNotCreateOperatorHint(handle, agents.join(', ')),
       });
     }
-    throw violation('policy', `${actor} darf den User ${handle} nicht anlegen`, {
-      hint: 'Anlegen dürfen Nutzer nur eigene Agents (operator = sie selbst); Menschen legen Admins an.',
+    throw violation('policy', m.mayNotCreate(actor, handle), {
+      hint: m.mayNotCreateHint,
     });
   }
-  throw violation('policy', `${actor} darf den User ${handle} nicht entfernen`, {
-    hint: 'Nur Admins entfernen User.',
+  throw violation('policy', m.mayNotRemove(actor, handle), {
+    hint: m.mayNotRemoveHint,
   });
 }

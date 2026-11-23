@@ -3,10 +3,12 @@
  * auf die Operation und Übersetzung des Endstands in Dateiänderungen. Kein I/O, Zeit und Zufall
  * kommen aus dem `ApplyContext`.
  */
+
 import { BackeError } from '../core/errors.ts';
 import { type Comment, IssueSchema } from '../core/schemas.ts';
 import type { FileChange } from '../store/files.ts';
 import type { BacklogSnapshot, StoredEntity } from '../store/snapshot.ts';
+import { m } from './apply.messages.ts';
 import { attachAdd, attachRm, commentAdd, commentDelete, commentEdit } from './comment-ops.ts';
 import { issueDelete } from './delete-op.ts';
 import { Draft } from './draft.ts';
@@ -117,7 +119,7 @@ function dispatch(d: Draft, op: Operation): Operation {
 /** Wer schreibt, muss ein User des Backlogs sein (backe.md §2.13); sonst `policy`. */
 export function assertActorIsUser(s: BacklogSnapshot, actor: string): void {
   if (!s.users.has(actor)) {
-    throw violation('policy', `Akteur »${actor}« ist kein User dieses Backlogs`);
+    throw violation('policy', m.actorNotUser(actor));
   }
 }
 
@@ -131,12 +133,12 @@ export function applyStep(d: Draft, op: Operation): Operation {
   const { ctx } = d;
   assertActorIsUser(d.snapshot, ctx.actor);
   if (!Timestamp.safeParse(ctx.now).success) {
-    throw new BackeError('unexpected', `Ungültiger Zeitstempel im ApplyContext: »${ctx.now}«`);
+    throw new BackeError('unexpected', m.invalidTimestamp(ctx.now));
   }
   const placeholders = referencedIds(op).filter((id) => PLACEHOLDER_RE.test(id));
   if (placeholders.length > 0) {
-    throw violation('schema', `Unaufgelöste Platzhalter: ${placeholders.join(', ')}`, {
-      hint: 'Platzhalter gibt es nur im Batch; dort werden sie vor dem Anwenden ersetzt.',
+    throw violation('schema', m.unresolvedPlaceholders(placeholders.join(', ')), {
+      hint: m.placeholdersHint,
     });
   }
   return dispatch(d, op);
