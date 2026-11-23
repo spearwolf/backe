@@ -1,7 +1,9 @@
 name: CI
 
 on:
+  # Feature-Branches prüft der pull_request-Lauf; ein ungefilterter push liefe dort doppelt.
   push:
+    branches: [main]
   pull_request:
 
 permissions:
