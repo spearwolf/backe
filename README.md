@@ -181,10 +181,17 @@ Single steps: `pnpm run lint`, `pnpm run build`, `pnpm run test`,
 
 ## Releases
 
-Commits follow [Conventional Commits](https://www.conventionalcommits.org).
-[release-please](https://github.com/googleapis/release-please) turns them into a
-release PR with the changelog; merging it tags the release, and the workflow
-publishes to npm with provenance (trusted publishing, no long-lived token).
+```sh
+mise run release
+```
+
+That's it. Commits follow [Conventional Commits](https://www.conventionalcommits.org);
+[release-please](https://github.com/googleapis/release-please) keeps one release PR
+(version + changelog) up to date on its own whenever `main` has `feat`, `fix` or
+`perf` commits since the last release. `mise run release` waits until that PR matches
+the pushed `main` and turns on auto-merge: GitHub merges it once CI is green, and the
+release workflow publishes to npm with provenance (trusted publishing, no token).
+Pushing straight to `main` keeps working as before.
 
 ## License
 
