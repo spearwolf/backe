@@ -80,45 +80,78 @@ test('usage errors exit with 2', async () => {
   expect(group.stderr).not.toContain('Hinweis:');
 });
 
-test('missing command, subcommand, argument or option prints the help of the failed command', async () => {
-  const { env, cwd } = await emptyHome();
-  const opts = { env, cwd };
-
-  const root = await cli([], opts);
-  expect(root.code).toBe(2);
-  expect(root.stdout).toBe('');
-  expect(root.stderr.startsWith('Fehler: Befehl fehlt\n\n')).toBe(true);
-  expect(root.stderr).toContain('Usage: backe');
-  expect(root.stderr).toContain('Schnellstart:');
-  expect(root.stderr).not.toContain('Hinweis:');
-
-  const group = await cli(['issue'], opts);
-  expect(group.code).toBe(2);
-  expect(group.stdout).toBe('');
-  expect(group.stderr).toMatch(/^Fehler: Unterbefehl fehlt\n\nUsage: backe issue \[options\]/);
-
-  const arg = await cli(['issue', 'show'], opts);
-  expect(arg.code).toBe(2);
-  expect(arg.stdout).toBe('');
-  expect(arg.stderr).toMatch(/^Fehler: Argument »id« fehlt\n\nUsage: backe issue show /);
-
-  const option = await cli(['issue', 'create'], opts);
-  expect(option.code).toBe(2);
-  expect(option.stdout).toBe('');
-  expect(option.stderr).toMatch(
-    /^Fehler: Option »-t, --title <titel>« fehlt\n\nUsage: backe issue create /,
-  );
-
-  const asJson = await cli(['issue', 'show', '--json'], opts);
-  expect(asJson.code).toBe(2);
-  expect(asJson.stdout).toBe('');
-  expect(JSON.parse(asJson.stderr)).toEqual({
-    error: { code: 'usage', message: 'Argument »id« fehlt', hint: 'backe issue show --help' },
+describe('missing command, subcommand, argument or option', () => {
+  test('root prints the root help', async () => {
+    const { env, cwd } = await emptyHome();
+    const root = await cli([], { env, cwd });
+    expect(root.code).toBe(2);
+    expect(root.stdout).toBe('');
+    expect(root.stderr.startsWith('Fehler: Befehl fehlt\n\n')).toBe(true);
+    expect(root.stderr).toContain('Usage: backe');
+    expect(root.stderr).toContain('Schnellstart:');
+    expect(root.stderr).not.toContain('Hinweis:');
   });
 
-  const unknown = await cli(['issue', 'show', 'x', '--frobnicate'], opts);
-  expect(unknown.code).toBe(2);
-  expect(unknown.stderr).toBe("Fehler: unknown option '--frobnicate'\n");
+  test('group prints the help of the group', async () => {
+    const { env, cwd } = await emptyHome();
+    const group = await cli(['issue'], { env, cwd });
+    expect(group.code).toBe(2);
+    expect(group.stdout).toBe('');
+    expect(group.stderr).toMatch(/^Fehler: Unterbefehl fehlt\n\nUsage: backe issue \[options\]/);
+    expect(group.stderr).not.toContain('Hinweis:');
+  });
+
+  test('missing argument prints the help of the command', async () => {
+    const { env, cwd } = await emptyHome();
+    const arg = await cli(['issue', 'show'], { env, cwd });
+    expect(arg.code).toBe(2);
+    expect(arg.stdout).toBe('');
+    expect(arg.stderr).toMatch(/^Fehler: Argument »id« fehlt\n\nUsage: backe issue show /);
+    expect(arg.stderr).not.toContain('Hinweis:');
+  });
+
+  test('missing mandatory option prints the help of the command', async () => {
+    const { env, cwd } = await emptyHome();
+    const option = await cli(['issue', 'create'], { env, cwd });
+    expect(option.code).toBe(2);
+    expect(option.stdout).toBe('');
+    expect(option.stderr).toMatch(
+      /^Fehler: Option »-t, --title <titel>« fehlt\n\nUsage: backe issue create /,
+    );
+    expect(option.stderr).not.toContain('Hinweis:');
+  });
+
+  test('json mode has the error object with hint and no help', async () => {
+    const { env, cwd } = await emptyHome();
+    const asJson = await cli(['issue', 'show', '--json'], { env, cwd });
+    expect(asJson.code).toBe(2);
+    expect(asJson.stdout).toBe('');
+    expect(JSON.parse(asJson.stderr)).toEqual({
+      error: { code: 'usage', message: 'Argument »id« fehlt', hint: 'backe issue show --help' },
+    });
+  });
+
+  test('json mode reports a missing mandatory option', async () => {
+    const { env, cwd } = await emptyHome();
+    const asJson = await cli(['issue', 'create', '--json'], { env, cwd });
+    expect(asJson.code).toBe(2);
+    expect(asJson.stdout).toBe('');
+    expect(JSON.parse(asJson.stderr)).toEqual({
+      error: {
+        code: 'usage',
+        message: 'Option »-t, --title <titel>« fehlt',
+        hint: 'backe issue create --help',
+      },
+    });
+  });
+
+  test('other usage errors get no help', async () => {
+    const { env, cwd } = await emptyHome();
+    const unknown = await cli(['issue', 'show', 'x', '--frobnicate'], { env, cwd });
+    expect(unknown.code).toBe(2);
+    expect(unknown.stdout).toBe('');
+    expect(unknown.stderr).toBe("Fehler: unknown option '--frobnicate'\n");
+  });
 });
 
 test('errors in json mode', async () => {
