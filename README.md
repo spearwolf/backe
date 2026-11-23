@@ -150,20 +150,6 @@ The technical direction is human — the spec, the architecture, the milestone c
 the reviews and every decision come from a long-time engineer (that's me).
 It is also a working experiment in how far that combination carries.
 
-## Status
-
-| Milestone | Scope                                                                  | State |
-| --------- | ---------------------------------------------------------------------- | ----- |
-| M1        | scaffold, `core`, `store` — entities, formats, canonical serialization | done  |
-| M2        | operations, state model, dependency graph (`ops`)                      | done  |
-| M3        | configs and context resolution                                         | done  |
-| M4        | Git layer, signed write path, verify, quarantine                       | done  |
-| M5a       | services and CLI core — issues, comments, projects, output formats     | done  |
-| M5b       | attachments, repo checks, hand-edit commits, batch, doctor, config     | done  |
-| M6        | sync, replay, claim                                                    | done  |
-| M7        | MCP server                                                             | done  |
-| M8        | release                                                                | done  |
-
 ## For contributors (and curious humans)
 
 - **The spec is binding:** [`docs/proposals/backe.md`](docs/proposals/backe.md).
