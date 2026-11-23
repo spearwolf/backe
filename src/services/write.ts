@@ -87,6 +87,7 @@ import { raiseSignal, withDeferredSignals } from './signals.ts';
 import { coversOpen, type FrozenBasis, pathTaintReasons, writeCommitBasis } from './verify.ts';
 import { activeFingerprints, parseJsoncAs, type State } from './verify-state.ts';
 import { ensureWorkingCopy, hubNotices, identityMismatch } from './working-copy.ts';
+import { m } from './write.messages.ts';
 
 export type WriteInput =
   | { kind: 'op'; op: Operation }
@@ -394,13 +395,9 @@ export async function recoverJournal(wc: string): Promise<void> {
     state.operation === undefined &&
     (state.head === head || (await below()) === head);
   if (!recoverable) {
-    throw new BackeError(
-      'conflict',
-      `Unterbrochener Write in ${wc} kann nicht zurückgesetzt werden`,
-      {
-        hint: `git -C ${wc} status prüfen, dann ${journal} löschen`,
-      },
-    );
+    throw new BackeError('conflict', m.interruptedWriteNotRecoverable(wc), {
+      hint: m.checkStatusThenDelete(wc, journal),
+    });
   }
   if (state.head !== head) await rollbackPaths(wc, [...paths, ...reset]);
   else if (saved !== undefined) await restoreSaved(wc, saved);
@@ -433,8 +430,8 @@ async function checkSigningKey(
 ): Promise<void> {
   const fingerprint = sshFingerprint(await readPublicKey(key));
   if (!activeFingerprints(users.get(handle)).has(fingerprint)) {
-    throw new BackeError('usage', `Der Key ${key} ist kein aktiver Key von ${handle}`, {
-      hint: `identities.${ctx.backlog.value}.${handle}.key in ${userConfigPath(ctx.homes.backeHome)} prüfen`,
+    throw new BackeError('usage', m.keyNotActive(key, handle), {
+      hint: m.checkIdentityKey(ctx.backlog.value, handle, userConfigPath(ctx.homes.backeHome)),
     });
   }
 }
@@ -455,11 +452,9 @@ async function checkFormatVersion(wc: string, rev?: string): Promise<void> {
   const raw = readJsonc(text, BACKLOG_CONFIG);
   const version = (raw as { version?: unknown } | null)?.version;
   if (typeof version === 'number' && version > BACKLOG_FORMAT_VERSION) {
-    throw new BackeError(
-      'validation',
-      `Backlog-Format ${version} ist neuer als dieses backe (${BACKLOG_FORMAT_VERSION})`,
-      { hint: 'backe aktualisieren; lesen geht weiter.' },
-    );
+    throw new BackeError('validation', m.backlogFormatTooNew(version, BACKLOG_FORMAT_VERSION), {
+      hint: m.updateBackeHint,
+    });
   }
 }
 
@@ -549,11 +544,9 @@ function opStep(
   };
 }
 
-const SPLIT_HINT = 'Änderung auf zwei backe commit aufteilen';
-
 /**
  * Wendet die übersetzten Operationen der Hand-Edits als Batch an. Ein Fehler behält Code und
- * Message, verliert aber die Batch-Zeile (`Zeile <n>: `, `details.line`): Sie zählt Operationen,
+ * Message, verliert aber die Batch-Zeile (Präfix `<Wort> <n>: `, `n` aus `details.line`): Sie zählt Operationen,
  * die der User nie gesehen hat. Eine Verletzung ohne eigenen Hinweis bekommt den, die Änderung
  * aufzuteilen.
  */
@@ -566,9 +559,12 @@ function applyEditOps(
     return applyBatch(s, ops, ctx);
   } catch (err) {
     if (!(err instanceof BackeError)) throw err;
-    const { line: _, ...details } = (err.details ?? {}) as { line?: number; reason?: unknown };
-    const hint = err.hint ?? (details.reason === undefined ? undefined : SPLIT_HINT);
-    throw new BackeError(err.code, err.message.replace(/^Zeile \d+: /, ''), {
+    const { line, ...details } = (err.details ?? {}) as { line?: number; reason?: unknown };
+    const hint = err.hint ?? (details.reason === undefined ? undefined : m.splitChangeHint);
+    // Das Präfix (`<Wort> <n>: `) setzt die Ops-Schicht in der Sprache der Locale; `details.line` nennt n.
+    const message =
+      line === undefined ? err.message : err.message.replace(new RegExp(`^\\S+ ${line}: `), '');
+    throw new BackeError(err.code, message, {
       details,
       ...(hint === undefined ? {} : { hint }),
     });
@@ -727,7 +723,7 @@ async function chainReasons(
     const next = policyStateAfter(state, changes);
     const judge = open?.state ?? state;
     if (typeof judge.config === 'string') {
-      found.push(`nicht prüfbar: ${BACKLOG_CONFIG}: ${judge.config}`);
+      found.push(m.notCheckable(BACKLOG_CONFIG, judge.config));
     } else {
       const addsUser = changes.some(
         (c) => c.status === 'A' && classifyPath(c.path).kind === 'user',
@@ -750,7 +746,7 @@ async function chainReasons(
         quarantine.content === null
           ? { entries: [] }
           : parseJsoncAs(QuarantineSchema, utf8Text(quarantine.content) as string, QUARANTINE);
-      if (typeof parsed === 'string') found.push(`quarantine.jsonc ungültig: ${parsed}`);
+      if (typeof parsed === 'string') found.push(m.quarantineInvalid(parsed));
       else entries = parsed.entries;
     }
     if (open !== undefined) {
@@ -882,7 +878,7 @@ export async function headConfig(wc: string): Promise<BacklogConfig | undefined>
 export async function requireHeadConfig(wc: string): Promise<BacklogConfig> {
   const config = await headConfig(wc);
   if (config === undefined) {
-    throw new BackeError('validation', `${wc} ist kein Backlog: ${BACKLOG_CONFIG} fehlt in HEAD`);
+    throw new BackeError('validation', m.notABacklog(wc, BACKLOG_CONFIG));
   }
   return config;
 }
@@ -960,7 +956,7 @@ export async function executeWrite(
     const lfs = config.attachments.lfs;
     if (lfs) await setUpLfs(wc);
     if (input.kind === 'manual' && input.expectHead !== undefined && input.expectHead !== head) {
-      throw new BackeError('conflict', 'Stand hat sich seit der Prüfung geändert');
+      throw new BackeError('conflict', m.stateChangedSinceCheck);
     }
     const edits =
       input.kind === 'edits'
@@ -1005,13 +1001,9 @@ export async function executeWrite(
         : await chainReasons(wc, head, snapshot, edits?.before, steps, handle, frozen);
     if (reasons.length > 0) {
       // Vor dem Schreiben: Hand-Edits bleiben liegen, HEAD bleibt, wo er ist.
-      throw new BackeError(
-        'validation',
-        `verify würde den Commit ablehnen: ${reasons.join('; ')}`,
-        {
-          details: { reasons },
-        },
-      );
+      throw new BackeError('validation', m.verifyWouldReject(reasons.join('; ')), {
+        details: { reasons },
+      });
     }
     const allChanges = steps.flatMap((s) => s.changes);
     const renormalized = steps.flatMap((s) => s.renormalize ?? []);
@@ -1050,8 +1042,8 @@ export async function executeWrite(
     );
     if (dirty.length > 0) {
       // Erst der Weg, der nichts verwirft; `restore` löscht die Hand-Edits.
-      throw new BackeError('conflict', `Ungesicherte Änderungen an ${dirty.join(', ')}`, {
-        hint: `git -C ${wc} stash, oder git -C ${wc} restore --staged --worktree -- ${dirty.join(' ')}`,
+      throw new BackeError('conflict', m.uncommittedChanges(dirty.join(', ')), {
+        hint: m.stashOrRestore(wc, dirty.join(' ')),
       });
     }
     const author = authorOf(handle, (snapshot.users.get(handle) as StoredEntity<User>).data.name);

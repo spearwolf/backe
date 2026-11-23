@@ -8,6 +8,7 @@ import { resolveShortId } from '../core/ids.ts';
 import { isHandle } from '../core/names.ts';
 import { normalizeStateInput, type State } from '../core/state.ts';
 import { type BacklogSnapshot, loadSnapshot } from '../store/snapshot.ts';
+import { m } from './read.messages.ts';
 
 /** Arbeitskopie des Kontexts; ohne eine `not_found` mit Clone-/Add-Hinweis. */
 export function requireRoot(ctx: ResolvedContext): string {
@@ -15,9 +16,8 @@ export function requireRoot(ctx: ResolvedContext): string {
   const name = ctx.backlog.value;
   if (root === undefined) {
     const remote = ctx.userConfig.backlogs?.[name]?.remote;
-    throw new BackeError('not_found', `Keine Arbeitskopie von »${name}« vorhanden`, {
-      hint:
-        remote === undefined ? `backe backlog add ${name} <pfad>` : `backe backlog clone ${remote}`,
+    throw new BackeError('not_found', m.noWorkingCopy(name), {
+      hint: remote === undefined ? m.addBacklogHint(name) : m.cloneBacklogHint(remote),
     });
   }
   return root;
@@ -54,14 +54,14 @@ export function resolveHandle(ctx: ResolvedContext, input: string): string {
   if (input === 'me') {
     const me = ctx.user.value;
     if (me === undefined) {
-      throw new BackeError('usage', '»me« braucht eine Identität', {
-        hint: 'mit --as <handle> angeben oder eine Identität setzen',
+      throw new BackeError('usage', m.meNeedsIdentity, {
+        hint: m.identityHint,
       });
     }
     return me;
   }
   if (!isHandle(input)) {
-    throw new BackeError('validation', `Ungültiger Handle: »${input}«`);
+    throw new BackeError('validation', m.invalidHandle(input));
   }
   return input;
 }
@@ -72,10 +72,10 @@ export function normalizeStates(input: readonly string[]): State[] | 'all' {
     .flatMap((v) => v.split(','))
     .map((v) => v.trim())
     .filter((v) => v !== '');
-  if (parts.length === 0) throw new BackeError('validation', 'Kein State angegeben');
+  if (parts.length === 0) throw new BackeError('validation', m.noStateGiven);
   if (parts.includes('all')) {
     if (parts.length > 1) {
-      throw new BackeError('usage', '»all« steht allein');
+      throw new BackeError('usage', m.allStandsAlone);
     }
     return 'all';
   }

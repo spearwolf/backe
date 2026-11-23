@@ -13,6 +13,7 @@ import type { Notice } from '../ops/notice.ts';
 import { settledDependencyNotice, unblockableNotice } from '../ops/notice.ts';
 import { compareIssues } from '../ops/order.ts';
 import { listComments, type StoredEntity } from '../store/snapshot.ts';
+import { m } from './issue-show.messages.ts';
 import { openSnapshot, resolveIssueRef } from './read.ts';
 
 export type IssueRefView = { id: string; state: State; title: string; assignee?: string };
@@ -67,8 +68,8 @@ export async function showIssue(
 ): Promise<IssueDetail> {
   const want = opts.comments ?? 0;
   if (want !== 'all' && (!Number.isInteger(want) || want < 0)) {
-    throw new BackeError('validation', `Ungültige Kommentaranzahl: »${want}«`, {
-      hint: 'eine Zahl ab 0 oder all angeben',
+    throw new BackeError('validation', m.invalidCommentCount(want), {
+      hint: m.commentCountExpects,
     });
   }
   const { root, snapshot: s } = await openSnapshot(ctx);

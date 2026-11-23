@@ -11,6 +11,7 @@ import { ATTACHMENT_NAME_RE } from '../core/names.ts';
 import { attachmentTooLarge } from '../ops/comment-ops.ts';
 import { exists, fsFailure, isMissing } from '../store/files.ts';
 import { attachmentsDir, BACKLOG_CONFIG } from '../store/layout.ts';
+import { m } from './attachments.messages.ts';
 import { type WriteOutcome, writeOp } from './outcome.ts';
 import { openSnapshot, resolveIssueRef } from './read.ts';
 import { headConfig, type WriteDeps } from './write.ts';
@@ -34,8 +35,8 @@ export function attachmentFileName(name: string, source: AttachmentSource): stri
     file = `${name}${extname(source.fileName).toLowerCase()}`;
   }
   if (source.kind !== 'url' && !ATTACHMENT_NAME_RE.test(file)) {
-    throw new BackeError('validation', `Ungültiger Dateiname für den Anhang: »${file}«`, {
-      hint: '--name <n>.<ext> angeben; erlaubt sind [a-z0-9][a-z0-9._-]{0,63}',
+    throw new BackeError('validation', m.invalidAttachmentName(file), {
+      hint: m.attachmentNameHint,
     });
   }
   return file;
@@ -79,10 +80,10 @@ function within(root: string, path: string): boolean {
 
 /** Fehler beim Zugriff auf die Quelldatei: fehlt → `not_found`, nicht lesbar → `validation`. */
 function fileError(raw: string, path: string, error: unknown): BackeError {
-  if (isMissing(error)) return new BackeError('not_found', `Datei »${raw}« nicht gefunden`);
+  if (isMissing(error)) return new BackeError('not_found', m.fileNotFound(raw));
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
   if (code === 'EACCES' || code === 'EPERM' || code === 'ELOOP') {
-    return new BackeError('validation', `Datei »${raw}« lässt sich nicht lesen (${code})`, {
+    return new BackeError('validation', m.fileUnreadable(raw, code), {
       details: { path },
     });
   }
@@ -115,8 +116,8 @@ async function loadFile(
     throw fileError(raw, path, error);
   }
   if (opts.confine && !within(await physicalPath(opts.base), real)) {
-    throw new BackeError('validation', `Datei »${raw}« liegt außerhalb des Arbeitsverzeichnisses`, {
-      hint: 'Inhalt per text oder json übergeben',
+    throw new BackeError('validation', m.fileOutsideWorkdir(raw), {
+      hint: m.passTextOrJson,
     });
   }
   await deps.afterConfine?.(real);
@@ -126,7 +127,7 @@ async function loadFile(
   } catch (error) {
     throw fileError(raw, path, error);
   }
-  if (!checked.isFile()) throw new BackeError('validation', `${path} ist keine Datei`);
+  if (!checked.isFile()) throw new BackeError('validation', m.notAFile(path));
   const fileName = basename(path);
   await deps.beforeOpen?.(real);
   let handle: FileHandle;
@@ -138,7 +139,7 @@ async function loadFile(
   try {
     const opened = await handle.stat();
     const swapped = () =>
-      new BackeError('validation', `Datei »${raw}« wurde während des Lesens ausgetauscht`, {
+      new BackeError('validation', m.fileSwapped(raw), {
         details: { path },
       });
     if (opened.dev !== checked.dev || opened.ino !== checked.ino) throw swapped();
@@ -186,7 +187,7 @@ export async function loadAttachmentSource(
   if (input.text !== undefined) {
     return { kind: 'file', fileName: input.name, content: new TextEncoder().encode(input.text) };
   }
-  if (input.path === undefined) throw new BackeError('usage', 'Keine Quelle für den Anhang');
+  if (input.path === undefined) throw new BackeError('usage', m.noAttachmentSource);
   return loadFile(input.name, input.path, opts, deps);
 }
 
@@ -212,7 +213,7 @@ function jsonContent(text: string): Uint8Array<ArrayBuffer> {
   try {
     parsed = JSON.parse(text);
   } catch (e) {
-    throw new BackeError('validation', `Ungültiges JSON: ${(e as Error).message}`);
+    throw new BackeError('validation', m.invalidJson((e as Error).message));
   }
   return new TextEncoder().encode(`${JSON.stringify(parsed, null, 2)}\n`);
 }
@@ -299,17 +300,17 @@ export async function getAttachment(
   const id = resolveIssueRef(s, ref);
   const entry = s.issues.get(id)?.data.attachments?.find((a) => a.name === name);
   if (entry === undefined) {
-    throw new BackeError('not_found', `${id}: Anhang »${name}« nicht gefunden`);
+    throw new BackeError('not_found', m.attachmentNotFound(id, name));
   }
   if (entry.url !== undefined) return { name, url: entry.url };
   const path = join(root, attachmentsDir(id), entry.file);
   const size = await sizeOf(path);
   if (size === undefined) {
-    throw new BackeError('not_found', `${path} existiert nicht`);
+    throw new BackeError('not_found', m.pathMissing(path));
   }
   // Ein Clone ohne `git lfs pull` hat statt der Bytes den Pointer im Arbeitsbaum.
   if ((await headConfig(root))?.attachments.lfs === true && (await isLfsPointer(path))) {
-    throw new BackeError('sync', `Anhang »${name}« ist nicht geladen (LFS)`, {
+    throw new BackeError('sync', m.attachmentNotLoaded(name), {
       hint: `git -C ${root} lfs pull`,
     });
   }

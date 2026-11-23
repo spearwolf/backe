@@ -10,6 +10,7 @@ import { readBlobs } from '../git/history.ts';
 import type { Operation } from '../ops/operation.ts';
 import { rebaseOp, rewriteCollisions } from '../ops/replay.ts';
 import { listComments, type StoredEntity } from '../store/snapshot.ts';
+import { m } from './resolve.messages.ts';
 import { type ConflictEntry, listConflicts, removeConflict } from './sync-state.ts';
 import { executeWrite, type WriteDeps } from './write.ts';
 
@@ -37,11 +38,10 @@ async function entryOps(wc: string, entry: ConflictEntry): Promise<Operation[]> 
       const spec = u.sources?.[i] ?? '';
       const blob = blobs.get(spec);
       if (blob == null) {
-        throw new BackeError(
-          'validation',
-          `Inhalt des Anhangs »${op.file}« an ${op.id} ist nicht mehr vorhanden`,
-          { hint: `backe sync resolve ${entry.id} --drop`, details: { source: spec } },
-        );
+        throw new BackeError('validation', m.attachmentContentGone(op.file, op.id), {
+          hint: `backe sync resolve ${entry.id} --drop`,
+          details: { source: spec },
+        });
       }
       return { ...op, content: new Uint8Array(blob) };
     }),
@@ -75,7 +75,7 @@ export async function resolveConflict(
 ): Promise<{ commit: string | undefined; ops: Operation[] }> {
   const { workingCopy: wc } = requireWriter(ctx);
   const entry = (await listConflicts(wc)).find((e) => e.id === id);
-  if (entry === undefined) throw new BackeError('not_found', `Konflikt ${id} nicht gefunden`);
+  if (entry === undefined) throw new BackeError('not_found', m.conflictNotFound(id));
   if (action === 'drop') {
     await removeConflict(wc, id);
     return { commit: undefined, ops: entry.units.flatMap((u) => u.ops) };

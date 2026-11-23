@@ -12,6 +12,7 @@ import { matchesContext } from '../ops/next.ts';
 import { compareIssues } from '../ops/order.ts';
 import { checkPropFilter, parsePropFilter, propMatches } from '../ops/props.ts';
 import type { BacklogSnapshot, Problem } from '../store/snapshot.ts';
+import { m } from './issue-list.messages.ts';
 import {
   effectiveFilter,
   normalizeStates,
@@ -53,8 +54,8 @@ export type IssueListResult = {
 /** `--sort rank|created` für `issue list` und `sprint show`; sonst `validation`. */
 export function listSort(value: string | undefined): IssueListQuery['sort'] {
   if (value === undefined || value === 'rank' || value === 'created') return value;
-  throw new BackeError('validation', `Ungültige Sortierung: »${value}«`, {
-    hint: 'rank oder created',
+  throw new BackeError('validation', m.invalidSort(value), {
+    hint: m.sortChoices,
   });
 }
 
@@ -121,11 +122,11 @@ export async function listIssues(
   q: IssueListQuery,
 ): Promise<IssueListResult> {
   if (q.parent !== undefined && q.topLevel === true) {
-    throw new BackeError('usage', '--parent und --top-level schließen sich aus');
+    throw new BackeError('usage', m.parentAndTopLevelExclusive);
   }
   if (q.limit !== undefined && !(Number.isInteger(q.limit) && q.limit >= 1)) {
-    throw new BackeError('validation', `Ungültiges Limit: »${q.limit}«`, {
-      hint: 'erwartet eine ganze Zahl ab 1',
+    throw new BackeError('validation', m.invalidLimit(q.limit), {
+      hint: m.limitExpects,
     });
   }
   const states = q.states === undefined ? undefined : normalizeStates(q.states);
