@@ -109,10 +109,9 @@ Claiming is synchronous with the remote: exactly one client wins each issue.
 
 ### Language
 
-Output is English by default and German when the locale asks for it: the first
-non-empty value of `BACKE_LANG`, `LC_ALL`, `LC_MESSAGES` and `LANG` that starts
-with `de` switches help, errors, hints and warnings to German
-(`BACKE_LANG=en` forces English). JSON keys, error codes and exit codes are the
+Output is English by default. It is German when the first non-empty of
+`BACKE_LANG`, `LC_ALL`, `LC_MESSAGES`, `LANG` starts with `de`; `BACKE_LANG=en`
+forces English. The language covers help, errors, hints and warnings. JSON keys, error codes and exit codes are the
 same in both languages, and the MCP server always speaks English.
 
 ## For agents: MCP

@@ -10,6 +10,8 @@ export const m = catalog({
     killedBySignal: (command: string, signal: string) =>
       `${command} terminated by signal (${signal})`,
     unknownSignal: 'unknown',
+    failed: (command: string, exitCode: number, firstLine: string) =>
+      `${command} failed (exit ${exitCode}): ${firstLine}`,
   },
   de: {
     startFailed: (bin: string, cause: string) => `${bin} konnte nicht gestartet werden: ${cause}`,
@@ -22,5 +24,7 @@ export const m = catalog({
     killedBySignal: (command: string, signal: string) =>
       `${command} durch Signal beendet (${signal})`,
     unknownSignal: 'unbekannt',
+    failed: (command: string, exitCode: number, firstLine: string) =>
+      `${command} fehlgeschlagen (Exit ${exitCode}): ${firstLine}`,
   },
 });

@@ -38,10 +38,7 @@ export function generateIssueId(
   for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
     const bytes = source(length);
     if (bytes.length < length) {
-      throw new BackeError(
-        'unexpected',
-        `Zufallsquelle lieferte ${bytes.length} statt ${length} Bytes`,
-      );
+      throw new BackeError('unexpected', m.shortRandom(bytes.length, length));
     }
     let rand = '';
     for (let i = 0; i < length; i++) {

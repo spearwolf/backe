@@ -4,7 +4,7 @@ export const m = catalog({
   en: {
     invalidRepoName: (name: string) => `Invalid repo name: '${name}'`,
     invalidRepoNameHint:
-      'Allowed are a-z, 0-9, ".", "_" and "-", starting with a letter or digit (max. 64 characters).',
+      "Use a-z, 0-9, '.', '_' and '-', starting with a letter or digit (max. 64 characters)",
     invalidRef: (ref: string) => `Invalid ref '${ref}'`,
     invalidRefHint:
       'Form: <repo>@<ref>, e.g. webapp@main. The ref follows git check-ref-format: not empty, no leading "-", no whitespace or control characters, and none of ~ ^ : ? * [ \\ nor ".." and "@{".',

@@ -127,13 +127,13 @@ export function issueDetailText(d: IssueDetail, color: boolean): string {
     list === undefined || list.length === 0 ? undefined : list.join(', ');
 
   let state = stateText(i.state, color, false);
-  if (i.paused_from !== undefined) state += ` (aus ${safeText(i.paused_from)})`;
+  if (i.paused_from !== undefined) state += ` ${m.pausedFrom(safeText(i.paused_from))}`;
   if (i.blocked_by !== undefined && i.blocked_by.length > 0) {
     const blockers = i.blocked_by.map((id) => {
       const ref = d.blockedBy.find((b) => b.id === id);
       return ref === undefined ? safeText(id) : refWithState(ref, color);
     });
-    state += `, blockiert von ${blockers.join(', ')}`;
+    state += `, ${m.blockedBy(blockers.join(', '))}`;
   }
   field('state', state);
   if (d.lastReason !== undefined) {

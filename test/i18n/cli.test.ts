@@ -1,7 +1,9 @@
 import type { CliIo } from '../../src/cli/io.ts';
 import { checkNodeVersion } from '../../src/cli/node-version.ts';
+import { issueDetailText } from '../../src/cli/render-issue.ts';
 import { run } from '../../src/cli/run.ts';
 import { setLocale } from '../../src/i18n/locale.ts';
+import type { IssueDetail } from '../../src/services/issue-show.ts';
 
 type Result = { code: number; stdout: string; stderr: string };
 
@@ -87,5 +89,33 @@ describe('CLI core in German', () => {
     expect(help.stdout).toContain('Optionen:');
     const root = await backe('--help');
     expect(root.stdout).toContain('Befehle:');
+  });
+});
+
+describe('issue detail in English', () => {
+  beforeAll(() => setLocale('en'));
+  afterAll(() => setLocale('de'));
+
+  test('a blocked, paused issue names its origin and its blockers', () => {
+    const detail = {
+      issue: {
+        id: 'bk-aaaaa',
+        title: 'Waiting',
+        state: 'blocked',
+        paused_from: 'todo',
+        blocked_by: ['bk-bbbbb'],
+      },
+      body: '',
+      parents: [],
+      blockedBy: [{ id: 'bk-bbbbb', state: 'in_progress', title: 'Other' }],
+      dependsOn: [],
+      dependents: [],
+      children: [],
+      commentsCount: 0,
+      comments: [],
+    } as unknown as IssueDetail;
+    expect(issueDetailText(detail, false)).toContain(
+      'state       blocked (from todo), blocked by bk-bbbbb [in_progress]\n',
+    );
   });
 });

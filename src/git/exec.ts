@@ -276,13 +276,9 @@ function run(bin: Bin, args: readonly string[], opts: GitOptions): Promise<GitBy
       if (exitCode !== 0 && !(opts.okExitCodes ?? []).includes(exitCode)) {
         const firstLine = stderr.split('\n')[0] ?? '';
         reject(
-          new BackeError(
-            'unexpected',
-            `${label(bin, args)} fehlgeschlagen (Exit ${exitCode}): ${firstLine}`,
-            {
-              details: { args, exitCode, stderr },
-            },
-          ),
+          new BackeError('unexpected', m.failed(label(bin, args), exitCode, firstLine), {
+            details: { args, exitCode, stderr },
+          }),
         );
         return;
       }

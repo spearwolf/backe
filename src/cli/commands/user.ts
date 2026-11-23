@@ -48,7 +48,7 @@ export function userCommands(program: Command, rt: Runtime): void {
     );
 
   subcommand(user, 'create-agent <handle>', m.createAgentDescription)
-    .option('--name <name>', 'Anzeigename (Default: Handle)')
+    .option('--name <name>', m.nameOption)
     .action(
       action(
         rt,

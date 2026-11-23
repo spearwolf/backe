@@ -31,6 +31,11 @@ test('without a locale, help and errors are English', async () => {
   expect(missing.code).toBe(3);
   expect(missing.stderr).toMatch(/^Error: /);
   expect(findGermanLiterals('stderr', asLiterals(missing.stderr))).toEqual([]);
+
+  const format = await run(['ls', '--format', 'xml'], { BACKE_LANG: '' });
+  expect(format.stderr).toBe(
+    "Error: Unknown output format 'xml' (source: --format)\nHint: text, json or md\n",
+  );
 });
 
 test('LANG=de_DE.UTF-8 switches help and errors to German', async () => {

@@ -20,7 +20,7 @@ export const m = catalog({
     noBacklogGiven: 'No backlog given',
     noBacklogHint:
       "--backlog <name>, BACKE_BACKLOG, 'backe backlog use <name>' or 'backlog' in a .backlog.jsonc",
-    noUserResolved: 'No user resolved, writing needs an identity',
+    noUserResolved: 'No user resolved; writing needs an identity',
     noUserHint: (file: string) => `--as <handle>, BACKE_USER or 'user' in ${file}`,
     workingCopyOwnedByOther: (workingCopy: string, owner: string, handle: string, own: string) =>
       `The working copy ${workingCopy} belongs to '${owner}'; the working copy of '${handle}' is ${own}`,

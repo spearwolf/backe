@@ -43,7 +43,7 @@ describe('core', () => {
     const err = thrown(() => parseRepoRef('Bad Name'));
     expect(err.message).toBe("Invalid repo name: 'Bad Name'");
     expect(err.hint).toBe(
-      'Allowed are a-z, 0-9, ".", "_" and "-", starting with a letter or digit (max. 64 characters).',
+      "Use a-z, 0-9, '.', '_' and '-', starting with a letter or digit (max. 64 characters)",
     );
   });
 

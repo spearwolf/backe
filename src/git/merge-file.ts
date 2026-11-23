@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { BackeError } from '../core/errors.ts';
 import { gitBytes } from './exec.ts';
 import { stateDir } from './local-state.ts';
+import { m } from './merge-file.messages.ts';
 
 /** Höchster Exit-Code von `git merge-file`, der noch eine Konfliktzahl meint (mehr Konflikte kappt git). */
 const MAX_CONFLICTS = 127;
@@ -59,7 +60,7 @@ export async function mergeText(
     return { clean: result.exitCode === 0, content: result.stdout };
   } catch (error) {
     if (error instanceof BackeError) throw error;
-    throw new BackeError('unexpected', 'git merge-file fehlgeschlagen', {
+    throw new BackeError('unexpected', m.failed, {
       details: { cause: String(error) },
     });
   } finally {

@@ -87,7 +87,7 @@ export async function manualChanges(
       base: base ?? Buffer.alloc(0),
       ours,
       theirs,
-      labels: ['remote', 'basis', 'lokal'],
+      labels: [m.labelRemote, m.labelBase, m.labelLocal],
     });
     if (!merged.clean) conflicts.push({ path, base, ours, theirs, merged: merged.content });
     else if (!merged.content.equals(ours)) changes.push({ path, content: merged.content });

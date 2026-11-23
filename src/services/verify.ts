@@ -117,7 +117,7 @@ function actorReasons(actors: readonly string[], sig: Signature | undefined): st
 function opNotice(sha: string, ops: readonly string[]): string[] {
   if (ops.length === 0) return [m.opMissing(shortSha(sha))];
   try {
-    if (ops.length > 1) throw new Error('mehrfach');
+    if (ops.length > 1) throw new Error('multiple op trailers');
     parseOpTrailer(ops[0] as string);
     return [];
   } catch {

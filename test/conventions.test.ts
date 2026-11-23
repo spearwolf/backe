@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { findGermanLiterals } from './helpers/german-literals.ts';
+import { CATALOG_TEXTS } from '../src/i18n/catalog.ts';
+import { findGermanLiterals, germanVocabulary } from './helpers/german-literals.ts';
 
 const SRC = join(import.meta.dirname, '..', 'src');
 /**
@@ -134,11 +135,40 @@ test('flag names are not quoted', async () => {
   expect(hits).toEqual([]);
 });
 
-/** Dateien mit gewolltem deutschen Text außerhalb eines Katalogs, mit dem Grund. */
-const GERMAN_ALLOWED: Record<string, string> = {
-  'ops/delete-op.ts':
-    'der Text des Transition-Kommentars ist Backlog-Inhalt, kein Ausgabetext: er steht in der Datei und muss beim Replay auf jedem Rechner gleich entstehen, egal in welcher Sprache der Akteur arbeitet',
-};
+/**
+ * Gewollter deutscher Text außerhalb eines Katalogs: ein Treffer ist erlaubt, wenn seine Zeile
+ * `text` enthält. Je Eintrag mit Grund.
+ */
+const GERMAN_ALLOWED: { file: string; text: string; reason: string }[] = [
+  {
+    file: 'ops/delete-op.ts',
+    text: 'Blocker ',
+    reason:
+      'Transition-Kommentar: Backlog-Inhalt, muss beim Replay auf jedem Rechner gleich entstehen',
+  },
+  {
+    file: 'services/write.ts',
+    text: 'manual: ',
+    reason: 'Commit-Subject: Backlog-Inhalt, muss beim Replay auf jedem Rechner gleich entstehen',
+  },
+  {
+    file: 'services/resign.ts',
+    text: 'manual: ',
+    reason: 'Commit-Subject: Backlog-Inhalt, muss beim Replay auf jedem Rechner gleich entstehen',
+  },
+];
+
+/** Alle Kataloge unter `src`, geladen aus ihren `*.messages.ts`. */
+async function loadCatalogs(): Promise<Parameters<typeof germanVocabulary>[0]> {
+  const catalogs: Parameters<typeof germanVocabulary>[0][number][] = [];
+  for (const file of await sources(SRC)) {
+    if (!file.endsWith('.messages.ts')) continue;
+    const mod = (await import(file)) as { m?: Record<symbol, never> };
+    const texts = mod.m?.[CATALOG_TEXTS as symbol];
+    if (texts !== undefined) catalogs.push(texts);
+  }
+  return catalogs;
+}
 
 test('the German-literal check ignores comments and catches literals', () => {
   const text = [
@@ -157,12 +187,30 @@ test('the German-literal check ignores comments and catches literals', () => {
   ]);
 });
 
+test('the German vocabulary derives from the catalogs', () => {
+  const vocabulary = germanVocabulary([
+    {
+      en: { a: 'Not found', b: (n: string) => `Missing ${n}` },
+      de: { a: 'Nicht gefunden', b: (n: string) => `Fehlt ${n}`, c: 'gefunden' },
+    },
+  ]);
+  expect([...vocabulary].sort()).toEqual(['fehlt', 'gefunden', 'nicht']);
+  expect(findGermanLiterals('x.ts', "throw new Error('Wurde gefunden');", vocabulary)).toHaveLength(
+    1,
+  );
+  expect(findGermanLiterals('x.ts', "throw new Error('Found it');", vocabulary)).toEqual([]);
+});
+
 test('user-facing literals live in *.messages.ts', async () => {
+  const vocabulary = germanVocabulary(await loadCatalogs());
   const hits: string[] = [];
   for (const file of await sources(SRC)) {
     const rel = file.slice(SRC.length + 1);
-    if (rel.endsWith('.messages.ts') || rel.startsWith('i18n/') || rel in GERMAN_ALLOWED) continue;
-    hits.push(...findGermanLiterals(rel, await readFile(file, 'utf8')));
+    if (rel.endsWith('.messages.ts') || rel.startsWith('i18n/')) continue;
+    const allowed = GERMAN_ALLOWED.filter((a) => a.file === rel);
+    for (const hit of findGermanLiterals(rel, await readFile(file, 'utf8'), vocabulary)) {
+      if (!allowed.some((a) => hit.includes(a.text))) hits.push(hit);
+    }
   }
   expect(hits).toEqual([]);
 });

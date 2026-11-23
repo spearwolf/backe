@@ -14,7 +14,7 @@ export const m = catalog({
       `Backlog format ${version} is newer than this backe (${supported})`,
     updateBackeHint: 'update backe; reading still works.',
     splitChangeHint: 'split the change into two backe commit runs',
-    notCheckable: (config: string, reason: string) => `not checkable: ${config}: ${reason}`,
+    notCheckable: (config: string, reason: string) => `not verifiable: ${config}: ${reason}`,
     quarantineInvalid: (reason: string) => `quarantine.jsonc invalid: ${reason}`,
     notABacklog: (wc: string, config: string) =>
       `${wc} is not a backlog: ${config} is missing in HEAD`,

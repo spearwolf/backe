@@ -353,7 +353,8 @@ async function emitStatusLine(env: CommandEnv, trace: Trace): Promise<void> {
     const ctx = await trace.ctx;
     if (ctx.backlog.workingCopy === undefined) return;
     const line = statusLine(await syncStatus(ctx));
-    if (line !== undefined) env.io.stderr(lines([safeText(line), 'Hinweis: backe sync status']));
+    if (line !== undefined)
+      env.io.stderr(lines([safeText(line)]) + renderHints(['backe sync status']));
   } catch {
     // Ohne Arbeitskopie oder lesbaren Zustand gibt es keine Kopfzeile.
   }
