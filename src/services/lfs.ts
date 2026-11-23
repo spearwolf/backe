@@ -7,6 +7,7 @@ import type { Env } from '../context/paths.ts';
 import { BackeError } from '../core/errors.ts';
 import { git, transportEnv } from '../git/exec.ts';
 import { firstStderrLine } from './init.ts';
+import { m } from './lfs.messages.ts';
 
 /** `git lfs version` gelingt. */
 export async function lfsAvailable(wc: string): Promise<boolean> {
@@ -19,7 +20,7 @@ export async function lfsAvailable(wc: string): Promise<boolean> {
 /** Wie `lfsAvailable`, aber ohne git-lfs ein `validation`-Fehler. */
 export async function requireLfs(wc: string): Promise<void> {
   if (await lfsAvailable(wc)) return;
-  throw new BackeError('validation', 'attachments.lfs verlangt git-lfs', { hint: 'backe doctor' });
+  throw new BackeError('validation', m.lfsRequired, { hint: 'backe doctor' });
 }
 
 /**
@@ -78,6 +79,6 @@ export async function lfsPull(
     });
     return [];
   } catch (err) {
-    return [`git lfs pull fehlgeschlagen: ${firstStderrLine(err)}`];
+    return [m.lfsPullFailed(firstStderrLine(err))];
   }
 }
