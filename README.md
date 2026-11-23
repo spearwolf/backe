@@ -107,6 +107,14 @@ backe next --sprint 2026-w47 --claim
 
 Claiming is synchronous with the remote: exactly one client wins each issue.
 
+### Language
+
+Output is English by default and German when the locale asks for it: the first
+non-empty value of `BACKE_LANG`, `LC_ALL`, `LC_MESSAGES` and `LANG` that starts
+with `de` switches help, errors, hints and warnings to German
+(`BACKE_LANG=en` forces English). JSON keys, error codes and exit codes are the
+same in both languages, and the MCP server always speaks English.
+
 ## For agents: MCP
 
 `backe mcp` starts an MCP server over stdio. It is a thin adapter over the same
