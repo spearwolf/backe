@@ -15,6 +15,7 @@ import {
 } from '../options.ts';
 import { bodyBlock, columns, headerLine, json, lines, paint, safeText } from '../output.ts';
 import { issueLines } from '../render-issue.ts';
+import { m } from './sprint.messages.ts';
 
 type CreateOpts = {
   title?: string;
@@ -32,8 +33,6 @@ function range(start: string | undefined, end: string | undefined): string {
   return `${start ?? ''}–${end ?? ''}`;
 }
 
-const CLOSED = '(geschlossen)';
-
 type SprintShow = Awaited<ReturnType<typeof showSprint>>;
 
 /** Text von `sprint show`: Kopf, Filterzeile, Beschreibung, dann die Issues je State. */
@@ -44,7 +43,7 @@ function renderSprintShow(slug: string, r: SprintShow, color: boolean): string {
     safeText(slug),
     paint(color, 'bold', title),
     ...(when === '-' ? [] : [safeText(when)]),
-    ...(closed === true ? [CLOSED] : []),
+    ...(closed === true ? [m.closed] : []),
   ].join('  ');
   const header = headerLine(r.header);
   // Eine Spaltenbreite über alle Gruppen, damit die Gruppen untereinander fluchten.
@@ -62,17 +61,14 @@ function renderSprintShow(slug: string, r: SprintShow, color: boolean): string {
 }
 
 export function sprintCommands(program: Command, rt: Runtime): void {
-  const sprint = subcommand(program, 'sprint', 'Sprints anlegen, listen, zeigen und abschließen');
+  const sprint = subcommand(program, 'sprint', m.description);
 
-  subcommand(sprint, 'create <slug>', 'Sprint anlegen')
-    .option('-t, --title <titel>', 'Titel (Default: Slug)')
-    .option('--start <datum>', 'Beginn (JJJJ-MM-TT)')
-    .option('--end <datum>', 'Ende (JJJJ-MM-TT)')
-    .option(
-      '-d, --description <md|->',
-      "Sprint-Ziel; »-« liest stdin, das nicht leer sein darf (ohne Text: -d '')",
-    )
-    .option('-F, --file <pfad>', 'Sprint-Ziel aus Datei (darf leer sein)')
+  subcommand(sprint, 'create <slug>', m.createDescription)
+    .option(m.titleFlags, m.titleOption)
+    .option(m.startFlags, m.startOption)
+    .option(m.endFlags, m.endOption)
+    .option('-d, --description <md|->', m.descriptionOption)
+    .option(m.fileFlags, m.fileOption)
     .action(
       action(
         rt,
@@ -91,9 +87,7 @@ export function sprintCommands(program: Command, rt: Runtime): void {
       ),
     );
 
-  syncOption(
-    subcommand(sprint, 'list', 'Sprints, offene zuerst, mit der Zahl offener Issues'),
-  ).action(
+  syncOption(subcommand(sprint, 'list', m.listDescription)).action(
     action(
       rt,
       async (env) => {
@@ -105,7 +99,7 @@ export function sprintCommands(program: Command, rt: Runtime): void {
                 sp.slug,
                 range(sp.start, sp.end),
                 String(sp.open),
-                sp.closed ? `${sp.title}  ${CLOSED}` : sp.title,
+                sp.closed ? `${sp.title}  ${m.closed}` : sp.title,
               ]),
             ),
           ),
@@ -115,15 +109,11 @@ export function sprintCommands(program: Command, rt: Runtime): void {
     ),
   );
 
-  syncOption(subcommand(sprint, 'show <slug>', 'Issues eines Sprints, gruppiert nach State'))
-    .option(
-      '-p, --project <pfad>',
-      'nur Issues dieses Projekts samt Unterprojekten (wiederholbar)',
-      collect,
-    )
-    .option('--repo <name>', 'nur Issues mit diesem Repo (wiederholbar)', collect)
-    .option('-A, --all', 'Kontextfilter (Projekt, Repo) ignorieren')
-    .option('--sort <rank|created>', 'Sortierung in den Gruppen (Default rank)')
+  syncOption(subcommand(sprint, 'show <slug>', m.showDescription))
+    .option(m.projectFlags, m.projectOption, collect)
+    .option('--repo <name>', m.repoOption, collect)
+    .option('-A, --all', m.allOption)
+    .option('--sort <rank|created>', m.sortOption)
     .action(
       action(
         rt,
@@ -145,8 +135,8 @@ export function sprintCommands(program: Command, rt: Runtime): void {
       ),
     );
 
-  subcommand(sprint, 'close <slug>', 'Sprint abschließen; offene Issues bleiben zugeordnet')
-    .option('--carry-over <slug>', 'offene Issues zusätzlich diesem Sprint zuordnen')
+  subcommand(sprint, 'close <slug>', m.closeDescription)
+    .option('--carry-over <slug>', m.carryOverOption)
     .action(
       action(
         rt,

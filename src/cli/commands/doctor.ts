@@ -3,6 +3,7 @@ import type { Command } from 'commander';
 import { type DoctorCheck, doctorFailure, runDoctor } from '../../services/doctor.ts';
 import { action, emit, type Runtime, subcommand } from '../options.ts';
 import { lines, safeText } from '../output.ts';
+import { m } from './doctor.messages.ts';
 
 /** Je Prüfung `<status>  <id>  <detail>`, bei `warn`/`fail` der Hint direkt darunter. */
 function checkLines(checks: readonly DoctorCheck[]): string[] {
@@ -13,8 +14,8 @@ function checkLines(checks: readonly DoctorCheck[]): string[] {
 }
 
 export function doctorCommand(program: Command, rt: Runtime): void {
-  subcommand(program, 'doctor', 'Umgebung, Arbeitskopien und Backlog prüfen')
-    .option('--fix', 'Temp-Reste entfernen')
+  subcommand(program, 'doctor', m.description)
+    .option('--fix', m.fixOption)
     .action(
       action(
         rt,

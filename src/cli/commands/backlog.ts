@@ -12,6 +12,7 @@ import {
 } from '../../services/working-copy.ts';
 import { absPath, action, type CommandEnv, emit, type Runtime, subcommand } from '../options.ts';
 import { columns, lines, paint, renderHints, safeText } from '../output.ts';
+import { m } from './backlog.messages.ts';
 
 /** Lokale Pfade (`./…`, `../…`, `~/…`) werden wie bei `add` expandiert; URLs bleiben, wie sie sind. */
 const PATH_LIKE = /^(?:\.\.?(?:\/|$)|~(?:\/|$))/;
@@ -22,26 +23,24 @@ function hints(env: CommandEnv, notices: readonly string[]): void {
 }
 
 function workingCopyRow(wc: WorkingCopyInfo): string[] {
-  const kind = wc.managed ? 'verwaltet' : 'gebunden';
-  if (!wc.exists) return [wc.handle, wc.path, kind, 'fehlt'];
+  const kind = wc.managed ? m.kindManaged : m.kindBound;
+  if (!wc.exists) return [wc.handle, wc.path, kind, m.missing];
   const parts = [
-    `Identität ${wc.identity ?? '-'}`,
-    `Anker ${wc.anchor === undefined ? '-' : shortSha(wc.anchor)}`,
+    m.identity(wc.identity ?? '-'),
+    m.anchor(wc.anchor === undefined ? '-' : shortSha(wc.anchor)),
   ];
   return [wc.handle, wc.path, kind, parts.join(', ')];
 }
 
 export function backlogCommands(program: Command, rt: Runtime): void {
-  const backlog = subcommand(program, 'backlog', 'registrierte Backlogs verwalten');
+  const backlog = subcommand(program, 'backlog', m.description);
 
-  subcommand(backlog, 'list', 'registrierte Backlogs, der aktuelle mit *').action(
+  subcommand(backlog, 'list', m.listDescription).action(
     action(rt, async (env) => {
       const entries = listBacklogs(env.userConfig);
       if (env.format === 'json') return emit(env, entries, () => '');
       if (entries.length === 0) {
-        env.io.stderr(
-          renderHints(['Noch kein Backlog registriert: backe init oder backe backlog clone <url>']),
-        );
+        env.io.stderr(renderHints([m.noBacklogYet]));
         return;
       }
       // `* ` vor dem aktuellen, zwei Leerzeichen vor den anderen; dann Name und Remote.
@@ -52,15 +51,15 @@ export function backlogCommands(program: Command, rt: Runtime): void {
     }),
   );
 
-  subcommand(backlog, 'use <name>', 'aktuellen Backlog setzen').action(
+  subcommand(backlog, 'use <name>', m.useDescription).action(
     action(rt, async (env, name: string) => {
       await useBacklog(env.homes, name);
-      emit(env, { current: name }, () => safeText(`aktuell: ${name}\n`));
+      emit(env, { current: name }, () => safeText(`${m.current(name)}\n`));
     }),
   );
 
-  subcommand(backlog, 'clone <url>', 'Backlog registrieren und die eigene Arbeitskopie klonen')
-    .option('--name <name>', 'erwarteter Name des Backlogs')
+  subcommand(backlog, 'clone <url>', m.cloneDescription)
+    .option('--name <name>', m.nameOption)
     .action(
       action(rt, async (env, url: string, opts: { name?: string }) => {
         const r = await cloneBacklog({
@@ -75,7 +74,7 @@ export function backlogCommands(program: Command, rt: Runtime): void {
       }),
     );
 
-  subcommand(backlog, 'add <name> <pfad>', 'vorhandenen Clone an eine Identität binden').action(
+  subcommand(backlog, m.addCommand, m.addDescription).action(
     action(rt, async (env, name: string, path: string) => {
       const r = await addBacklog({
         homes: env.homes,
@@ -89,13 +88,13 @@ export function backlogCommands(program: Command, rt: Runtime): void {
     }),
   );
 
-  subcommand(backlog, 'remove <name>', 'Backlog deregistrieren')
-    .option('--purge', 'verwaltete Clones löschen (nicht ohne Remote oder mit ungepushten Commits)')
-    .option('--force', 'mit --purge auch Clones ohne Remote oder mit ungepushten Commits löschen')
+  subcommand(backlog, 'remove <name>', m.removeDescription)
+    .option('--purge', m.purgeOption)
+    .option('--force', m.forceOption)
     .action(
       action(rt, async (env, name: string, opts: { purge?: boolean; force?: boolean }) => {
         if (opts.force === true && opts.purge !== true) {
-          throw new BackeError('usage', '--force gehört zu --purge');
+          throw new BackeError('usage', m.forceNeedsPurge);
         }
         const { purged } = await removeBacklog({
           homes: env.homes,
@@ -104,18 +103,12 @@ export function backlogCommands(program: Command, rt: Runtime): void {
           force: opts.force === true,
         });
         emit(env, { removed: name, purged }, () =>
-          safeText(
-            lines([`entfernt: ${name}`, ...(purged === undefined ? [] : [`gelöscht: ${purged}`])]),
-          ),
+          safeText(lines([m.removed(name), ...(purged === undefined ? [] : [m.purged(purged)])])),
         );
       }),
     );
 
-  subcommand(
-    backlog,
-    'show [name]',
-    'Eintrag und Arbeitskopien eines Backlogs (Default: Kontext)',
-  ).action(
+  subcommand(backlog, 'show [name]', m.showDescription).action(
     action(rt, async (env, given: string | undefined) => {
       const name = given ?? (await env.context()).backlog.value;
       const r = await showBacklog(env.homes, env.userConfig, name);
@@ -125,11 +118,11 @@ export function backlogCommands(program: Command, rt: Runtime): void {
         const out = [`name: ${entry.name}`];
         if (entry.remote !== undefined) out.push(`remote: ${entry.remote}`);
         if (entry.user !== undefined) out.push(`user: ${entry.user}`);
-        out.push(`aktuell: ${entry.current ? 'ja' : 'nein'}`);
-        if (workingCopies.length === 0) out.push('arbeitskopien: keine');
+        out.push(m.currentFlag(entry.current));
+        if (workingCopies.length === 0) out.push(m.workingCopiesNone);
         else
           out.push(
-            'arbeitskopien:',
+            m.workingCopiesLabel,
             ...columns(workingCopies.map(workingCopyRow)).map((l) => `  ${l}`),
           );
         return safeText(lines(out));

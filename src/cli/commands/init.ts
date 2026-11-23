@@ -6,6 +6,7 @@ import { initBacklog } from '../../services/init.ts';
 import { exists } from '../../store/files.ts';
 import { absPath, action, type CommandEnv, emit, type Runtime, subcommand } from '../options.ts';
 import { safeText } from '../output.ts';
+import { m } from './init.messages.ts';
 
 type Opts = { name: string; prefix: string; remote?: string; key?: string; userName?: string };
 
@@ -14,18 +15,18 @@ async function signingKey(env: CommandEnv, given: string | undefined): Promise<s
   if (given !== undefined) return absPath(given, env.io);
   const fallback = join(env.homes.home, '.ssh', 'id_ed25519.pub');
   if (await exists(fallback)) return fallback;
-  throw new BackeError('usage', 'Kein Signing-Key angegeben', {
-    hint: `--key <pfad> oder einen Key unter »${fallback}«`,
+  throw new BackeError('usage', m.noSigningKey, {
+    hint: m.noSigningKeyHint(fallback),
   });
 }
 
 export function initCommand(program: Command, rt: Runtime): void {
-  subcommand(program, 'init [pfad]', 'neuen Backlog mit signiertem Vertrauensanker anlegen')
-    .requiredOption('--name <name>', 'Name des Backlogs')
-    .requiredOption('--prefix <präfix>', 'Präfix der Issue-IDs (2 bis 6 Kleinbuchstaben)')
-    .option('--remote <url>', 'Remote, auf die der Anker gepusht wird')
-    .option('--key <pfad>', 'SSH-Signing-Key (Default ~/.ssh/id_ed25519.pub)')
-    .option('--user-name <name>', 'Anzeigename des Admin-Users')
+  subcommand(program, m.command, m.description)
+    .requiredOption('--name <name>', m.nameOption)
+    .requiredOption(m.prefixFlags, m.prefixOption)
+    .option('--remote <url>', m.remoteOption)
+    .option(m.keyFlags, m.keyOption)
+    .option('--user-name <name>', m.userNameOption)
     .action(
       action(rt, async (env, dir: string | undefined, opts: Opts) => {
         const handle = env.handle();

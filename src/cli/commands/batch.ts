@@ -13,8 +13,9 @@ import {
   subcommand,
   text,
 } from '../options.ts';
-import { m } from '../output.messages.ts';
+import { m as outputMessages } from '../output.messages.ts';
 import { columns, json, lines } from '../output.ts';
+import { m } from './batch.messages.ts';
 
 /** Der Batch-Text aus `-f <pfad|->` oder `-` (stdin); genau eine Quelle. */
 async function inputOf(
@@ -23,25 +24,25 @@ async function inputOf(
   dash: string | undefined,
 ): Promise<string> {
   if (dash !== undefined && dash !== '-') {
-    throw new BackeError('usage', `Unerwartetes Argument »${dash}«`, {
-      hint: 'Quelle: -f <pfad> oder - (stdin)',
+    throw new BackeError('usage', m.unexpectedArgument(dash), {
+      hint: m.sourceHint,
     });
   }
   if (file !== undefined && dash !== undefined) {
-    throw new BackeError('usage', '-f und - schließen sich aus');
+    throw new BackeError('usage', m.fileAndStdinExclusive);
   }
   const source = file ?? dash;
   if (source === undefined) {
-    throw new BackeError('usage', 'Keine Eingabe angegeben', {
-      hint: '-f <pfad>, -f - oder - (stdin)',
+    throw new BackeError('usage', m.noInput, {
+      hint: m.noInputHint,
     });
   }
   return source === '-' ? text('-', env.io, env.stdin) : fileText(source, env.io);
 }
 
 export function batchCommand(program: Command, rt: Runtime): void {
-  subcommand(program, 'batch [quelle]', 'Operationen als JSONL in einem Commit ausführen')
-    .option('-f, --file <pfad|->', 'JSONL-Datei (»-« liest stdin)')
+  subcommand(program, m.command, m.description)
+    .option(m.fileFlags, m.fileOption)
     .action(
       action(
         rt,
@@ -55,7 +56,7 @@ export function batchCommand(program: Command, rt: Runtime): void {
           }
           env.out(
             lines([
-              r.ops.length === 0 ? `${m.unchanged} batch` : summarizeBatch(r.ops),
+              r.ops.length === 0 ? `${outputMessages.unchanged} batch` : summarizeBatch(r.ops),
               ...columns(Object.entries(r.refs)),
             ]),
           );

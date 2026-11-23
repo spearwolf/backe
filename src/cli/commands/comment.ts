@@ -20,31 +20,30 @@ import {
   text,
 } from '../options.ts';
 import { columns, lines } from '../output.ts';
+import { m } from './comment.messages.ts';
 
 type MessageOpts = { message?: string; file?: string };
 
 /** Text aus `-m <md|->` oder `-F <pfad>`; genau eines von beiden. */
 async function messageOf(env: CommandEnv, opts: MessageOpts): Promise<string> {
   if (opts.message !== undefined && opts.file !== undefined) {
-    throw new BackeError('usage', '-m und -F schließen sich aus');
+    throw new BackeError('usage', m.messageAndFileExclusive);
   }
   if (opts.message !== undefined) return text(opts.message, env.io, env.stdin);
   if (opts.file !== undefined) return fileText(opts.file, env.io);
-  throw new BackeError('usage', '-m oder -F angeben', {
-    hint: '-m <text>, -m - (stdin) oder -F <datei>',
+  throw new BackeError('usage', m.messageOrFileRequired, {
+    hint: m.messageOrFileHint,
   });
 }
 
 function messageOptions(cmd: Command): Command {
-  return cmd
-    .option('-m, --message <md|->', 'Text (»-« liest stdin)')
-    .option('-F, --file <pfad>', 'Text aus Datei');
+  return cmd.option(m.messageFlags, m.messageOption).option(m.fileFlags, m.fileOption);
 }
 
 export function commentCommands(program: Command, rt: Runtime): void {
-  const comment = subcommand(program, 'comment', 'Kommentare eines Issues');
+  const comment = subcommand(program, 'comment', m.description);
 
-  messageOptions(subcommand(comment, 'add <id>', 'Kommentar anlegen')).action(
+  messageOptions(subcommand(comment, 'add <id>', m.addDescription)).action(
     action(
       rt,
       async (env, ref: string, opts: MessageOpts) => {
@@ -55,10 +54,8 @@ export function commentCommands(program: Command, rt: Runtime): void {
     ),
   );
 
-  syncOption(
-    subcommand(comment, 'list <id>', 'Kommentare chronologisch, mit Nummer für edit und delete'),
-  )
-    .option('--limit <n>', 'nur die letzten n')
+  syncOption(subcommand(comment, 'list <id>', m.listDescription))
+    .option('--limit <n>', m.limitOption)
     .action(
       action(
         rt,
@@ -87,13 +84,7 @@ export function commentCommands(program: Command, rt: Runtime): void {
       ),
     );
 
-  messageOptions(
-    subcommand(
-      comment,
-      'edit <id> <kommentar>',
-      'eigenen Kommentar ändern (Dateiname oder Nummer)',
-    ),
-  ).action(
+  messageOptions(subcommand(comment, m.editCommand, m.editDescription)).action(
     action(
       rt,
       async (env, ref: string, which: string, opts: MessageOpts) => {
@@ -104,11 +95,7 @@ export function commentCommands(program: Command, rt: Runtime): void {
     ),
   );
 
-  subcommand(
-    comment,
-    'delete <id> <kommentar>',
-    'eigenen Kommentar löschen (Dateiname oder Nummer)',
-  ).action(
+  subcommand(comment, m.deleteCommand, m.deleteDescription).action(
     action(
       rt,
       async (env, ref: string, which: string) => {

@@ -47,15 +47,17 @@ import {
   syncOption,
   text,
 } from '../options.ts';
+import { m as outputMessages } from '../output.messages.ts';
 import { headerLine, json, lines, safeText } from '../output.ts';
 import { issueDetailMd, issueDetailText, issueLines } from '../render-issue.ts';
+import { m } from './issue.messages.ts';
 
 type ReasonOpts = { reason?: string; reasonFile?: string };
 
 /** Begründung aus `--reason <md|->` oder `--reason-file <pfad>`; beide zusammen passen nicht. */
 async function reasonOf(env: CommandEnv, opts: ReasonOpts): Promise<string | undefined> {
   if (opts.reason !== undefined && opts.reasonFile !== undefined) {
-    throw new BackeError('usage', '--reason und --reason-file schließen sich aus');
+    throw new BackeError('usage', m.reasonAndFileExclusive);
   }
   if (opts.reason !== undefined) return text(opts.reason, env.io, env.stdin);
   if (opts.reasonFile !== undefined) return fileText(opts.reasonFile, env.io);
@@ -64,8 +66,8 @@ async function reasonOf(env: CommandEnv, opts: ReasonOpts): Promise<string | und
 
 function reasonOptions(cmd: Command): Command {
   return cmd
-    .option('--reason <md|->', 'Begründung (»-« liest stdin)')
-    .option('--reason-file <pfad>', 'Begründung aus Datei');
+    .option('--reason <md|->', m.reasonOption)
+    .option(m.reasonFileFlags, m.reasonFileOption);
 }
 
 // --- create ------------------------------------------------------------------------------------
@@ -86,20 +88,17 @@ type CreateOpts = {
 
 function defineCreate(parent: Command, name: string, rt: Runtime, description: string): void {
   subcommand(parent, name, description)
-    .requiredOption('-t, --title <titel>', 'Titel')
-    .option(
-      '-d, --description <md|->',
-      "Beschreibung; »-« liest stdin, das nicht leer sein darf (ohne Text: -d '')",
-    )
-    .option('-F, --file <pfad>', 'Beschreibung aus Datei (darf leer sein)')
-    .option('-p, --project <pfad>', 'Projekt (wiederholbar)', collect)
-    .option('-s, --sprint <slug>', 'Sprint (wiederholbar)', collect)
-    .option('-a, --assignee <user|me>', 'zuweisen')
-    .option('--repo <name[@ref]>', 'Repo (wiederholbar)', collect)
-    .option('--dep <id>', 'Abhängigkeit (wiederholbar)', collect)
-    .option('--parent <id>', 'Parent; Projekte, Sprints und Repos werden von dort vorbelegt')
-    .option('--prop <key=wert|key:=json>', 'Property (wiederholbar)', collect)
-    .option('--state <state>', 'Anfangszustand (Default backlog)')
+    .requiredOption(m.titleFlags, m.titleOption)
+    .option('-d, --description <md|->', m.descriptionOption)
+    .option(m.fileFlags, m.fileOption)
+    .option(m.projectFlags, m.projectOption, collect)
+    .option('-s, --sprint <slug>', m.sprintOption, collect)
+    .option('-a, --assignee <user|me>', m.assigneeOption)
+    .option('--repo <name[@ref]>', m.repoOption, collect)
+    .option('--dep <id>', m.depOption, collect)
+    .option('--parent <id>', m.parentOption)
+    .option(m.propFlags, m.propOption, collect)
+    .option('--state <state>', m.stateOption)
     .action(
       action(
         rt,
@@ -151,7 +150,7 @@ type ListOpts = {
 function listMode(opts: ListOpts): IssueListQuery['mode'] {
   const modes = (['blocked', 'unblockable', 'ready'] as const).filter((m) => opts[m] === true);
   if (modes.length > 1) {
-    throw new BackeError('usage', '--blocked, --unblockable und --ready schließen sich aus');
+    throw new BackeError('usage', m.modesExclusive);
   }
   return modes[0];
 }
@@ -183,25 +182,25 @@ function listQuery(opts: ListOpts): IssueListQuery {
 
 function defineList(parent: Command, name: string, rt: Runtime, description: string): void {
   syncOption(subcommand(parent, name, description))
-    .option('--state <state[,state]|all>', 'States (Default: alle offenen; wiederholbar)', collect)
-    .option('-p, --project <pfad>', 'Projekt samt Unterprojekten (wiederholbar)', collect)
-    .option('--exact', 'nur genau diese Projekte, ohne Unterprojekte')
-    .option('-s, --sprint <slug>', 'Sprint (wiederholbar)', collect)
-    .option('-a, --assignee <user|me|none>', 'zugewiesen an; none = niemandem')
-    .option('--creator <user|me>', 'angelegt von')
-    .option('--repo <name>', 'Repo (wiederholbar)', collect)
-    .option('--blocked', 'nur blockierte')
-    .option('--unblockable', 'blockierte, deren Blocker alle erledigt sind')
-    .option('--ready', 'nur bereite (backe.md §2.22)')
-    .option('--parent <id>', 'nur direkte Sub-Issues von <id>')
-    .option('--top-level', 'nur Issues ohne Parent')
-    .option('--prop <filter>', 'Property-Filter key=wert[,wert], key>=wert, key<=wert', collect)
-    .option('--has-prop <key>', 'Property gesetzt (wiederholbar)', collect)
-    .option('--tree', 'Hierarchie eingerückt')
-    .option('--sort <rank|created>', 'Sortierung (Default rank)')
-    .option('-q, --query <text>', 'Text in Titel oder Body')
-    .option('-A, --all', 'Kontextfilter (Projekt, Sprint, Repo) ignorieren')
-    .option('--limit <n>', 'höchstens n Einträge')
+    .option('--state <state[,state]|all>', m.stateFilterOption, collect)
+    .option(m.projectFlags, m.projectFilterOption, collect)
+    .option('--exact', m.exactOption)
+    .option('-s, --sprint <slug>', m.sprintOption, collect)
+    .option('-a, --assignee <user|me|none>', m.assigneeFilterOption)
+    .option('--creator <user|me>', m.creatorOption)
+    .option('--repo <name>', m.repoOption, collect)
+    .option('--blocked', m.blockedOption)
+    .option('--unblockable', m.unblockableOption)
+    .option('--ready', m.readyOption)
+    .option('--parent <id>', m.parentFilterOption)
+    .option('--top-level', m.topLevelOption)
+    .option(m.propFilterFlags, m.propFilterOption, collect)
+    .option('--has-prop <key>', m.hasPropOption, collect)
+    .option('--tree', m.treeOption)
+    .option('--sort <rank|created>', m.sortOption)
+    .option('-q, --query <text>', m.queryOption)
+    .option('-A, --all', m.allOption)
+    .option('--limit <n>', m.limitOption)
     .action(
       action(
         rt,
@@ -218,8 +217,12 @@ function defineList(parent: Command, name: string, rt: Runtime, description: str
           );
           env.io.stderr(
             lines([
-              ...r.problems.map((p) => safeText(`Warnung: ${p.path}: ${p.message}`)),
-              ...(r.truncated ? [`Hinweis: Liste gekürzt (--limit ${r.items.length})`] : []),
+              ...r.problems.map((p) =>
+                safeText(`${outputMessages.warningPrefix} ${p.path}: ${p.message}`),
+              ),
+              ...(r.truncated
+                ? [`${outputMessages.hintPrefix} ${m.listTruncated(r.items.length)}`]
+                : []),
             ]),
           );
         },
@@ -233,14 +236,14 @@ function defineList(parent: Command, name: string, rt: Runtime, description: str
 function commentsArg(value: string | undefined): number | 'all' | undefined {
   if (value === undefined || value === 'all') return value;
   if (/^\d+$/.test(value)) return Number(value);
-  throw new BackeError('validation', `Ungültige Kommentaranzahl: »${value}«`, {
-    hint: 'eine Zahl ab 0 oder all angeben',
+  throw new BackeError('validation', m.invalidCommentCount(value), {
+    hint: m.commentCountHint,
   });
 }
 
 function defineShow(parent: Command, name: string, rt: Runtime, description: string): void {
   syncOption(subcommand(parent, `${name} <id>`, description))
-    .option('--comments <n|all>', 'die letzten n Kommentare oder alle anhängen')
+    .option('--comments <n|all>', m.commentsOption)
     .action(
       action(
         rt,
@@ -265,7 +268,7 @@ function defineShow(parent: Command, name: string, rt: Runtime, description: str
 
 /** Ein Fehler der Übersetzung, mit dem Pfad des Entwurfs statt dem der Issue-Datei und dem Entwurf im Hinweis. */
 function draftError(error: BackeError, issuePath: string, draft: string): BackeError {
-  const hint = [`Entwurf: ${draft}`, error.hint?.replaceAll(issuePath, draft)]
+  const hint = [m.draftLabel(draft), error.hint?.replaceAll(issuePath, draft)]
     .filter((part) => part !== undefined)
     .join('; ');
   return new BackeError(error.code, error.message.replaceAll(issuePath, draft), {
@@ -311,40 +314,28 @@ function defineEdit(parent: Command, rt: Runtime): void {
   // commander legt `--parent <id>` und `--no-parent` auf dasselbe Feld, die letzte Angabe gewönne
   // still. Beide Events zu sehen heißt: widersprüchlicher Aufruf.
   const parentFlags = new Set<string>();
-  subcommand(parent, 'edit <id>', 'Felder eines Issues ändern oder im Editor bearbeiten')
+  subcommand(parent, 'edit <id>', m.editDescription)
     .on('option:parent', () => parentFlags.add('--parent'))
     .on('option:no-parent', () => parentFlags.add('--no-parent'))
-    .option('--title <titel>', 'neuer Titel')
-    .option('--add-project <pfad>', 'Projekt hinzufügen (wiederholbar)', collect)
-    .option('--rm-project <pfad>', 'Projekt entfernen (wiederholbar)', collect)
-    .option('--add-sprint <slug>', 'Sprint hinzufügen (wiederholbar)', collect)
-    .option('--rm-sprint <slug>', 'Sprint entfernen (wiederholbar)', collect)
-    .option('--add-dep <id>', 'Abhängigkeit hinzufügen (wiederholbar)', collect)
-    .option('--rm-dep <id>', 'Abhängigkeit entfernen (wiederholbar)', collect)
-    .option('--parent <id>', 'umhängen unter <id>')
-    .option('--no-parent', 'vom Parent lösen')
-    .option('--prop <key=wert|key:=json>', 'Property setzen (wiederholbar)', collect)
-    .option('--unset-prop <key>', 'Property entfernen (wiederholbar)', collect)
-    .option(
-      '--body-file <pfad|->',
-      'neuer Body aus Datei, eine leere Datei leert ihn; »-« liest stdin, das nicht leer sein darf',
-    )
-    .addHelpText(
-      'after',
-      [
-        '',
-        'Ohne Änderungs-Flags öffnet backe issue edit <id> die Issue-Datei (Frontmatter und',
-        'Body) im Editor. Editor: BACKE_EDITOR, sonst VISUAL, dann EDITOR — die beiden letzten',
-        'nur, wenn stdin und stdout ein Terminal sind.',
-        '',
-      ].join('\n'),
-    )
+    .option(m.newTitleFlags, m.newTitleOption)
+    .option(m.addProjectFlags, m.addProjectOption, collect)
+    .option(m.rmProjectFlags, m.rmProjectOption, collect)
+    .option('--add-sprint <slug>', m.addSprintOption, collect)
+    .option('--rm-sprint <slug>', m.rmSprintOption, collect)
+    .option('--add-dep <id>', m.addDepOption, collect)
+    .option('--rm-dep <id>', m.rmDepOption, collect)
+    .option('--parent <id>', m.reparentOption)
+    .option('--no-parent', m.noParentOption)
+    .option(m.propFlags, m.editPropOption, collect)
+    .option('--unset-prop <key>', m.unsetPropOption, collect)
+    .option(m.bodyFileFlags, m.bodyFileOption)
+    .addHelpText('after', m.editorHelp)
     .action(
       action(
         rt,
         async (env, ref: string, opts: EditOpts) => {
           if (parentFlags.size > 1) {
-            throw new BackeError('usage', '--parent und --no-parent schließen sich aus');
+            throw new BackeError('usage', m.parentAndNoParentExclusive);
           }
           const given = Object.entries(opts).filter(
             ([key, v]) => v !== undefined && !(GLOBAL_KEYS as readonly string[]).includes(key),
@@ -357,7 +348,7 @@ function defineEdit(parent: Command, rt: Runtime): void {
             opts.bodyFile === undefined
               ? undefined
               : opts.bodyFile === '-'
-                ? await stdinBody(env.io, env.stdin, '--body-file <leere datei>')
+                ? await stdinBody(env.io, env.stdin, m.emptyFileLabel)
                 : await fileText(opts.bodyFile, env.io);
           const r = await editIssue(await env.context(), ref, {
             ...(opts.title === undefined ? {} : { title: opts.title }),
@@ -387,8 +378,8 @@ type MoveOpts = ReasonOpts & { blockedBy?: string[]; force?: boolean };
 
 function defineMove(parent: Command, name: string, rt: Runtime, description: string): void {
   reasonOptions(subcommand(parent, `${name} <id> <state>`, description))
-    .option('--blocked-by <id>', 'Blocker bei blocked (wiederholbar)', collect)
-    .option('--force', 'done trotz offener Sub-Issues oder unter einem done-Parent')
+    .option('--blocked-by <id>', m.blockedByOption, collect)
+    .option('--force', m.forceMoveOption)
     .action(
       action(
         rt,
@@ -408,9 +399,7 @@ function defineMove(parent: Command, name: string, rt: Runtime, description: str
 }
 
 function defineResume(parent: Command, rt: Runtime): void {
-  reasonOptions(
-    subcommand(parent, 'resume <id>', 'blocked oder on_hold verlassen, zurück nach paused_from'),
-  ).action(
+  reasonOptions(subcommand(parent, 'resume <id>', m.resumeDescription)).action(
     action(
       rt,
       async (env, ref: string, opts: ReasonOpts) => {
@@ -426,8 +415,8 @@ function defineResume(parent: Command, rt: Runtime): void {
 }
 
 function defineReopen(parent: Command, rt: Runtime): void {
-  reasonOptions(subcommand(parent, 'reopen <id>', 'erledigtes Issue wieder öffnen'))
-    .option('--to <state>', 'Zielzustand')
+  reasonOptions(subcommand(parent, 'reopen <id>', m.reopenDescription))
+    .option('--to <state>', m.toOption)
     .action(
       action(
         rt,
@@ -456,23 +445,23 @@ function rankPosition(value: string | undefined, opts: RankOpts): RankPositionIn
   if (opts.after !== undefined) given.push({ after: opts.after });
   if (value !== undefined) {
     if (!/^-?\d+$/.test(value)) {
-      throw new BackeError('validation', `Ungültiger Rang: »${value}«`, {
-        hint: 'erwartet eine ganze Zahl',
+      throw new BackeError('validation', m.invalidRank(value), {
+        hint: m.rankHint,
       });
     }
     given.push({ value: Number(value) });
   }
   const [only] = given;
   if (given.length !== 1 || only === undefined) {
-    throw new BackeError('usage', 'Genau eine Position angeben', {
-      hint: '--top, --bottom, --before <id>, --after <id> oder eine Zahl',
+    throw new BackeError('usage', m.exactlyOnePosition, {
+      hint: m.positionHint,
     });
   }
   return only;
 }
 
 function defineSmallWrites(issue: Command, rt: Runtime): void {
-  subcommand(issue, 'assign <id> <user>', 'zuweisen: Handle, me oder none').action(
+  subcommand(issue, 'assign <id> <user>', m.assignDescription).action(
     action(
       rt,
       async (env, ref: string, who: string) => {
@@ -484,21 +473,17 @@ function defineSmallWrites(issue: Command, rt: Runtime): void {
 
   // Kein `write`: Der Claim synct selbst und pusht sich als letzten Commit; einen Hintergrund-Lauf,
   // der währenddessen warten musste, startet der Service nach der Freigabe von `sync.lock`.
-  subcommand(
-    issue,
-    'claim <id>',
-    'übernehmen, synchron mit dem Remote; war jemand schneller, Exit 4',
-  ).action(
+  subcommand(issue, 'claim <id>', m.claimDescription).action(
     action(rt, async (env, ref: string) => {
       emitOutcome(env, await claimIssue(await env.context(), ref), 'other');
     }),
   );
 
-  subcommand(issue, 'rank <id> [zahl]', 'umsortieren')
-    .option('--top', 'ganz nach vorn')
-    .option('--bottom', 'ganz nach hinten')
-    .option('--before <id>', 'vor <id>')
-    .option('--after <id>', 'hinter <id>')
+  subcommand(issue, m.rankCommand, m.rankDescription)
+    .option('--top', m.topOption)
+    .option('--bottom', m.bottomOption)
+    .option('--before <id>', m.beforeOption)
+    .option('--after <id>', m.afterOption)
     .action(
       action(
         rt,
@@ -510,11 +495,7 @@ function defineSmallWrites(issue: Command, rt: Runtime): void {
       ),
     );
 
-  subcommand(
-    issue,
-    'link <id> <ziel>',
-    'Repo verknüpfen: <repo>[@<ref>] oder <url>[@<ref>]',
-  ).action(
+  subcommand(issue, m.linkCommand, m.linkDescription).action(
     action(
       rt,
       async (env, ref: string, target: string) => {
@@ -524,7 +505,7 @@ function defineSmallWrites(issue: Command, rt: Runtime): void {
     ),
   );
 
-  subcommand(issue, 'unlink <id> <repo>', 'Repo-Verknüpfung lösen').action(
+  subcommand(issue, 'unlink <id> <repo>', m.unlinkDescription).action(
     action(
       rt,
       async (env, ref: string, repo: string) => {
@@ -534,10 +515,10 @@ function defineSmallWrites(issue: Command, rt: Runtime): void {
     ),
   );
 
-  subcommand(issue, 'delete <id>', 'Issue löschen (Historie bleibt in Git)')
-    .option('--force', 'auch wenn andere Issues es in blocked_by oder depends_on führen')
-    .option('--orphan', 'Sub-Issues vom Parent lösen')
-    .option('--recursive', 'Sub-Issues mitlöschen')
+  subcommand(issue, 'delete <id>', m.deleteDescription)
+    .option('--force', m.deleteForceOption)
+    .option('--orphan', m.orphanOption)
+    .option('--recursive', m.recursiveOption)
     .action(
       action(
         rt,
@@ -547,7 +528,7 @@ function defineSmallWrites(issue: Command, rt: Runtime): void {
           opts: { force?: boolean; orphan?: boolean; recursive?: boolean },
         ) => {
           if (opts.orphan === true && opts.recursive === true) {
-            throw new BackeError('usage', '--orphan und --recursive schließen sich aus');
+            throw new BackeError('usage', m.orphanAndRecursiveExclusive);
           }
           const children =
             opts.orphan === true ? 'orphan' : opts.recursive === true ? 'recursive' : undefined;
@@ -563,19 +544,19 @@ function defineSmallWrites(issue: Command, rt: Runtime): void {
 }
 
 export function issueCommands(program: Command, rt: Runtime): void {
-  const issue = subcommand(program, 'issue', 'Issues anlegen, listen, zeigen und ändern');
-  defineCreate(issue, 'create', rt, 'Issue anlegen; druckt die neue ID');
-  defineList(issue, 'list', rt, 'Issues listen (Default: offene im Kontext)');
-  defineShow(issue, 'show', rt, 'Issue mit Beziehungen und Kommentaren zeigen');
+  const issue = subcommand(program, 'issue', m.groupDescription);
+  defineCreate(issue, 'create', rt, m.createDescription);
+  defineList(issue, 'list', rt, m.listDescription);
+  defineShow(issue, 'show', rt, m.showDescription);
   defineEdit(issue, rt);
-  defineMove(issue, 'move', rt, 'State ändern');
+  defineMove(issue, 'move', rt, m.moveDescription);
   defineResume(issue, rt);
   defineReopen(issue, rt);
   defineSmallWrites(issue, rt);
 
   // Top-Level-Aliase (backe.md §2.17).
-  defineCreate(program, 'new', rt, 'Issue anlegen (= issue create)');
-  defineList(program, 'ls', rt, 'Issues listen (= issue list)');
-  defineShow(program, 'show', rt, 'Issue zeigen (= issue show)');
-  defineMove(program, 'mv', rt, 'State ändern (= issue move)');
+  defineCreate(program, 'new', rt, m.newDescription);
+  defineList(program, 'ls', rt, m.lsDescription);
+  defineShow(program, 'show', rt, m.showAliasDescription);
+  defineMove(program, 'mv', rt, m.mvDescription);
 }

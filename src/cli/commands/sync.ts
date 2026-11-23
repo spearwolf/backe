@@ -12,8 +12,10 @@ import { type SyncOutcome, syncNow } from '../../services/sync.ts';
 import { type ConflictEntry, listConflicts } from '../../services/sync-state.ts';
 import { syncJson } from '../../services/views.ts';
 import { action, type CommandEnv, emit, type Runtime, subcommand } from '../options.ts';
+import { m as outputMessages } from '../output.messages.ts';
 import { json, lines, renderError, renderHints, safeText } from '../output.ts';
 import { interactiveResolver } from '../prompt.ts';
+import { m } from './sync.messages.ts';
 
 const short = (sha: string) => sha.slice(0, 7);
 
@@ -37,14 +39,14 @@ const conflictJson = (c: ConflictEntry) => ({
  * `push: <sha7>`).
  */
 function syncText(out: SyncOutcome, entries: readonly ConflictEntry[]): string {
-  if (out.skipped !== undefined) return 'kein Remote\n';
+  if (out.skipped !== undefined) return `${m.noRemote}\n`;
   const subjects = new Map(entries.map((e) => [e.id, subjectOf(e)]));
   const rows: string[] = [];
-  if (out.fetched > 0) rows.push(`fetch: ${out.fetched} neue Commits`);
-  if (out.replayed > 0) rows.push(`replay: ${out.replayed} Einheiten neu signiert`);
-  for (const id of out.conflicts) rows.push(`konflikt: ${id}  ${subjects.get(id) ?? ''}`);
-  if (out.pushed !== undefined) rows.push(`push: ${short(out.pushed)}`);
-  return rows.length === 0 ? 'aktuell\n' : lines(rows.map(safeText));
+  if (out.fetched > 0) rows.push(m.fetched(out.fetched));
+  if (out.replayed > 0) rows.push(m.replayed(out.replayed));
+  for (const id of out.conflicts) rows.push(m.conflict(id, subjects.get(id) ?? ''));
+  if (out.pushed !== undefined) rows.push(m.pushed(short(out.pushed)));
+  return rows.length === 0 ? `${m.upToDate}\n` : lines(rows.map(safeText));
 }
 
 type SyncOpts = { background?: boolean; interactive?: boolean };
@@ -63,13 +65,13 @@ async function background(env: CommandEnv): Promise<void> {
 
 function statusText(s: SyncStatus): string {
   const rows = [
-    `remote  ${s.remote ?? 'kein Remote'}`,
-    `modus  ${s.mode}`,
-    `ungepusht  ${s.unpushed}`,
-    `letzter Sync  ${s.state.last_attempt ?? 'nie'}`,
+    `${m.labelRemote}  ${s.remote ?? m.noRemote}`,
+    `${m.labelMode}  ${s.mode}`,
+    `${m.labelUnpushed}  ${s.unpushed}`,
+    `${m.labelLastSync}  ${s.state.last_attempt ?? m.never}`,
   ];
-  if (s.state.last_error !== undefined) rows.push(`fehler  ${s.state.last_error.message}`);
-  if (s.running) rows.push('läuft  ja');
+  if (s.state.last_error !== undefined) rows.push(`${m.labelError}  ${s.state.last_error.message}`);
+  if (s.running) rows.push(`${m.labelRunning}  ${m.yes}`);
   return lines([...rows.map(safeText), ...conflictLines(s.conflicts)]);
 }
 
@@ -90,8 +92,8 @@ async function resolve(env: CommandEnv, id: string | undefined, opts: ResolveOpt
   const ctx = await env.context();
   if (id === undefined) {
     if (opts.drop === true || opts.apply === true) {
-      throw new BackeError('usage', '--drop und --apply brauchen eine Konflikt-ID', {
-        hint: 'backe sync resolve zeigt die Liste',
+      throw new BackeError('usage', m.dropAndApplyNeedId, {
+        hint: m.dropAndApplyNeedIdHint,
       });
     }
     const { conflicts } = await syncStatus(ctx);
@@ -99,36 +101,36 @@ async function resolve(env: CommandEnv, id: string | undefined, opts: ResolveOpt
     return;
   }
   if ((opts.drop === true) === (opts.apply === true)) {
-    throw new BackeError('usage', 'Genau eins von --drop und --apply angeben', {
-      hint: `backe sync resolve ${id} --drop oder --apply`,
+    throw new BackeError('usage', m.exactlyOneOfDropApply, {
+      hint: m.resolveHint(id),
     });
   }
   const how = opts.drop === true ? 'drop' : 'apply';
   const r = await resolveConflict(ctx, id, how);
   env.committed(r.commit);
   emit(env, { id, action: how, commit: r.commit ?? null, ops: r.ops }, () => {
-    if (how === 'drop') return `verworfen: ${safeText(id)}\n`;
+    if (how === 'drop') return `${m.dropped(safeText(id))}\n`;
     const [only] = r.ops;
     const summary =
       r.ops.length === 1 && only !== undefined ? summarizeOp(only) : summarizeBatch(r.ops);
-    return `${r.commit === undefined ? 'unverändert: ' : ''}${safeText(summary)}\n`;
+    return `${r.commit === undefined ? `${outputMessages.unchanged} ` : ''}${safeText(summary)}\n`;
   });
 }
 
 export function syncCommands(program: Command, rt: Runtime): void {
-  const sync = subcommand(program, 'sync', 'mit dem Remote synchronisieren (eine Runde)')
-    .option('--background', 'als Hintergrund-Sync: Debounce, keine Ausgabe, Exit immer 0')
-    .option('--interactive', 'Textkonflikte in manual-Commits einzeln entscheiden')
+  const sync = subcommand(program, 'sync', m.description)
+    .option('--background', m.backgroundOption)
+    .option('--interactive', m.interactiveOption)
     .action(
       action(
         rt,
         async (env, opts: SyncOpts) => {
           if (opts.background === true) {
             if (opts.interactive !== true) return background(env);
-            throw new BackeError('usage', '--background und --interactive schließen sich aus');
+            throw new BackeError('usage', m.backgroundExcludesInteractive);
           }
           if (opts.interactive === true && !(env.io.stdinIsTTY && env.io.isTTY)) {
-            throw new BackeError('usage', '--interactive braucht ein Terminal');
+            throw new BackeError('usage', m.interactiveNeedsTerminal);
           }
           const ctx = await env.context();
           const out = await syncNow(
@@ -148,11 +150,7 @@ export function syncCommands(program: Command, rt: Runtime): void {
       ),
     );
 
-  subcommand(
-    sync,
-    'status',
-    'Zustand des Syncs: Remote, Modus, Ungepushtes, Fehler, Konflikte',
-  ).action(
+  subcommand(sync, 'status', m.statusDescription).action(
     action(
       rt,
       async (env) => {
@@ -163,12 +161,8 @@ export function syncCommands(program: Command, rt: Runtime): void {
     ),
   );
 
-  subcommand(
-    sync,
-    'resolve [id]',
-    'Konflikt-Eintrag verwerfen oder trotzdem anwenden; ohne ID die Liste',
-  )
-    .option('--drop', 'Eintrag verwerfen')
-    .option('--apply', 'Eintrag mit Vorbedingungen auf dem aktuellen Stand anwenden')
+  subcommand(sync, 'resolve [id]', m.resolveDescription)
+    .option('--drop', m.dropOption)
+    .option('--apply', m.applyOption)
     .action(action(rt, resolve, { write: true }));
 }
