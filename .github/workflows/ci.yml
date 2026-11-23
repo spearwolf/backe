@@ -10,17 +10,19 @@ permissions:
   contents: read
 
 jobs:
-  check:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v5
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec biome ci .
-      - run: mise run check
-      - run: pnpm pack --pack-destination "$RUNNER_TEMP/pack"
-      - run: bash scripts/pack-smoke.sh "$RUNNER_TEMP"/pack/*.tgz
+  # Vitest braucht auf macOS etwa dreimal so lange wie auf Ubuntu, daher doppelt so viele Shards.
+  # Die Coverage-Schwellen prüft nur Ubuntu; sie hängen nicht vom Betriebssystem ab.
+  ubuntu:
+    uses: ./.github/workflows/test.yml
+    with:
+      os: ubuntu-latest
+      shards: "[1, 2]"
+      coverage: true
+      checks: true
+
+  macos:
+    uses: ./.github/workflows/test.yml
+    with:
+      os: macos-latest
+      shards: "[1, 2, 3, 4]"
+      checks: true

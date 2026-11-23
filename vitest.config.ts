@@ -1,5 +1,21 @@
 import { defineConfig } from 'vitest/config';
 
+// Ein Shard sieht nur seinen Teil der Coverage und reißt jede Schwelle. Geprüft wird darum erst
+// beim Zusammenführen der Blob-Reports (`vitest run --merge-reports --coverage`), das ohne
+// `--shard` läuft.
+const sharded = process.argv.some((arg) => arg.startsWith('--shard'));
+
+const thresholds = {
+  lines: 85,
+  branches: 85,
+  'src/core/**': { lines: 90, branches: 90 },
+  'src/store/**': { lines: 90, branches: 90 },
+  'src/ops/**': { lines: 90, branches: 90 },
+  'src/context/**': { lines: 90, branches: 90 },
+  'src/services/**': { lines: 90, branches: 90 },
+  'src/mcp/**': { lines: 90, branches: 85 },
+};
+
 export default defineConfig({
   test: {
     globals: true,
@@ -17,16 +33,7 @@ export default defineConfig({
       // CLI-Code wird über E2E abgedeckt, nicht über Unit-Coverage; der MCP-Adapter läuft in den
       // Tests in-process über den In-Memory-Transport und zählt.
       exclude: ['src/cli/**', 'src/**/*.test.ts'],
-      thresholds: {
-        lines: 85,
-        branches: 85,
-        'src/core/**': { lines: 90, branches: 90 },
-        'src/store/**': { lines: 90, branches: 90 },
-        'src/ops/**': { lines: 90, branches: 90 },
-        'src/context/**': { lines: 90, branches: 90 },
-        'src/services/**': { lines: 90, branches: 90 },
-        'src/mcp/**': { lines: 90, branches: 85 },
-      },
+      thresholds: sharded ? undefined : thresholds,
     },
   },
 });

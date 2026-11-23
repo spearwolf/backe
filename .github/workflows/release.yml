@@ -76,8 +76,21 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-  # Fremder Code (Dev-Abhängigkeiten, Tests) läuft nur hier, ohne Schreibrechte
-  # und ohne OIDC; publish bekommt nur den fertigen Tarball.
+  # Fremder Code (Dev-Abhängigkeiten, Tests) läuft nur in test und build, ohne
+  # Schreibrechte und ohne OIDC; publish bekommt nur den fertigen Tarball.
+  test:
+    needs: target
+    if: ${{ !cancelled() && needs.target.result == 'success' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test.yml
+    with:
+      os: ubuntu-latest
+      shards: "[1, 2]"
+      coverage: true
+      ref: ${{ needs.target.outputs.tag }}
+
+  # Läuft parallel zu test; publish wartet auf beide.
   build:
     needs: target
     # !cancelled() hebt das Überspringen auf, das ein übersprungener release-please
@@ -93,7 +106,8 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@v5
       - run: pnpm install --frozen-lockfile
-      - run: mise run check
+      # Baut prepack beim Packen; die Tests laufen geshardet im Job test.
+      - run: mise run lint
 
       - name: Tarball packen
         id: pack
@@ -132,8 +146,10 @@ jobs:
 
   # Kein Checkout, kein Projektcode: nur Node, der Tarball und npm.
   publish:
-    needs: [target, build]
-    if: ${{ !cancelled() && needs.target.result == 'success' && needs.build.result == 'success' }}
+    needs: [target, test, build]
+    if: >-
+      ${{ !cancelled() && needs.target.result == 'success' &&
+        needs.test.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     environment: npm
     permissions:
