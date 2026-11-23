@@ -17,6 +17,7 @@ import { parseEntityFile } from '../store/frontmatter.ts';
 import type { Problem } from '../store/snapshot.ts';
 import { openSnapshot } from './read.ts';
 import { m } from './repo-check.messages.ts';
+import { m as repoLocalMessages } from './repo-local.messages.ts';
 
 export type RepoFinding = {
   level: 'error' | 'warning' | 'info';
@@ -242,8 +243,8 @@ export async function checkRepoResult(
     const wanted = new Set(input.names);
     for (const name of wanted) {
       if (!items.some((i) => i.name === name)) {
-        throw new BackeError('not_found', m.repoNotFound(name), {
-          hint: m.repoNotFoundHint,
+        throw new BackeError('not_found', repoLocalMessages.repoNotFound(name), {
+          hint: repoLocalMessages.repoNotFoundHint,
         });
       }
     }

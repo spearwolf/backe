@@ -8,11 +8,11 @@ export const m = catalog({
     refRepo: 'repo',
     refUser: 'user',
     hierarchyCycle: (a: string, b: string) => `Cycle via parent and depends_on: ${a} -> ${b}`,
-    parentDone: (id: string, parent: string) => `${id}: Parent ${parent} is done`,
-    missingRefs: (id: string, list: string) => `${id}: Reference to something nonexistent: ${list}`,
+    parentDone: (id: string, parent: string) => `${id}: parent ${parent} is done`,
+    missingRefs: (id: string, list: string) => `${id}: reference to something nonexistent: ${list}`,
     fieldCycle: (field: string, cycle: string) => `Cycle in ${field}: ${cycle}`,
     repoRepeated: (id: string, name: string) =>
-      `${id}: Repo '${name}' appears more than once in repos`,
+      `${id}: repo '${name}' appears more than once in repos`,
     repoRepeatedHint: 'Only one entry per repo is allowed ("name" or "name@ref").',
   },
   de: {

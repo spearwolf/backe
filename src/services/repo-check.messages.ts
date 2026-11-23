@@ -4,8 +4,6 @@ export const m = catalog({
   en: {
     canonicalUrlShared: (canonical: string, others: readonly string[]) =>
       `Canonical URL '${canonical}' also belongs to ${others.map((n) => `'${n}'`).join(', ')}`,
-    repoNotFound: (name: string) => `Repo '${name}' not found`,
-    repoNotFoundHint: 'backe repo list shows the registered repos',
     invalidIssueRef: (key: string, path: string, ref: string) =>
       `Issue '${key}' (${path}): ref '${ref}' is invalid`,
     withUnregisteredRepo: (message: string, name: string) =>
@@ -24,8 +22,6 @@ export const m = catalog({
   de: {
     canonicalUrlShared: (canonical: string, others: readonly string[]) =>
       `Kanonische URL »${canonical}« gehört auch zu ${others.map((n) => `»${n}«`).join(', ')}`,
-    repoNotFound: (name: string) => `Repo »${name}« nicht gefunden`,
-    repoNotFoundHint: 'backe repo list zeigt die registrierten Repos',
     invalidIssueRef: (key: string, path: string, ref: string) =>
       `Issue »${key}« (${path}): Ref »${ref}« ist ungültig`,
     withUnregisteredRepo: (message: string, name: string) =>

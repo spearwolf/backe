@@ -36,6 +36,7 @@ import { exists, isMissing } from '../store/files.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG, userFile } from '../store/layout.ts';
 import { ensureHub, hubPath } from './hub.ts';
+import { m as initMessages } from './init.messages.ts';
 import { firstStderrLine } from './init.ts';
 import { lfsPull, SKIP_SMUDGE } from './lfs.ts';
 import { assertVerified, trustedVerifyMode, type VerifyReport, verifyRange } from './verify.ts';
@@ -301,8 +302,8 @@ export async function cloneBacklog(
 ): Promise<CloneResult> {
   const { homes, env, url, handle } = input;
   if (!isHandle(handle)) {
-    throw new BackeError('validation', m.invalidHandle(handle), {
-      hint: m.handleRules,
+    throw new BackeError('validation', initMessages.invalidHandle(handle), {
+      hint: initMessages.handleRules,
     });
   }
   return withTempClone(homes, async (temp) => {
@@ -315,7 +316,7 @@ export async function cloneBacklog(
       trust: async (actual) => {
         if (input.name !== undefined && input.name !== actual) {
           throw new BackeError('validation', m.backlogNameMismatch(actual, input.name), {
-            hint: m.backlogNameMismatchHint('--name'),
+            hint: m.backlogNameMismatchHint,
           });
         }
         const cfg = await readUserConfig(homes.backeHome);

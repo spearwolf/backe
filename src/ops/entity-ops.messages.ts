@@ -29,7 +29,7 @@ export const m = catalog({
     userLacksKey: (handle: string) => `User ${handle} does not have this key`,
     adminCannotBeRemoved: (handle: string) => `${handle} is an admin and cannot be removed`,
     adminCannotBeRemovedHint: 'Revoke the admin role in the config first.',
-    bodyChanged: (label: string) => `${label}: Body has been changed in the meantime`,
+    bodyChanged: (label: string) => `${label}: body has been changed in the meantime`,
   },
   de: {
     userNotFound: (handle: string) => `User ${handle} nicht gefunden`,

@@ -15,13 +15,9 @@ export const m = catalog({
     targetNotAWorkingCopy: (target: string, name: string) =>
       `${target} exists but is not a working copy of ${name}`,
     targetNotAWorkingCopyHint: (target: string) => `Check ${target} and remove it`,
-    invalidHandle: (handle: string) => `Invalid handle '${handle}'`,
-    handleRules:
-      "Allowed are lowercase letters, digits and hyphens (2 to 32 characters); 'me' is reserved.",
     backlogNameMismatch: (actual: string, requested: string) =>
       `The backlog is named '${actual}', not '${requested}'`,
-    backlogNameMismatchHint: (flag: string) =>
-      `Omit ${flag}; there are no local alias names in v1.`,
+    backlogNameMismatchHint: 'Omit --name; there are no local alias names in v1.',
     userNotPushed: (handle: string) => `User ${handle} has not been pushed yet`,
     workingCopyMissing: (wc: string) => `Working copy ${wc} is missing`,
     workingCopyMissingHint: (name: string, handle: string, configPath: string) =>
@@ -71,13 +67,9 @@ export const m = catalog({
     targetNotAWorkingCopy: (target: string, name: string) =>
       `${target} existiert, ist aber keine Arbeitskopie von ${name}`,
     targetNotAWorkingCopyHint: (target: string) => `${target} prüfen und entfernen`,
-    invalidHandle: (handle: string) => `Ungültiger Handle »${handle}«`,
-    handleRules:
-      'Erlaubt sind Kleinbuchstaben, Ziffern und Bindestriche (2 bis 32 Zeichen); »me« ist reserviert.',
     backlogNameMismatch: (actual: string, requested: string) =>
       `Der Backlog heißt »${actual}«, nicht »${requested}«`,
-    backlogNameMismatchHint: (flag: string) =>
-      `${flag} weglassen; lokale Aliasnamen gibt es in v1 nicht.`,
+    backlogNameMismatchHint: '--name weglassen; lokale Aliasnamen gibt es in v1 nicht.',
     userNotPushed: (handle: string) => `User ${handle} ist noch nicht gepusht`,
     workingCopyMissing: (wc: string) => `Arbeitskopie ${wc} fehlt`,
     workingCopyMissingHint: (name: string, handle: string, configPath: string) =>

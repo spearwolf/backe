@@ -134,12 +134,6 @@ test('flag names are not quoted', async () => {
   expect(hits).toEqual([]);
 });
 
-/**
- * Bereiche, deren Texte noch nicht in Katalogen liegen (Pfadpräfixe relativ zu `src/`). Jeder
- * migrierte Bereich fällt heraus; danach entfällt die Liste.
- */
-const PENDING = ['services/commit.ts'];
-
 /** Dateien mit gewolltem deutschen Text außerhalb eines Katalogs, mit dem Grund. */
 const GERMAN_ALLOWED: Record<string, string> = {
   'ops/delete-op.ts':
@@ -168,7 +162,6 @@ test('user-facing literals live in *.messages.ts', async () => {
   for (const file of await sources(SRC)) {
     const rel = file.slice(SRC.length + 1);
     if (rel.endsWith('.messages.ts') || rel.startsWith('i18n/') || rel in GERMAN_ALLOWED) continue;
-    if (PENDING.some((prefix) => rel.startsWith(prefix))) continue;
     hits.push(...findGermanLiterals(rel, await readFile(file, 'utf8')));
   }
   expect(hits).toEqual([]);

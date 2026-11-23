@@ -10,6 +10,7 @@ import { action, type CommandEnv, type Runtime, subcommand } from '../options.ts
 import { m as outputMessages } from '../output.messages.ts';
 import { json, lines, renderHints, renderNotices, safeText } from '../output.ts';
 import { m } from './commit.messages.ts';
+import { m as verifyMessages } from './verify.messages.ts';
 
 /** `[]` wird zu `undefined`: JSON trägt nur gesetzte Felder. */
 const some = <T>(list: readonly T[]): readonly T[] | undefined =>
@@ -77,7 +78,7 @@ export function commitCommand(program: Command, rt: Runtime): void {
             lines(
               r.unknownKeys.map((u) =>
                 safeText(
-                  `${outputMessages.warningPrefix} ${m.unknownKeys(u.path, u.keys.join(', '))}`,
+                  `${outputMessages.warningPrefix} ${verifyMessages.unknownKeys(u.path, u.keys.join(', '))}`,
                 ),
               ),
             ) +

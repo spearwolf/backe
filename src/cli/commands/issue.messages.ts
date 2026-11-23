@@ -59,7 +59,7 @@ export const m = catalog({
 
     // show
     invalidCommentCount: (value: string) => `Invalid comment count: '${value}'`,
-    commentCountHint: 'give a number from 0 or all',
+    commentCountHint: 'a number from 0, or all',
     commentsOption: 'Append the last n comments or all of them',
 
     // edit

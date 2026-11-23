@@ -3,7 +3,7 @@ import { catalog } from '../i18n/catalog.ts';
 export const m = catalog({
   en: {
     backlogNotRegistered: (name: string) => `Backlog '${name}' is not registered`,
-    pathNeedsUser: `--path needs --user (handle) that owns the path`,
+    pathNeedsUser: '--path needs --user (handle) that owns the path',
     backlogOtherRemote: (name: string, remote: string) =>
       `Backlog '${name}' is already registered with a different remote: ${remote}`,
     remoteAlreadyRegistered: (other: string) =>
@@ -15,7 +15,7 @@ export const m = catalog({
   },
   de: {
     backlogNotRegistered: (name: string) => `Backlog »${name}« ist nicht registriert`,
-    pathNeedsUser: `--path braucht --user (Handle), dem der Pfad gehört`,
+    pathNeedsUser: '--path braucht --user (Handle), dem der Pfad gehört',
     backlogOtherRemote: (name: string, remote: string) =>
       `Backlog »${name}« ist bereits mit einer anderen Remote registriert: ${remote}`,
     remoteAlreadyRegistered: (other: string) =>

@@ -42,6 +42,7 @@ import { canonicalEdit } from './hand-edits.ts';
 import { type LocalCommit, localCommits, type ReplayUnit, replayOnto } from './replay.ts';
 import { m } from './resign.messages.ts';
 import { resetKeep, underWriteLock } from './sync.ts';
+import { m as verifyMessages } from './verify.messages.ts';
 import { builtCommitReasons } from './verify.ts';
 import {
   type ChainEntry,
@@ -235,7 +236,7 @@ async function localBase(wc: string): Promise<string> {
     if (ref !== undefined) return ref;
   }
   const anchor = await readLocalState(wc, 'anchor');
-  if (anchor === undefined) throw new BackeError('verify', m.noTrustAnchor(wc));
+  if (anchor === undefined) throw new BackeError('verify', verifyMessages.noTrustAnchor(wc));
   return anchor;
 }
 
@@ -265,7 +266,7 @@ export async function resignCommits(
     async () => {
       await recoverJournal(wc);
       if ((await changedEntries(wc)).length > 0) {
-        throw new BackeError('usage', m.resignWithHandEdits('--resign'), {
+        throw new BackeError('usage', m.resignWithHandEdits, {
           hint: m.resignWithHandEditsHint,
         });
       }

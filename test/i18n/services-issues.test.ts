@@ -49,7 +49,7 @@ test('an invalid attachment name is reported in English, with a hint', () => {
   expect(() => attachmentFileName('x!', { kind: 'json', text: '' })).toThrow(
     expect.objectContaining({
       message: "Invalid file name for the attachment: 'x!.json'",
-      hint: 'give --name <n>.<ext>; allowed are [a-z0-9][a-z0-9._-]{0,63}',
+      hint: 'give --name <n>.<ext> matching [a-z0-9][a-z0-9._-]{0,63}',
     }),
   );
 });

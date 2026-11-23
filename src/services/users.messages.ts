@@ -2,8 +2,7 @@ import { catalog } from '../i18n/catalog.ts';
 
 export const m = catalog({
   en: {
-    operatorNeedsAgent: (operator: string, agent: string) =>
-      `${operator} only applies together with ${agent}`,
+    operatorNeedsAgent: '--operator only applies together with --agent',
     userNotFound: (handle: string) => `User '${handle}' not found`,
     fingerprintTooShort: (fingerprint: string, min: number) =>
       `The fingerprint '${fingerprint}' is too short, at least ${min} characters required`,
@@ -13,8 +12,7 @@ export const m = catalog({
       `'${fingerprint}' matches several keys of '${handle}'`,
   },
   de: {
-    operatorNeedsAgent: (operator: string, agent: string) =>
-      `${operator} gilt nur zusammen mit ${agent}`,
+    operatorNeedsAgent: '--operator gilt nur zusammen mit --agent',
     userNotFound: (handle: string) => `User »${handle}« nicht gefunden`,
     fingerprintTooShort: (fingerprint: string, min: number) =>
       `Der Fingerprint »${fingerprint}« ist zu kurz, mindestens ${min} Zeichen nötig`,

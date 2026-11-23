@@ -8,8 +8,6 @@ export const m = catalog({
     resignExcludesMessage: '--resign cannot be combined with -m',
     nothingToResign: 'Nothing to re-sign',
     nothingToCommit: 'Nothing to commit',
-    unknownKeys: (path: string, keys: string) =>
-      `${path}: unknown keys ${keys} — custom data belongs in props`,
     rewriteNotice: (reason: 'canonical' | 'no_effect'): string =>
       reason === 'canonical' ? 'rewritten canonically' : 'no effective change',
   },
@@ -20,8 +18,6 @@ export const m = catalog({
     resignExcludesMessage: '--resign passt nicht zu -m',
     nothingToResign: 'Nichts neu zu signieren',
     nothingToCommit: 'Nichts zu committen',
-    unknownKeys: (path: string, keys: string) =>
-      `${path}: unbekannte Keys ${keys} — eigene Daten gehören nach props`,
     rewriteNotice: (reason: 'canonical' | 'no_effect'): string =>
       reason === 'canonical' ? 'kanonisch umgeschrieben' : 'keine wirksame Änderung',
   },

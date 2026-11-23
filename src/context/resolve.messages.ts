@@ -46,7 +46,8 @@ export const m = catalog({
     workingCopyOfOtherBacklog: (root: string, actual: string, expected: string) =>
       `${root}: gehört zum Backlog »${actual}«, erwartet wurde »${expected}«`,
     noBacklogGiven: 'Kein Backlog angegeben',
-    noBacklogHint: `--backlog <name>, BACKE_BACKLOG, »backe backlog use <name>« oder »backlog« in einer .backlog.jsonc`,
+    noBacklogHint:
+      '--backlog <name>, BACKE_BACKLOG, »backe backlog use <name>« oder »backlog« in einer .backlog.jsonc',
     noUserResolved: 'Kein User aufgelöst, Schreiben braucht eine Identität',
     noUserHint: (file: string) => `--as <handle>, BACKE_USER oder »user« in ${file}`,
     workingCopyOwnedByOther: (workingCopy: string, owner: string, handle: string, own: string) =>

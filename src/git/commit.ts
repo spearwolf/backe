@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BackeError } from '../core/errors.ts';
 import { m } from './commit.messages.ts';
+import { m as changesMessages } from './commit-changes.messages.ts';
 import { type GitEnv, git, transportEnv } from './exec.ts';
 import { stateDir } from './local-state.ts';
 
@@ -116,7 +117,7 @@ export async function commitPaths(wc: string, input: CommitInput): Promise<strin
     await git(['add', '-A', '-f', ...pathspec], { cwd: wc, env, input: pathList(input.paths) });
     const tree = (await git(['write-tree'], { cwd: wc, env })).stdout.trim();
     if (tree === (await treeOf(wc, parent))) {
-      throw new BackeError('unexpected', m.noTreeChange);
+      throw new BackeError('unexpected', changesMessages.noTreeChange);
     }
 
     const sha = await signedCommit(wc, { ...input, tree });
