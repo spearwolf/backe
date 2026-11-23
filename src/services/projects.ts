@@ -6,6 +6,7 @@ import type { Project } from '../core/schemas.ts';
 import { isSettled, type State } from '../core/state.ts';
 import type { OpOf } from '../ops/operation.ts';
 import { type WriteOutcome, writeOp } from './outcome.ts';
+import { m } from './projects.messages.ts';
 import { openSnapshot, resolveHandle } from './read.ts';
 import type { WriteDeps } from './write.ts';
 
@@ -62,7 +63,7 @@ export async function showProject(
   const { snapshot: s } = await openSnapshot(ctx);
   const stored = s.projects.get(path);
   if (stored === undefined) {
-    throw new BackeError('not_found', `Projekt »${path}« nicht gefunden`);
+    throw new BackeError('not_found', m.projectNotFound(path));
   }
   const inTree = (p: string): boolean => p === path || p.startsWith(`${path}/`);
   const counts: Partial<Record<State, number>> = {};
@@ -94,7 +95,7 @@ export function removeProject(
   deps?: WriteDeps,
 ): Promise<WriteOutcome> {
   if (input.reassign !== undefined && input.detach === true) {
-    throw new BackeError('usage', '--reassign und --detach schließen sich aus');
+    throw new BackeError('usage', m.reassignAndDetachExclusive);
   }
   const op: OpOf<'project.rm'> = { op: 'project.rm', path };
   if (input.reassign !== undefined) op.reassign = input.reassign;

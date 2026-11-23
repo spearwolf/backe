@@ -15,6 +15,7 @@ import type { WriteOpsOutcome, WriteOutcome } from './outcome.ts';
 import type { locateRepo } from './repo-local.ts';
 import type { showSprint } from './sprints.ts';
 import type { SyncOutcome } from './sync.ts';
+import { m } from './views.messages.ts';
 
 /** Felder eines Issues, wie sie in der Datei stehen; Grundlage für `--fields`. */
 export const ISSUE_FIELDS: readonly string[] = KEY_ORDER.issue;
@@ -43,11 +44,10 @@ export const NEXT_FIELDS: readonly string[] = [...ISSUE_FIELDS, 'open_deps'];
 export function checkFields(fields: readonly string[], allowed: readonly string[]): void {
   const unknown = fields.filter((f) => !allowed.includes(f));
   if (unknown.length === 0) return;
-  throw new BackeError(
-    'usage',
-    `Unbekannte Felder für --fields: ${unknown.map((f) => `»${f}«`).join(', ')}`,
-    { hint: `Erlaubt: ${allowed.join(', ')}`, details: { unknown, allowed } },
-  );
+  throw new BackeError('usage', m.unknownFields(unknown), {
+    hint: m.allowedFields(allowed.join(', ')),
+    details: { unknown, allowed },
+  });
 }
 
 /** Nur die Felder `fields` von `obj`, in dieser Reihenfolge; ein unbekanntes Feld ist `usage`. */
@@ -156,7 +156,7 @@ export function toBackeError(err: unknown): BackeError {
     ? err
     : new BackeError(
         'unexpected',
-        `Unerwarteter Fehler: ${err instanceof Error ? err.message : String(err)}`,
+        m.unexpectedError(err instanceof Error ? err.message : String(err)),
       );
 }
 

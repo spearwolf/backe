@@ -9,6 +9,7 @@ import { selectNext } from '../ops/next.ts';
 import type { Notice } from '../ops/notice.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { hasOpenDeps } from './issue-list.ts';
+import { m } from './next.messages.ts';
 import { effectiveFilter, openSnapshot } from './read.ts';
 
 export type NextOutcome = {
@@ -34,8 +35,8 @@ export type NextQuery = {
 export function nextActor(ctx: ResolvedContext): string {
   const actor = ctx.user.value;
   if (actor === undefined) {
-    throw new BackeError('usage', '»next« braucht eine Identität', {
-      hint: 'mit --as <handle> angeben oder eine Identität setzen',
+    throw new BackeError('usage', m.nextNeedsIdentity, {
+      hint: m.identityHint,
     });
   }
   return actor;
@@ -88,10 +89,10 @@ export function pickNext(
   }
   const reason = result.reason ?? 'nothing_open';
   const messages = {
-    waiting: `Nichts bereit: alles wartet auf Abhängigkeiten (${(result.waiting ?? []).join(', ')})`,
-    all_assigned: 'Nichts frei: alle bereiten Issues sind vergeben',
-    all_blocked: 'Nichts bereit: alles ist blockiert',
-    nothing_open: 'Nichts offen',
+    waiting: m.nothingReadyWaiting((result.waiting ?? []).join(', ')),
+    all_assigned: m.nothingFreeAllAssigned,
+    all_blocked: m.nothingReadyAllBlocked,
+    nothing_open: m.nothingOpen,
   } as const;
   throw new BackeError('not_found', messages[reason], {
     details: { reason, ...(result.waiting === undefined ? {} : { waiting: result.waiting }) },

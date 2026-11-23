@@ -16,6 +16,7 @@ import type { Notice } from '../ops/notice.ts';
 import { exists } from '../store/files.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
 import { type BacklogSnapshot, loadSnapshot, loadSnapshotFrom } from '../store/snapshot.ts';
+import { m } from './claim.messages.ts';
 import { type NextOutcome, type NextQuery, nextActor, pickNext } from './next.ts';
 import { type WriteOutcome, writeOp } from './outcome.ts';
 import { resolveIssueRef } from './read.ts';
@@ -32,10 +33,9 @@ export type ClaimDeps = SyncDeps & WriteDeps;
 /** Versuche von `next --claim`, bis es aufgibt. */
 const MAX_ATTEMPTS = 5;
 
-const LOCAL_NOTICE = {
-  no_remote: 'Claim nur lokal: kein Remote',
-  manual: 'Claim nur lokal: sync.mode manual',
-} as const;
+/** Text der Notice, wenn der Claim nur lokal bleibt; erst bei Verwendung gelesen (Locale). */
+const localNotice = (reason: 'no_remote' | 'manual'): string =>
+  reason === 'no_remote' ? m.claimLocalNoRemote : m.claimLocalManual;
 
 /** Grund in `details.reason`, wenn ein Claim beim Push an einen Schnelleren verloren ging. */
 const CLAIM_LOST = 'claim_lost';
@@ -90,11 +90,9 @@ async function lostClaim(
 ): Promise<BackeError> {
   const assignee = (await remoteIssue(wc, id))?.assignee;
   const taken = assignee !== undefined && assignee !== handle;
-  return new BackeError(
-    'conflict',
-    taken ? `${id} wurde inzwischen von ${assignee} übernommen` : fallback,
-    { details: { reason: CLAIM_LOST, id, ...(taken ? { assignee } : {}) } },
-  );
+  return new BackeError('conflict', taken ? m.takenMeanwhile(id, assignee) : fallback, {
+    details: { reason: CLAIM_LOST, id, ...(taken ? { assignee } : {}) },
+  });
 }
 
 /**
@@ -104,7 +102,7 @@ async function lostClaim(
 async function assertClaimed(wc: string, handle: string, id: string): Promise<void> {
   const issue = await remoteIssue(wc, id);
   if (issue?.state === 'in_progress' && issue.assignee === handle) return;
-  throw await lostClaim(wc, handle, id, `Claim ${id} ist nicht auf dem Remote angekommen`);
+  throw await lostClaim(wc, handle, id, m.claimNotOnRemote(id));
 }
 
 /**
@@ -125,7 +123,7 @@ async function claimWith(
     const written = await writeOp(ctx, claim, deps);
     const notice: Notice = {
       code: 'claim_local',
-      message: LOCAL_NOTICE[setup.local],
+      message: localNotice(setup.local),
       ids: [written.id as string],
     };
     const warnings = [...setup.warnings, ...written.warnings];
@@ -233,7 +231,7 @@ export async function nextClaim(
       attempts.push(picked.next.issue.id);
     }
   }
-  throw new BackeError('conflict', `Claim fünfmal verloren: ${attempts.join(', ')}`, {
+  throw new BackeError('conflict', m.claimLostFiveTimes(attempts.join(', ')), {
     details: { reason: CLAIM_LOST, ids: attempts },
   });
 }

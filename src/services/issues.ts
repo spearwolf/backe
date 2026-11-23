@@ -19,6 +19,7 @@ import { translateEdits } from '../ops/translate.ts';
 import { canonicalBody } from '../store/frontmatter.ts';
 import { issueFile } from '../store/layout.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
+import { m } from './issues.messages.ts';
 import { type WriteOpsOutcome, type WriteOutcome, writeOp } from './outcome.ts';
 import { openSnapshot, resolveHandle, resolveIssueRef } from './read.ts';
 import type { WriteDeps } from './write.ts';
@@ -58,7 +59,7 @@ function parseProps(exprs: readonly string[]): Record<string, PropValue> {
   for (const expr of exprs) {
     const [key, value] = parsePropAssignment(expr);
     if (Object.hasOwn(out, key)) {
-      throw new BackeError('usage', `Property »${key}« mehrfach angegeben`);
+      throw new BackeError('usage', m.propertyRepeated(key));
     }
     out[key] = value;
   }
@@ -111,13 +112,13 @@ export async function editIssue(
   deps?: WriteDeps,
 ): Promise<WriteOutcome> {
   if (Object.values(input).every((v) => v === undefined || (Array.isArray(v) && v.length === 0))) {
-    throw new BackeError('usage', 'Nichts zu ändern');
+    throw new BackeError('usage', m.nothingToChange);
   }
   const props = parseProps(input.props ?? []);
   const unset = unique(input.unsetProps ?? []);
   for (const key of unset) {
     if (Object.hasOwn(props, key)) {
-      throw new BackeError('usage', `Property »${key}« gleichzeitig setzen und entfernen`);
+      throw new BackeError('usage', m.propertySetAndUnset(key));
     }
   }
   return writeOp(
@@ -160,7 +161,7 @@ export async function editIssue(
         const toAdd = unique(adds ?? []);
         for (const v of toAdd) {
           if ((removes ?? []).includes(v)) {
-            throw new BackeError('usage', `»${v}« steht in add… und rm… (${field})`);
+            throw new BackeError('usage', m.valueInAddAndRemove(v, field));
           }
         }
         const toRemove = unique(removes ?? []).filter((v) => have.includes(v));
@@ -227,13 +228,9 @@ export async function editIssueText(
     if (after === before) return noEffect;
     const r = translateEdits(s, [{ path: issueFile(id), before, after }], { actor });
     if (r.manual.length > 0) {
-      throw new BackeError(
-        'validation',
-        'Diese Änderung lässt sich nicht als Operation ausdrücken',
-        {
-          hint: 'Datei direkt bearbeiten und backe commit',
-        },
-      );
+      throw new BackeError('validation', m.notExpressibleAsOperation, {
+        hint: m.editFileDirectly,
+      });
     }
     return r.ops.length === 0 ? noEffect : r.ops;
   };
@@ -250,7 +247,7 @@ function currentProp(issue: Issue, key: string) {
 function storedIssue(s: BacklogSnapshot, ref: string) {
   const id = resolveIssueRef(s, ref);
   const current = s.issues.get(id);
-  if (current === undefined) throw new BackeError('not_found', `Issue »${id}« nicht gefunden`);
+  if (current === undefined) throw new BackeError('not_found', m.issueNotFound(id));
   return current;
 }
 
@@ -261,7 +258,7 @@ function currentIssue(s: BacklogSnapshot, ref: string) {
 /** Leerer oder nur aus Whitespace bestehender Grund ist ein Wertfehler; `undefined` ist erlaubt. */
 function checkedReason(reason: string | undefined): string | undefined {
   if (reason !== undefined && reason.trim() === '') {
-    throw new BackeError('validation', 'Begründung ist leer');
+    throw new BackeError('validation', m.reasonEmpty);
   }
   return reason;
 }
@@ -418,7 +415,7 @@ function parseLinkTarget(
     const tail = target.slice(at + 1);
     if (head !== 'git' && !tail.includes(':') && normalizable(head)) {
       if (!isGitArg(tail) || !isGitRef(tail)) {
-        throw new BackeError('validation', `Ungültiger Ref »${tail}«`);
+        throw new BackeError('validation', m.invalidRef(tail));
       }
       return { url: head, ref: tail };
     }

@@ -22,6 +22,7 @@ import {
   type StoredEntity,
   snapshotAt,
 } from '../store/snapshot.ts';
+import { m } from './hand-edits.messages.ts';
 
 export type HandEdits = {
   /** Alle geänderten Pfade (`changedEntries`), sortiert. */
@@ -73,8 +74,8 @@ async function readWorktree(wc: string, path: string): Promise<Buffer | null> {
   const abs = join(wc, path);
   try {
     if (!(await lstat(abs)).isFile()) {
-      throw new BackeError('validation', `${path} ist keine reguläre Datei`, {
-        hint: 'Symlinks und Verzeichnisse fremder Repos gehören nicht ins Backlog; entfernen oder durch eine Datei ersetzen.',
+      throw new BackeError('validation', m.notARegularFile(path), {
+        hint: m.notARegularFileHint,
       });
     }
     return await readFile(abs);
@@ -121,8 +122,8 @@ export async function readHandEdits(
   // Swap-, Backup- und Systemdateien committet backe nicht still, auch ohne `.gitignore`.
   const junk = entries.filter((e) => e.untracked && isJunkFile(e.path)).map((e) => e.path);
   if (junk.length > 0) {
-    throw new BackeError('validation', `Editor- oder Systemdateien: ${junk.join(', ')}`, {
-      hint: 'löschen oder in .gitignore aufnehmen',
+    throw new BackeError('validation', m.editorOrSystemFiles(junk.join(', ')), {
+      hint: m.junkHint,
       details: { paths: junk },
     });
   }
