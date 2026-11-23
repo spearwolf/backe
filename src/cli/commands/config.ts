@@ -6,13 +6,14 @@ import { editConfigText, getConfig, setConfig } from '../../services/config.ts';
 import { editorCommand, editText } from '../editor.ts';
 import { action, type Runtime, subcommand } from '../options.ts';
 import { json, safeText } from '../output.ts';
+import { m } from './config.messages.ts';
 
 export function configCommands(program: Command, rt: Runtime): void {
-  const config = subcommand(program, 'config', 'User-Config lesen, setzen und bearbeiten');
+  const config = subcommand(program, 'config', m.description);
 
   // `get` und `edit` laufen auch mit kaputter Config: `get` meldet den Fehler selbst, `edit`
   // repariert ihn.
-  subcommand(config, 'get [key]', 'Wert oder die ganze Config ausgeben').action(
+  subcommand(config, 'get [key]', m.getDescription).action(
     action(
       rt,
       async (env, key: string | undefined) => {
@@ -29,33 +30,34 @@ export function configCommands(program: Command, rt: Runtime): void {
     ),
   );
 
-  subcommand(config, 'set <key> [wert]', 'Wert setzen; --unset entfernt den Key')
-    .option('--unset', 'Key entfernen')
+  subcommand(config, m.setCommand, m.setDescription)
+    .option('--unset', m.unsetOption)
     .action(
       action(rt, async (env, key: string, value: string | undefined, opts: { unset?: boolean }) => {
         if (opts.unset === true && value !== undefined) {
-          throw new BackeError('usage', 'Wert und --unset schließen sich aus');
+          throw new BackeError('usage', m.valueAndUnsetExclusive);
         }
         if (opts.unset !== true && value === undefined) {
-          throw new BackeError('usage', 'Wert fehlt', { hint: 'config set <key> <wert>' });
+          throw new BackeError('usage', m.valueMissing, { hint: m.valueMissingHint });
         }
         await setConfig(env.homes, key, opts.unset === true ? undefined : value);
       }),
     );
 
-  subcommand(config, 'edit', 'Config im Editor bearbeiten').action(
+  subcommand(config, 'edit', m.editDescription).action(
     action(
       rt,
       async (env) => {
         if (editorCommand(env.io) === undefined) {
-          throw new BackeError('usage', 'Kein Editor verfügbar', { hint: 'BACKE_EDITOR setzen' });
+          throw new BackeError('usage', m.noEditor, { hint: m.noEditorHint });
         }
         const r = await editConfigText(env.homes, async (text) => {
           const edited = await editText(env.io, 'config', text, 'jsonc');
           await rm(edited.file, { force: true });
           return edited.text;
         });
-        if (!r.changed) env.out(env.format === 'json' ? json({ changed: false }) : 'unverändert\n');
+        if (!r.changed)
+          env.out(env.format === 'json' ? json({ changed: false }) : `${m.unchanged}\n`);
       },
       { lenientConfig: true },
     ),

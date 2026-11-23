@@ -12,23 +12,24 @@ import {
   syncOption,
 } from '../options.ts';
 import { bodyBlock, columns, fieldRows, lines, paint, safeText } from '../output.ts';
+import { m } from './user.messages.ts';
 
 type AddOpts = { key: string; name?: string; agent?: boolean; operator?: string };
 
 /** Erste Zeile mit Label, jede weitere eingerückt darunter; ohne Werte `keine`. */
 function listField(label: string, values: readonly string[]): [string, string][] {
-  if (values.length === 0) return [[label, 'keine']];
+  if (values.length === 0) return [[label, m.none]];
   return values.map((v, i) => [i === 0 ? label : '', v]);
 }
 
 export function userCommands(program: Command, rt: Runtime): void {
-  const user = subcommand(program, 'user', 'Users und ihre Keys');
+  const user = subcommand(program, 'user', m.description);
 
-  subcommand(user, 'add <handle>', 'User mit vorhandenem Public Key registrieren')
-    .requiredOption('--key <pubfile>', 'Datei mit dem SSH-Public-Key (ssh-ed25519)')
-    .option('--name <name>', 'Anzeigename (Default: Handle)')
-    .option('--agent', 'als Agent registrieren')
-    .option('--operator <handle>', 'verantwortlicher Mensch eines Agents (Default: ich)')
+  subcommand(user, 'add <handle>', m.addDescription)
+    .requiredOption('--key <pubfile>', m.keyOption)
+    .option('--name <name>', m.nameOption)
+    .option('--agent', m.agentOption)
+    .option('--operator <handle>', m.operatorOption)
     .action(
       action(
         rt,
@@ -46,11 +47,7 @@ export function userCommands(program: Command, rt: Runtime): void {
       ),
     );
 
-  subcommand(
-    user,
-    'create-agent <handle>',
-    'Agent mit eigenem Keypair anlegen und als Identität eintragen; druckt den Key-Pfad',
-  )
+  subcommand(user, 'create-agent <handle>', m.createAgentDescription)
     .option('--name <name>', 'Anzeigename (Default: Handle)')
     .action(
       action(
@@ -69,7 +66,7 @@ export function userCommands(program: Command, rt: Runtime): void {
       ),
     );
 
-  syncOption(subcommand(user, 'list', 'Users mit Art, Admin-Rolle und Operator')).action(
+  syncOption(subcommand(user, 'list', m.listDescription)).action(
     action(
       rt,
       async (env) => {
@@ -94,12 +91,12 @@ export function userCommands(program: Command, rt: Runtime): void {
     ),
   );
 
-  syncOption(subcommand(user, 'show <handle|me>', 'User mit aktiven und widerrufenen Keys')).action(
+  syncOption(subcommand(user, 'show <handle|me>', m.showDescription)).action(
     action(
       rt,
       async (env, who: string) => {
         const r = await showUser(await env.context(), who);
-        const revoked = r.revoked.map((k) => `${k.fingerprint} (widerrufen ${k.revoked})`);
+        const revoked = r.revoked.map((k) => m.revokedKey(k.fingerprint, k.revoked));
         emit(
           env,
           {
@@ -118,7 +115,7 @@ export function userCommands(program: Command, rt: Runtime): void {
               ...fieldRows([
                 ['kind', r.user.kind],
                 ['operator', r.user.operator],
-                ['admin', r.admin ? 'ja' : 'nein'],
+                ['admin', r.admin ? m.yes : m.no],
                 ...listField('keys', r.fingerprints),
                 ...(revoked.length === 0 ? [] : listField('revoked', revoked)),
               ]),
@@ -130,11 +127,7 @@ export function userCommands(program: Command, rt: Runtime): void {
     ),
   );
 
-  subcommand(
-    user,
-    'revoke-key <handle|me> <fingerprint>',
-    'aktiven Key widerrufen (Fingerprint oder eindeutiger Präfix ab 8 Zeichen)',
-  ).action(
+  subcommand(user, 'revoke-key <handle|me> <fingerprint>', m.revokeDescription).action(
     action(
       rt,
       async (env, who: string, fingerprint: string) => {
@@ -144,7 +137,7 @@ export function userCommands(program: Command, rt: Runtime): void {
     ),
   );
 
-  subcommand(user, 'rm <handle>', 'User entfernen (Admins nicht)').action(
+  subcommand(user, 'rm <handle>', m.rmDescription).action(
     action(
       rt,
       async (env, handle: string) => {

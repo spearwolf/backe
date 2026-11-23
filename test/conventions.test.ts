@@ -124,8 +124,10 @@ test('flag names are not quoted', async () => {
     const lines = (await readFile(file, 'utf8')).split('\n');
     for (const [i, line] of lines.entries()) {
       // Deutsch »--x«, Englisch '--x' (nur in Katalogen; im Code sind '--x' gewöhnliche Literale).
+      // Ein Text, der mit einem Flag beginnt (`'--force gehört zu --purge'`), zitiert es nicht:
+      // gesucht ist das Flag direkt zwischen den Anführungszeichen.
       const quoted =
-        line.includes('»--') || (file.endsWith('.messages.ts') && line.includes("'--"));
+        line.includes('»--') || (file.endsWith('.messages.ts') && /'--[\w-]+'/.test(line));
       if (quoted) hits.push(`${file.slice(SRC.length + 1)}:${i + 1}: ${line.trim()}`);
     }
   }
@@ -136,16 +138,7 @@ test('flag names are not quoted', async () => {
  * Bereiche, deren Texte noch nicht in Katalogen liegen (Pfadpräfixe relativ zu `src/`). Jeder
  * migrierte Bereich fällt heraus; danach entfällt die Liste.
  */
-const PENDING = [
-  'cli/commands/',
-  'context/',
-  'core/',
-  'git/',
-  'mcp/',
-  'ops/',
-  'services/',
-  'store/',
-];
+const PENDING = ['context/', 'core/', 'git/', 'mcp/', 'ops/', 'services/', 'store/'];
 
 /** Dateien mit gewolltem deutschen Text außerhalb eines Katalogs, mit dem Grund. */
 const GERMAN_ALLOWED: Record<string, string> = {};

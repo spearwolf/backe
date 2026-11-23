@@ -18,24 +18,18 @@ import {
   syncOption,
 } from '../options.ts';
 import { bodyBlock, columns, fieldRows, lines, paint, safeText } from '../output.ts';
+import { m } from './project.messages.ts';
 
 type CreateOpts = { title?: string; lead?: string; description?: string; file?: string };
 
 export function projectCommands(program: Command, rt: Runtime): void {
-  const project = subcommand(program, 'project', 'Projekte anlegen, listen, zeigen und ändern');
+  const project = subcommand(program, 'project', m.description);
 
-  subcommand(
-    project,
-    'create <pfad>',
-    'Projekt anlegen; ein Unterprojekt braucht sein Elternprojekt',
-  )
-    .option('-t, --title <titel>', 'Titel (Default: letztes Pfadsegment)')
-    .option('--lead <user|me>', 'verantwortlicher User')
-    .option(
-      '-d, --description <md|->',
-      "Beschreibung; »-« liest stdin, das nicht leer sein darf (ohne Text: -d '')",
-    )
-    .option('-F, --file <pfad>', 'Beschreibung aus Datei (darf leer sein)')
+  subcommand(project, m.createCommand, m.createDescription)
+    .option(m.titleFlags, m.titleOption)
+    .option('--lead <user|me>', m.leadOption)
+    .option('-d, --description <md|->', m.descriptionOption)
+    .option(m.fileFlags, m.fileOption)
     .action(
       action(
         rt,
@@ -53,7 +47,7 @@ export function projectCommands(program: Command, rt: Runtime): void {
       ),
     );
 
-  syncOption(subcommand(project, 'list', 'Projekte mit der Zahl offener Issues')).action(
+  syncOption(subcommand(project, 'list', m.listDescription)).action(
     action(
       rt,
       async (env) => {
@@ -64,9 +58,7 @@ export function projectCommands(program: Command, rt: Runtime): void {
     ),
   );
 
-  syncOption(
-    subcommand(project, 'show <pfad>', 'Projekt mit Unterprojekten und Issues je State'),
-  ).action(
+  syncOption(subcommand(project, m.showCommand, m.showDescription)).action(
     action(
       rt,
       async (env, path: string) => {
@@ -93,7 +85,7 @@ export function projectCommands(program: Command, rt: Runtime): void {
                 ['subprojects', r.subprojects.join(', ')],
                 [
                   'issues',
-                  counts.length === 0 ? 'keine' : counts.map(([st, n]) => `${st} ${n}`).join(', '),
+                  counts.length === 0 ? m.none : counts.map(([st, n]) => `${st} ${n}`).join(', '),
                 ],
               ]),
               ...bodyBlock(r.body),
@@ -104,7 +96,7 @@ export function projectCommands(program: Command, rt: Runtime): void {
     ),
   );
 
-  subcommand(project, 'mv <alt> <neu>', 'Projekt samt Unterprojekten und Issues umbenennen').action(
+  subcommand(project, m.mvCommand, m.mvDescription).action(
     action(
       rt,
       async (env, from: string, to: string) => {
@@ -114,9 +106,9 @@ export function projectCommands(program: Command, rt: Runtime): void {
     ),
   );
 
-  subcommand(project, 'rm <pfad>', 'Projekt entfernen (nur ohne Issues, sonst --reassign/--detach)')
-    .option('--reassign <pfad>', 'Issues diesem Projekt zuordnen')
-    .option('--detach', 'Issues vom Projekt lösen')
+  subcommand(project, m.rmCommand, m.rmDescription)
+    .option(m.reassignFlags, m.reassignOption)
+    .option('--detach', m.detachOption)
     .action(
       action(
         rt,

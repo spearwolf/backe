@@ -16,19 +16,17 @@ import {
   syncOption,
 } from '../options.ts';
 import { columns, lines, safeText } from '../output.ts';
+import { m } from './repo.messages.ts';
 
 type AddOpts = { name?: string; ref?: string; description?: string };
 
 export function repoCommands(program: Command, rt: Runtime): void {
-  const repo = subcommand(program, 'repo', 'Repo-Registry des Backlogs');
+  const repo = subcommand(program, 'repo', m.description);
 
-  subcommand(repo, 'add <url>', 'Repo registrieren; der Name folgt sonst aus der URL')
-    .option('--name <name>', 'Name im Backlog')
-    .option('--ref <ref>', 'Default-Ref (etwa main)')
-    .option(
-      '-d, --description <md|->',
-      "Beschreibung; »-« liest stdin, das nicht leer sein darf (ohne Text: -d '')",
-    )
+  subcommand(repo, 'add <url>', m.addDescription)
+    .option('--name <name>', m.nameOption)
+    .option('--ref <ref>', m.refOption)
+    .option('-d, --description <md|->', m.descriptionOption)
     .action(
       action(
         rt,
@@ -46,7 +44,7 @@ export function repoCommands(program: Command, rt: Runtime): void {
       ),
     );
 
-  syncOption(subcommand(repo, 'list', 'registrierte Repos mit der Zahl verknüpfter Issues')).action(
+  syncOption(subcommand(repo, 'list', m.listDescription)).action(
     action(
       rt,
       async (env) => {
@@ -67,7 +65,7 @@ export function repoCommands(program: Command, rt: Runtime): void {
     ),
   );
 
-  subcommand(repo, 'rm <name>', 'Repo austragen (nur ohne verknüpfte Issues)').action(
+  subcommand(repo, 'rm <name>', m.rmDescription).action(
     action(
       rt,
       async (env, name: string) => {
@@ -77,9 +75,9 @@ export function repoCommands(program: Command, rt: Runtime): void {
     ),
   );
 
-  subcommand(repo, 'check [name...]', 'Repos prüfen; mit --remote auch Erreichbarkeit und Refs')
-    .option('--remote', 'Remote abfragen (Erreichbarkeit, Refs, GitHub-Status)')
-    .option('--fresh', 'den Cache der Remote-Ergebnisse umgehen')
+  subcommand(repo, 'check [name...]', m.checkDescription)
+    .option('--remote', m.remoteOption)
+    .option('--fresh', m.freshOption)
     .action(
       action(rt, async (env, names: string[], opts: { remote?: boolean; fresh?: boolean }) => {
         const { repos: checks, notices } = await checkRepoResult(await env.context(), {
@@ -96,20 +94,16 @@ export function repoCommands(program: Command, rt: Runtime): void {
       }),
     );
 
-  subcommand(repo, 'where <name>', 'lokaler Pfad eines Repos (aus der User-Config)').action(
+  subcommand(repo, 'where <name>', m.whereDescription).action(
     action(rt, async (env, name: string) => {
       const r = await locateRepo(await env.context(), name);
       emit(env, repoLocateJson(r), () => `${safeText(r.path)}\n`);
     }),
   );
 
-  subcommand(
-    repo,
-    'scan <verzeichnis>',
-    'Clones registrierter Repos unter einem Verzeichnis eintragen',
-  )
-    .option('--force', 'abweichende Einträge überschreiben')
-    .option('--dry-run', 'nichts schreiben')
+  subcommand(repo, m.scanCommand, m.scanDescription)
+    .option('--force', m.forceOption)
+    .option('--dry-run', m.dryRunOption)
     .action(
       action(rt, async (env, dir: string, opts: { force?: boolean; dryRun?: boolean }) => {
         const entries = await scanRepos(await env.context(), absPath(dir, env.io), {
@@ -132,16 +126,9 @@ export function repoCommands(program: Command, rt: Runtime): void {
     );
 }
 
-const SCAN_STATUS: Record<ScanEntry['status'], string> = {
-  new: 'neu',
-  unchanged: 'unverändert',
-  differs: 'abweichend',
-  overwritten: 'überschrieben',
-};
-
 function scanLine(e: ScanEntry): string {
   const status =
-    e.status === 'differs' ? `${SCAN_STATUS.differs} (${e.previous})` : SCAN_STATUS[e.status];
+    e.status === 'differs' ? `${m.scanStatus('differs')} (${e.previous})` : m.scanStatus(e.status);
   return `${e.name}  ${e.path}  ${status}`;
 }
 
@@ -158,15 +145,15 @@ function checkJson(c: RepoCheck): Record<string, unknown> {
 
 function checkLines(c: RepoCheck): string[] {
   const state = c.findings.some((f) => f.level === 'error')
-    ? 'fehler'
+    ? m.stateError
     : c.findings.some((f) => f.level === 'warning')
-      ? 'warnung'
+      ? m.stateWarning
       : 'ok';
   const out = [`${c.name}  ${state}  ${c.url}`];
   for (const f of c.findings) out.push(`  ${f.level}: ${f.message}`);
   if (c.github !== undefined) {
-    out.push(`  github: ${c.github.visibility}${c.github.archived ? ', archiviert' : ''}`);
+    out.push(`  github: ${c.github.visibility}${c.github.archived ? m.archived : ''}`);
   }
-  if (c.cached !== undefined) out.push(`  (Cache vom ${c.cached})`);
+  if (c.cached !== undefined) out.push(`  ${m.cachedFrom(c.cached)}`);
   return out.map(safeText);
 }
