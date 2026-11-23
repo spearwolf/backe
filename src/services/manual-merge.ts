@@ -47,7 +47,7 @@ function manualConflict(sha: string, paths: readonly string[]): BackeError {
 
 /**
  * Die Änderungen eines `manual`-Commits auf dem aktuellen Stand `head` (backe.md §2.16.2): je Pfad
- * `basis` = `parent`, `lokal` = Ursprungs-Commit, `aktuell` = `head`. Was sich nicht sauber
+ * Basis = `parent`, lokal = Ursprungs-Commit, aktuell = `head` (Marker-Labels im Katalog). Was sich nicht sauber
  * übernehmen lässt, entscheidet `resolve`; ohne ihn bricht die Runde mit `conflict` ab. Wählt er
  * `remote`, fällt der ganze Commit weg (leere Liste).
  */
