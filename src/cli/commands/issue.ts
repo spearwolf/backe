@@ -333,7 +333,7 @@ function defineEdit(parent: Command, rt: Runtime): void {
       'after',
       [
         '',
-        'Ohne Änderungs-Flags öffnet `backe issue edit <id>` die Issue-Datei (Frontmatter und',
+        'Ohne Änderungs-Flags öffnet backe issue edit <id> die Issue-Datei (Frontmatter und',
         'Body) im Editor. Editor: BACKE_EDITOR, sonst VISUAL, dann EDITOR — die beiden letzten',
         'nur, wenn stdin und stdout ein Terminal sind.',
         '',

@@ -38,27 +38,28 @@ import {
 } from './options.ts';
 import { exitCodeOf, type Format, renderError, resolveFormat } from './output.ts';
 
-/**
- * Das Programm samt aller Befehle. Einstellungen (Fehlerbehandlung, Ausgabe, positionale Optionen)
- * müssen vor dem ersten Befehl stehen, weil Unterbefehle sie beim Anlegen erben.
- */
 const QUICKSTART = [
   '',
   'Schnellstart:',
-  '  backe config set user <handle>      eigenes Handle setzen',
+  '  backe config set user <handle>    eigenes Handle setzen',
   '  backe init <verz> --name <n> --prefix <p> --remote <url>',
-  '                                      neues Backlog anlegen (oder: backe backlog clone <url>)',
-  '  backe project create web            Projekt anlegen (-t für einen Titel)',
-  '  backe sprint create 2026-w48        Sprint anlegen',
-  '  backe new -t "…" -p web -s 2026-w48 Issue anlegen',
-  '  backe ls                            offene Issues',
-  '  backe show <id>                     Issue anzeigen',
-  '  backe mv <id> in_progress           State ändern',
-  '  backe next --claim                  nächstes Issue holen und übernehmen (Agents)',
+  '                                    neues Backlog anlegen',
+  '  backe backlog clone <url>         vorhandenes Backlog klonen',
+  '  backe project create web          Projekt anlegen (-t für einen Titel)',
+  '  backe sprint create 2026-w48      Sprint anlegen',
+  '  backe new -t "…" -p web           Issue anlegen (-s für den Sprint)',
+  '  backe ls                          offene Issues',
+  '  backe show <id>                   Issue anzeigen',
+  '  backe mv <id> in_progress         State ändern',
+  '  backe next --claim                nächstes Issue holen und übernehmen',
   'Mehr: backe <befehl> --help',
   '',
 ].join('\n');
 
+/**
+ * Das Programm samt aller Befehle. Einstellungen (Fehlerbehandlung, Ausgabe, positionale Optionen)
+ * müssen vor dem ersten Befehl stehen, weil Unterbefehle sie beim Anlegen erben.
+ */
 export function buildProgram(rt: Runtime): Command {
   const program = new Command('backe')
     .description('Git-basiertes Backlog für Menschen und Agents')

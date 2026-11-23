@@ -432,6 +432,9 @@ test('root help and help command end with the quickstart; subcommand help does n
     const r = await cli(args, { env, cwd });
     expect({ args, code: r.code }).toEqual({ args, code: 0 });
     expect(r.stdout).toContain('Schnellstart:');
+    const lines = r.stdout.trimEnd().split('\n');
+    const block = lines.slice(lines.indexOf('Schnellstart:'));
+    expect(block.filter((l) => l.length > 80)).toEqual([]);
     expect(r.stdout.trimEnd().split('\n').at(-1)).toBe('Mehr: backe <befehl> --help');
   }
   for (const args of [
