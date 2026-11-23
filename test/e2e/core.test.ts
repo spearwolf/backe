@@ -426,6 +426,27 @@ test('issue edit --help names the editor mode and its variables', async () => {
   expect(r.stdout).toContain('BACKE_EDITOR, sonst VISUAL, dann EDITOR');
 });
 
+test('root help and help command end with the quickstart; subcommand help does not', async () => {
+  const { env, cwd } = await emptyHome();
+  for (const args of [['--help'], ['help']]) {
+    const r = await cli(args, { env, cwd });
+    expect({ args, code: r.code }).toEqual({ args, code: 0 });
+    expect(r.stdout).toContain('Schnellstart:');
+    expect(r.stdout.trimEnd().split('\n').at(-1)).toBe('Mehr: backe <befehl> --help');
+  }
+  for (const args of [
+    ['issue', '--help'],
+    ['issue', 'edit', '--help'],
+    ['help', 'verify'],
+  ]) {
+    const r = await cli(args, { env, cwd });
+    expect({ args, quickstart: r.stdout.includes('Schnellstart') }).toEqual({
+      args,
+      quickstart: false,
+    });
+  }
+});
+
 test('--help and --version exit 0', async () => {
   const { env, cwd } = await emptyHome();
   for (const args of [

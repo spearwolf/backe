@@ -607,6 +607,8 @@ backe config   get | set | edit          (User-Config)
 Aliase: backe new = issue create, backe ls = issue list, backe show = issue show, backe mv = issue move
 ```
 
+`backe --help` endet mit einem Abschnitt »Schnellstart«, der die ersten Befehle für ein neues Backlog zeigt.
+
 Ausgewählte Signaturen:
 
 ```
