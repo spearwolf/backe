@@ -16,6 +16,8 @@ import { writeFileAtomic } from '../store/files.ts';
 import { parseEntityFile } from '../store/frontmatter.ts';
 import type { Problem } from '../store/snapshot.ts';
 import { openSnapshot } from './read.ts';
+import { m } from './repo-check.messages.ts';
+import { m as repoLocalMessages } from './repo-local.messages.ts';
 
 export type RepoFinding = {
   level: 'error' | 'warning' | 'info';
@@ -208,11 +210,10 @@ export async function checkRepoResult(
     const findings: RepoFinding[] = [];
     const twins = (canonicals.get(canonical) ?? []).filter((n) => n !== name);
     if (twins.length > 0) {
-      const list = twins.map((n) => `»${n}«`).join(', ');
       findings.push({
         level: 'error',
         kind: 'local',
-        message: `Kanonische URL »${canonical}« gehört auch zu ${list}`,
+        message: m.canonicalUrlShared(canonical, twins),
       });
     }
     items.push({
@@ -242,8 +243,8 @@ export async function checkRepoResult(
     const wanted = new Set(input.names);
     for (const name of wanted) {
       if (!items.some((i) => i.name === name)) {
-        throw new BackeError('not_found', `Repo »${name}« nicht gefunden`, {
-          hint: 'backe repo list zeigt die registrierten Repos',
+        throw new BackeError('not_found', repoLocalMessages.repoNotFound(name), {
+          hint: repoLocalMessages.repoNotFoundHint,
         });
       }
     }
@@ -289,12 +290,12 @@ async function addInvalidIssueRefs(
       const ref = raw.slice(at + 1);
       if (isGitArg(ref) && isGitRef(ref)) continue;
       const name = raw.slice(0, at);
-      const message = `Issue »${p.key}« (${p.path}): Ref »${ref}« ist ungültig`;
+      const message = m.invalidIssueRef(p.key, p.path, ref);
       const item = items.find((i) => i.name === name);
       if (item === undefined) {
         notices.push({
           code: 'unknown_repo',
-          message: `${message}, Repo »${name}« ist nicht registriert`,
+          message: m.withUnregisteredRepo(message, name),
           ids: [p.key],
         });
       } else {
@@ -348,7 +349,7 @@ async function checkRemote(
           out.githubFinding = {
             level: 'info',
             kind: 'github',
-            message: 'GitHub lieferte keine auswertbare Antwort',
+            message: m.githubNoUsableAnswer,
           };
         }
       } catch (error) {
@@ -356,7 +357,7 @@ async function checkRemote(
         out.githubFinding = {
           level: 'warning',
           kind: 'github',
-          message: `GitHub-Abfrage fehlgeschlagen: ${message}`,
+          message: m.githubRequestFailed(message),
         };
       }
     }
@@ -384,7 +385,7 @@ async function checkRemote(
       item.findings.push({
         level: 'error',
         kind: 'network',
-        message: `nicht erreichbar: ${remote}`,
+        message: m.unreachable(remote),
       });
       continue;
     }
@@ -392,15 +393,14 @@ async function checkRemote(
     if (remote.github !== undefined) {
       item.github = remote.github;
       if (remote.github.archived) {
-        item.findings.push({ level: 'warning', kind: 'github', message: 'Repo ist archiviert' });
+        item.findings.push({ level: 'warning', kind: 'github', message: m.repoArchived });
       }
     }
     if (remote.githubFinding !== undefined) item.findings.push(remote.githubFinding);
 
     const known = new Set(remote.refs);
     // Ein Ref kann seit dem Cache-Eintrag angelegt worden sein; die Meldung sagt, wie man neu prüft.
-    const stale =
-      remote.cached === undefined ? '' : ` (Cache vom ${remote.cached}; --fresh prüft neu)`;
+    const stale = remote.cached === undefined ? '' : m.staleCache(remote.cached);
     const wanted: [string, string][] = [];
     if (item.defaultRef !== undefined) wanted.push(['default_ref', item.defaultRef]);
     for (const ref of item.refs) wanted.push(['Ref', ref]);
@@ -409,13 +409,13 @@ async function checkRemote(
         item.findings.push({
           level: 'info',
           kind: 'ref',
-          message: `${label} »${ref}« sieht wie ein Commit aus und ist per ls-remote nicht prüfbar`,
+          message: m.looksLikeCommit(label, ref),
         });
       } else if (!known.has(ref)) {
         item.findings.push({
           level: 'error',
           kind: 'ref',
-          message: `${label} »${ref}« existiert im Remote nicht${stale}`,
+          message: m.missingOnRemote(label, ref, stale),
         });
       }
     }
@@ -438,7 +438,7 @@ async function checkRemote(
 export function repoCheckExit(checks: readonly RepoCheck[]): BackeError | undefined {
   const errors = checks.flatMap((c) => c.findings).filter((f) => f.level === 'error');
   if (errors.length === 0) return undefined;
-  const message = `repo check: ${errors.length} Fehler`;
+  const message = m.errorCount(errors.length);
   const content = errors.some((f) => f.kind === 'local' || f.kind === 'ref');
   return new BackeError(content ? 'validation' : 'sync', message);
 }

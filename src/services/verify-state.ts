@@ -26,6 +26,7 @@ import { exists, writeFileAtomic } from '../store/files.ts';
 import { parseEntityFile } from '../store/frontmatter.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG, classifyPath } from '../store/layout.ts';
+import { m } from './verify-state.messages.ts';
 
 /** Users- und Config-Stand eines Commits; eine kaputte Config ist ihre Fehlermeldung. */
 export type State = { usersTree: string; users: Map<string, User>; config: BacklogConfig | string };
@@ -78,7 +79,7 @@ export async function loadStates(wc: string, shas: readonly string[]): Promise<M
     shas.flatMap((s) => [`${s}:users`, `${s}:${BACKLOG_CONFIG}`]),
   );
   const usersByTree = new Map<string, Map<string, User>>([['none', new Map()]]);
-  const configs = new Map<string, BacklogConfig | string>([['none', 'fehlt']]);
+  const configs = new Map<string, BacklogConfig | string>([['none', m.configMissing]]);
   const states = new Map<string, State>();
   for (const sha of shas) {
     const users = info.get(`${sha}:users`);
@@ -196,20 +197,20 @@ export function signatureReasons(
   gpgsig: string | undefined,
   users: ReadonlyMap<string, User>,
 ): string[] {
-  if (gpgsig === undefined) return ['unsigniert'];
-  if (!isSshSignature(gpgsig)) return ['Signatur ist keine SSH-Signatur'];
-  if (sig === undefined || sig.status === 'N') return ['unsigniert'];
-  if (sig.status === 'B') return ['Signatur ungültig'];
+  if (gpgsig === undefined) return [m.unsigned];
+  if (!isSshSignature(gpgsig)) return [m.notSshSignature];
+  if (sig === undefined || sig.status === 'N') return [m.unsigned];
+  if (sig.status === 'B') return [m.signatureInvalid];
   if (sig.status === 'G') {
     return activeFingerprints(users.get(sig.principal)).has(sig.fingerprint)
       ? []
-      : [`Key ${sig.fingerprint} gehört nicht zu ${sig.principal}`];
+      : [m.keyForeign(sig.fingerprint, sig.principal)];
   }
-  if (sig.status === 'E' || sig.fingerprint === '') return ['Signatur nicht prüfbar (ssh-keygen?)'];
+  if (sig.status === 'E' || sig.fingerprint === '') return [m.signatureUnverifiable];
   for (const [handle, user] of users) {
     if ((user.revoked_keys ?? []).some((r) => sshFingerprint(r.key) === sig.fingerprint)) {
-      return [`Key ${sig.fingerprint} von ${handle} ist widerrufen`];
+      return [m.keyRevoked(sig.fingerprint, handle)];
     }
   }
-  return [`Key ${sig.fingerprint} gehört zu keinem User`];
+  return [m.keyOfNoUser(sig.fingerprint)];
 }

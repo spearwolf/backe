@@ -10,6 +10,7 @@ import { NEXT_FIELDS, nextJson } from '../../services/views.ts';
 import { action, emitNotices, type Runtime, subcommand, syncOption } from '../options.ts';
 import { headerLine, json, lines } from '../output.ts';
 import { issueLines } from '../render-issue.ts';
+import { m } from './next.messages.ts';
 
 type Opts = {
   project?: string;
@@ -23,26 +24,24 @@ type Opts = {
 
 function levelArg(value: string | undefined): NextQuery['level'] {
   if (value === undefined || value === 'leaf' || value === 'top') return value;
-  throw new BackeError('validation', `Ungültige Ebene: »${value}«`, { hint: 'leaf oder top' });
+  throw new BackeError('validation', m.invalidLevel(value), { hint: m.levelHint });
 }
 
 export function nextCommand(program: Command, rt: Runtime): void {
-  syncOption(
-    subcommand(program, 'next', 'nächstes Issue für mich zeigen; mit --claim gleich übernehmen'),
-  )
-    .option('-p, --project <pfad>', 'nur in diesem Projekt')
-    .option('-s, --sprint <slug>', 'nur in diesem Sprint')
-    .option('--repo <name>', 'nur mit diesem Repo')
-    .option('--level <leaf|top>', 'Arbeitseinheit: Blatt (Default) oder ganzer Teilbaum')
-    .option('-A, --all', 'Kontextfilter (Projekt, Sprint, Repo) ignorieren')
-    .option('--claim', 'das Issue gleich übernehmen, synchron mit dem Remote')
+  syncOption(subcommand(program, 'next', m.description))
+    .option(m.projectFlags, m.projectOption)
+    .option('-s, --sprint <slug>', m.sprintOption)
+    .option('--repo <name>', m.repoOption)
+    .option('--level <leaf|top>', m.levelOption)
+    .option('-A, --all', m.allOption)
+    .option('--claim', m.claimOption)
     .action(
       action(
         rt,
         async (env, opts: Opts) => {
           if (opts.claim === true && opts.sync === true) {
-            throw new BackeError('usage', '--sync passt nicht zu --claim', {
-              hint: 'der Claim synchronisiert selbst',
+            throw new BackeError('usage', m.syncExcludesClaim, {
+              hint: m.syncExcludesClaimHint,
             });
           }
           const level = levelArg(opts.level);
@@ -80,7 +79,7 @@ export function nextCommand(program: Command, rt: Runtime): void {
           env.out(
             lines([
               ...(header === undefined ? [] : [header]),
-              `${line}${r.resumed ? '  (läuft schon)' : ''}`,
+              `${line}${r.resumed ? `  ${m.alreadyRunning}` : ''}`,
             ]),
           );
           emitNotices(env, notices, warnings);

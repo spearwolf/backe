@@ -21,6 +21,7 @@ import {
 import { entriesInFileOrder, parseEntityFile } from './frontmatter.ts';
 import { readJsonc } from './jsonc.ts';
 import { BACKLOG_CONFIG, commentsDir, GITATTRIBUTES, parseIssuePath } from './layout.ts';
+import { m } from './snapshot.messages.ts';
 import { fsSource, type SourceEntry, type TreeSource } from './source.ts';
 
 /**
@@ -52,12 +53,12 @@ type NamedKind = 'user' | 'project' | 'sprint' | 'repo';
 /** Wo die Dateien einer benannten Entitätsart liegen und wie ihr Name aus dem Pfad geprüft wird. */
 const NAMED: Record<
   NamedKind,
-  { dir: string; deep: boolean; valid: (name: string) => boolean; label: string }
+  { dir: string; deep: boolean; valid: (name: string) => boolean; label: () => string }
 > = {
-  user: { dir: 'users', deep: false, valid: isHandle, label: 'Handle' },
-  project: { dir: 'projects', deep: true, valid: isProjectPath, label: 'Projekt-Pfad' },
-  sprint: { dir: 'sprints', deep: false, valid: isSprintSlug, label: 'Sprint-Slug' },
-  repo: { dir: 'repos', deep: false, valid: isRepoName, label: 'Repo-Name' },
+  user: { dir: 'users', deep: false, valid: isHandle, label: () => m.labelHandle },
+  project: { dir: 'projects', deep: true, valid: isProjectPath, label: () => m.labelProjectPath },
+  sprint: { dir: 'sprints', deep: false, valid: isSprintSlug, label: () => m.labelSprintSlug },
+  repo: { dir: 'repos', deep: false, valid: isRepoName, label: () => m.labelRepoName },
 };
 const NAMED_KINDS: readonly NamedKind[] = ['user', 'project', 'sprint', 'repo'];
 const MAP_OF = {
@@ -80,8 +81,7 @@ function readDirSorted(src: TreeSource, dir: string): Promise<SourceEntry[]> {
 /** Inhalt einer Datei, die die Quelle eben aufgelistet hat; verschwindet sie doch (Wettlauf), ist das unerwartet. */
 async function readText(src: TreeSource, path: string): Promise<string> {
   const bytes = await src.read(path);
-  if (bytes === undefined)
-    throw new BackeError('unexpected', `Datei »${path}« verschwand zwischen Auflisten und Lesen`);
+  if (bytes === undefined) throw new BackeError('unexpected', m.fileVanished(path));
   return bytes.toString('utf8');
 }
 
@@ -207,7 +207,7 @@ function nameOf(kind: NamedKind, path: string, problems: Problem[]): string | un
   const { dir, valid, label } = NAMED[kind];
   const name = path.slice(dir.length + 1, -'.md'.length);
   if (valid(name)) return name;
-  problems.push({ path, message: `${path}: ungültiger ${label} »${name}«`, kind });
+  problems.push({ path, message: m.invalidName(path, label(), name), kind });
   return undefined;
 }
 
@@ -255,7 +255,7 @@ function acceptProjects(
       const parent = name.slice(0, slash);
       problems.push({
         path: entity.path,
-        message: `${entity.path}: Elternprojekt »${parent}« fehlt`,
+        message: m.parentProjectMissing(entity.path, parent),
         kind: 'project',
         key: name,
       });
@@ -287,7 +287,7 @@ function parseIssue(
   if (!isIssueId(id)) {
     problems.push({
       path,
-      message: `${path}: Verzeichnisname »${id}« ist keine Issue-ID`,
+      message: m.dirNameNotIssueId(path, id),
       kind: 'issue',
     });
     return undefined;
@@ -295,7 +295,7 @@ function parseIssue(
   if (shardOf(id) !== shard) {
     problems.push({
       path,
-      message: `${path}: Issue »${id}« gehört in den Shard »${shardOf(id)}«, nicht »${shard}«`,
+      message: m.issueInWrongShard(path, id, shardOf(id), shard),
       kind: 'issue',
       key: id,
     });
@@ -306,7 +306,7 @@ function parseIssue(
   if (entity.data.id !== id) {
     problems.push({
       path,
-      message: `${path}: id »${entity.data.id}« passt nicht zum Verzeichnis »${id}«`,
+      message: m.idMismatch(path, entity.data.id, id),
       kind: 'issue',
       key: id,
     });
@@ -354,10 +354,7 @@ async function loadIssues(
 async function loadConfig(src: TreeSource, origin: string): Promise<BacklogConfig> {
   const bytes = await src.read(BACKLOG_CONFIG);
   if (bytes === undefined) {
-    throw new BackeError(
-      'not_found',
-      `Kein Backlog gefunden: ${BACKLOG_CONFIG} fehlt in ${origin}`,
-    );
+    throw new BackeError('not_found', m.noBacklogFound(BACKLOG_CONFIG, origin));
   }
   const text = bytes.toString('utf8');
   const result = BacklogConfigSchema.safeParse(readJsonc(text, BACKLOG_CONFIG));
@@ -383,7 +380,7 @@ export async function loadSnapshot(root: string): Promise<BacklogSnapshot> {
 /** Wie `loadSnapshot` für eine beliebige Quelle; `origin` benennt sie in der Fehlermeldung. */
 export async function loadSnapshotFrom(
   src: TreeSource,
-  origin = 'der Quelle',
+  origin = m.defaultOrigin,
 ): Promise<BacklogSnapshot> {
   const config = await loadConfig(src, origin);
   const problems: Problem[] = [];
@@ -514,7 +511,7 @@ export async function listCommentsFrom(
   src: TreeSource,
   id: string,
 ): Promise<StoredEntity<Comment>[]> {
-  if (!isIssueId(id)) throw new BackeError('validation', `Ungültige Issue-ID »${id}«`);
+  if (!isIssueId(id)) throw new BackeError('validation', m.invalidIssueId(id));
   const out: StoredEntity<Comment>[] = [];
   for (const path of await listMarkdown(src, commentsDir(id), false)) {
     out.push(await readEntity<Comment>(src, path, 'comment'));
@@ -541,7 +538,7 @@ const SHARD_RE = /^[0-9a-hjkmnp-tv-z]{2}$/;
 /** Issue-IDs aus den Verzeichnisnamen, sortiert; mit `shard` nur dieser Shard. */
 export async function listIssueIds(root: string, shard?: string): Promise<string[]> {
   if (shard !== undefined && !SHARD_RE.test(shard)) {
-    throw new BackeError('validation', `Ungültiger Shard »${shard}«`);
+    throw new BackeError('validation', m.invalidShard(shard));
   }
   const src = fsSource(root);
   const shards =

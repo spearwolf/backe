@@ -6,6 +6,7 @@ import { BackeError } from '../core/errors.ts';
 import { readBlobs, treeChanges } from '../git/history.ts';
 import { mergeText } from '../git/merge-file.ts';
 import type { FileChange } from '../store/files.ts';
+import { m } from './manual-merge.messages.ts';
 
 /** Konfliktpfad eines `manual`-Commits; `ours` ist der aktuelle Stand (Remote), `theirs` lokal. */
 export type ManualConflictPath = {
@@ -38,16 +39,15 @@ const same = (a: Buffer | null, b: Buffer | null) =>
 const isText = (b: Buffer | null) => b === null || !b.includes(0);
 
 function manualConflict(sha: string, paths: readonly string[]): BackeError {
-  return new BackeError(
-    'conflict',
-    `Textkonflikt in manual-Commit ${sha.slice(0, 7)}: ${paths.join(', ')}`,
-    { hint: 'backe sync --interactive', details: { commit: sha, paths } },
-  );
+  return new BackeError('conflict', m.textConflict(sha.slice(0, 7), paths.join(', ')), {
+    hint: 'backe sync --interactive',
+    details: { commit: sha, paths },
+  });
 }
 
 /**
  * Die Änderungen eines `manual`-Commits auf dem aktuellen Stand `head` (backe.md §2.16.2): je Pfad
- * `basis` = `parent`, `lokal` = Ursprungs-Commit, `aktuell` = `head`. Was sich nicht sauber
+ * Basis = `parent`, lokal = Ursprungs-Commit, aktuell = `head` (Marker-Labels im Katalog). Was sich nicht sauber
  * übernehmen lässt, entscheidet `resolve`; ohne ihn bricht die Runde mit `conflict` ab. Wählt er
  * `remote`, fällt der ganze Commit weg (leere Liste).
  */
@@ -87,7 +87,7 @@ export async function manualChanges(
       base: base ?? Buffer.alloc(0),
       ours,
       theirs,
-      labels: ['remote', 'basis', 'lokal'],
+      labels: [m.labelRemote, m.labelBase, m.labelLocal],
     });
     if (!merged.clean) conflicts.push({ path, base, ours, theirs, merged: merged.content });
     else if (!merged.content.equals(ours)) changes.push({ path, content: merged.content });

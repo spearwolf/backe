@@ -4,6 +4,7 @@ import { hostname, uptime } from 'node:os';
 import { dirname } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { BackeError } from '../core/errors.ts';
+import { m } from './lock.messages.ts';
 
 export type LockOptions = {
   timeoutMs?: number;
@@ -95,8 +96,8 @@ async function publish(lockPath: string, host: string): Promise<boolean> {
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== undefined && NO_HARDLINK_CODES.has(code)) {
-        throw new BackeError('unexpected', `Dateisystem ohne Hardlinks: ${dirname(lockPath)}`, {
-          hint: 'BACKE_HOME und Arbeitskopien auf ein lokales Dateisystem legen.',
+        throw new BackeError('unexpected', m.noHardlinks(dirname(lockPath)), {
+          hint: m.noHardlinksHint,
         });
       }
       throw error;
@@ -164,23 +165,19 @@ export async function withFileLock<T>(
       continue;
     }
     if (Date.now() >= deadline) {
-      const pid = holder.pid ?? 'unbekannt';
+      const pid = holder.pid ?? m.unknownPid;
       if (holder.pid === undefined) {
-        throw new BackeError('conflict', `Lock ${lockPath} gehalten von PID ${pid}`, {
-          hint: `Falls kein backe-Prozess läuft: ${lockPath} löschen.`,
+        throw new BackeError('conflict', m.lockHeld(lockPath, pid), {
+          hint: m.lockHolderUnknownHint(lockPath),
         });
       }
       if (foreignHost(holder, id.host)) {
-        throw new BackeError(
-          'conflict',
-          `Lock ${lockPath} gehalten von PID ${pid} auf ${holder.host}`,
-          {
-            hint: `Läuft dort kein backe-Prozess mehr: ${lockPath} löschen.`,
-          },
-        );
+        throw new BackeError('conflict', m.lockHeldOnHost(lockPath, pid, String(holder.host)), {
+          hint: m.lockForeignHostHint(lockPath),
+        });
       }
-      throw new BackeError('conflict', `Lock ${lockPath} gehalten von PID ${pid}`, {
-        hint: 'Läuft noch ein anderer backe-Prozess?',
+      throw new BackeError('conflict', m.lockHeld(lockPath, pid), {
+        hint: m.lockOtherProcessHint,
       });
     }
     await sleep(retryMs);

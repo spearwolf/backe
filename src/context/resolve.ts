@@ -13,6 +13,7 @@ import { loadRepoRegistry } from '../store/snapshot.ts';
 import { type Env, envValue, expandPath, type Homes, physicalPath, resolveHomes } from './paths.ts';
 import { findProjectConfig, type ProjectConfigLevel } from './project-config.ts';
 import { findBacklogByRemote, managedClonePath, workingCopyPath } from './registry.ts';
+import { m } from './resolve.messages.ts';
 import { readUserConfig, userConfigPath } from './user-config.ts';
 
 export type ContextFlags = { backlog?: string; as?: string; project?: string; sprint?: string };
@@ -74,7 +75,7 @@ export async function readBacklogName(root: string): Promise<string | undefined>
   const name =
     typeof raw === 'object' && raw !== null ? (raw as { name?: unknown }).name : undefined;
   if (typeof name !== 'string' || !BACKLOG_NAME_RE.test(name)) {
-    throw new BackeError('validation', `${file}: name: kein gültiger Backlog-Name`);
+    throw new BackeError('validation', m.invalidBacklogName(file));
   }
   return name;
 }
@@ -85,10 +86,7 @@ function describe(source: Source): string {
 
 function validHandle(handle: string, source: Source): string {
   if (!isHandle(handle)) {
-    throw new BackeError(
-      'validation',
-      `Ungültiger User-Handle »${handle}« (Quelle: ${describe(source)})`,
-    );
+    throw new BackeError('validation', m.invalidHandle(handle, describe(source)));
   }
   return handle;
 }
@@ -128,21 +126,16 @@ async function bindPath(path: string, source: Source): Promise<Found> {
   const top = (await exists(path)) ? await gitToplevel(path) : undefined;
   const name = top === undefined ? undefined : await readBacklogName(top);
   if (top === undefined || name === undefined) {
-    throw new BackeError(
-      'not_found',
-      `${path} ist keine Arbeitskopie eines Backlogs (Quelle: ${describe(source)})`,
-    );
+    throw new BackeError('not_found', m.notAWorkingCopy(path, describe(source)));
   }
   return { name, source, bound: top };
 }
 
 function byName(cfg: UserConfig, name: string, source: Source): Found {
   if (cfg.backlogs?.[name] === undefined) {
-    throw new BackeError(
-      'not_found',
-      `Backlog »${name}« ist nicht registriert (Quelle: ${describe(source)})`,
-      { hint: 'backe backlog list' },
-    );
+    throw new BackeError('not_found', m.backlogNotRegistered(name, describe(source)), {
+      hint: 'backe backlog list',
+    });
   }
   return { name, source };
 }
@@ -164,7 +157,7 @@ async function resolveRef(
   } catch (error) {
     // normalizeRepoUrl wirft nur `validation`; die Quelle gehört in die Meldung.
     const e = error as BackeError;
-    throw new BackeError('validation', `${e.message} (Quelle: ${describe(source)})`, {
+    throw new BackeError('validation', m.sourceSuffix(e.message, describe(source)), {
       ...(e.hint === undefined ? {} : { hint: e.hint }),
     });
   }
@@ -174,11 +167,9 @@ async function resolveRef(
   }
   const name = findBacklogByRemote(ctx.cfg, value);
   if (name === undefined) {
-    throw new BackeError(
-      'not_found',
-      `Backlog »${value}« ist nicht registriert (Quelle: ${describe(source)})`,
-      { hint: `backe backlog clone ${value}` },
-    );
+    throw new BackeError('not_found', m.backlogNotRegistered(value, describe(source)), {
+      hint: `backe backlog clone ${value}`,
+    });
   }
   return { name, source };
 }
@@ -200,9 +191,7 @@ async function findBacklog(input: ContextInput, ctx: RefContext, level: Level): 
   if (ctx.cfg.current !== undefined) {
     return byName(ctx.cfg, ctx.cfg.current, { kind: 'user-current' });
   }
-  throw new BackeError('usage', 'Kein Backlog angegeben', {
-    hint: '--backlog <name>, BACKE_BACKLOG, »backe backlog use <name>« oder »backlog« in einer .backlog.jsonc',
-  });
+  throw new BackeError('usage', m.noBacklogGiven, { hint: m.noBacklogHint });
 }
 
 function findUser(
@@ -229,11 +218,26 @@ function findUser(
 }
 
 type ScopedKey = 'project' | 'sprint';
-const SCOPED: Record<ScopedKey, { env: string; valid: (value: string) => boolean; label: string }> =
+const SCOPED: Record<
+  ScopedKey,
   {
-    project: { env: 'BACKE_PROJECT', valid: isProjectPath, label: 'Projektpfad' },
-    sprint: { env: 'BACKE_SPRINT', valid: isSprintSlug, label: 'Sprint-Slug' },
-  };
+    env: string;
+    valid: (value: string) => boolean;
+    invalid: (value: string, source: string) => string;
+  }
+> = {
+  // Der Text wird erst bei der Meldung gelesen, damit die Locale beim Import nicht einfriert.
+  project: {
+    env: 'BACKE_PROJECT',
+    valid: isProjectPath,
+    invalid: (value, source) => m.invalidProjectPath(value, source),
+  },
+  sprint: {
+    env: 'BACKE_SPRINT',
+    valid: isSprintSlug,
+    invalid: (value, source) => m.invalidSprintSlug(value, source),
+  },
+};
 
 /** project/sprint: Flag, Env, lokale und geteilte Projekt-Config, Backlog-Eintrag, globaler Default. */
 function findScoped(
@@ -243,13 +247,10 @@ function findScoped(
   backlog: string,
   level: Level,
 ): Resolved<string | undefined> {
-  const { env: envName, valid, label } = SCOPED[key];
+  const { env: envName, valid, invalid } = SCOPED[key];
   const pick = (value: string, source: Source): Resolved<string> => {
     if (!valid(value)) {
-      throw new BackeError(
-        'validation',
-        `Ungültiger ${label} »${value}« (Quelle: ${describe(source)})`,
-      );
+      throw new BackeError('validation', invalid(value, describe(source)));
     }
     return { value, source };
   };
@@ -309,7 +310,7 @@ async function findRepo(
     if (configured.value !== null && registry !== undefined && !registry.has(configured.value)) {
       throw new BackeError(
         'not_found',
-        `Repo »${configured.value}« steht nicht im Backlog (Quelle: ${describe(configured.source)})`,
+        m.repoNotInBacklog(configured.value, describe(configured.source)),
         { hint: 'backe repo list' },
       );
     }
@@ -421,12 +422,11 @@ export async function resolveContext(input: ContextInput): Promise<ResolvedConte
       workingCopy !== undefined && (await exists(join(workingCopy, BACKLOG_CONFIG)))
         ? workingCopy
         : await fallbackRoot(userConfig, homes, found.name, handle);
-    const actual = root === undefined ? undefined : await readBacklogName(root);
-    if (actual !== undefined && actual !== found.name) {
-      throw new BackeError(
-        'validation',
-        `${root}: gehört zum Backlog »${actual}«, erwartet wurde »${found.name}«`,
-      );
+    if (root !== undefined) {
+      const actual = await readBacklogName(root);
+      if (actual !== undefined && actual !== found.name) {
+        throw new BackeError('validation', m.workingCopyOfOtherBacklog(root, actual, found.name));
+      }
     }
   }
 
@@ -466,21 +466,19 @@ export function requireWriter(ctx: ResolvedContext): {
   const handle = ctx.user.value;
   const file = userConfigPath(ctx.homes.backeHome);
   if (handle === undefined || ctx.backlog.workingCopy === undefined) {
-    throw new BackeError('usage', 'Kein User aufgelöst, Schreiben braucht eine Identität', {
-      hint: `--as <handle>, BACKE_USER oder »user« in ${file}`,
-    });
+    throw new BackeError('usage', m.noUserResolved, { hint: m.noUserHint(file) });
   }
   const owner = ctx.backlog.boundTo;
   if (owner !== undefined && owner !== handle) {
     const own = workingCopyPath(ctx.userConfig, ctx.homes, ctx.backlog.value, handle);
     throw new BackeError(
       'usage',
-      `Die Arbeitskopie ${ctx.backlog.workingCopy} gehört »${owner}«; die Arbeitskopie von »${handle}« ist ${own}`,
+      m.workingCopyOwnedByOther(ctx.backlog.workingCopy, owner, handle, own),
     );
   }
   if (ctx.user.key === undefined) {
-    throw new BackeError('usage', `Für »${handle}« ist kein Signing-Key eingetragen`, {
-      hint: `identities.${ctx.backlog.value}.${handle} in ${file} eintragen oder backe user create-agent`,
+    throw new BackeError('usage', m.noSigningKey(handle), {
+      hint: m.noSigningKeyHint(ctx.backlog.value, handle, file),
     });
   }
   return { handle, key: ctx.user.key, workingCopy: ctx.backlog.workingCopy };

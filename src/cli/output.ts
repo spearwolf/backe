@@ -10,6 +10,7 @@ import { summarizeBatch, summarizeOp } from '../ops/operation.ts';
 import type { WriteOpsOutcome, WriteOutcome } from '../services/outcome.ts';
 import { errorJson, outcomeJson, toBackeError } from '../services/views.ts';
 import type { CliIo } from './io.ts';
+import { m } from './output.messages.ts';
 
 export const FORMATS = ['text', 'json', 'md'] as const;
 export type Format = (typeof FORMATS)[number];
@@ -18,8 +19,8 @@ const isFormat = (value: string): value is Format => (FORMATS as readonly string
 
 function checked(value: string, source: string): Format {
   if (isFormat(value)) return value;
-  throw new BackeError('validation', `Unbekanntes Ausgabeformat »${value}« (Quelle: ${source})`, {
-    hint: 'text, json oder md',
+  throw new BackeError('validation', m.unknownFormat(value, source), {
+    hint: m.formatChoices,
   });
 }
 
@@ -155,7 +156,9 @@ export function renderError(err: unknown, format: Format): string {
   if (format === 'json') {
     return json(errorJson(e));
   }
-  return safeText(`Fehler: ${e.message}\n${e.hint === undefined ? '' : `Hinweis: ${e.hint}\n`}`);
+  return safeText(
+    `${m.errorPrefix} ${e.message}\n${e.hint === undefined ? '' : `${m.hintPrefix} ${e.hint}\n`}`,
+  );
 }
 
 /**
@@ -177,7 +180,7 @@ export function renderOutcome(
   // Eine Operation ist ein gewöhnlicher Commit, mehrere sind ein Batch-Commit.
   const [only] = ops;
   const summary = ops.length === 1 && only !== undefined ? summarizeOp(only) : summarizeBatch(ops);
-  if (o.commit === undefined) return `unverändert: ${safeText(summary)}\n`;
+  if (o.commit === undefined) return `${m.unchanged} ${safeText(summary)}\n`;
   if (kind === 'create' && o.id !== undefined) return `${o.id}\n`;
   return `${safeText(summary)}\n`;
 }
@@ -185,11 +188,11 @@ export function renderOutcome(
 /** Hinweise und Warnungen für stderr: `Hinweis: …` je Notice, dann `Warnung: …`. */
 export function renderNotices(notices: readonly Notice[], warnings: readonly string[]): string {
   return lines([
-    ...notices.map((n) => `Hinweis: ${safeText(n.message)}`),
-    ...warnings.map((w) => `Warnung: ${safeText(w)}`),
+    ...notices.map((n) => `${m.hintPrefix} ${safeText(n.message)}`),
+    ...warnings.map((w) => `${m.warningPrefix} ${safeText(w)}`),
   ]);
 }
 
 /** Hinweise als Text-Zeilen für stderr. */
 export const renderHints = (hints: readonly string[]): string =>
-  lines(hints.map((h) => `Hinweis: ${safeText(h)}`));
+  lines(hints.map((h) => `${m.hintPrefix} ${safeText(h)}`));

@@ -47,7 +47,7 @@ $ backe config set output.color bunt
 [exit 2]
 [stdout]
 [stderr]
-Fehler: <backe>/config.jsonc: output.color: Invalid option: expected one of "auto"|"always"|"never"
+Fehler: <backe>/config.jsonc: output.color: Ungültige Option: erwartet eine von "auto"|"always"|"never"
 
 $ backe config set --unset output.color
 [exit 0]

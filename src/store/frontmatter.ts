@@ -21,6 +21,7 @@ import {
 } from 'yaml';
 import { BackeError } from '../core/errors.ts';
 import { type EntityKind, KEY_ORDER } from '../core/schemas.ts';
+import { m } from './frontmatter.messages.ts';
 
 const FENCE = '---';
 const MAX_LINE = 100;
@@ -40,16 +41,16 @@ function toLf(s: string): string {
 
 // --- Lesen -------------------------------------------------------------------------------
 
-/** CST-Token, die das Subset nicht kennt, und der Grund für die Ablehnung. */
-const FORBIDDEN_TOKENS: Readonly<Record<string, string>> = {
-  comment: 'Kommentare sind nicht erlaubt',
-  anchor: 'Anker sind nicht erlaubt',
-  alias: 'Aliase sind nicht erlaubt',
-  tag: 'Tags sind nicht erlaubt',
-  directive: 'Direktiven sind nicht erlaubt',
-  'doc-start': 'mehrere Dokumente sind nicht erlaubt',
-  'doc-end': 'mehrere Dokumente sind nicht erlaubt',
-};
+/** CST-Token, die das Subset nicht kennt, und der Katalog-Key des Grundes für die Ablehnung. */
+const FORBIDDEN_TOKENS = {
+  comment: 'commentsForbidden',
+  anchor: 'anchorsForbidden',
+  alias: 'aliasesForbidden',
+  tag: 'tagsForbidden',
+  directive: 'directivesForbidden',
+  'doc-start': 'multipleDocumentsForbidden',
+  'doc-end': 'multipleDocumentsForbidden',
+} as const;
 
 /**
  * Eine gelesene Entitätsdatei. `keys` sind die Top-Level-Keys in Dateireihenfolge — die
@@ -61,7 +62,7 @@ export type ParsedEntityFile = { data: Record<string, unknown>; keys: string[]; 
 export function parseEntityFile(text: string, file: string): ParsedEntityFile {
   const src = toLf(text.startsWith('\ufeff') ? text.slice(1) : text);
   if (!src.startsWith(`${FENCE}\n`)) {
-    throw new BackeError('validation', `${file}:1: Frontmatter muss mit "---" in Zeile 1 beginnen`);
+    throw new BackeError('validation', m.mustStartWithFence(file));
   }
   let pos = FENCE.length + 1;
   for (;;) {
@@ -72,7 +73,7 @@ export function parseEntityFile(text: string, file: string): ParsedEntityFile {
       return { data, keys, body: nl === -1 ? '' : src.slice(nl + 1) };
     }
     if (nl === -1) {
-      throw new BackeError('validation', `${file}:1: Frontmatter ohne schließende "---"-Zeile`);
+      throw new BackeError('validation', m.missingClosingFence(file));
     }
     pos = nl + 1;
   }
@@ -112,11 +113,11 @@ function parseFrontmatter(
   // forceDoc: auch ein leerer Text ergibt ein Dokument (mit `contents === null`).
   const doc = composer.compose(tokens, true, yaml.length).next().value as Document.Parsed;
   const [error] = doc.errors;
-  if (error) fail(error.pos[0], `ungültiges YAML: ${error.message}`);
+  if (error) fail(error.pos[0], m.invalidYaml(error.message));
 
   const root = doc.contents;
   if (root === null) return { data: {}, keys: [] };
-  if (!isMap(root)) return fail(offsetOf(root), 'Frontmatter muss eine Map sein');
+  if (!isMap(root)) return fail(offsetOf(root), m.mustBeMap);
   const data = toPlain(root, { yaml, fail }) as Record<string, unknown>;
   // toPlain hat bereits geprüft, dass jeder Key ein String-Skalar ist.
   const keys = root.items.map((pair) => (pair.key as Scalar<string>).value);
@@ -140,14 +141,14 @@ function findForbiddenToken(
       typeof offset === 'number' &&
       Object.hasOwn(FORBIDDEN_TOKENS, type)
     ) {
-      hits.push({ offset, reason: FORBIDDEN_TOKENS[type] as string });
+      hits.push({ offset, reason: m[FORBIDDEN_TOKENS[type as keyof typeof FORBIDDEN_TOKENS]] });
     }
     for (const child of Object.values(x)) visit(child);
   };
   let documents = 0;
   for (const token of tokens) {
     if (token.type === 'document' && ++documents > 1) {
-      hits.push({ offset: token.offset, reason: 'mehrere Dokumente sind nicht erlaubt' });
+      hits.push({ offset: token.offset, reason: m.multipleDocumentsForbidden });
     }
     visit(token);
   }
@@ -186,14 +187,11 @@ function toPlain(node: unknown, ctx: PlainContext): unknown {
     if (typeof v === 'number' && node.range) {
       const literal = ctx.yaml.slice(node.range[0], node.range[1]);
       if (!isLosslessNumber(literal, v)) {
-        return fail(
-          node.range[0],
-          `Zahl ${literal} ist nicht verlustfrei darstellbar; als String in Anführungszeichen schreiben ("${literal}")`,
-        );
+        return fail(node.range[0], m.numberNotLossless(literal));
       }
     }
     if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return v;
-    return fail(offsetOf(node), 'leere Werte und null sind nicht erlaubt');
+    return fail(offsetOf(node), m.emptyValuesAndNull);
   }
   if (isSeq(node)) return node.items.map((item) => toPlain(item, ctx));
   if (isMap(node)) {
@@ -201,10 +199,10 @@ function toPlain(node: unknown, ctx: PlainContext): unknown {
     for (const pair of node.items) {
       const key: unknown = pair.key;
       if (!isScalar(key) || typeof key.value !== 'string') {
-        return fail(offsetOf(key ?? pair.value), 'Keys müssen Strings sein');
+        return fail(offsetOf(key ?? pair.value), m.keysMustBeStrings);
       }
       if (pair.value === null || (isScalar(pair.value) && pair.value.value === null)) {
-        return fail(offsetOf(key), 'leere Werte und null sind nicht erlaubt');
+        return fail(offsetOf(key), m.emptyValuesAndNull);
       }
       // defineProperty statt Zuweisung: ein Key "__proto__" wird so ein gewöhnliches Feld.
       Object.defineProperty(obj, key.value, {
@@ -217,7 +215,7 @@ function toPlain(node: unknown, ctx: PlainContext): unknown {
     return obj;
   }
   /* v8 ignore next -- Aliase lehnt bereits der CST-Scan ab */
-  return fail(offsetOf(node), 'nicht unterstützter YAML-Knoten');
+  return fail(offsetOf(node), m.unsupportedYamlNode);
 }
 
 // --- Schreiben ---------------------------------------------------------------------------
@@ -266,7 +264,7 @@ function scalar(value: unknown): Scalar {
     }
     return node;
   }
-  throw new BackeError('unexpected', `nicht serialisierbarer Wert: ${String(value)}`);
+  throw new BackeError('unexpected', m.notSerializable(String(value)));
 }
 
 /** Baut einen Knoten, der vollständig im Flow-Stil steht. */
@@ -356,7 +354,7 @@ function assertDistinctExtra(
   const seen = new Set<string>();
   for (const [key] of extra) {
     if (KEY_ORDER[kind].includes(key) || Object.hasOwn(data, key) || seen.has(key)) {
-      throw new BackeError('unexpected', `extra-Key »${key}« kollidiert mit einem anderen Key`);
+      throw new BackeError('unexpected', m.extraKeyCollides(key));
     }
     seen.add(key);
   }

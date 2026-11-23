@@ -1,0 +1,38 @@
+import { catalog } from '../../i18n/catalog.ts';
+
+export const m = catalog({
+  en: {
+    messageAndFileExclusive: '-m and -F are mutually exclusive',
+    messageOrFileRequired: 'Specify -m or -F',
+    messageOrFileHint: '-m <text>, -m - (stdin) or -F <file>',
+    messageFlags: '-m, --message <md|->',
+    messageOption: "Text ('-' reads stdin)",
+    fileFlags: '-F, --file <path>',
+    fileOption: 'Text from a file',
+    description: 'Comments of an issue',
+    addDescription: 'Create a comment',
+    listDescription: 'Comments in chronological order, with a number for edit and delete',
+    limitOption: 'Only the last n',
+    editCommand: 'edit <id> <comment>',
+    editDescription: 'Edit your own comment (file name or number)',
+    deleteCommand: 'delete <id> <comment>',
+    deleteDescription: 'Delete your own comment (file name or number)',
+  },
+  de: {
+    messageAndFileExclusive: '-m und -F schließen sich aus',
+    messageOrFileRequired: '-m oder -F angeben',
+    messageOrFileHint: '-m <text>, -m - (stdin) oder -F <datei>',
+    messageFlags: '-m, --message <md|->',
+    messageOption: 'Text (»-« liest stdin)',
+    fileFlags: '-F, --file <pfad>',
+    fileOption: 'Text aus Datei',
+    description: 'Kommentare eines Issues',
+    addDescription: 'Kommentar anlegen',
+    listDescription: 'Kommentare chronologisch, mit Nummer für edit und delete',
+    limitOption: 'nur die letzten n',
+    editCommand: 'edit <id> <kommentar>',
+    editDescription: 'eigenen Kommentar ändern (Dateiname oder Nummer)',
+    deleteCommand: 'delete <id> <kommentar>',
+    deleteDescription: 'eigenen Kommentar löschen (Dateiname oder Nummer)',
+  },
+});

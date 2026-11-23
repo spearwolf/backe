@@ -3,6 +3,7 @@
  * Snapshot sammeln, Invarianten beim Schreiben prüfen und am Ende in `FileChange`s übersetzen.
  * Ein Draft wird nach jedem geworfenen Fehler verworfen; er kennt kein Zurückrollen.
  */
+
 import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import { CROCKFORD, defaultRandomBytes } from '../core/ids.ts';
@@ -32,6 +33,7 @@ import {
 } from '../store/layout.ts';
 import type { BacklogSnapshot, Problem, StoredEntity } from '../store/snapshot.ts';
 import type { ApplyContext } from './apply.ts';
+import { m } from './draft.messages.ts';
 import { checkIssueInvariants, sameValue, violation } from './invariants.ts';
 import { LayeredMap } from './layered-map.ts';
 import type { Notice } from './notice.ts';
@@ -67,13 +69,16 @@ const FILE_OF: Record<NamedKind, (key: string) => string> = {
   repo: repoFile,
 };
 
-const LABEL_OF: Record<NamedKind | 'issue', string> = {
-  issue: 'Issue',
-  user: 'User',
-  project: 'Projekt',
-  sprint: 'Sprint',
-  repo: 'Repo',
-};
+const LABEL_KEY = {
+  issue: 'labelIssue',
+  user: 'labelUser',
+  project: 'labelProject',
+  sprint: 'labelSprint',
+  repo: 'labelRepo',
+} as const satisfies Record<NamedKind | 'issue', string>;
+
+/** Bezeichnung der Art in der Sprache der aktuellen Locale. */
+const labelOf = (kind: NamedKind | 'issue'): string => m[LABEL_KEY[kind]];
 
 const MAP_NAMES: readonly MapName[] = ['issues', 'users', 'projects', 'sprints', 'repos'];
 const MAX_NAME_ATTEMPTS = 100;
@@ -164,7 +169,7 @@ export class Draft {
   issue(id: string): StoredEntity<Issue> {
     const found = this.findIssue(id);
     if (found === undefined) {
-      throw violation('missing_ref', `Issue ${id} nicht gefunden`, { ids: [id] });
+      throw violation('missing_ref', m.notFound(m.labelIssue, id), { ids: [id] });
     }
     return found;
   }
@@ -177,7 +182,7 @@ export class Draft {
     const file = issueFile(id);
     const parsed = this.#validated('issue', data, file) as Issue;
     if (parsed.id !== id) {
-      throw violation('schema', `${file}: id: erwartet ${id}, bekam ${parsed.id}`);
+      throw violation('schema', m.idMismatch(file, id, parsed.id));
     }
     const before = this.findIssue(id);
     if (!this.#put('issues', id, file, before, parsed, body)) return;
@@ -207,7 +212,7 @@ export class Draft {
   entity<K extends NamedKind>(kind: K, key: string): StoredEntity<NamedData[K]> {
     const found = this.findEntity(kind, key);
     if (found === undefined) {
-      throw violation('missing_ref', `${LABEL_OF[kind]} ${key} nicht gefunden`, { ids: [key] });
+      throw violation('missing_ref', m.notFound(labelOf(kind), key), { ids: [key] });
     }
     return found;
   }
@@ -251,13 +256,13 @@ export class Draft {
     } else {
       const parsed = parseCommentFileName(file);
       if (parsed === undefined) {
-        throw violation('schema', `Ungültiger Kommentar-Dateiname »${file}«`);
+        throw violation('schema', m.invalidCommentFileName(file));
       }
       if (parsed.author !== this.ctx.actor) {
-        throw violation('policy', `Kommentar »${file}« gehört nicht zu ${this.ctx.actor}`);
+        throw violation('policy', m.commentNotOwn(file, this.ctx.actor));
       }
       if (this.#commentTaken(issueId, file)) {
-        throw violation('exists', `Kommentar ${dir}/${file} existiert bereits`, { ids: [issueId] });
+        throw violation('exists', m.commentExists(`${dir}/${file}`), { ids: [issueId] });
       }
       name = file;
       created = parsed.created;
@@ -340,11 +345,10 @@ export class Draft {
     const kind = KIND_OF[name];
     const problem = this.brokenFile(kind, key);
     if (problem === undefined) return undefined;
-    throw violation(
-      'schema',
-      `${LABEL_OF[kind]} ${key} ist nicht ladbar (${problem.path}): ${problem.message}`,
-      { ids: [key], hint: 'Erst die Datei reparieren; bis dahin scheitert jeder Write darauf.' },
-    );
+    throw violation('schema', m.notLoadable(labelOf(kind), key, problem.path, problem.message), {
+      ids: [key],
+      hint: m.notLoadableHint,
+    });
   }
 
   #validated(kind: EntityKind, data: object, file: string): Record<string, unknown> {
@@ -356,7 +360,7 @@ export class Draft {
       throw err;
     }
     if (result.unknownKeys.length > 0) {
-      throw violation('schema', `${file}: unbekannte Felder: ${result.unknownKeys.join(', ')}`);
+      throw violation('schema', m.unknownFields(file, result.unknownKeys.join(', ')));
     }
     return compact(result.data as Record<string, unknown>);
   }
@@ -415,16 +419,13 @@ export class Draft {
     for (let attempt = 0; attempt < MAX_NAME_ATTEMPTS; attempt++) {
       const bytes = source(3);
       if (bytes.length < 3) {
-        throw new BackeError('unexpected', `Zufallsquelle lieferte ${bytes.length} statt 3 Bytes`);
+        throw new BackeError('unexpected', m.randomSourceShort(bytes.length));
       }
       // 256 ist durch 32 teilbar, `& 31` ist also gleichverteilt.
       const rnd = [...bytes.subarray(0, 3)].map((b) => CROCKFORD[b & 31]).join('');
       const name = commentFileName(this.ctx.now, this.ctx.actor, rnd);
       if (!this.#commentTaken(issueId, name)) return name;
     }
-    throw new BackeError(
-      'unexpected',
-      `Kein freier Kommentar-Dateiname nach ${MAX_NAME_ATTEMPTS} Versuchen gefunden`,
-    );
+    throw new BackeError('unexpected', m.noFreeCommentName(MAX_NAME_ATTEMPTS));
   }
 }

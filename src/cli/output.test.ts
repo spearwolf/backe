@@ -1,6 +1,16 @@
 import { catchErr } from '../../test/helpers/catch.ts';
 import { BackeError } from '../core/errors.ts';
-import { bodyBlock, columns, paint, renderError, resolveFormat, safeText } from './output.ts';
+import { setLocale } from '../i18n/locale.ts';
+import {
+  bodyBlock,
+  columns,
+  paint,
+  renderError,
+  renderNotices,
+  renderOutcome,
+  resolveFormat,
+  safeText,
+} from './output.ts';
 
 describe('resolveFormat', () => {
   test('an unknown --format value is a validation error naming its source', () => {
@@ -72,5 +82,29 @@ test('error details keep user keys', () => {
   expect(JSON.parse(renderError(err, 'json')).error.details).toEqual({
     exit_code: 2,
     props: { estimate_h: 1, someKey: 2 },
+  });
+});
+
+describe('prefixes follow the locale', () => {
+  afterEach(() => setLocale('de'));
+  const err = new BackeError('usage', 'boom', { hint: 'try this' });
+  const notice = { code: 'unblockable' as const, message: 'n', ids: [] };
+  const unchanged = {
+    commit: undefined,
+    op: { op: 'issue.move' as const, id: 'bk-1', from: 'todo' as const, to: 'done' as const },
+    notices: [],
+    warnings: [],
+  };
+  test('English', () => {
+    setLocale('en');
+    expect(renderError(err, 'text')).toBe('Error: boom\nHint: try this\n');
+    expect(renderNotices([notice], ['w'])).toBe('Hint: n\nWarning: w\n');
+    expect(renderOutcome(unchanged, 'text', 'other')).toBe('unchanged: issue move bk-1 done\n');
+  });
+  test('German', () => {
+    setLocale('de');
+    expect(renderError(err, 'text')).toBe('Fehler: boom\nHinweis: try this\n');
+    expect(renderNotices([notice], ['w'])).toBe('Hinweis: n\nWarnung: w\n');
+    expect(renderOutcome(unchanged, 'text', 'other')).toBe('unverändert: issue move bk-1 done\n');
   });
 });

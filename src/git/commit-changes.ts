@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { BackeError } from '../core/errors.ts';
 import { assertRecursiveAllowed, assertRelative, type FileChange } from '../store/files.ts';
 import { signedCommit, treeOf } from './commit.ts';
+import { m } from './commit-changes.messages.ts';
 import { type GitEnv, git } from './exec.ts';
 import { stateDir } from './local-state.ts';
 
@@ -90,7 +91,7 @@ export async function commitChanges(wc: string, input: CommitChangesInput): Prom
     }
     const tree = (await git(['write-tree'], { cwd: wc, env })).stdout.trim();
     if (tree === (await treeOf(wc, parent))) {
-      throw new BackeError('unexpected', 'Write ohne Änderung am Baum');
+      throw new BackeError('unexpected', m.noTreeChange);
     }
     return await signedCommit(wc, { ...input, tree });
   } finally {

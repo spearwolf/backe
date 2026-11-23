@@ -26,6 +26,7 @@ import { LFS_TIMEOUT_MS, lfsPull, requireLfs, SKIP_SMUDGE } from './lfs.ts';
 import { type ManualResolver, readUnits, replayOnto } from './replay.ts';
 import { type SpawnFn, scheduleDeferred, syncRemote } from './schedule.ts';
 import { raiseSignal, withDeferredSignals } from './signals.ts';
+import { m } from './sync.messages.ts';
 import {
   readSyncState,
   type SyncState,
@@ -123,7 +124,7 @@ async function fetchTip(
     });
   } catch (err) {
     if (stderrMatches(err, /couldn't find remote ref/)) return undefined;
-    throw new BackeError('sync', `Fetch von ${remote} fehlgeschlagen: ${firstStderrLine(err)}`);
+    throw new BackeError('sync', m.fetchFailed(remote, firstStderrLine(err)));
   }
   return resolveCommit(wc, tracking);
 }
@@ -211,14 +212,10 @@ export async function resetKeep(wc: string, from: string, to: string): Promise<v
   const paths = stdout.split('\0').filter((p) => p !== '');
   const dirty = await dirtyPaths(wc, paths);
   if (dirty.length > 0) {
-    throw new BackeError(
-      'conflict',
-      `Ungesicherte Änderungen an ${dirty.join(', ')} verhindern den Sync`,
-      {
-        hint: `backe commit oder git -C ${wc} stash`,
-        details: { paths: dirty },
-      },
-    );
+    throw new BackeError('conflict', m.dirtyBlocksSync(dirty.join(', ')), {
+      hint: m.dirtyHint(wc),
+      details: { paths: dirty },
+    });
   }
   await git(['reset', '-q', '--keep', to], { cwd: wc, env: SKIP_SMUDGE });
 }
@@ -254,14 +251,14 @@ type Section = {
  */
 function replayRejected(r: Round, reasons: readonly string[]): BackeError {
   const { ctx, handle } = r;
-  return new BackeError(
-    'verify',
-    `verify würde die neu signierten Commits ablehnen: ${reasons.join('; ')}`,
-    {
-      hint: `identities.${ctx.backlog.value}.${handle}.key in ${userConfigPath(ctx.homes.backeHome)} und ${userFile(handle)} im Remote-Stand prüfen`,
-      details: { reasons: [...reasons] },
-    },
-  );
+  return new BackeError('verify', m.replayRejected(reasons.join('; ')), {
+    hint: m.replayRejectedHint(
+      `identities.${ctx.backlog.value}.${handle}.key`,
+      userConfigPath(ctx.homes.backeHome),
+      userFile(handle),
+    ),
+    details: { reasons: [...reasons] },
+  });
 }
 
 /**
@@ -277,10 +274,10 @@ async function assertSigner(r: Round, tip: string): Promise<void> {
   const revoked = (user?.revoked_keys ?? []).some((k) => sshFingerprint(k.key) === fingerprint);
   const reason =
     user === undefined
-      ? `${r.handle} ist im Stand von ${tip.slice(0, 7)} kein User`
+      ? m.signerNotAUser(r.handle, tip.slice(0, 7))
       : revoked
-        ? `Key ${fingerprint} von ${r.handle} ist widerrufen`
-        : `Key ${fingerprint} gehört nicht zu ${r.handle}`;
+        ? m.signerKeyRevoked(fingerprint, r.handle)
+        : m.signerKeyForeign(fingerprint, r.handle);
   throw replayRejected(r, [reason]);
 }
 
@@ -406,7 +403,7 @@ async function lfsPush(wc: string, env: Env, remote: string, sha: string): Promi
       timeoutMs: LFS_TIMEOUT_MS,
     });
   } catch (err) {
-    throw new BackeError('sync', `LFS-Push nach ${remote} fehlgeschlagen: ${firstStderrLine(err)}`);
+    throw new BackeError('sync', m.lfsPushFailed(remote, firstStderrLine(err)));
   }
 }
 
@@ -426,7 +423,7 @@ async function pushSha(
     });
   } catch (err) {
     if (stderrMatches(err, /\[rejected\]|non-fast-forward|fetch first/)) return 'rejected';
-    throw new BackeError('sync', `Push nach ${remote} fehlgeschlagen: ${firstStderrLine(err)}`);
+    throw new BackeError('sync', m.pushFailed(remote, firstStderrLine(err)));
   }
   await git(['update-ref', `refs/remotes/${remote}/${branch}`, sha], { cwd: wc });
   return 'pushed';
@@ -498,7 +495,7 @@ async function runRounds(
     await deps.hooks?.afterRound?.();
     if (!rejected) return claim === undefined ? out : { ...out, claimSha: claim };
     if (round === MAX_ROUNDS) {
-      throw new BackeError('sync', `Push nach ${MAX_ROUNDS} Runden abgelehnt`);
+      throw new BackeError('sync', m.pushRejectedAfterRounds(MAX_ROUNDS));
     }
     await sleep(BACKOFF_MS * 2 ** (round - 1));
   }

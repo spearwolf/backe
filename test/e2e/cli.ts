@@ -10,8 +10,17 @@ vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 export const CLI = fileURLToPath(new URL('../../dist/cli.js', import.meta.url));
 
-/** Git-Isolation des Testlaufs, die jeder CLI-Aufruf erbt; `NO_COLOR` setzen die Tests selbst. */
-const INHERITED = ['PATH', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'XDG_CONFIG_HOME'] as const;
+/**
+ * Git-Isolation und Ausgabesprache des Testlaufs, die jeder CLI-Aufruf erbt; `NO_COLOR` setzen
+ * die Tests selbst. Ein Test, der eine andere Sprache will, setzt `BACKE_LANG` in `env`.
+ */
+const INHERITED = [
+  'PATH',
+  'GIT_CONFIG_GLOBAL',
+  'GIT_CONFIG_NOSYSTEM',
+  'XDG_CONFIG_HOME',
+  'BACKE_LANG',
+] as const;
 
 export type CliResult = { stdout: string; stderr: string; code: number };
 

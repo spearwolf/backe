@@ -6,6 +6,7 @@ import type { ResolvedContext } from '../context/resolve.ts';
 import { parseBatchInput } from '../ops/batch.ts';
 import type { Notice } from '../ops/notice.ts';
 import type { Operation } from '../ops/operation.ts';
+import { m } from './batch.messages.ts';
 import { executeWrite, type WriteDeps } from './write.ts';
 
 export type BatchOutcome = {
@@ -21,8 +22,8 @@ export type BatchOutcome = {
 
 const FORBIDDEN: Partial<Record<Operation['op'], (op: Operation) => string | undefined>> = {
   'attach.add': (op) =>
-    'file' in op && op.file !== undefined ? 'Datei-Anhänge gehen nicht per Batch' : undefined,
-  'issue.claim': () => 'issue.claim gibt es nicht im Batch',
+    'file' in op && op.file !== undefined ? m.fileAttachmentsNotInBatch : undefined,
+  'issue.claim': () => m.claimNotInBatch,
 };
 
 export async function runBatch(

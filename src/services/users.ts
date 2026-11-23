@@ -8,6 +8,7 @@ import { readPublicKey } from '../git/ssh.ts';
 import type { OpOf } from '../ops/operation.ts';
 import { type WriteOutcome, writeOp } from './outcome.ts';
 import { openSnapshot, resolveHandle } from './read.ts';
+import { m } from './users.messages.ts';
 import type { WriteDeps } from './write.ts';
 
 const MIN_FINGERPRINT_PREFIX = 8;
@@ -19,7 +20,7 @@ export async function addUser(
   deps?: WriteDeps,
 ): Promise<WriteOutcome> {
   if (input.operator !== undefined && input.agent !== true) {
-    throw new BackeError('usage', '--operator gilt nur zusammen mit --agent');
+    throw new BackeError('usage', m.operatorNeedsAgent);
   }
   const handle = resolveHandle(ctx, input.handle);
   const key = await readPublicKey(input.keyFile);
@@ -71,7 +72,7 @@ export async function showUser(
   const handle = resolveHandle(ctx, who);
   const { snapshot: s } = await openSnapshot(ctx);
   const stored = s.users.get(handle);
-  if (stored === undefined) throw new BackeError('not_found', `User »${handle}« nicht gefunden`);
+  if (stored === undefined) throw new BackeError('not_found', m.userNotFound(handle));
   return {
     handle,
     user: stored.data,
@@ -97,32 +98,24 @@ export function revokeKey(
     ? fingerprint.slice(FINGERPRINT_SCHEME.length)
     : fingerprint;
   if (body.length < MIN_FINGERPRINT_PREFIX) {
-    throw new BackeError(
-      'validation',
-      `Der Fingerprint »${fingerprint}« ist zu kurz, mindestens ${MIN_FINGERPRINT_PREFIX} Zeichen nötig`,
-    );
+    throw new BackeError('validation', m.fingerprintTooShort(fingerprint, MIN_FINGERPRINT_PREFIX));
   }
   return writeOp(
     ctx,
     (s) => {
       const user = s.users.get(handle);
-      if (user === undefined) throw new BackeError('not_found', `User »${handle}« nicht gefunden`);
+      if (user === undefined) throw new BackeError('not_found', m.userNotFound(handle));
       const hits = (user.data.keys ?? []).filter((k) =>
         sshFingerprint(k).slice(FINGERPRINT_SCHEME.length).startsWith(body),
       );
       if (hits.length === 0) {
-        throw new BackeError(
-          'not_found',
-          `Kein aktiver Key von »${handle}« passt auf »${fingerprint}«`,
-        );
+        throw new BackeError('not_found', m.noActiveKeyMatches(handle, fingerprint));
       }
       const [key] = hits;
       if (hits.length > 1 || key === undefined) {
-        throw new BackeError(
-          'ambiguous',
-          `»${fingerprint}« passt auf mehrere Keys von »${handle}«`,
-          { details: { candidates: hits.map(sshFingerprint) } },
-        );
+        throw new BackeError('ambiguous', m.ambiguousFingerprint(fingerprint, handle), {
+          details: { candidates: hits.map(sshFingerprint) },
+        });
       }
       return { op: 'user.revoke_key', handle, key };
     },

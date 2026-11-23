@@ -26,7 +26,11 @@ export default defineConfig({
       // ein Pfad unter /dev/null existiert nie.
       XDG_CONFIG_HOME: '/dev/null/xdg',
       NO_COLOR: '1',
+      // Die Suite prüft die deutschen Texte; Englisch prüfen die Tests, die `setLocale('en')`
+      // setzen, und die E2E-Tests, die `BACKE_LANG` im Kind-Env weglassen.
+      BACKE_LANG: 'de',
     },
+    setupFiles: ['test/setup-locale.ts'],
     coverage: {
       provider: 'v8',
       include: ['src/**'],

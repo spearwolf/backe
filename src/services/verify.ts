@@ -37,6 +37,7 @@ import { checkCommitPolicy, type TreeChange } from '../ops/verify-policy.ts';
 import { BACKLOG_CONFIG, classifyPath, QUARANTINE } from '../store/layout.ts';
 import { loadSnapshot, readableComments, type StoredEntity } from '../store/snapshot.ts';
 import { requireRoot } from './read.ts';
+import { m } from './verify.messages.ts';
 import {
   loadStates,
   parseJsoncAs,
@@ -75,36 +76,28 @@ type Checked = VerifyFinding & { notices: string[]; quarantine?: Quarantine; bas
 /** `descent: false` überlässt die Abstammungsprüfung dem Aufrufer, der den Bereich schon geprüft hat. */
 async function resolveRange(wc: string, opts: VerifyOptions, descent = true) {
   const anchor = await readLocalState(wc, 'anchor');
-  if (anchor === undefined) throw new BackeError('verify', `Kein Vertrauensanker in ${wc}`);
+  if (anchor === undefined) throw new BackeError('verify', m.noTrustAnchor(wc));
   const toRev = opts.to ?? 'HEAD';
   const to = await resolveCommit(wc, toRev);
   const roots = await rootCommits(wc, to);
   if (roots.length !== 1 || roots[0] !== anchor) {
-    throw new BackeError('verify', `Historie von ${toRev} passt nicht zum Vertrauensanker`);
+    throw new BackeError('verify', m.historyMismatch(toRev));
   }
   const verified = await readLocalState(wc, 'verified');
   const ancestor = opts.ancestor ?? verified;
   if (descent && ancestor !== undefined && !(await isAncestor(wc, ancestor, to))) {
-    throw new BackeError(
-      'verify',
-      `${toRev} ist kein Nachfahre des zuletzt verifizierten Stands ${shortSha(ancestor)}`,
-    );
+    throw new BackeError('verify', m.notDescendantOfVerified(toRev, shortSha(ancestor)));
   }
   const since = opts.since === undefined ? undefined : await resolveCommit(wc, opts.since);
   if (since !== undefined && !(await isAncestor(wc, since, to))) {
-    throw new BackeError(
-      'validation',
-      `since ${shortSha(since)} ist kein Vorfahre von ${shortSha(to)}`,
-    );
+    throw new BackeError('validation', m.sinceNotAncestor(shortSha(since), shortSha(to)));
   }
   if (opts.record && since !== undefined) {
     const covered = verified !== undefined && (await isAncestor(wc, since, verified));
     if (!covered) {
-      throw new BackeError(
-        'validation',
-        `Aufzeichnen mit --since ${opts.since} geht nur, wenn ${opts.since} schon verifiziert ist`,
-        { hint: 'Ohne --since prüfen oder ab dem zuletzt verifizierten Stand.' },
-      );
+      throw new BackeError('validation', m.recordSinceUnverified(opts.since as string), {
+        hint: m.recordSinceUnverifiedHint,
+      });
     }
   }
   return { anchor, to, since };
@@ -113,32 +106,32 @@ async function resolveRange(wc: string, opts: VerifyOptions, descent = true) {
 // --- Einzelner Commit -----------------------------------------------------------------------
 
 function actorReasons(actors: readonly string[], sig: Signature | undefined): string[] {
-  if (actors.length === 0) return ['Backe-Actor fehlt'];
-  if (actors.length > 1) return ['Backe-Actor mehrfach'];
+  if (actors.length === 0) return [m.actorMissing];
+  if (actors.length > 1) return [m.actorRepeated];
   if (sig?.status === 'G' && sig.principal !== actors[0]) {
-    return [`signiert von ${sig.principal}, Backe-Actor ist ${actors[0]}`];
+    return [m.signerIsNotActor(sig.principal, actors[0] as string)];
   }
   return [];
 }
 
 function opNotice(sha: string, ops: readonly string[]): string[] {
-  if (ops.length === 0) return [`${shortSha(sha)}: Backe-Op fehlt`];
+  if (ops.length === 0) return [m.opMissing(shortSha(sha))];
   try {
-    if (ops.length > 1) throw new Error('mehrfach');
+    if (ops.length > 1) throw new Error('multiple op trailers');
     parseOpTrailer(ops[0] as string);
     return [];
   } catch {
-    return [`${shortSha(sha)}: Backe-Op nicht dekodierbar`];
+    return [m.opUndecodable(shortSha(sha))];
   }
 }
 
 function anchorReasons(state: State, actor: string | undefined, ops: readonly string[]): string[] {
   const reasons: string[] = [];
-  if (ops.length !== 1 || ops[0] !== 'init') reasons.push('Vertrauensanker ohne Backe-Op init');
+  if (ops.length !== 1 || ops[0] !== 'init') reasons.push(m.anchorWithoutInit);
   if (typeof state.config === 'string') {
-    reasons.push(`nicht prüfbar: ${BACKLOG_CONFIG}: ${state.config}`);
+    reasons.push(m.notVerifiable(BACKLOG_CONFIG, state.config));
   } else if (actor !== undefined && !isAdmin(state.config, actor, state.users.get(actor))) {
-    reasons.push(`Akteur ${actor} ist im Vertrauensanker kein Admin`);
+    reasons.push(m.actorNotAdminInAnchor(actor));
   }
   return reasons;
 }
@@ -204,7 +197,7 @@ async function contentReasons(
   const reasons: string[] = [];
   if (typeof before.config === 'string' || typeof after.config === 'string') {
     const message = typeof after.config === 'string' ? after.config : before.config;
-    reasons.push(`nicht prüfbar: ${BACKLOG_CONFIG}: ${message}`);
+    reasons.push(m.notVerifiable(BACKLOG_CONFIG, message as string));
   } else {
     const addsUser = changes.some((c) => c.status === 'A' && classifyPath(c.path).kind === 'user');
     reasons.push(
@@ -222,7 +215,7 @@ async function contentReasons(
   if (change.status === 'D') return { reasons, quarantine: { entries: [] } };
   const quarantine = await quarantineAt(wc, commit.sha);
   if (typeof quarantine === 'string') {
-    return { reasons: [...reasons, `quarantine.jsonc ungültig: ${quarantine}`] };
+    return { reasons: [...reasons, m.quarantineInvalid(quarantine)] };
   }
   return { reasons, quarantine };
 }
@@ -314,7 +307,7 @@ export async function pathTaintReasons(
     if (c.parent === oid(frozen.at, c.path)) continue;
     const now = decides ? await after(c.path) : undefined;
     if (!decides || !back.some((rev) => oid(rev, c.path) === now)) {
-      return [`baut auf ungültigem Commit ${shortSha(frozen.open[0] as string)} auf`];
+      return [m.buildsOnInvalid(shortSha(frozen.open[0] as string))];
     }
   }
   return [];
@@ -616,9 +609,7 @@ export async function verifyBacklog(
  */
 export function assertVerified(report: VerifyReport, details: unknown = report): void {
   if (report.invalid.length === 0) return;
-  throw new BackeError(
-    'verify',
-    `${report.invalid.length} ungültige Commits seit ${shortSha(report.anchor)}`,
-    { details },
-  );
+  throw new BackeError('verify', m.invalidCommits(report.invalid.length, shortSha(report.anchor)), {
+    details,
+  });
 }

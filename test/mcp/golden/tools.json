@@ -1,7 +1,7 @@
 [
   {
     "name": "attachment_add",
-    "description": "Anhang hinzufügen (wie backe attach add); genau eins von path (Datei im Arbeitsverzeichnis des Servers, relativ dazu), url, json, text",
+    "description": "Add an attachment (like backe attach add); exactly one of path (file in the server working directory, relative to it), url, json, text",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -34,7 +34,7 @@
   },
   {
     "name": "attachment_get",
-    "description": "Anhang eines Issues holen (wie backe attach get); kleine UTF-8-Dateien kommen als text mit",
+    "description": "Get an attachment of an issue (like backe attach get); small UTF-8 files are included as text",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -55,7 +55,7 @@
   },
   {
     "name": "batch",
-    "description": "Mehrere Operationen in einem Commit (wie backe batch); ops sind Objekte im Format von backe.md §2.16.6, Platzhalter wie $a verbinden sie; erlaubt sind issue.create, issue.edit, issue.move, issue.resume, issue.reopen, issue.rank, comment.add, attach.add mit url und mit --allow-delete issue.delete",
+    "description": "Several operations in one commit (like backe batch); ops are objects in the format of backe.md §2.16.6, placeholders such as $a link them; supported: issue.create, issue.edit, issue.move, issue.resume, issue.reopen, issue.rank, comment.add, attach.add with url and, with --allow-delete, issue.delete",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -79,7 +79,7 @@
   },
   {
     "name": "comment_add",
-    "description": "Kommentar an ein Issue schreiben (wie backe comment add)",
+    "description": "Write a comment on an issue (like backe comment add)",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -100,7 +100,7 @@
   },
   {
     "name": "context_get",
-    "description": "Aufgelösten Kontext mit Herkunft jedes Werts zeigen (wie backe context); mit props die Property-Deklarationen des Backlogs",
+    "description": "Show the resolved context with the source of each value (like backe context); with props, the property declarations of the backlog",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -114,7 +114,7 @@
   },
   {
     "name": "issue_claim",
-    "description": "Issue übernehmen, synchron mit dem Remote (wie backe issue claim); hat es inzwischen jemand anderes → conflict",
+    "description": "Claim an issue, synchronously with the remote (like backe issue claim); if someone else got it meanwhile → conflict",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -131,7 +131,7 @@
   },
   {
     "name": "issue_create",
-    "description": "Issue anlegen (wie backe issue create); props ist ein Objekt",
+    "description": "Create an issue (like backe issue create); props is an object",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -191,7 +191,7 @@
   },
   {
     "name": "issue_delete",
-    "description": "Issue endgültig löschen (wie backe issue delete); nur mit --allow-delete",
+    "description": "Delete an issue permanently (like backe issue delete); only with --allow-delete",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -218,7 +218,7 @@
   },
   {
     "name": "issue_get",
-    "description": "Issue mit Beziehungen zeigen (wie backe issue show); Kurz-IDs sind erlaubt",
+    "description": "Show an issue with its relations (like backe issue show); short IDs are allowed",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -249,7 +249,7 @@
   },
   {
     "name": "issue_list",
-    "description": "Issues listen und filtern (wie backe issue list); Standard: alle offenen im Kontextfilter",
+    "description": "List and filter issues (like backe issue list); default: all open issues within the context filter",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -346,7 +346,7 @@
   },
   {
     "name": "issue_move",
-    "description": "Issue in einen State verschieben (wie backe issue move)",
+    "description": "Move an issue to a state (like backe issue move)",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -379,7 +379,7 @@
   },
   {
     "name": "issue_next",
-    "description": "Nächstes Issue für mich zeigen (wie backe next); mit claim gleich übernehmen, synchron mit dem Remote",
+    "description": "Show the next issue for me (like backe next); with claim, take it over right away, synchronously with the remote",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -418,7 +418,7 @@
   },
   {
     "name": "issue_rank",
-    "description": "Issue neu einreihen (wie backe issue rank); genau eins von top, bottom, before, after, value",
+    "description": "Rerank an issue (like backe issue rank); exactly one of top, bottom, before, after, value",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -450,7 +450,7 @@
   },
   {
     "name": "issue_reopen",
-    "description": "Abgeschlossenes Issue wieder öffnen (wie backe issue reopen)",
+    "description": "Reopen a closed issue (like backe issue reopen)",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -473,7 +473,7 @@
   },
   {
     "name": "issue_resume",
-    "description": "Blockiertes Issue fortsetzen (wie backe issue resume)",
+    "description": "Resume a blocked issue (like backe issue resume)",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -493,7 +493,7 @@
   },
   {
     "name": "issue_update",
-    "description": "Issue ändern (wie backe issue edit / assign); parent und assignee: null entfernt, props: null entfernt den Key",
+    "description": "Change an issue (like backe issue edit / assign); parent and assignee: null removes, props: null removes the key",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -571,7 +571,7 @@
   },
   {
     "name": "project_list",
-    "description": "Projekte mit der Zahl offener Issues (wie backe project list)",
+    "description": "Projects with their number of open issues (like backe project list)",
     "inputSchema": {
       "type": "object",
       "properties": {},
@@ -581,7 +581,7 @@
   },
   {
     "name": "repo_locate",
-    "description": "Lokaler Pfad eines Repos aus der User-Config (wie backe repo where)",
+    "description": "Local path of a repo from the user config (like backe repo where)",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -598,7 +598,7 @@
   },
   {
     "name": "sprint_get",
-    "description": "Issues eines Sprints, gruppiert nach State (wie backe sprint show)",
+    "description": "Issues of a sprint, grouped by state (like backe sprint show)",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -637,7 +637,7 @@
   },
   {
     "name": "sprint_list",
-    "description": "Sprints, offene zuerst, mit der Zahl offener Issues (wie backe sprint list)",
+    "description": "Sprints, open ones first, with their number of open issues (like backe sprint list)",
     "inputSchema": {
       "type": "object",
       "properties": {},
@@ -647,7 +647,7 @@
   },
   {
     "name": "sync_now",
-    "description": "Eine Sync-Runde mit dem Remote jetzt, blockierend (wie backe sync)",
+    "description": "One sync round with the remote now, blocking (like backe sync)",
     "inputSchema": {
       "type": "object",
       "properties": {},

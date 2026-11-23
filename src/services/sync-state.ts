@@ -12,6 +12,7 @@ import { BackeError } from '../core/errors.ts';
 import { stateDir } from '../git/local-state.ts';
 import { decodeOp, encodeOp, type Operation } from '../ops/operation.ts';
 import { writeFileAtomic } from '../store/files.ts';
+import { m } from './sync-state.messages.ts';
 
 export type ConflictUnit = {
   sha: string;
@@ -136,7 +137,7 @@ export async function writeConflicts(wc: string, entries: readonly ConflictEntry
   await mkdir(dir, { recursive: true });
   for (const entry of entries) {
     if (!CONFLICT_ID_RE.test(entry.id)) {
-      throw new BackeError('unexpected', `Ungültige Konflikt-ID »${entry.id}«`);
+      throw new BackeError('unexpected', m.invalidConflictId(entry.id));
     }
     const stored = {
       ...entry,
@@ -183,7 +184,7 @@ export async function listConflicts(wc: string): Promise<ConflictEntry[]> {
 
 /** Entfernt einen Eintrag; einen unbekannten gibt es nicht (`not_found`). */
 export async function removeConflict(wc: string, id: string): Promise<void> {
-  const missing = () => new BackeError('not_found', `Konflikt ${id} nicht gefunden`);
+  const missing = () => new BackeError('not_found', m.conflictNotFound(id));
   if (!CONFLICT_ID_RE.test(id)) throw missing();
   const file = join(await conflictsDir(wc), `${id}.json`);
   try {

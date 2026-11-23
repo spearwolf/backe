@@ -1,7 +1,5 @@
 import { BackeError } from './errors.ts';
-
-const HINT =
-  'Erlaubt: https://…, http://…, ssh://[user@]host[:port]/pfad, [user@]host:pfad, gh:owner/repo, absoluter Pfad (/…) oder file:///…';
+import { m } from './url.messages.ts';
 
 const NETWORK_RE = /^(?:https?|ssh):\/\/(?:[^@/\s]*@)?([^/:@\s]+)(?::\d+)?(\/.*)?$/i;
 /** Kanonische Form `<host>/<pfad>`: Host mit Punkt, oder ein kleingeschriebener Name ohne Punkt (`localhost`). */
@@ -17,7 +15,7 @@ const SCP_RE = /^(?:[^@/:\s]+@)?([^/:@\s]+):(.*)$/;
 const MAX_NAME_LENGTH = 64;
 
 function fail(input: string): never {
-  throw new BackeError('validation', `Repo-URL nicht erkannt: »${input}«`, { hint: HINT });
+  throw new BackeError('validation', m.unrecognizedUrl(input), { hint: m.hint });
 }
 
 /**

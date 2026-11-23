@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { envValue } from '../context/paths.ts';
 import { BackeError } from '../core/errors.ts';
+import { m } from './editor.messages.ts';
 import type { CliIo } from './io.ts';
 
 /**
@@ -26,8 +27,8 @@ export function editorCommand(io: CliIo): string | undefined {
  * nicht, ohne Flags gibt es nichts zu ändern. `config edit` meldet `Kein Editor verfügbar`.
  */
 export function noEditorError(): BackeError {
-  return new BackeError('usage', 'Nichts zu ändern', {
-    hint: 'Flags angeben oder BACKE_EDITOR setzen',
+  return new BackeError('usage', m.nothingToChange, {
+    hint: m.nothingToChangeHint,
   });
 }
 
@@ -52,14 +53,11 @@ export async function editText(
     code = await io.runEditor(command, file);
   } catch (error) {
     await rm(file, { force: true });
-    throw new BackeError(
-      'unexpected',
-      `Editor konnte nicht gestartet werden: ${(error as Error).message}`,
-    );
+    throw new BackeError('unexpected', m.editorStartFailed((error as Error).message));
   }
   if (code !== 0) {
     await rm(file, { force: true });
-    throw new BackeError('unexpected', `Editor endete mit Exit-Code ${code}; nichts geändert`);
+    throw new BackeError('unexpected', m.editorFailed(code));
   }
   return { text: await readFile(file, 'utf8'), file };
 }

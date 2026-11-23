@@ -42,13 +42,13 @@ export function propsArgs(
   const out = { props: [] as string[], unset: [] as string[] };
   for (const [key, value] of Object.entries(props)) {
     if (!PROP_KEY_RE.test(key)) {
-      throw new BackeError('validation', `Ungültiger Property-Key »${key}«`, {
-        hint: 'erlaubt: Kleinbuchstaben, Ziffern, _ . -, beginnend mit einem Buchstaben',
+      throw new BackeError('validation', `Invalid property key '${key}'`, {
+        hint: 'use lowercase letters, digits, _ . -, starting with a letter',
       });
     }
     if (value === null) {
       if (!allowNull) {
-        throw new BackeError('validation', `Property »${key}«: null geht nur in issue_update`);
+        throw new BackeError('validation', `Property '${key}': null only works in issue_update`);
       }
       out.unset.push(key);
     } else {
@@ -74,16 +74,16 @@ function rankPosition(a: RankArgs): RankPositionInput {
   if (a.after !== undefined) given.push({ after: a.after });
   if (a.value !== undefined) {
     if (!Number.isInteger(a.value)) {
-      throw new BackeError('validation', `Ungültiger Rang: »${a.value}«`, {
-        hint: 'erwartet eine ganze Zahl',
+      throw new BackeError('validation', `Invalid rank: '${a.value}'`, {
+        hint: 'expects an integer',
       });
     }
     given.push({ value: a.value });
   }
   const [only] = given;
   if (given.length !== 1 || only === undefined) {
-    throw new BackeError('usage', 'Genau eine Position angeben', {
-      hint: 'top, bottom, before, after oder value',
+    throw new BackeError('usage', 'Give exactly one position', {
+      hint: 'top, bottom, before, after or value',
     });
   }
   return only;
@@ -109,7 +109,7 @@ async function attachSource(
 ): Promise<AttachmentSource> {
   const given = [a.path, a.url, a.json, a.text].filter((v) => v !== undefined).length;
   if (given !== 1) {
-    throw new BackeError('usage', 'Genau eins von path, url, json, text angeben');
+    throw new BackeError('usage', 'Give exactly one of path, url, json, text');
   }
   return loadAttachmentSource(a, {
     base: cwd,
@@ -149,7 +149,7 @@ export function rejectBatchOps(
     if (typeof op !== 'string') return;
     if (BATCH_OPS.has(op) || (allowDelete && op === 'issue.delete')) return;
     const line = i + 1;
-    throw new BackeError('validation', `Zeile ${line}: »${op}« gibt es im MCP-Modus nicht`, {
+    throw new BackeError('validation', `line ${line}: '${op}' is not available in MCP mode`, {
       details: { line },
     });
   });
@@ -161,7 +161,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     env,
     'issue_create',
     {
-      description: 'Issue anlegen (wie backe issue create); props ist ein Objekt',
+      description: 'Create an issue (like backe issue create); props is an object',
       input: z.strictObject({
         title: z.string(),
         body: z.string().optional(),
@@ -197,7 +197,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     'issue_update',
     {
       description:
-        'Issue ändern (wie backe issue edit / assign); parent und assignee: null entfernt, props: null entfernt den Key',
+        'Change an issue (like backe issue edit / assign); parent and assignee: null removes, props: null removes the key',
       input: z.strictObject({
         id: z.string(),
         title: z.string().optional(),
@@ -240,7 +240,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     env,
     'issue_move',
     {
-      description: 'Issue in einen State verschieben (wie backe issue move)',
+      description: 'Move an issue to a state (like backe issue move)',
       input: z.strictObject({
         id: z.string(),
         to: z.string(),
@@ -264,7 +264,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     env,
     'issue_resume',
     {
-      description: 'Blockiertes Issue fortsetzen (wie backe issue resume)',
+      description: 'Resume a blocked issue (like backe issue resume)',
       input: z.strictObject({ id: z.string(), reason: z.string().optional() }),
       kind: 'write',
     },
@@ -284,7 +284,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     env,
     'issue_reopen',
     {
-      description: 'Abgeschlossenes Issue wieder öffnen (wie backe issue reopen)',
+      description: 'Reopen a closed issue (like backe issue reopen)',
       input: z.strictObject({
         id: z.string(),
         to: z.string().optional(),
@@ -306,7 +306,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     'issue_rank',
     {
       description:
-        'Issue neu einreihen (wie backe issue rank); genau eins von top, bottom, before, after, value',
+        'Rerank an issue (like backe issue rank); exactly one of top, bottom, before, after, value',
       input: z.strictObject({
         id: z.string(),
         top: z.boolean().optional(),
@@ -327,7 +327,8 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
       env,
       'issue_delete',
       {
-        description: 'Issue endgültig löschen (wie backe issue delete); nur mit --allow-delete',
+        description:
+          'Delete an issue permanently (like backe issue delete); only with --allow-delete',
         input: z.strictObject({
           id: z.string(),
           force: z.boolean().optional(),
@@ -349,7 +350,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     env,
     'comment_add',
     {
-      description: 'Kommentar an ein Issue schreiben (wie backe comment add)',
+      description: 'Write a comment on an issue (like backe comment add)',
       input: z.strictObject({ id: z.string(), body: z.string() }),
       kind: 'write',
     },
@@ -362,7 +363,7 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     'attachment_add',
     {
       description:
-        'Anhang hinzufügen (wie backe attach add); genau eins von path (Datei im Arbeitsverzeichnis des Servers, relativ dazu), url, json, text',
+        'Add an attachment (like backe attach add); exactly one of path (file in the server working directory, relative to it), url, json, text',
       input: z.strictObject({
         id: z.string(),
         name: z.string(),
@@ -387,13 +388,13 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
     'batch',
     {
       description:
-        'Mehrere Operationen in einem Commit (wie backe batch); ops sind Objekte im Format von backe.md §2.16.6, Platzhalter wie $a verbinden sie; erlaubt sind issue.create, issue.edit, issue.move, issue.resume, issue.reopen, issue.rank, comment.add, attach.add mit url und mit --allow-delete issue.delete',
+        'Several operations in one commit (like backe batch); ops are objects in the format of backe.md §2.16.6, placeholders such as $a link them; supported: issue.create, issue.edit, issue.move, issue.resume, issue.reopen, issue.rank, comment.add, attach.add with url and, with --allow-delete, issue.delete',
       input: z.strictObject({ ops: z.array(z.record(z.string(), z.unknown())) }),
       kind: 'write',
     },
     async (ctx, a) => {
       if (a.ops.length === 0) {
-        throw new BackeError('usage', 'batch braucht mindestens eine Operation');
+        throw new BackeError('usage', 'batch needs at least one operation');
       }
       rejectBatchOps(a.ops, env.opts.allowDelete);
       const text = a.ops.map((o) => JSON.stringify(o)).join('\n');

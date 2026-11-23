@@ -2,6 +2,7 @@
  * Identitätsschutz eines einzelnen Commits (backe.md §2.13 Punkt 4, §3.10): rein, ohne I/O.
  * `verify` ruft `checkCommitPolicy` für jeden Commit mit den Tree-Änderungen gegenüber dem Parent.
  */
+
 import { BackeError } from '../core/errors.ts';
 import { isIssueId, shardOf } from '../core/ids.ts';
 import { type BacklogConfig, type Issue, type User, validateEntity } from '../core/schemas.ts';
@@ -10,6 +11,7 @@ import { classifyPath, issueFile, parseCommentFileName, userFile } from '../stor
 import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { isAdmin } from './admin.ts';
 import { checkUserChange } from './policy.ts';
+import { m } from './verify-policy.messages.ts';
 
 /** Eine Änderung im Tree; `before`/`after` sind nur für Users, Issues, Kommentare und die Config gefüllt. */
 export type TreeChange = {
@@ -54,13 +56,13 @@ function checkChange(
   const reasons: string[] = [];
   if (change.newMode === '120000') reasons.push(`Symlink: ${path}`);
   if (change.newMode === '160000') reasons.push(`Submodule: ${path}`);
-  if (path.startsWith('.backe/') && !admin) reasons.push(`nur Admins ändern ${path}`);
+  if (path.startsWith('.backe/') && !admin) reasons.push(m.onlyAdminsChange(path));
   if (caseVariant(path)) {
-    reasons.push(`Pfad weicht nur in Groß-/Kleinschreibung vom Layout ab: ${path}`);
+    reasons.push(m.caseVariant(path));
   }
 
   if (change.status !== 'D' && misnamedComment(path)) {
-    reasons.push(`Kommentar-Datei mit ungültigem Namen: ${path}`);
+    reasons.push(m.misnamedComment(path));
   }
   const cls = classifyPath(path);
   if (cls.kind === 'user') reasons.push(...checkUserFile(input, change, cls.key, admin));
@@ -83,7 +85,7 @@ function unverifiable(path: string, err: unknown): string {
     const message = err.message.startsWith(`${path}: `)
       ? err.message.slice(path.length + 2)
       : err.message;
-    return `nicht prüfbar: ${path}: ${message}`;
+    return m.unverifiable(path, message);
   }
   throw err;
 }
@@ -152,12 +154,12 @@ function checkIssueFile(actor: string, change: TreeChange, id: string): string[]
   const reasons: string[] = [];
   if (before === undefined) {
     if (after.creator !== actor) {
-      reasons.push(`creator von ${id} ist ${after.creator}, Akteur ist ${actor}`);
+      reasons.push(m.creatorMismatch(id, after.creator, actor));
     }
-    if (after.id !== id) reasons.push(`id von ${path} ist ${after.id}`);
+    if (after.id !== id) reasons.push(m.idMismatch(path, after.id));
   } else {
     for (const field of ['creator', 'id', 'created'] as const) {
-      if (before[field] !== after[field]) reasons.push(`${field} von ${id} geändert`);
+      if (before[field] !== after[field]) reasons.push(m.fieldChanged(field, id));
     }
   }
   return reasons;
@@ -170,7 +172,7 @@ function checkCommentFile(
   issueDeleted: boolean,
 ): string[] {
   const { path, status } = change;
-  const foreign = (author: string) => `Kommentar ${file} von ${author}, Akteur ist ${actor}`;
+  const foreign = (author: string) => m.foreignComment(file, author, actor);
   const reasons: string[] = [];
   try {
     const after =
@@ -179,7 +181,7 @@ function checkCommentFile(
         : undefined;
     const nameAuthor = parseCommentFileName(file)?.author;
     if (after !== undefined && nameAuthor !== undefined && after.author !== nameAuthor) {
-      reasons.push(`Kommentar ${file}: author ${after.author} passt nicht zum Dateinamen`);
+      reasons.push(m.authorMismatch(file, after.author));
     }
     if (status === 'A') {
       if (after !== undefined && after.author !== actor) reasons.push(foreign(after.author));
@@ -192,7 +194,7 @@ function checkCommentFile(
       reasons.push(foreign(before.author));
     }
     if (after !== undefined && after.author !== before.author) {
-      reasons.push(`author von Kommentar ${file} geändert`);
+      reasons.push(m.authorChanged(file));
     }
   } catch (err) {
     reasons.push(unverifiable(path, err));

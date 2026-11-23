@@ -59,7 +59,7 @@ test('usage errors exit with 2', async () => {
   const r = await cli(['--frobnicate'], opts);
   expect(r.code).toBe(2);
   expect(r.stdout).toBe('');
-  expect(r.stderr).toMatch(/^Fehler: unknown option '--frobnicate'/);
+  expect(r.stderr).toMatch(/^Fehler: Unbekannte Option --frobnicate/);
 
   for (const args of [
     ['context', '--frobnicate'],
@@ -76,7 +76,7 @@ test('usage errors exit with 2', async () => {
     noStack(u);
   }
   const group = await cli(['backlog'], opts);
-  expect(group.stderr).toMatch(/^Fehler: Unterbefehl fehlt\n\nUsage: backe backlog /);
+  expect(group.stderr).toMatch(/^Fehler: Unterbefehl fehlt\n\nAufruf: backe backlog /);
   expect(group.stderr).not.toContain('Hinweis:');
 });
 
@@ -87,7 +87,7 @@ describe('missing command, subcommand, argument or option', () => {
     expect(root.code).toBe(2);
     expect(root.stdout).toBe('');
     expect(root.stderr.startsWith('Fehler: Befehl fehlt\n\n')).toBe(true);
-    expect(root.stderr).toContain('Usage: backe');
+    expect(root.stderr).toContain('Aufruf: backe');
     expect(root.stderr).toContain('Schnellstart:');
     expect(root.stderr).not.toContain('Hinweis:');
   });
@@ -97,7 +97,7 @@ describe('missing command, subcommand, argument or option', () => {
     const group = await cli(['issue'], { env, cwd });
     expect(group.code).toBe(2);
     expect(group.stdout).toBe('');
-    expect(group.stderr).toMatch(/^Fehler: Unterbefehl fehlt\n\nUsage: backe issue \[options\]/);
+    expect(group.stderr).toMatch(/^Fehler: Unterbefehl fehlt\n\nAufruf: backe issue \[options\]/);
     expect(group.stderr).not.toContain('Hinweis:');
   });
 
@@ -106,7 +106,7 @@ describe('missing command, subcommand, argument or option', () => {
     const arg = await cli(['issue', 'show'], { env, cwd });
     expect(arg.code).toBe(2);
     expect(arg.stdout).toBe('');
-    expect(arg.stderr).toMatch(/^Fehler: Argument »id« fehlt\n\nUsage: backe issue show /);
+    expect(arg.stderr).toMatch(/^Fehler: Argument »id« fehlt\n\nAufruf: backe issue show /);
     expect(arg.stderr).not.toContain('Hinweis:');
   });
 
@@ -116,7 +116,7 @@ describe('missing command, subcommand, argument or option', () => {
     expect(option.code).toBe(2);
     expect(option.stdout).toBe('');
     expect(option.stderr).toMatch(
-      /^Fehler: Option »-t, --title <titel>« fehlt\n\nUsage: backe issue create /,
+      /^Fehler: Option »-t, --title <titel>« fehlt\n\nAufruf: backe issue create /,
     );
     expect(option.stderr).not.toContain('Hinweis:');
   });
@@ -150,7 +150,7 @@ describe('missing command, subcommand, argument or option', () => {
     const unknown = await cli(['issue', 'show', 'x', '--frobnicate'], { env, cwd });
     expect(unknown.code).toBe(2);
     expect(unknown.stdout).toBe('');
-    expect(unknown.stderr).toBe("Fehler: unknown option '--frobnicate'\n");
+    expect(unknown.stderr).toBe('Fehler: Unbekannte Option --frobnicate\n');
   });
 });
 
@@ -535,7 +535,7 @@ test('--help and --version exit 0', async () => {
   ]) {
     const r = await cli(args, { env, cwd });
     expect({ args, code: r.code }).toEqual({ args, code: 0 });
-    expect(r.stdout).toMatch(/^Usage: backe/);
+    expect(r.stdout).toMatch(/^Aufruf: backe/);
     expect(r.stderr).toBe('');
   }
   expect(await cli(['--version'], { env, cwd })).toEqual({

@@ -1,6 +1,7 @@
 import type { Issue } from '../core/schemas.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { isUnblockable } from './graph.ts';
+import { m } from './notice.messages.ts';
 
 /** Hinweise, die eine Operation neben ihrem Ergebnis meldet. */
 export type NoticeCode =
@@ -26,7 +27,7 @@ export function settledDependencyNotice(s: BacklogSnapshot, issue: Issue): Notic
   if (settled.length === 0) return undefined;
   return {
     code: 'settled_dependency',
-    message: `${issue.id} hängt von abgebrochenen oder abgelehnten Issues ab: ${settled.join(', ')}`,
+    message: m.settledDependency(issue.id, settled.join(', ')),
     ids: settled,
   };
 }
@@ -47,11 +48,11 @@ export function unblockableNotice(
       const state = s.issues.get(b)?.data.state;
       return state === 'cancelled' || state === 'rejected' ? [`${b} (${state})`] : [];
     });
-    return odd.length > 0 ? `${i.id} (nicht erledigt: ${odd.join(', ')})` : i.id;
+    return odd.length > 0 ? m.notDone(i.id, odd.join(', ')) : i.id;
   });
   return {
     code: 'unblockable',
-    message: `Alle Blocker erledigt, entblockbar: ${parts.join('; ')}`,
+    message: m.allBlockersSettled(parts.join('; ')),
     ids: unblockable.map((i) => i.id),
   };
 }

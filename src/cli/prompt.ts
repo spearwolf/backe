@@ -8,6 +8,7 @@ import type { ManualConflictPath, ManualResolver } from '../services/replay.ts';
 import { editorCommand, editText } from './editor.ts';
 import type { CliIo } from './io.ts';
 import { renderHints, safeText } from './output.ts';
+import { m } from './prompt.messages.ts';
 
 const short = (sha: string) => sha.slice(0, 7);
 
@@ -31,14 +32,14 @@ async function editConflicts(
   const files = new Map<string, Buffer>();
   for (const c of paths) {
     if (c.merged === undefined) {
-      io.stderr(renderHints([`${c.path} lässt sich nicht im Editor lösen; bleibt wie im Remote`]));
+      io.stderr(renderHints([m.notEditable(c.path)]));
       continue;
     }
     const ext = extname(c.path).slice(1) || 'txt';
     const edited = await editText(io, `sync-${short(sha)}`, c.merged.toString('utf8'), ext);
     await rm(edited.file, { force: true });
     if (MARKER.test(edited.text)) {
-      io.stderr(renderHints([`${c.path} hat noch Konfliktmarker`]));
+      io.stderr(renderHints([m.conflictMarkers(c.path)]));
       return undefined;
     }
     files.set(c.path, Buffer.from(edited.text, 'utf8'));
@@ -54,22 +55,16 @@ async function editConflicts(
 export function interactiveResolver(io: CliIo): ManualResolver {
   return async ({ sha, subject, paths }) => {
     io.stderr(
-      `${safeText(
-        `Textkonflikt in manual-Commit ${short(sha)} (${subject}): ${paths.map((p) => p.path).join(', ')}`,
-      )}\n`,
+      `${safeText(m.textConflict(short(sha), subject, paths.map((p) => p.path).join(', ')))}\n`,
     );
     for (;;) {
-      const answer = (
-        await io.prompt('[e]ditieren, [l]okal nehmen, [r]emote behalten, [a]bbrechen? ')
-      )
-        .trim()
-        .toLowerCase();
+      const answer = (await io.prompt(m.choose)).trim().toLowerCase();
       if (answer === '' || answer === 'a') return { kind: 'abort' };
       if (answer === 'l') return { kind: 'local' };
       if (answer === 'r') return { kind: 'remote' };
       if (answer !== 'e') continue;
       if (editorCommand(io) === undefined) {
-        io.stderr(renderHints(['Kein Editor verfügbar (BACKE_EDITOR, VISUAL oder EDITOR)']));
+        io.stderr(renderHints([m.noEditor]));
         continue;
       }
       const files = await editConflicts(io, sha, paths);

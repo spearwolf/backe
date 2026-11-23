@@ -14,6 +14,7 @@ import { remoteUrl } from '../git/query.ts';
 import { exists } from '../store/files.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
 import { isoNow } from './env.ts';
+import { m } from './schedule.messages.ts';
 import type { SyncDeps } from './sync.ts';
 import { appendSyncLog, readSyncState, rotateSyncLog, syncFile } from './sync-state.ts';
 import { requireHeadConfig } from './write.ts';
@@ -53,7 +54,7 @@ export const spawnDetached: SpawnFn = ({ argv, cwd, env, log }) => {
       try {
         appendFileSync(
           log,
-          `${isoNow(new Date())} unexpected: Hintergrund-Sync nicht gestartet: ${err.message}\n`,
+          `${isoNow(new Date())} unexpected: ${m.backgroundSyncNotStarted(err.message)}\n`,
         );
       } catch {
         // Ohne beschreibbares Log bleibt nur, den Start still aufzugeben.

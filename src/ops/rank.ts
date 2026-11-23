@@ -2,10 +2,12 @@
  * `rank`-Arithmetik (backe.md §2.22): ein Issue an eine Stelle der Rangfolge setzen und dabei nur
  * so viele Nachbarn neu nummerieren, wie nötig sind.
  */
+
 import { BackeError } from '../core/errors.ts';
 import type { Issue } from '../core/schemas.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { compareIssues } from './order.ts';
+import { m } from './rank.messages.ts';
 
 export const RANK_STEP = 1000;
 
@@ -21,18 +23,18 @@ type Slot = { id: string; rank: number };
 /** Anker auflösen: er muss existieren, ein anderes Issue sein und einen `rank` tragen. */
 function anchorIndex(s: BacklogSnapshot, id: string, anchor: string, list: Slot[]): number {
   if (anchor === id) {
-    throw new BackeError('validation', `Anker ${anchor} ist das Issue selbst`);
+    throw new BackeError('validation', m.anchorIsIssue(anchor));
   }
   if (!s.issues.has(anchor)) {
     const broken = s.problems.find((p) => p.kind === 'issue' && p.key === anchor);
     if (broken !== undefined) {
-      throw new BackeError('validation', `Anker ${anchor} ist nicht lesbar: ${broken.message}`);
+      throw new BackeError('validation', m.anchorUnreadable(anchor, broken.message));
     }
-    throw new BackeError('not_found', `Issue ${anchor} nicht gefunden`);
+    throw new BackeError('not_found', m.issueNotFound(anchor));
   }
   const index = list.findIndex((slot) => slot.id === anchor);
   if (index < 0) {
-    throw new BackeError('validation', `Anker ${anchor} hat keinen rank`, {
+    throw new BackeError('validation', m.anchorWithoutRank(anchor), {
       hint: `backe issue rank ${anchor} --bottom`,
     });
   }
@@ -45,7 +47,7 @@ function targetIndex(s: BacklogSnapshot, id: string, pos: RankPosition, list: Sl
   if ('bottom' in pos) return list.length;
   if ('before' in pos) return anchorIndex(s, id, pos.before, list);
   if ('after' in pos) return anchorIndex(s, id, pos.after, list) + 1;
-  throw new BackeError('unexpected', 'Unbekannte Rang-Position');
+  throw new BackeError('unexpected', m.unknownPosition);
 }
 
 /**
@@ -60,11 +62,11 @@ export function rankPlacement(
   pos: RankPosition,
 ): Map<string, number> {
   const self = s.issues.get(id)?.data;
-  if (!self) throw new BackeError('not_found', `Issue ${id} nicht gefunden`);
+  if (!self) throw new BackeError('not_found', m.issueNotFound(id));
 
   if ('value' in pos) {
     if (!Number.isInteger(pos.value)) {
-      throw new BackeError('validation', `rank muss eine Ganzzahl sein, nicht ${pos.value}`);
+      throw new BackeError('validation', m.rankNotInteger(pos.value));
     }
     return self.rank === pos.value ? new Map() : new Map([[id, pos.value]]);
   }
@@ -76,15 +78,15 @@ export function rankPlacement(
   const list: Slot[] = ordered.map((i) => ({ id: i.id, rank: i.rank as number }));
   const k = targetIndex(s, id, pos, list);
 
-  const m: Slot[] = [...list.slice(0, k), { id, rank: 0 }, ...list.slice(k)];
+  const slots: Slot[] = [...list.slice(0, k), { id, rank: 0 }, ...list.slice(k)];
   let a = k;
   let b = k;
   for (;;) {
-    const lo = a > 0 ? (m[a - 1] as Slot).rank : Number.NEGATIVE_INFINITY;
-    const hi = b < m.length - 1 ? (m[b + 1] as Slot).rank : Number.POSITIVE_INFINITY;
+    const lo = a > 0 ? (slots[a - 1] as Slot).rank : Number.NEGATIVE_INFINITY;
+    const hi = b < slots.length - 1 ? (slots[b + 1] as Slot).rank : Number.POSITIVE_INFINITY;
     const n = b - a + 1;
     const set = (value: (i: number) => number) => {
-      for (let i = 0; i < n; i++) (m[a + i] as Slot).rank = value(i);
+      for (let i = 0; i < n; i++) (slots[a + i] as Slot).rank = value(i);
     };
     if (lo === Number.NEGATIVE_INFINITY && hi === Number.POSITIVE_INFINITY) {
       set((i) => RANK_STEP * (i + 1));
@@ -97,14 +99,14 @@ export function rankPlacement(
       set((i) => lo + step * (i + 1));
     } else {
       a = Math.max(a - 1, 0);
-      b = Math.min(b + 1, m.length - 1);
+      b = Math.min(b + 1, slots.length - 1);
       continue;
     }
     break;
   }
 
   const result = new Map<string, number>();
-  for (const slot of m) {
+  for (const slot of slots) {
     if (s.issues.get(slot.id)?.data.rank !== slot.rank) result.set(slot.id, slot.rank);
   }
   return result;

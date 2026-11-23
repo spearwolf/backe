@@ -4,8 +4,13 @@ import { tempDir } from '../../test/helpers/backlog.ts';
 import { revParse, testBacklog } from '../../test/helpers/git.ts';
 import { connectMcp } from '../../test/helpers/mcp.ts';
 import { git } from '../git/exec.ts';
+import { setLocale } from '../i18n/locale.ts';
 import { issueFile } from '../store/layout.ts';
 import { propsArgs } from './write-tools.ts';
+
+// Der MCP-Modus spricht immer Englisch (backe.md §2.18); `backe mcp` setzt die Locale beim Start.
+beforeAll(() => setLocale('en'));
+afterAll(() => setLocale('de'));
 
 type Backlog = Awaited<ReturnType<typeof testBacklog>>;
 type Mcp = Awaited<ReturnType<typeof connectMcp>>;
@@ -42,7 +47,7 @@ test('propsArgs turns values into JSON assignments and null into unset', () => {
     unset: [],
   });
   expect(propsArgs({ level: null }, true)).toEqual({ props: [], unset: ['level'] });
-  expect(() => propsArgs({ level: null }, false)).toThrow('null geht nur in issue_update');
+  expect(() => propsArgs({ level: null }, false)).toThrow('null only works in issue_update');
 });
 
 test('props keys outside the key grammar are rejected, set and unset alike', () =>
@@ -51,10 +56,10 @@ test('props keys outside the key grammar are rejected, set and unset alike', () 
     const file = () => readFile(join(b.root, issueFile(id)), 'utf8');
     const before = await file();
     expect(await m.call('issue_update', { id, props: { 'a=b': 1 } })).toMatchObject({
-      error: { code: 'validation', message: 'Ungültiger Property-Key »a=b«' },
+      error: { code: 'validation', message: "Invalid property key 'a=b'" },
     });
     expect(await m.call('issue_update', { id, props: { Bad: null } })).toMatchObject({
-      error: { code: 'validation', message: 'Ungültiger Property-Key »Bad«' },
+      error: { code: 'validation', message: "Invalid property key 'Bad'" },
     });
     expect(await file()).toBe(before);
   }));
@@ -96,7 +101,7 @@ test('issue_update without changes is usage', () =>
   withMcp(async (m) => {
     const id = await create(m);
     const r = await m.call('issue_update', { id });
-    expect(r).toMatchObject({ error: { code: 'usage', message: 'Nichts zu ändern' } });
+    expect(r).toMatchObject({ error: { code: 'usage', message: 'Nothing to change' } });
   }));
 
 test('contradictory parameters are usage errors and the server keeps serving', () =>
@@ -108,13 +113,13 @@ test('contradictory parameters are usage errors and the server keeps serving', (
     expect(
       await m.call('attachment_add', { id, name: 'a.txt', url: 'https://x.y', text: 'x' }),
     ).toMatchObject({
-      error: { code: 'usage', message: 'Genau eins von path, url, json, text angeben' },
+      error: { code: 'usage', message: 'Give exactly one of path, url, json, text' },
     });
     expect(await m.call('issue_create', { title: 'X', props: { x: null } })).toMatchObject({
-      error: { code: 'validation', message: 'Property »x«: null geht nur in issue_update' },
+      error: { code: 'validation', message: "Property 'x': null only works in issue_update" },
     });
     expect(await m.call('batch', { ops: [] })).toMatchObject({
-      error: { code: 'usage', message: 'batch braucht mindestens eine Operation' },
+      error: { code: 'usage', message: 'batch needs at least one operation' },
     });
     expect(await m.call('issue_create', { title: 'Danach' })).toHaveProperty('ok');
   }));
@@ -197,7 +202,7 @@ async function rejected(m: Mcp, b: Backlog, op: Record<string, unknown>): Promis
   expect(r).toEqual({
     error: {
       code: 'validation',
-      message: `Zeile 2: »${op.op as string}« gibt es im MCP-Modus nicht`,
+      message: `line 2: '${op.op as string}' is not available in MCP mode`,
       details: { line: 2 },
     },
   });
@@ -232,7 +237,7 @@ test('batch rejects user, project, repo and removing ops before touching the bac
     // Ohne String-`op` bleibt es bei der Meldung von `runBatch`.
     const r = await m.call('batch', { ops: [{ op: 5 }] });
     expect(r).toMatchObject({ error: { code: 'validation', details: { line: 1 } } });
-    expect((r as { error: { message: string } }).error.message).not.toContain('MCP-Modus');
+    expect((r as { error: { message: string } }).error.message).not.toContain('MCP mode');
   }));
 
 test('issue_delete exists only with allowDelete', async () => {
@@ -291,8 +296,8 @@ test('attachment_add refuses files outside the server cwd, also through symlinks
       expect(r).toEqual({
         error: {
           code: 'validation',
-          message: `Datei »${path}« liegt außerhalb des Arbeitsverzeichnisses`,
-          hint: 'Inhalt per text oder json übergeben',
+          message: `File '${path}' is outside the working directory`,
+          hint: 'pass the content as text or json',
         },
       });
     }
@@ -343,7 +348,7 @@ test('issue_rank counts top: false as no position', () =>
   withMcp(async (m) => {
     const id = await create(m);
     expect(await m.call('issue_rank', { id, top: false })).toMatchObject({
-      error: { code: 'usage', message: 'Genau eine Position angeben' },
+      error: { code: 'usage', message: 'Give exactly one position' },
     });
     expect(await m.call('issue_rank', { id, top: false, bottom: false })).toMatchObject({
       error: { code: 'usage' },

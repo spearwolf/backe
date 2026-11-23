@@ -16,6 +16,7 @@ import {
 import { basename, dirname, join, posix } from 'node:path';
 import { BackeError } from '../core/errors.ts';
 import { isIssueId, shardOf } from '../core/ids.ts';
+import { m } from './files.messages.ts';
 
 /**
  * `recursive` gilt nur zusammen mit `content: null` und nur für ein Issue-Verzeichnis
@@ -74,15 +75,15 @@ export function assertRelative(path: string): void {
     segments.includes('..') ||
     posix.normalize(path) !== path
   ) {
-    throw new BackeError('validation', `Ungültiger Pfad im Backlog: »${path}«`, {
-      hint: 'Erlaubt sind nur normalisierte, relative Pfade ohne "..", ".", "//" und Schrägstrich am Ende.',
+    throw new BackeError('validation', m.invalidPath(path), {
+      hint: m.invalidPathHint,
     });
   }
   // Groß-/Kleinschreibung egal, weil APFS und NTFS `.GIT` auf `.git` abbilden. Die NTFS-Aliase
   // (`git~1`, `.git::$INDEX_ALLOCATION`) sind Aufgabe des Windows-Supports (backe.md §4.2).
   if (segments.some((s) => s.toLowerCase() === '.git')) {
-    throw new BackeError('validation', `Pfad unter .git im Backlog: »${path}«`, {
-      hint: 'Unter ".git" liegen Git-Interna; dorthin schreibt und löscht backe nie.',
+    throw new BackeError('validation', m.pathUnderGit(path), {
+      hint: m.pathUnderGitHint,
     });
   }
 }
@@ -102,8 +103,8 @@ export function isIssueDirPath(path: string): boolean {
 export function assertRecursiveAllowed(change: FileChange): void {
   if (change.recursive !== true) return;
   if (change.content !== null || !isIssueDirPath(change.path)) {
-    throw new BackeError('validation', `Rekursives Löschen nicht erlaubt: »${change.path}«`, {
-      hint: 'Rekursiv gelöscht wird nur ein Issue-Verzeichnis "issues/<shard>/<id>" (content: null).',
+    throw new BackeError('validation', m.recursiveDeleteNotAllowed(change.path), {
+      hint: m.recursiveDeleteHint,
     });
   }
 }
@@ -148,8 +149,8 @@ async function assertNoSymlinks(root: string, path: string): Promise<void> {
       throw err;
     }
     if (isLink) {
-      throw new BackeError('validation', `Symlink im Backlog: ${path}`, {
-        hint: 'backe schreibt nicht durch Symlinks; den Link durch eine Datei oder ein Verzeichnis ersetzen.',
+      throw new BackeError('validation', m.symlinkInBacklog(path), {
+        hint: m.symlinkHint,
       });
     }
   }

@@ -3,6 +3,7 @@
  * gegen Arbeitskopie) werden zu Operationen, die sich gegen den `HEAD`-Snapshot anwenden und
  * replayen lassen. Eine Datei wird ganz übersetzt oder ganz als `manual` gemeldet.
  */
+
 import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import {
@@ -21,6 +22,7 @@ import { classifyPath, misplacedIssueFile, parseCommentFileName } from '../store
 import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { sameValue, violation } from './invariants.ts';
 import { bodyHash, type Operation, type OpOf } from './operation.ts';
+import { m } from './translate.messages.ts';
 
 /** Inhalt einer Datei in `HEAD` (`before`) und in der Arbeitskopie (`after`); `null` = fehlt. */
 export type EditedFile = { path: string; before: string | null; after: string | null };
@@ -84,12 +86,12 @@ function createIssue(
 ): OpOf<'issue.create'> | typeof MANUAL {
   const d = after.data;
   if (d.id !== id) {
-    throw violation('schema', `${path}: id ${d.id} passt nicht zum Pfad (${id})`, { ids: [id] });
+    throw violation('schema', m.idPathMismatch(path, d.id, id), { ids: [id] });
   }
   if (d.creator !== actor) {
-    throw violation('policy', `${path}: creator ist ${d.creator}, committen will ${actor}`, {
+    throw violation('policy', m.creatorMismatch(path, d.creator, actor), {
       ids: [id],
-      hint: 'Ein neues Issue gehört dem, der es anlegt; creator auf den eigenen Handle setzen.',
+      hint: m.creatorHint,
     });
   }
   if (d.attachments !== undefined) return MANUAL;
@@ -120,7 +122,7 @@ function moveIssue(path: string, before: Issue, after: Issue, strict: boolean): 
   const fail = (message: string) =>
     violation('transition', `${path}: ${message}`, {
       ids: [id],
-      hint: `Den Zustand mit backe issue move, resume oder reopen ändern (${id}).`,
+      hint: m.changeStateHint(id),
     });
   let next: ReturnType<typeof planTransition>;
   try {
@@ -134,10 +136,7 @@ function moveIssue(path: string, before: Issue, after: Issue, strict: boolean): 
     throw err;
   }
   if (next?.paused_from !== after.paused_from || !sameValue(next?.blocked_by, after.blocked_by)) {
-    throw fail(
-      `paused_from/blocked_by passen nicht zum Übergang ${before.state} -> ${after.state}` +
-        ` (erwartet paused_from ${next?.paused_from ?? 'nicht gesetzt'})`,
-    );
+    throw fail(m.pausedFromMismatch(before.state, after.state, next?.paused_from ?? m.notSet));
   }
   return defined({
     op: 'issue.move',
@@ -201,20 +200,16 @@ function changeIssue(
   const a = after.data;
   for (const field of ['id', 'created', 'creator'] as const) {
     if (b[field] !== a[field]) {
-      throw violation(
-        'policy',
-        `${path}: ${field} ist nicht änderbar (${b[field]} -> ${a[field]})`,
-        {
-          ids: [b.id],
-        },
-      );
+      throw violation('policy', m.fieldImmutable(path, field, String(b[field]), String(a[field])), {
+        ids: [b.id],
+      });
     }
   }
   const moved = b.state !== a.state;
   if (!moved && b.paused_from !== a.paused_from) {
-    throw violation('transition', `${path}: paused_from ändert sich nur mit dem Zustand`, {
+    throw violation('transition', m.pausedFromOnlyWithState(path), {
       ids: [b.id],
-      hint: `backe issue move ${b.id} oder backe issue resume ${b.id}`,
+      hint: m.pausedFromHint(b.id),
     });
   }
   // Ein entfernter Rank und geänderte Anhänge haben keine Operation.
@@ -246,24 +241,20 @@ function commentOps(
   if (before === undefined) {
     const name = parseCommentFileName(file);
     if (name?.author !== actor || after.data.author !== actor) {
-      throw violation('policy', `${path}: ein neuer Kommentar muss von ${actor} sein`, {
+      throw violation('policy', m.commentNotOwn(path, actor), {
         ids: [id],
       });
     }
     if (after.data.created !== name.created) {
-      throw violation('policy', `${path}: created ${after.data.created} passt nicht zum Namen`, {
+      throw violation('policy', m.commentCreatedMismatch(path, after.data.created), {
         ids: [id],
       });
     }
     if (after.data.kind === 'transition') {
-      throw violation(
-        'transition',
-        `${path}: Transition-Kommentare entstehen nur mit dem Übergang`,
-        {
-          ids: [id],
-          hint: 'Den Zustand mit backe issue move ändern; ein Grund wird dabei zum Kommentar.',
-        },
-      );
+      throw violation('transition', m.transitionCommentOnlyWithTransition(path), {
+        ids: [id],
+        hint: m.transitionCommentHint,
+      });
     }
     if (extraChanged) return MANUAL;
     return [{ op: 'comment.add', id, file, body: after.body }];
@@ -464,9 +455,9 @@ function orderCreates(creates: ReadonlyMap<string, OpOf<'issue.create'>>): Opera
     ];
   });
   if (stuck.length > 0) {
-    throw violation('cycle', `Neue Issues verweisen zyklisch aufeinander: ${stuck.join(', ')}`, {
+    throw violation('cycle', m.newIssuesCycle(stuck.join(', ')), {
       ids: stuck,
-      hint: 'Erst einen Teil der Issues committen, dann die Verweise ergänzen.',
+      hint: m.newIssuesCycleHint,
     });
   }
   return order.map((id) => creates.get(id) as Operation);
@@ -579,7 +570,7 @@ export function translateEdits(
   const seen = new Set<string>();
   for (const f of files) {
     if (seen.has(f.path)) {
-      throw new BackeError('usage', `${f.path} steht mehrfach in den Hand-Edits`);
+      throw new BackeError('usage', m.pathRepeated(f.path));
     }
     seen.add(f.path);
     const cls = classifyPath(f.path);
@@ -595,19 +586,17 @@ export function translateEdits(
       throw new BackeError(
         'validation',
         misplaced.expected === undefined
-          ? `${path}: kein gültiges Issue-Verzeichnis`
-          : `${path}: Issue gehört nach ${misplaced.expected}`,
+          ? m.notIssueDirectory(path)
+          : m.issueBelongsTo(path, misplaced.expected),
       );
     }
     if ((cls.kind === 'comment' || cls.kind === 'attachment') && deletedIssues.has(cls.id)) {
       if (f.after === null || f.before === f.after) continue;
       // Sonst landete der neue Inhalt im Commit und `issue.delete` entfernte ihn gleich wieder.
-      const label = cls.kind === 'comment' ? 'Kommentar' : 'Anhang';
-      throw new BackeError(
-        'validation',
-        `${path}: ${label} unter ${cls.id}, das im selben Edit gelöscht wird, ginge verloren`,
-        { hint: `Den ${label} verwerfen oder ${cls.id} nicht löschen.` },
-      );
+      const label = cls.kind === 'comment' ? m.labelComment : m.labelAttachment;
+      throw new BackeError('validation', m.lostWithDeletedIssue(path, label, cls.id), {
+        hint: m.lostHint(label, cls.id),
+      });
     }
     if (cls.kind === 'config' || cls.kind === 'other' || cls.kind === 'attachment') {
       if (f.before !== f.after) manual.push(path);

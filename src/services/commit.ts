@@ -8,6 +8,7 @@ import { requireWriter } from '../context/resolve.ts';
 import { git } from '../git/exec.ts';
 import type { Notice } from '../ops/notice.ts';
 import type { Operation } from '../ops/operation.ts';
+import { m } from './commit.messages.ts';
 import type { Rewritten } from './hand-edits.ts';
 import type { UnknownKeys } from './verify.ts';
 import { type ChainEntry, executeWrite, type WriteDeps } from './write.ts';
@@ -61,16 +62,14 @@ export async function commitEdits(
   }
   const warnings = [...r.verifyNotices];
   if (r.unsettled !== undefined) {
-    warnings.push(
-      `Arbeitskopie nicht angeglichen (${r.unsettled.paths.join(', ')}): ${r.unsettled.reason}`,
-    );
+    warnings.push(m.unsettled(r.unsettled.paths.join(', '), r.unsettled.reason));
   }
   if (
     input.message !== undefined &&
     r.chain.length > 0 &&
     !r.chain.some((c) => c.kind === 'manual')
   ) {
-    warnings.push('-m gilt nur für manuelle Änderungen');
+    warnings.push(m.messageOnlyForManual);
   }
   return {
     commits,

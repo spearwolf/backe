@@ -25,6 +25,7 @@ import {
   text,
 } from '../options.ts';
 import { columns, json, lines } from '../output.ts';
+import { m } from './attach.messages.ts';
 
 /**
  * Schreibt den Anhang nach `-o <pfad>` (eine vorhandene Datei wird überschrieben). Ein Verzeichnis
@@ -35,9 +36,9 @@ async function writeTarget(target: string, bytes: Uint8Array): Promise<void> {
     await writeFile(target, bytes);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === 'EISDIR') throw new BackeError('validation', `${target} ist ein Verzeichnis`);
+    if (code === 'EISDIR') throw new BackeError('validation', m.isDirectory(target));
     if (code === 'ENOENT' || code === 'ENOTDIR') {
-      throw new BackeError('not_found', `Verzeichnis für ${target} existiert nicht`);
+      throw new BackeError('not_found', m.directoryMissing(target));
     }
     throw error;
   }
@@ -66,20 +67,20 @@ async function sourceOf(
 function checkOneSource(file: string | undefined, opts: AddOpts): void {
   const given = [file, opts.url, opts.json].filter((v) => v !== undefined).length;
   if (given !== 1) {
-    throw new BackeError('usage', 'Genau eine Quelle angeben', {
-      hint: '<datei>, --url <url> oder --json <json|->',
+    throw new BackeError('usage', m.exactlyOneSource, {
+      hint: m.sourceHint,
     });
   }
 }
 
 export function attachCommands(program: Command, rt: Runtime): void {
-  const attach = subcommand(program, 'attach', 'Anhänge eines Issues');
+  const attach = subcommand(program, 'attach', m.description);
 
   // `--json <json|->` ist hier die Inhaltsquelle; die Ausgabe als JSON geht über `--format json`.
-  subcommand(attach, 'add <id> [datei]', 'Datei, URL oder JSON anhängen', { without: ['json'] })
-    .requiredOption('--name <name>', 'Name des Anhangs')
-    .option('--url <url>', 'URL statt Datei')
-    .option('--json <json|->', 'JSON-Inhalt (»-« liest stdin)')
+  subcommand(attach, m.addCommand, m.addDescription, { without: ['json'] })
+    .requiredOption('--name <name>', m.nameOption)
+    .option('--url <url>', m.urlOption)
+    .option('--json <json|->', m.jsonOption)
     .action(
       action(
         rt,
@@ -94,7 +95,7 @@ export function attachCommands(program: Command, rt: Runtime): void {
       ),
     );
 
-  syncOption(subcommand(attach, 'list <id>', 'Anhänge auflisten')).action(
+  syncOption(subcommand(attach, 'list <id>', m.listDescription)).action(
     action(
       rt,
       async (env, ref: string) => {
@@ -107,14 +108,8 @@ export function attachCommands(program: Command, rt: Runtime): void {
     ),
   );
 
-  syncOption(
-    subcommand(
-      attach,
-      'get <id> <name>',
-      'Anhang holen: Inhalt nach stdout oder mit -o in eine Datei',
-    ),
-  )
-    .option('-o, --output <pfad>', 'in diese Datei schreiben (überschreibt) und den Pfad drucken')
+  syncOption(subcommand(attach, 'get <id> <name>', m.getDescription))
+    .option(m.outputFlags, m.outputOption)
     .action(
       action(
         rt,
@@ -140,7 +135,7 @@ export function attachCommands(program: Command, rt: Runtime): void {
       ),
     );
 
-  subcommand(attach, 'rm <id> <name>', 'Anhang entfernen').action(
+  subcommand(attach, 'rm <id> <name>', m.rmDescription).action(
     action(
       rt,
       async (env, ref: string, name: string) => {

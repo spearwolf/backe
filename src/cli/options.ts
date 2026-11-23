@@ -16,6 +16,7 @@ import type { WriteOpsOutcome, WriteOutcome } from '../services/outcome.ts';
 import { checkFields } from '../services/views.ts';
 import { isMissing } from '../store/files.ts';
 import type { CliIo } from './io.ts';
+import { m } from './options.messages.ts';
 import {
   type Format,
   json,
@@ -40,12 +41,20 @@ export type GlobalOpts = {
 export const GLOBAL_KEYS = ['backlog', 'as', 'format', 'json', 'fields'] as const;
 export type GlobalKey = (typeof GLOBAL_KEYS)[number];
 
-const GLOBAL_OPTIONS: Record<GlobalKey, [flags: string, description: string]> = {
-  backlog: ['-B, --backlog <name|pfad>', 'Backlog (Name, Pfad oder Remote-URL)'],
-  as: ['--as <handle>', 'Identität für diesen Aufruf'],
-  format: ['--format <format>', 'Ausgabeformat: text, json oder md'],
-  json: ['--json', 'Kurzform für --format json'],
-  fields: ['--fields <liste>', 'nur diese Felder ausgeben (mit --format json)'],
+/** Flags und Beschreibung je globaler Option; als Funktion, damit sie die Locale beim Bauen lesen. */
+const globalOption = (key: GlobalKey): [flags: string, description: string] => {
+  switch (key) {
+    case 'backlog':
+      return [m.backlogFlags, m.backlogDescription];
+    case 'as':
+      return ['--as <handle>', m.asDescription];
+    case 'format':
+      return ['--format <format>', m.formatDescription];
+    case 'json':
+      return ['--json', m.jsonDescription];
+    case 'fields':
+      return [m.fieldsFlags, m.fieldsDescription];
+  }
 };
 
 /** Globale Optionen, die ein Befehl nicht trägt, weil er den Namen selbst belegt. */
@@ -59,7 +68,7 @@ export function globalKeysOf(cmd: Command): GlobalKey[] {
 
 export function addGlobalOptions(cmd: Command, without: readonly GlobalKey[] = []): Command {
   if (without.length > 0) optedOut.set(cmd, new Set(without));
-  for (const key of globalKeysOf(cmd)) cmd.option(...GLOBAL_OPTIONS[key]);
+  for (const key of globalKeysOf(cmd)) cmd.option(...globalOption(key));
   return cmd;
 }
 
@@ -202,7 +211,7 @@ export type CommandSpec = {
 
 /** Die Option `--sync` eines lesenden Befehls. */
 export function syncOption(cmd: Command): Command {
-  return cmd.option('--sync', 'vorher blockierend mit dem Remote synchronisieren');
+  return cmd.option('--sync', m.syncDescription);
 }
 
 /** Was eine Aktion über den Aufruf hinterlässt: den ersten aufgelösten Kontext und den Commit. */
@@ -242,15 +251,15 @@ async function commandEnv(
   } catch (error) {
     if (spec.lenientConfig !== true) throw error;
   }
-  const name = `»${commandPath(cmd)}«`;
+  const name = commandPath(cmd);
   let format = resolveFormat(g, io.env, userConfig);
   const formats = spec.formats ?? ['text', 'json'];
   if (!formats.includes(format)) {
     // Ein Default aus Env oder Config, den der Befehl nicht kann, fällt auf Text zurück.
     if (g.json === true || g.format !== undefined) {
       rt.state.format = 'text';
-      throw new BackeError('usage', `${name} kennt --format ${format} nicht`, {
-        hint: `Möglich: ${formats.join(', ')}`,
+      throw new BackeError('usage', m.formatNotSupported(name, format), {
+        hint: m.formatAvailable(formats.join(', ')),
       });
     }
     format = 'text';
@@ -258,8 +267,8 @@ async function commandEnv(
   rt.state.format = format;
   const fields = splitFields(g.fields);
   if (fields !== undefined) {
-    if (format !== 'json') throw new BackeError('usage', '--fields geht nur mit --format json');
-    if (spec.fields === undefined) throw new BackeError('usage', `${name} kennt --fields nicht`);
+    if (format !== 'json') throw new BackeError('usage', m.fieldsNeedJson);
+    if (spec.fields === undefined) throw new BackeError('usage', m.fieldsNotSupported(name));
     checkFields(fields, spec.fields);
   }
   const resolved = new Map<string, Promise<ResolvedContext>>();
@@ -298,8 +307,8 @@ async function commandEnv(
     handle: () => {
       const handle = g.as ?? envValue(io.env, 'BACKE_USER') ?? userConfig.user;
       if (handle === undefined) {
-        throw new BackeError('usage', 'Kein Handle angegeben', {
-          hint: `--as <handle>, BACKE_USER oder »user« in ${userConfigPath(homes.backeHome)}`,
+        throw new BackeError('usage', m.noHandle, {
+          hint: m.noHandleHint(userConfigPath(homes.backeHome)),
         });
       }
       return handle;
@@ -344,7 +353,8 @@ async function emitStatusLine(env: CommandEnv, trace: Trace): Promise<void> {
     const ctx = await trace.ctx;
     if (ctx.backlog.workingCopy === undefined) return;
     const line = statusLine(await syncStatus(ctx));
-    if (line !== undefined) env.io.stderr(lines([safeText(line), 'Hinweis: backe sync status']));
+    if (line !== undefined)
+      env.io.stderr(lines([safeText(line)]) + renderHints(['backe sync status']));
   } catch {
     // Ohne Arbeitskopie oder lesbaren Zustand gibt es keine Kopfzeile.
   }
@@ -394,8 +404,8 @@ export function collect(value: string, prev: string[] = []): string[] {
 export function limitArg(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
   if (!/^[1-9]\d*$/.test(value)) {
-    throw new BackeError('validation', `Ungültiges Limit: »${value}«`, {
-      hint: 'erwartet eine ganze Zahl ab 1',
+    throw new BackeError('validation', m.invalidLimit(value), {
+      hint: m.invalidLimitHint,
     });
   }
   return Number(value);
@@ -410,8 +420,8 @@ export function absPath(p: string, io: CliIo): string {
 export async function text(value: string, io: CliIo, stdin: StdinGuard): Promise<string> {
   if (value !== '-') return value;
   if (stdin.taken) {
-    throw new BackeError('usage', 'stdin ist schon vergeben', {
-      hint: 'Nur eine Angabe je Aufruf kann »-« (stdin) sein.',
+    throw new BackeError('usage', m.stdinTaken, {
+      hint: m.stdinTakenHint,
     });
   }
   stdin.taken = true;
@@ -424,8 +434,11 @@ export async function fileText(path: string, io: CliIo): Promise<string> {
   try {
     return await readFile(file, 'utf8');
   } catch (error) {
-    if (isMissing(error)) throw new BackeError('not_found', `Datei »${path}« nicht gefunden`);
-    throw new BackeError('unexpected', `»${file}«: ${(error as NodeJS.ErrnoException).code}`);
+    if (isMissing(error)) throw new BackeError('not_found', m.fileNotFound(path));
+    throw new BackeError(
+      'unexpected',
+      m.fileUnreadable(file, (error as NodeJS.ErrnoException).code),
+    );
   }
 }
 
@@ -465,7 +478,7 @@ export function emitOutcome(
 export async function stdinBody(io: CliIo, stdin: StdinGuard, clear: string): Promise<string> {
   const body = await text('-', io, stdin);
   if (body.trim() === '') {
-    throw new BackeError('validation', 'Beschreibung ist leer', { hint: `Leeren mit ${clear}` });
+    throw new BackeError('validation', m.emptyBody, { hint: m.emptyBodyHint(clear) });
   }
   return body;
 }
@@ -479,7 +492,7 @@ export async function bodyArg(
   opts: { description?: string; file?: string },
 ): Promise<string | undefined> {
   if (opts.description !== undefined && opts.file !== undefined) {
-    throw new BackeError('usage', '-d und -F schließen sich aus');
+    throw new BackeError('usage', m.bodyAndFile);
   }
   if (opts.description === '-') return stdinBody(env.io, env.stdin, "-d ''");
   if (opts.description !== undefined) return opts.description;

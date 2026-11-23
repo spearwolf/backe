@@ -6,6 +6,7 @@ import { type ContextInfo, contextInfo } from '../../services/context-info.ts';
 import { contextJson } from '../../services/views.ts';
 import { action, emit, type Runtime, subcommand, syncOption } from '../options.ts';
 import { columns, lines, paint, safeText, width } from '../output.ts';
+import { m } from './context.messages.ts';
 
 type Opts = { project?: string; sprint?: string; props?: boolean };
 
@@ -13,7 +14,7 @@ const sourceText = (s: Source) => `(${s.kind}${s.detail === undefined ? '' : `: 
 
 function declarations(props: BacklogConfig['props']): string[] {
   const keys = Object.keys(props).sort();
-  if (keys.length === 0) return ['keine Properties deklariert'];
+  if (keys.length === 0) return [m.noPropsDeclared];
   return columns(
     keys.map((key) => {
       const d = props[key] as BacklogConfig['props'][string];
@@ -50,17 +51,17 @@ function render(info: ContextInfo, color: boolean): string {
     user as string,
     plain('key', info.user.key ?? '-'),
     ...scoped,
-    `schreiben: ${info.user.canWrite ? 'ja' : paint(color, 'yellow', 'nein')}`,
+    `${m.writeLabel} ${info.user.canWrite ? m.yes : paint(color, 'yellow', m.no)}`,
   ];
   if (info.props !== undefined) out.push('', ...declarations(info.props));
   return lines(out);
 }
 
 export function contextCommand(program: Command, rt: Runtime): void {
-  syncOption(subcommand(program, 'context', 'aufgelösten Kontext mit Herkunft jedes Werts zeigen'))
-    .option('--project <pfad>', 'Projekt für diesen Aufruf')
-    .option('--sprint <slug>', 'Sprint für diesen Aufruf')
-    .option('--props', 'Property-Deklarationen des Backlogs anhängen')
+  syncOption(subcommand(program, 'context', m.description))
+    .option(m.projectFlags, m.projectOption)
+    .option('--sprint <slug>', m.sprintOption)
+    .option('--props', m.propsOption)
     .action(
       action(
         rt,

@@ -32,7 +32,7 @@ export type McpOptions = {
  * einmal hier statt in einer Übersetzungstabelle, die neben den Befehlen driften würde.
  */
 export const INSTRUCTIONS =
-  'Ergebnisse sind kompaktes JSON. Fehler kommen als {"error":{code,message,hint}}; Hinweise nennen CLI-Befehle und -Flags von backe: ein Tool entspricht dem gleichnamigen Befehl (issue_move ↔ backe issue move), ein Flag dem Parameter in snake_case (--add-dep ↔ add_deps, --blocked-by ↔ blocked_by).';
+  'Results are compact JSON. Errors come as {"error":{code,message,hint}}; hints name backe CLI commands and flags: a tool corresponds to the command of the same name (issue_move ↔ backe issue move), a flag to the parameter in snake_case (--add-dep ↔ add_deps, --blocked-by ↔ blocked_by).';
 
 const resolve = (opts: McpOptions): Promise<ResolvedContext> =>
   resolveContext({ cwd: opts.cwd, env: opts.env, flags: opts.flags });
@@ -60,7 +60,7 @@ function registerTools(server: McpServer, env: ToolEnv): void {
     'context_get',
     {
       description:
-        'Aufgelösten Kontext mit Herkunft jedes Werts zeigen (wie backe context); mit props die Property-Deklarationen des Backlogs',
+        'Show the resolved context with the source of each value (like backe context); with props, the property declarations of the backlog',
       input: z.strictObject({ props: z.boolean().optional() }),
       kind: 'read',
     },

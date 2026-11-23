@@ -14,6 +14,7 @@ import {
   text,
 } from '../options.ts';
 import { json, lines, paint, renderHints, renderNotices, safeText } from '../output.ts';
+import { m } from './verify.messages.ts';
 
 type Opts = { since?: string; accept?: string; revert?: string; reason?: string };
 
@@ -23,7 +24,7 @@ type Opts = { since?: string; accept?: string; revert?: string; reason?: string 
  */
 function render(report: BacklogVerifyReport, since: string | undefined, color: boolean): string {
   return lines([
-    safeText(`geprüft: ${report.checked} Commits seit ${since ?? shortSha(report.anchor)}`),
+    safeText(m.checked(report.checked, since ?? shortSha(report.anchor))),
     ...report.invalid.map((f) =>
       paint(color, 'red', `${shortSha(f.sha)} ${f.subject}: ${f.reasons.join('; ')}`),
     ),
@@ -45,10 +46,10 @@ function verifyJson(report: BacklogVerifyReport): Record<string, unknown> {
 
 async function quarantine(env: CommandEnv, opts: Opts): Promise<void> {
   if (opts.accept !== undefined && opts.revert !== undefined) {
-    throw new BackeError('usage', '--accept und --revert schließen sich aus');
+    throw new BackeError('usage', m.acceptAndRevertExclusive);
   }
   if (opts.since !== undefined) {
-    throw new BackeError('usage', '--since passt nicht zu --accept oder --revert');
+    throw new BackeError('usage', m.sinceExcludesQuarantine);
   }
   const [flag, sha, decision] =
     opts.accept !== undefined
@@ -57,7 +58,7 @@ async function quarantine(env: CommandEnv, opts: Opts): Promise<void> {
   // Fehlt die Begründung, passt der Aufruf nicht (`usage`); ist sie leer, prüft der Service
   // (`validation`).
   if (opts.reason === undefined) {
-    throw new BackeError('usage', `${flag} braucht --reason mit einer Begründung`, {
+    throw new BackeError('usage', m.reasonRequired(flag), {
       hint: `backe verify ${flag} <sha> --reason <text>`,
     });
   }
@@ -73,18 +74,18 @@ async function quarantine(env: CommandEnv, opts: Opts): Promise<void> {
 }
 
 export function verifyCommand(program: Command, rt: Runtime): void {
-  subcommand(program, 'verify', 'Signaturen und Rechte jedes Commits seit dem Anker prüfen')
-    .option('--since <rev>', 'nur Commits nach <rev> prüfen')
-    .option('--accept <sha>', 'ungültigen Commit als hingenommen in die Quarantäne eintragen')
-    .option('--revert <sha>', 'ungültigen Commit umkehren und in die Quarantäne eintragen')
-    .option('--reason <text>', 'Begründung für --accept/--revert (»-« liest stdin)')
+  subcommand(program, 'verify', m.description)
+    .option('--since <rev>', m.sinceOption)
+    .option('--accept <sha>', m.acceptOption)
+    .option('--revert <sha>', m.revertOption)
+    .option('--reason <text>', m.reasonOption)
     .action(
       action(
         rt,
         async (env, opts: Opts) => {
           if (opts.accept !== undefined || opts.revert !== undefined) return quarantine(env, opts);
           if (opts.reason !== undefined) {
-            throw new BackeError('usage', '--reason gehört zu --accept oder --revert');
+            throw new BackeError('usage', m.reasonOnlyWithQuarantine);
           }
           const report = await verifyBacklog(await env.context(), {
             ...(opts.since === undefined ? { record: true } : { since: opts.since }),
@@ -97,9 +98,8 @@ export function verifyCommand(program: Command, rt: Runtime): void {
             env.out(render(report, opts.since, env.color));
             const hints = [...report.notices, ...report.propNotices];
             if (hints.length > 0) env.io.stderr(renderHints(hints));
-            const warnings = report.unknownKeys.map(
-              (u) =>
-                `${u.path}: unbekannte Keys ${u.keys.join(', ')} — eigene Daten gehören nach props`,
+            const warnings = report.unknownKeys.map((u) =>
+              m.unknownKeys(u.path, u.keys.join(', ')),
             );
             if (warnings.length > 0) env.io.stderr(renderNotices([], warnings));
           }

@@ -7,12 +7,10 @@ import { BackeError } from '../../core/errors.ts';
 import { commitEdits } from '../../services/commit.ts';
 import { resignCommits } from '../../services/resign.ts';
 import { action, type CommandEnv, type Runtime, subcommand } from '../options.ts';
+import { m as outputMessages } from '../output.messages.ts';
 import { json, lines, renderHints, renderNotices, safeText } from '../output.ts';
-
-const REWRITE_NOTICE = {
-  canonical: 'kanonisch umgeschrieben',
-  no_effect: 'keine wirksame Änderung',
-} as const;
+import { m } from './commit.messages.ts';
+import { m as verifyMessages } from './verify.messages.ts';
 
 /** `[]` wird zu `undefined`: JSON trägt nur gesetzte Felder. */
 const some = <T>(list: readonly T[]): readonly T[] | undefined =>
@@ -30,24 +28,22 @@ async function resign(env: CommandEnv): Promise<void> {
     return;
   }
   env.out(
-    r.rewritten === 0
-      ? 'Nichts neu zu signieren\n'
-      : lines(r.commits.map((c) => safeText(c.summary))),
+    r.rewritten === 0 ? `${m.nothingToResign}\n` : lines(r.commits.map((c) => safeText(c.summary))),
   );
   env.io.stderr(renderNotices(r.notices ?? [], []));
 }
 
 export function commitCommand(program: Command, rt: Runtime): void {
-  subcommand(program, 'commit', 'Hand-Edits der Arbeitskopie committen')
-    .option('-m, --message <text>', 'Betreff für Änderungen ohne Operations-Entsprechung')
-    .option('--resign', 'fremde lokale Commits (etwa git commit) übersetzen und neu signieren')
+  subcommand(program, 'commit', m.description)
+    .option('-m, --message <text>', m.messageOption)
+    .option('--resign', m.resignOption)
     .action(
       action(
         rt,
         async (env, opts: { message?: string; resign?: boolean }) => {
           if (opts.resign === true) {
             if (opts.message !== undefined) {
-              throw new BackeError('usage', '--resign passt nicht zu -m');
+              throw new BackeError('usage', m.resignExcludesMessage);
             }
             return resign(env);
           }
@@ -75,20 +71,20 @@ export function commitCommand(program: Command, rt: Runtime): void {
           }
           env.out(
             r.commits.length === 0
-              ? 'Nichts zu committen\n'
+              ? `${m.nothingToCommit}\n`
               : lines(r.commits.map((c) => safeText(c.summary))),
           );
           env.io.stderr(
             lines(
               r.unknownKeys.map((u) =>
                 safeText(
-                  `Warnung: ${u.path}: unbekannte Keys ${u.keys.join(', ')} — eigene Daten gehören nach props`,
+                  `${outputMessages.warningPrefix} ${verifyMessages.unknownKeys(u.path, u.keys.join(', '))}`,
                 ),
               ),
             ) +
               renderHints([
                 ...r.notices.map((n) => n.message),
-                ...r.rewritten.map((w) => `${w.path}: ${REWRITE_NOTICE[w.reason]}`),
+                ...r.rewritten.map((w) => `${w.path}: ${m.rewriteNotice(w.reason)}`),
               ]) +
               renderNotices([], r.warnings),
           );

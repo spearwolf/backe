@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { BackeError } from '../core/errors.ts';
 import { isMissing } from '../store/files.ts';
+import { m } from './paths.messages.ts';
 
 export type Env = Readonly<Record<string, string | undefined>>;
 export type Homes = { home: string; backeHome: string };
@@ -18,8 +19,8 @@ export function expandPath(p: string, opts: { home: string; base: string }): str
   if (p === '~') return resolve(opts.home);
   if (p.startsWith('~/')) return resolve(opts.home, p.slice(2));
   if (p.startsWith('~')) {
-    throw new BackeError('validation', `Pfad »${p}«: ~name wird nicht unterstützt`, {
-      hint: 'Nutze ~/… oder einen absoluten Pfad.',
+    throw new BackeError('validation', m.tildeUserUnsupported(p), {
+      hint: m.tildeUserHint,
     });
   }
   return resolve(opts.base, p);

@@ -3,12 +3,14 @@
  * §2.12): anlegen, verschieben, entfernen und Felder mit Vorbedingung ändern. Verweise von Issues
  * darauf bleiben dabei gültig oder die Operation wird abgelehnt.
  */
+
 import { isProjectPath, parseRepoRef, projectAncestors } from '../core/names.ts';
 import type { Issue, Project, User } from '../core/schemas.ts';
 import { isSettled } from '../core/state.ts';
 import { deriveRepoName, normalizeRepoUrl } from '../core/url.ts';
 import { canonicalBody } from '../store/frontmatter.ts';
 import type { Draft, NamedKind } from './draft.ts';
+import { m } from './entity-ops.messages.ts';
 import { sameValue, violation } from './invariants.ts';
 import { canonicalOf, settle } from './issue-ops.ts';
 import { bodyHash, type OpOf } from './operation.ts';
@@ -26,14 +28,14 @@ function uniqueList(list: readonly string[]): string[] | undefined {
 
 function requireUser(d: Draft, handle: string): void {
   if (d.findEntity('user', handle) === undefined) {
-    throw violation('missing_ref', `User ${handle} nicht gefunden`, { ids: [handle] });
+    throw violation('missing_ref', m.userNotFound(handle), { ids: [handle] });
   }
 }
 
 function requireParent(d: Draft, path: string): void {
   const parent = projectAncestors(path).at(-1);
   if (parent !== undefined && d.findEntity('project', parent) === undefined) {
-    throw violation('missing_ref', `Elternprojekt ${parent} nicht gefunden`, { ids: [parent] });
+    throw violation('missing_ref', m.parentProjectNotFound(parent), { ids: [parent] });
   }
 }
 
@@ -41,13 +43,13 @@ function requireParent(d: Draft, path: string): void {
 
 export function projectCreate(d: Draft, op: OpOf<'project.create'>): OpOf<'project.create'> {
   if (!isProjectPath(op.path)) {
-    throw violation('schema', `Ungültiger Projekt-Pfad »${op.path}«`, {
-      hint: 'Segmente aus a-z, 0-9 und "-", höchstens fünf Ebenen.',
+    throw violation('schema', m.invalidProjectPath(op.path), {
+      hint: m.invalidProjectPathHint,
     });
   }
   requireParent(d, op.path);
   if (d.findEntity('project', op.path) !== undefined) {
-    throw violation('exists', `Projekt ${op.path} existiert bereits`, { ids: [op.path] });
+    throw violation('exists', m.projectExists(op.path), { ids: [op.path] });
   }
   if (op.lead !== undefined) requireUser(d, op.lead);
   d.putEntity('project', op.path, { title: op.title, lead: op.lead }, op.body ?? '');
@@ -72,15 +74,15 @@ export function projectMv(d: Draft, op: OpOf<'project.mv'>): OpOf<'project.mv'> 
   const { from, to } = op;
   d.entity('project', from);
   if (!isProjectPath(to)) {
-    throw violation('schema', `Ungültiger Projekt-Pfad »${to}«`);
+    throw violation('schema', m.invalidProjectPath(to));
   }
   if (inSubtree(to, from)) {
-    throw violation('schema', `${from} kann nicht nach ${to} verschoben werden`, {
-      hint: 'Das Ziel liegt im Teilbaum des Projekts selbst.',
+    throw violation('schema', m.cannotMove(from, to), {
+      hint: m.cannotMoveHint,
     });
   }
   if (d.findEntity('project', to) !== undefined) {
-    throw violation('exists', `Projekt ${to} existiert bereits`, { ids: [to] });
+    throw violation('exists', m.projectExists(to), { ids: [to] });
   }
   requireParent(d, to);
   // Eine kaputte Datei im Teilbaum fehlt in den Maps und bliebe beim Verschieben zurück.
@@ -88,8 +90,8 @@ export function projectMv(d: Draft, op: OpOf<'project.mv'>): OpOf<'project.mv'> 
     (p) => p.kind === 'project' && p.key !== undefined && inSubtree(p.key, from),
   );
   if (unreadable !== undefined) {
-    throw violation('schema', `Projekt ${unreadable.key} ist nicht lesbar: ${unreadable.message}`, {
-      hint: 'Erst die Datei reparieren; bis dahin lässt sich der Teilbaum nicht verschieben.',
+    throw violation('schema', m.projectUnreadable(unreadable.key as string, unreadable.message), {
+      hint: m.projectUnreadableHint,
     });
   }
 
@@ -97,10 +99,10 @@ export function projectMv(d: Draft, op: OpOf<'project.mv'>): OpOf<'project.mv'> 
   const newPath = (p: string) => `${to}${p.slice(from.length)}`;
   for (const p of moved) {
     if (!isProjectPath(newPath(p))) {
-      throw violation('schema', `${p} würde nach ${newPath(p)} wandern, der Pfad ist zu tief`);
+      throw violation('schema', m.pathTooDeep(p, newPath(p)));
     }
     if (d.findEntity('project', newPath(p)) !== undefined) {
-      throw violation('exists', `Projekt ${newPath(p)} existiert bereits`, { ids: [newPath(p)] });
+      throw violation('exists', m.projectExists(newPath(p)), { ids: [newPath(p)] });
     }
   }
   // Projekte vor Issues: Die Referenzprüfung der Issues sieht sonst den neuen Pfad nicht.
@@ -118,14 +120,14 @@ export function projectRm(d: Draft, op: OpOf<'project.rm'>): OpOf<'project.rm'> 
   d.entity('project', path);
   const subprojects = [...d.snapshot.projects.keys()].filter((p) => p.startsWith(`${path}/`));
   if (subprojects.length > 0) {
-    throw violation('has_subprojects', `${path} hat Unterprojekte: ${subprojects.join(', ')}`, {
+    throw violation('has_subprojects', m.hasSubprojects(path, subprojects.join(', ')), {
       ids: subprojects,
-      hint: 'Erst die Unterprojekte entfernen oder verschieben.',
+      hint: m.hasSubprojectsHint,
     });
   }
   if (op.reassign !== undefined) {
     if (op.reassign === path) {
-      throw violation('schema', `${path} kann nicht auf sich selbst umgehängt werden`);
+      throw violation('schema', m.cannotReassignToSelf(path));
     }
     d.entity('project', op.reassign);
   }
@@ -133,9 +135,9 @@ export function projectRm(d: Draft, op: OpOf<'project.rm'>): OpOf<'project.rm'> 
     .filter(([, { data }]) => (data.projects ?? []).includes(path))
     .map(([id]) => id);
   if (referencing.length > 0 && op.reassign === undefined && op.detach !== true) {
-    throw violation('references', `${path} wird noch referenziert von ${referencing.join(', ')}`, {
+    throw violation('references', m.projectStillReferenced(path, referencing.join(', ')), {
       ids: referencing,
-      hint: 'Mit --reassign <projekt> umhängen oder mit --detach lösen.',
+      hint: m.projectStillReferencedHint,
     });
   }
   rewriteIssueProjects(d, (p) => (p === path ? op.reassign : p));
@@ -147,7 +149,7 @@ export function projectRm(d: Draft, op: OpOf<'project.rm'>): OpOf<'project.rm'> 
 
 export function sprintCreate(d: Draft, op: OpOf<'sprint.create'>): OpOf<'sprint.create'> {
   if (d.findEntity('sprint', op.slug) !== undefined) {
-    throw violation('exists', `Sprint ${op.slug} existiert bereits`, { ids: [op.slug] });
+    throw violation('exists', m.sprintExists(op.slug), { ids: [op.slug] });
   }
   d.putEntity('sprint', op.slug, { title: op.title, start: op.start, end: op.end }, op.body ?? '');
   return op;
@@ -158,7 +160,7 @@ export function sprintClose(d: Draft, op: OpOf<'sprint.close'>): OpOf<'sprint.cl
   const target = op.carry_over;
   if (target !== undefined) {
     if (target === op.slug) {
-      throw violation('schema', `Sprint ${op.slug} kann nicht in sich selbst übernommen werden`);
+      throw violation('schema', m.sprintCarryOverToSelf(op.slug));
     }
     d.entity('sprint', target);
   }
@@ -180,11 +182,11 @@ export function repoAdd(d: Draft, op: OpOf<'repo.add'>): OpOf<'repo.add'> {
   const canonical = normalizeRepoUrl(op.url);
   for (const [name, repo] of d.snapshot.repos) {
     if (canonicalOf(repo.data.url) === canonical) {
-      throw violation('exists', `Die URL ist schon als Repo ${name} registriert`, { ids: [name] });
+      throw violation('exists', m.urlAlreadyRegistered(name), { ids: [name] });
     }
   }
   if (op.name !== undefined && d.findEntity('repo', op.name) !== undefined) {
-    throw violation('exists', `Repo ${op.name} existiert bereits`, { ids: [op.name] });
+    throw violation('exists', m.repoExists(op.name), { ids: [op.name] });
   }
   // Ein abgeleiteter Name meidet auch Repos, deren Datei nicht ladbar war.
   const taken = new Set(d.snapshot.repos.keys());
@@ -201,11 +203,10 @@ export function repoRm(d: Draft, op: OpOf<'repo.rm'>): OpOf<'repo.rm'> {
     .filter(([, { data }]) => (data.repos ?? []).some((e) => parseRepoRef(e).name === op.name))
     .map(([id]) => id);
   if (referencing.length > 0) {
-    throw violation(
-      'references',
-      `Repo ${op.name} wird noch referenziert von ${referencing.join(', ')}`,
-      { ids: referencing, hint: 'Erst die Verknüpfungen lösen (issue unlink).' },
-    );
+    throw violation('references', m.repoStillReferenced(op.name, referencing.join(', ')), {
+      ids: referencing,
+      hint: m.repoStillReferencedHint,
+    });
   }
   d.removeEntity('repo', op.name);
   return op;
@@ -215,7 +216,7 @@ export function repoRm(d: Draft, op: OpOf<'repo.rm'>): OpOf<'repo.rm'> {
 
 export function userAdd(d: Draft, op: OpOf<'user.add'>): OpOf<'user.add'> {
   if (d.findEntity('user', op.handle) !== undefined) {
-    throw violation('exists', `User ${op.handle} existiert bereits`, { ids: [op.handle] });
+    throw violation('exists', m.userExists(op.handle), { ids: [op.handle] });
   }
   const user: User = { name: op.name, kind: op.kind, operator: op.operator, keys: [...op.keys] };
   d.putEntity('user', op.handle, user, op.body ?? '');
@@ -230,7 +231,7 @@ export function userRevokeKey(d: Draft, op: OpOf<'user.revoke_key'>): OpOf<'user
   const already = (before.revoked_keys ?? []).find((r) => r.key === op.key);
   if (already !== undefined) return { ...op, revoked: already.revoked };
   if (!(before.keys ?? []).includes(op.key)) {
-    throw violation('missing_ref', `User ${op.handle} hat diesen Key nicht`, { ids: [op.handle] });
+    throw violation('missing_ref', m.userLacksKey(op.handle), { ids: [op.handle] });
   }
   const revoked = op.revoked ?? d.ctx.now;
   d.putEntity('user', op.handle, {
@@ -246,9 +247,9 @@ export function userRevokeKey(d: Draft, op: OpOf<'user.revoke_key'>): OpOf<'user
 export function userRm(d: Draft, op: OpOf<'user.rm'>): OpOf<'user.rm'> {
   const before = d.entity('user', op.handle).data;
   if (d.config.admins.includes(op.handle)) {
-    throw violation('admin', `${op.handle} ist Admin und kann nicht entfernt werden`, {
+    throw violation('admin', m.adminCannotBeRemoved(op.handle), {
       ids: [op.handle],
-      hint: 'Erst die Admin-Rolle in der Config entziehen.',
+      hint: m.adminCannotBeRemovedHint,
     });
   }
   d.removeEntity('user', op.handle);
@@ -287,7 +288,7 @@ export function entityEdit(d: Draft, op: OpOf<'entity.edit'>): OpOf<'entity.edit
   let body: string | undefined;
   if (op.body !== undefined && current.body !== canonicalBody(op.body.to)) {
     if (bodyHash(current.body) !== op.body.from_hash) {
-      throw violation('precondition', `${label}: Body wurde inzwischen geändert`, { ids: [key] });
+      throw violation('precondition', m.bodyChanged(label), { ids: [key] });
     }
     body = op.body.to;
   }
@@ -299,7 +300,7 @@ export function entityEdit(d: Draft, op: OpOf<'entity.edit'>): OpOf<'entity.edit
     const canonical = canonicalOf(next.url as string);
     for (const [name, repo] of d.snapshot.repos) {
       if (name !== key && canonical !== undefined && canonicalOf(repo.data.url) === canonical) {
-        throw violation('exists', `Die URL ist schon als Repo ${name} registriert`, {
+        throw violation('exists', m.urlAlreadyRegistered(name), {
           ids: [name],
         });
       }

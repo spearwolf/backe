@@ -18,6 +18,7 @@ import { readPublicKey } from '../git/ssh.ts';
 import { exists } from '../store/files.ts';
 import { hasLfsRule, projectFile } from '../store/layout.ts';
 import { type BacklogSnapshot, loadSnapshot } from '../store/snapshot.ts';
+import { m } from './doctor.messages.ts';
 import { activeFingerprints } from './verify-state.ts';
 
 export type DoctorCheck = {
@@ -141,17 +142,12 @@ function checkNode(version: string): DoctorCheck {
   const major = Number.parseInt(version.split('.')[0] ?? '', 10);
   return major >= MIN_NODE
     ? check('node', 'ok', version)
-    : check(
-        'node',
-        'fail',
-        `Node ${version}, benötigt ≥ ${MIN_NODE}`,
-        `Node ≥ ${MIN_NODE} installieren`,
-      );
+    : check('node', 'fail', m.nodeTooOld(version, MIN_NODE), m.nodeInstallHint(MIN_NODE));
 }
 
 /** Ein Werkzeug, das nicht rechtzeitig antwortet, ist kaputt, nicht abwesend. */
 const timedOut = (id: string, label: string, hint: string): DoctorCheck =>
-  check(id, 'fail', `${label}: Zeitüberschreitung`, hint);
+  check(id, 'fail', m.timedOut(label), hint);
 
 async function checkTools(
   run: NonNullable<DoctorDeps['run']>,
@@ -159,56 +155,41 @@ async function checkTools(
 ): Promise<DoctorCheck[]> {
   const out: DoctorCheck[] = [];
   const git = await run('git', ['--version']);
-  const m = typeof git === 'string' ? null : /git version (\d+)\.(\d+)/.exec(git.stdout);
-  if (git === 'missing')
-    out.push(check('git', 'fail', 'git nicht gefunden', 'Git ≥ 2.38 installieren'));
-  else if (git === 'timeout') out.push(timedOut('git', 'git', 'git --version prüfen'));
-  else if (m === null) {
-    out.push(
-      check(
-        'git',
-        'fail',
-        `Version nicht erkennbar: ${git.stdout.trim()}`,
-        'Git ≥ 2.38 installieren',
-      ),
-    );
+  const version = typeof git === 'string' ? null : /git version (\d+)\.(\d+)/.exec(git.stdout);
+  if (git === 'missing') out.push(check('git', 'fail', m.gitMissing, m.gitInstallHint));
+  else if (git === 'timeout') out.push(timedOut('git', 'git', m.gitVersionHint));
+  else if (version === null) {
+    out.push(check('git', 'fail', m.gitVersionUnknown(git.stdout.trim()), m.gitInstallHint));
   } else {
-    const [major, minor] = [Number(m[1]), Number(m[2])];
+    const [major, minor] = [Number(version[1]), Number(version[2])];
     const ok = major > MIN_GIT[0] || (major === MIN_GIT[0] && minor >= MIN_GIT[1]);
     out.push(
       ok
         ? check('git', 'ok', `${major}.${minor}`)
-        : check('git', 'fail', `Git ${major}.${minor}, benötigt ≥ 2.38`, 'Git ≥ 2.38 installieren'),
+        : check('git', 'fail', m.gitTooOld(major, minor), m.gitInstallHint),
     );
   }
   const keygen = await run('ssh-keygen', ['-?']);
   out.push(
     keygen === 'missing'
-      ? check('ssh-keygen', 'fail', 'ssh-keygen nicht gefunden', 'OpenSSH installieren')
+      ? check('ssh-keygen', 'fail', m.sshKeygenMissing, m.sshKeygenInstallHint)
       : keygen === 'timeout'
-        ? timedOut('ssh-keygen', 'ssh-keygen', 'ssh-keygen prüfen')
-        : check('ssh-keygen', 'ok', 'vorhanden'),
+        ? timedOut('ssh-keygen', 'ssh-keygen', m.sshKeygenCheckHint)
+        : check('ssh-keygen', 'ok', m.present),
   );
   const lfs = await run('git', ['lfs', 'version']);
-  if (lfs === 'timeout') out.push(timedOut('git-lfs', 'git lfs', 'git lfs version prüfen'));
+  if (lfs === 'timeout') out.push(timedOut('git-lfs', 'git lfs', m.gitLfsVersionHint));
   else if (lfs !== 'missing' && lfs.code === 0) out.push(check('git-lfs', 'ok', lfs.stdout.trim()));
   else if (lfsRequired) {
-    out.push(
-      check(
-        'git-lfs',
-        'fail',
-        'git-lfs fehlt, attachments.lfs verlangt es',
-        'git-lfs installieren',
-      ),
-    );
-  } else out.push(check('git-lfs', 'warn', 'nicht gefunden (optional)'));
+    out.push(check('git-lfs', 'fail', m.gitLfsRequired, m.gitLfsInstallHint));
+  } else out.push(check('git-lfs', 'warn', m.gitLfsOptionalMissing));
   const gh = await run('gh', ['--version']);
   out.push(
     gh === 'timeout'
-      ? timedOut('gh', 'gh', 'gh --version prüfen')
+      ? timedOut('gh', 'gh', m.ghVersionHint)
       : gh === 'missing' || gh.code !== 0
-        ? check('gh', 'warn', 'nicht gefunden (optional, für repo check --remote)')
-        : check('gh', 'ok', gh.stdout.split('\n')[0] ?? 'vorhanden'),
+        ? check('gh', 'warn', m.ghOptionalMissing)
+        : check('gh', 'ok', gh.stdout.split('\n')[0] ?? m.present),
   );
   return out;
 }
@@ -224,32 +205,29 @@ async function backlogProblem(
   if (root === undefined) {
     const remote = ctx.userConfig.backlogs?.[name]?.remote;
     return {
-      detail: `Keine Arbeitskopie von »${name}« vorhanden`,
-      hint:
-        remote === undefined ? `backe backlog add ${name} <pfad>` : `backe backlog clone ${remote}`,
+      detail: m.noWorkingCopy(name),
+      hint: remote === undefined ? m.addBacklogHint(name) : m.cloneBacklogHint(remote),
     };
   }
-  if (snapshot === undefined) return { detail: `Snapshot nicht ladbar: ${loadError}` };
+  if (snapshot === undefined) return { detail: m.snapshotNotLoadable(loadError ?? '') };
   const problems: string[] = [];
   let hint: string | undefined;
   try {
     const state = await headState(root);
     const wanted = snapshot.config.sync.branch;
     if (state.operation !== undefined) {
-      problems.push(`läuft ein ${state.operation}`);
+      problems.push(m.operationRunning(state.operation));
       hint = `git -C ${root} ${state.operation} --abort`;
     } else if (state.branch !== wanted) {
       problems.push(
-        state.branch === undefined
-          ? 'detached HEAD'
-          : `steht auf ${state.branch}, erwartet ${wanted}`,
+        state.branch === undefined ? 'detached HEAD' : m.onWrongBranch(state.branch, wanted),
       );
       hint = `git -C ${root} switch ${wanted}`;
     }
     const journal = join(await stateDir(root, { create: false }), 'write.journal');
     if (await exists(journal)) {
-      problems.push('liegengebliebenes write.journal');
-      hint ??= `Der nächste Write setzt es zurück; sonst git -C ${root} status prüfen und ${journal} löschen`;
+      problems.push(m.staleJournal);
+      hint ??= m.staleJournalHint(root, journal);
     }
   } catch (error) {
     problems.push(message(error));
@@ -266,14 +244,9 @@ async function checkIdentity(
 ): Promise<DoctorCheck> {
   const handle = ctx.user.value;
   if (handle === undefined)
-    return check('identity', 'warn', 'kein User aufgelöst', '--as <handle> oder BACKE_USER');
+    return check('identity', 'warn', m.noUserResolved, m.noUserResolvedHint);
   if (ctx.user.key === undefined) {
-    return check(
-      'identity',
-      'warn',
-      `für »${handle}« ist kein Signing-Key eingetragen`,
-      'backe user create-agent oder identities in der User-Config',
-    );
+    return check('identity', 'warn', m.noSigningKey(handle), m.noSigningKeyHint);
   }
   let line: string;
   try {
@@ -282,24 +255,19 @@ async function checkIdentity(
     return check('identity', 'fail', message(error));
   }
   if (!activeFingerprints(snapshot.users.get(handle)?.data).has(sshFingerprint(line))) {
-    return check('identity', 'fail', `Der Key ist kein aktiver Key von »${handle}« im Snapshot`);
+    return check('identity', 'fail', m.keyNotActive(handle));
   }
   const local = await readLocalState(root, 'identity');
   if (local !== undefined && local !== handle) {
-    return check('identity', 'fail', `Die Arbeitskopie gehört »${local}«, nicht »${handle}«`);
+    return check('identity', 'fail', m.workingCopyOfOther(local, handle));
   }
   return check('identity', 'ok', handle);
 }
 
 async function checkLfsRule(snapshot: BacklogSnapshot, root: string): Promise<DoctorCheck> {
-  if (!snapshot.config.attachments.lfs) return check('lfs-rule', 'ok', 'attachments.lfs ist aus');
+  if (!snapshot.config.attachments.lfs) return check('lfs-rule', 'ok', m.lfsOff);
   if (!hasLfsRule(snapshot.attributes)) {
-    return check(
-      'lfs-rule',
-      'warn',
-      'LFS-Regel fehlt in .gitattributes',
-      'kommt mit dem nächsten attach add',
-    );
+    return check('lfs-rule', 'warn', m.lfsRuleMissing, m.lfsRuleMissingHint);
   }
   let filter: Awaited<ReturnType<typeof git>>;
   try {
@@ -311,18 +279,12 @@ async function checkLfsRule(snapshot: BacklogSnapshot, root: string): Promise<Do
     return check('lfs-rule', 'warn', message(error));
   }
   return filter.exitCode === 0
-    ? check('lfs-rule', 'ok', 'LFS-Regel und lokaler Filter vorhanden')
-    : check(
-        'lfs-rule',
-        'warn',
-        'filter.lfs.process fehlt in der lokalen Git-Config',
-        'wird beim nächsten Write eingerichtet',
-      );
+    ? check('lfs-rule', 'ok', m.lfsRuleOk)
+    : check('lfs-rule', 'warn', m.lfsFilterMissing, m.lfsFilterMissingHint);
 }
 
 async function checkBindings(cfg: UserConfig | undefined, homes: Homes): Promise<DoctorCheck[]> {
-  if (cfg === undefined)
-    return [check('bindings', 'warn', 'übersprungen, die User-Config ist ungültig')];
+  if (cfg === undefined) return [check('bindings', 'warn', m.bindingsSkipped)];
   const out: DoctorCheck[] = [];
   for (const { backlog, handle, path } of boundPaths(cfg, homes)) {
     if (await exists(path)) continue;
@@ -330,12 +292,12 @@ async function checkBindings(cfg: UserConfig | undefined, homes: Homes): Promise
       check(
         'bindings',
         'warn',
-        `${backlog}/${handle}: ${path} existiert nicht`,
-        `backe backlog remove ${backlog} oder backe backlog add`,
+        m.bindingMissing(backlog, handle, path),
+        m.bindingMissingHint(backlog),
       ),
     );
   }
-  return out.length === 0 ? [check('bindings', 'ok', 'alle gebundenen Pfade existieren')] : out;
+  return out.length === 0 ? [check('bindings', 'ok', m.bindingsOk)] : out;
 }
 
 async function checkAlternates(homes: Homes): Promise<DoctorCheck[]> {
@@ -358,13 +320,13 @@ async function checkAlternates(homes: Homes): Promise<DoctorCheck[]> {
         check(
           'alternates',
           'fail',
-          `${clone}: ${target} existiert nicht`,
+          m.alternateMissing(clone, target),
           `git -C ${clone} repack -a -d && rm ${file}`,
         ),
       );
     }
   }
-  return out.length === 0 ? [check('alternates', 'ok', 'alle Referenzen existieren')] : out;
+  return out.length === 0 ? [check('alternates', 'ok', m.alternatesOk)] : out;
 }
 
 /** Temp-Reste: alte Clone-Temps und Lock-Temps toter PIDs dieses Hosts. */
@@ -398,9 +360,9 @@ async function findLeftovers(
 }
 
 async function checkTemp(leftovers: string[], fix: boolean): Promise<DoctorCheck> {
-  if (leftovers.length === 0) return check('temp', 'ok', 'keine Temp-Reste');
+  if (leftovers.length === 0) return check('temp', 'ok', m.noTempLeftovers);
   if (!fix) {
-    return check('temp', 'warn', `${leftovers.length} Temp-Reste`, 'backe doctor --fix');
+    return check('temp', 'warn', m.tempLeftovers(leftovers.length), 'backe doctor --fix');
   }
   let removed = 0;
   for (const path of leftovers) {
@@ -412,13 +374,13 @@ async function checkTemp(leftovers: string[], fix: boolean): Promise<DoctorCheck
     }
   }
   return removed === leftovers.length
-    ? check('temp', 'ok', `${removed} entfernt`)
-    : check('temp', 'warn', `${removed} von ${leftovers.length} entfernt`, 'Rechte prüfen');
+    ? check('temp', 'ok', m.removedCount(removed))
+    : check('temp', 'warn', m.removedPartly(removed, leftovers.length), m.checkPermissionsHint);
 }
 
 function checkReferences(snapshot: BacklogSnapshot): DoctorCheck[] {
   const out: DoctorCheck[] = [];
-  const byKey = <T>(m: Map<string, T>) => [...m].sort(([a], [b]) => compareCodeUnits(a, b));
+  const byKey = <T>(map: Map<string, T>) => [...map].sort(([a], [b]) => compareCodeUnits(a, b));
   for (const [id, { data }] of byKey(snapshot.issues)) {
     if (data.assignee !== undefined && !snapshot.users.has(data.assignee)) {
       out.push(
@@ -438,12 +400,12 @@ function checkReferences(snapshot: BacklogSnapshot): DoctorCheck[] {
           'references',
           'warn',
           `${path} lead ${data.lead}`,
-          `lead in ${projectFile(path)} entfernen oder den User anlegen`,
+          m.leadMissingHint(projectFile(path)),
         ),
       );
     }
   }
-  return out.length === 0 ? [check('references', 'ok', 'alle Verweise zeigen auf Users')] : out;
+  return out.length === 0 ? [check('references', 'ok', m.referencesOk)] : out;
 }
 
 export async function runDoctor(input: DoctorInput, deps: DoctorDeps = {}): Promise<DoctorCheck[]> {
@@ -471,19 +433,14 @@ export async function runDoctor(input: DoctorInput, deps: DoctorDeps = {}): Prom
   let cfg: UserConfig | undefined;
   try {
     cfg = await readUserConfig(homes.backeHome);
-    checks.push(check('user-config', 'ok', 'gültig'));
+    checks.push(check('user-config', 'ok', m.userConfigValid));
   } catch (error) {
     checks.push(check('user-config', 'fail', message(error), 'backe config edit'));
   }
 
   if (ctx === undefined) {
     checks.push(
-      check(
-        'backlog',
-        'warn',
-        input.contextError ?? 'Kein Backlog aufgelöst',
-        'backe backlog list',
-      ),
+      check('backlog', 'warn', input.contextError ?? m.noBacklogResolved, 'backe backlog list'),
     );
   } else {
     const problem = await backlogProblem(ctx, snapshot, loadError);
@@ -517,7 +474,7 @@ export async function runDoctor(input: DoctorInput, deps: DoctorDeps = {}): Prom
       check('problems', 'warn', `${p.path}: ${p.message}`),
     );
     checks.push(
-      ...(problems.length === 0 ? [check('problems', 'ok', 'keine Problem-Dateien')] : problems),
+      ...(problems.length === 0 ? [check('problems', 'ok', m.noProblemFiles)] : problems),
     );
     checks.push(...checkReferences(snapshot));
   }
@@ -527,7 +484,5 @@ export async function runDoctor(input: DoctorInput, deps: DoctorDeps = {}): Prom
 /** Ein `fail` macht den Lauf zu einem `validation`-Fehler (Exit 2), nachdem der Bericht ausgegeben ist. */
 export function doctorFailure(checks: readonly DoctorCheck[]): BackeError | undefined {
   const failed = checks.filter((c) => c.status === 'fail').length;
-  return failed === 0
-    ? undefined
-    : new BackeError('validation', `doctor: ${failed} Prüfung(en) fehlgeschlagen`);
+  return failed === 0 ? undefined : new BackeError('validation', m.checksFailed(failed));
 }

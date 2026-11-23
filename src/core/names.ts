@@ -1,4 +1,5 @@
 import { BackeError } from './errors.ts';
+import { m } from './names.messages.ts';
 
 /** Handle-Muster inkl. Ausschluss des reservierten `me`; als Muster, damit es ins JSON Schema wandert. */
 export const HANDLE_PATTERN = /^(?!me$)[a-z0-9][a-z0-9-]{1,31}$/;
@@ -73,15 +74,15 @@ export function parseRepoRef(s: string): { name: string; ref?: string } {
   const at = s.indexOf('@');
   const name = at < 0 ? s : s.slice(0, at);
   if (!isRepoName(name)) {
-    throw new BackeError('validation', `Ungültiger Repo-Name: »${name}«`, {
-      hint: 'Erlaubt sind a-z, 0-9, ".", "_" und "-", beginnend mit Buchstabe oder Ziffer (max. 64 Zeichen).',
+    throw new BackeError('validation', m.invalidRepoName(name), {
+      hint: m.invalidRepoNameHint,
     });
   }
   if (at < 0) return { name };
   const ref = s.slice(at + 1);
   if (!isGitArg(ref) || !isGitRef(ref)) {
-    throw new BackeError('validation', `Ungültiger Ref »${ref}«`, {
-      hint: 'Form: <repo>@<ref>, z. B. webapp@main. Der Ref folgt git check-ref-format: nicht leer, ohne führendes "-", ohne Leer- und Steuerzeichen und ohne ~ ^ : ? * [ \\ sowie ".." und "@{".',
+    throw new BackeError('validation', m.invalidRef(ref), {
+      hint: m.invalidRefHint,
     });
   }
   return { name, ref };

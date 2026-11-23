@@ -2,10 +2,12 @@
  * Custom Properties (backe.md §2.24): Typprüfung gegen die Deklarationen aus `backlog.jsonc`,
  * Zuweisungs- und Filter-Syntax der CLI (`k=v`, `k:=<json>`, `k>=v`) und Filterauswertung.
  */
+
 import { BackeError } from '../core/errors.ts';
 import { PROP_KEY_RE } from '../core/names.ts';
 import type { BacklogConfig, PropValue } from '../core/schemas.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
+import { m } from './props.messages.ts';
 
 type PropDeclaration = NonNullable<BacklogConfig['props']>[string];
 
@@ -42,18 +44,16 @@ function violationMessage(
 ): string | undefined {
   const decl = declarationOf(config, key);
   if (decl === undefined) {
-    return config.props_strict
-      ? `Property »${key}« ist nicht deklariert (props_strict ist aktiv)`
-      : undefined;
+    return config.props_strict ? m.undeclared(key) : undefined;
   }
   return fitsDeclaration(decl, value)
     ? undefined
-    : `Property »${key}« erwartet ${describeDeclaration(decl)}, bekam ${describeValue(value)}`;
+    : m.typeMismatch(key, describeDeclaration(decl), describeValue(value));
 }
 
 /** Ein String in »…«, jeder andere Wert in seiner JSON-Form. */
 function describeValue(value: PropValue): string {
-  return typeof value === 'string' ? `»${value}«` : JSON.stringify(value);
+  return typeof value === 'string' ? m.quoted(value) : JSON.stringify(value);
 }
 
 /** Prüft nur die übergebenen Keys; `null` heißt »entfernt« und ist immer erlaubt. */
@@ -76,16 +76,16 @@ function jsonProblem(root: unknown): string | undefined {
   const stack: unknown[] = [root];
   while (stack.length > 0) {
     const v = stack.pop();
-    if (v === null || v === undefined) return 'null ist kein gültiger Wert';
+    if (v === null || v === undefined) return m.jsonNull;
     if (typeof v === 'number') {
-      if (!Number.isFinite(v)) return 'nur endliche Zahlen sind erlaubt';
-      if (Object.is(v, -0)) return '-0 ist nicht erlaubt';
+      if (!Number.isFinite(v)) return m.finiteOnly;
+      if (Object.is(v, -0)) return m.minusZero;
     } else if (Array.isArray(v)) {
       stack.push(...v);
     } else if (typeof v === 'object') {
       // `JSON.parse` legt `__proto__` als eigenen Key an, `Object.keys` sieht ihn.
       for (const k of Object.keys(v)) {
-        if (k === '__proto__') return '"__proto__" ist als Key nicht erlaubt';
+        if (k === '__proto__') return m.protoKey;
         stack.push((v as Record<string, unknown>)[k]);
       }
     }
@@ -98,10 +98,10 @@ function parseJsonValue(key: string, text: string): PropValue {
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new BackeError('validation', `Property »${key}«: ungültiges JSON: ${text}`);
+    throw new BackeError('validation', m.invalidJson(key, text));
   }
   const problem = jsonProblem(parsed);
-  if (problem !== undefined) throw new BackeError('validation', `Property »${key}«: ${problem}`);
+  if (problem !== undefined) throw new BackeError('validation', m.propertyProblem(key, problem));
   return parsed as PropValue;
 }
 
@@ -110,14 +110,11 @@ function parseJsonValue(key: string, text: string): PropValue {
 const EXPR_RE = /^([a-z][a-z0-9_.-]{0,63})(>=|<=|:=|=)(.*)$/s;
 
 function splitExpr(expr: string): [key: string, op: string, rest: string] {
-  const m = EXPR_RE.exec(expr);
-  if (m === null || !PROP_KEY_RE.test(m[1] ?? '')) {
-    throw new BackeError(
-      'validation',
-      `Ungültiger Property-Ausdruck »${expr}« (erwartet key=wert oder key:=<json>)`,
-    );
+  const match = EXPR_RE.exec(expr);
+  if (match === null || !PROP_KEY_RE.test(match[1] ?? '')) {
+    throw new BackeError('validation', m.invalidExpression(expr));
   }
-  return [m[1] as string, m[2] as string, m[3] as string];
+  return [match[1] as string, match[2] as string, match[3] as string];
 }
 
 /** `k=v` setzt einen String, `k:=<json>` einen getypten Wert. */
@@ -125,10 +122,7 @@ export function parsePropAssignment(expr: string): [key: string, value: PropValu
   const [key, op, rest] = splitExpr(expr);
   if (op === '=') return [key, rest];
   if (op === ':=') return [key, parseJsonValue(key, rest)];
-  throw new BackeError(
-    'validation',
-    `Property »${key}«: Zuweisung erwartet = oder :=, nicht ${op}`,
-  );
+  throw new BackeError('validation', m.assignmentOperator(key, op));
 }
 
 export type PropFilter =
@@ -151,18 +145,18 @@ export function checkPropFilter(f: PropFilter, config: BacklogConfig): void {
   const symbol = f.op === 'ge' ? '>=' : '<=';
   const decl = declarationOf(config, f.key);
   const fail = (why: string): never => {
-    throw new BackeError('validation', `Filter ${f.key}${symbol}${f.raw}: ${why}`);
+    throw new BackeError('validation', m.filterError(f.key, symbol, f.raw, why));
   };
   if (decl === undefined) {
-    if (typeof f.value !== 'number') fail('der Vergleichswert muss eine Zahl sein');
+    if (typeof f.value !== 'number') fail(m.comparisonNeedsNumber);
   } else if (decl.type === 'enum') {
-    if (decl.ordered !== true) fail('das Enum ist nicht geordnet (ordered: true fehlt)');
+    if (decl.ordered !== true) fail(m.enumNotOrdered);
     if (!(decl.values ?? []).includes(f.raw))
-      fail(`unbekannter Wert, erlaubt: ${(decl.values ?? []).join(', ')}`);
+      fail(m.unknownEnumValue((decl.values ?? []).join(', ')));
   } else if (decl.type === 'integer' || decl.type === 'number') {
-    if (typeof f.value !== 'number') fail('der Vergleichswert muss eine Zahl sein');
+    if (typeof f.value !== 'number') fail(m.comparisonNeedsNumber);
   } else {
-    fail(`Bereichsvergleich geht nicht auf type »${decl.type}«`);
+    fail(m.rangeNotForType(decl.type));
   }
 }
 

@@ -3,6 +3,7 @@
  * Trailer `Backe-Op` (§2.13) und den Batch-Body (§2.16.6), die Zusammenfassung für die
  * Betreffzeile des Commits und das Umschreiben von Issue-IDs.
  */
+
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { BackeError } from '../core/errors.ts';
@@ -17,6 +18,7 @@ import {
   UserSchema,
 } from '../core/schemas.ts';
 import { parseCommentFileName } from '../store/layout.ts';
+import { m } from './operation.messages.ts';
 
 /** Platzhalter für ein Issue, das erst im selben Batch entsteht (backe.md §2.16.6). */
 export const PLACEHOLDER_RE = /^\$[A-Za-z0-9_-]{1,32}$/;
@@ -44,27 +46,27 @@ const RepoUrl = RepoSchema.shape.url;
 const GitArg = RepoSchema.shape.default_ref.unwrap();
 const DateOnly = SprintSchema.shape.start.unwrap();
 
-const RepoName = z.string().refine(isRepoName, 'kein gültiger Repo-Name');
-const IssueRef = z
-  .string()
-  .refine((s) => isIssueId(s) || PLACEHOLDER_RE.test(s), 'keine Issue-ID und kein Platzhalter');
-const Placeholder = z.string().regex(PLACEHOLDER_RE, 'kein gültiger Platzhalter');
-const Hash = z.string().regex(/^[0-9a-f]{64}$/, 'erwartet SHA-256 als 64 Hex-Zeichen');
+const RepoName = z.string().refine(isRepoName, { error: () => m.invalidRepoName });
+const IssueRef = z.string().refine((s) => isIssueId(s) || PLACEHOLDER_RE.test(s), {
+  error: () => m.issueRefExpected,
+});
+const Placeholder = z.string().regex(PLACEHOLDER_RE, { error: () => m.invalidPlaceholder });
+const Hash = z.string().regex(/^[0-9a-f]{64}$/, { error: () => m.hashExpected });
 const Reason = z.string().min(1);
 
 const CommentFile = z
   .string()
-  .refine((s) => parseCommentFileName(s) !== undefined, 'kein gültiger Kommentar-Dateiname');
+  .refine((s) => parseCommentFileName(s) !== undefined, { error: () => m.invalidCommentFile });
 
 /** Liste von Issue-Referenzen: nicht leer, ohne Duplikate. */
 const RefList = z
   .array(IssueRef)
   .min(1)
-  .refine((list) => new Set(list).size === list.length, 'enthält Duplikate');
+  .refine((list) => new Set(list).size === list.length, { error: () => m.duplicates });
 
 /** Mindestens ein Schlüssel mit Wert; `undefined` zählt nicht, weil JSON ihn verliert. */
 const hasKeys = (o: object) => Object.values(o).some((v) => v !== undefined);
-const NOT_EMPTY = 'darf nicht leer sein';
+const NOT_EMPTY = { error: () => m.notEmpty };
 
 /** Setzen mit Vorbedingung; `null` heißt »nicht gesetzt«. */
 function fromTo<T extends z.ZodType>(value: T) {
@@ -79,13 +81,13 @@ function present(o: object, keys: readonly string[]): string[] {
 }
 
 function quoted(keys: readonly string[]): string {
-  return keys.map((k) => `»${k}«`).join(', ');
+  return keys.map((k) => m.quote(k)).join(', ');
 }
 
 function exactlyOne(keys: readonly string[]) {
   return (o: object, ctx: z.RefinementCtx) => {
     if (present(o, keys).length !== 1)
-      ctx.addIssue({ code: 'custom', message: `genau eines von ${quoted(keys)} erwartet` });
+      ctx.addIssue({ code: 'custom', message: m.exactlyOne(quoted(keys)) });
   };
 }
 
@@ -138,15 +140,14 @@ const IssueEdit = z
     add: ListSection.optional(),
     remove: ListSection.optional(),
     props: z
-      .record(z.string().regex(PROP_KEY_RE, 'ungültiger Property-Key'), PropChange)
+      .record(z.string().regex(PROP_KEY_RE, { error: () => m.invalidPropKey }), PropChange)
       .refine(hasKeys, NOT_EMPTY)
       .optional(),
     body: BodyEdit.optional(),
   })
-  .refine(
-    (e) => present(e, EDIT_SECTIONS).length > 0,
-    `mindestens einer von ${quoted(EDIT_SECTIONS)} erwartet`,
-  );
+  .refine((e) => present(e, EDIT_SECTIONS).length > 0, {
+    error: () => m.atLeastOneOf(quoted(EDIT_SECTIONS)),
+  });
 
 const reasonFields = { reason: Reason.optional(), reason_file: CommentFile.optional() };
 
@@ -156,7 +157,7 @@ function reasonFileNeedsReason(
   ctx: z.RefinementCtx,
 ) {
   if (o.reason_file !== undefined && o.reason === undefined) {
-    ctx.addIssue({ code: 'custom', message: '»reason_file« nur zusammen mit »reason«' });
+    ctx.addIssue({ code: 'custom', message: m.reasonFileNeedsReason });
   }
 }
 
@@ -256,7 +257,7 @@ const AttachAdd = z
     name: attachmentFields.name,
     file: attachmentFields.file
       .unwrap()
-      .refine((s) => s !== '.' && s !== '..', 'Dateiname darf nicht "." oder ".." sein')
+      .refine((s) => s !== '.' && s !== '..', { error: () => m.fileNameDots })
       .optional(),
     url: attachmentFields.url.unwrap().optional(),
     /** Inhalt der Datei für `applyOperation`; geht nie in die Kodierung. */
@@ -265,7 +266,7 @@ const AttachAdd = z
   .superRefine((a, ctx) => {
     exactlyOne(['file', 'url'])(a, ctx);
     if (a.content !== undefined && a.file === undefined) {
-      ctx.addIssue({ code: 'custom', path: ['content'], message: 'nur zusammen mit "file"' });
+      ctx.addIssue({ code: 'custom', path: ['content'], message: m.onlyWithFile });
     }
   });
 
@@ -297,7 +298,7 @@ const ProjectRm = z
     detach: z.literal(true).optional(),
   })
   .refine((p) => p.reassign === undefined || p.detach === undefined, {
-    message: 'höchstens eines von "reassign" und "detach"',
+    error: () => m.atMostOneOf,
   });
 
 const SprintCreate = z.strictObject({
@@ -364,7 +365,7 @@ const ENTITY_SCHEMAS = {
  */
 function fieldValueProblem(field: z.ZodType, value: unknown): string | undefined {
   const optional = field instanceof z.ZodOptional;
-  if (value === null) return optional ? undefined : 'Pflichtfeld, null nicht erlaubt';
+  if (value === null) return optional ? undefined : m.requiredNotNull;
   // `value` ist nie `undefined` (PropChange verlangt einen Wert), die optionale Hülle stört nicht.
   const result = field.safeParse(value);
   return result.success ? undefined : result.error.issues.map((i) => i.message).join('; ');
@@ -383,14 +384,14 @@ const EntityEdit = z
       ctx.addIssue({
         code: 'custom',
         path: ['key'],
-        message: `kein gültiger Schlüssel für ${e.kind}`,
+        message: m.invalidKeyFor(e.kind),
       });
     }
     const shape: Readonly<Record<string, z.ZodType>> = ENTITY_SCHEMAS[e.kind].shape;
     for (const [field, change] of Object.entries(e.set ?? {})) {
       const fieldSchema = shape[field];
       if (!KEY_ORDER[e.kind].includes(field) || fieldSchema === undefined) {
-        ctx.addIssue({ code: 'custom', path: ['set', field], message: `kein Feld von ${e.kind}` });
+        ctx.addIssue({ code: 'custom', path: ['set', field], message: m.noFieldOf(e.kind) });
         continue;
       }
       for (const side of ['from', 'to'] as const) {
@@ -400,7 +401,7 @@ const EntityEdit = z
       }
     }
     if (e.set === undefined && e.body === undefined) {
-      ctx.addIssue({ code: 'custom', message: 'mindestens einer von "set", "body" erwartet' });
+      ctx.addIssue({ code: 'custom', message: m.atLeastSetOrBody });
     }
   });
 
@@ -438,9 +439,7 @@ export const OperationSchema = z.discriminatedUnion(
     error: (iss) => {
       // Laut Typ nur `invalid_union`; für Nicht-Objekte meldet zod zur Laufzeit `invalid_type`.
       const code: string = iss.code;
-      return code === 'invalid_type'
-        ? 'Operation muss ein JSON-Objekt sein'
-        : 'unbekannte Operation';
+      return code === 'invalid_type' ? m.operationNotObject : m.unknownOperation;
     },
   },
 );
@@ -458,13 +457,13 @@ function validate(data: unknown, where: string): Operation {
     const path = i.path.length > 0 ? i.path.join('.') : '<root>';
     return `${where}${path}: ${i.message}`;
   });
-  throw new BackeError('validation', `Ungültige Operation:\n${lines.join('\n')}`);
+  throw new BackeError('validation', m.invalidOperation(lines.join('\n')));
 }
 
 /** zod verwirft `__proto__` in Records still; die Operation käme dann verändert an. */
 function rejectProtoKey(key: string, value: unknown): unknown {
   if (key === '__proto__') {
-    throw new BackeError('validation', 'Key "__proto__" ist in Operationen nicht erlaubt');
+    throw new BackeError('validation', m.protoKey);
   }
   return value;
 }
@@ -477,7 +476,7 @@ function decode(text: string, where: string): Operation {
     // Die Ablehnung von `__proto__` kommt aus dem Reviver und bleibt, wie sie ist.
     if (err instanceof BackeError) throw new BackeError(err.code, `${where}${err.message}`);
     const reason = (err as SyntaxError).message;
-    throw new BackeError('validation', `${where}Operation ist kein gültiges JSON: ${reason}`);
+    throw new BackeError('validation', `${where}${m.invalidJson(reason)}`);
   }
   return validate(data, where);
 }
@@ -507,7 +506,7 @@ export function encodeOp(op: Operation): string {
     decodeOp(text);
   } catch (err) {
     const reason = err instanceof BackeError ? err.message : String(err);
-    throw new BackeError('unexpected', `Kodierte Operation ist nicht dekodierbar: ${reason}`);
+    throw new BackeError('unexpected', m.undecodable(reason));
   }
   return text;
 }
@@ -540,8 +539,8 @@ export function decodeBatchBody(text: string): Operation[] {
   const lines = text.split('\n');
   if (lines.at(-1) === '') lines.pop();
   return lines.map((line, i) => {
-    const where = `Zeile ${i + 1}: `;
-    if (line === '') throw new BackeError('validation', `${where}leere Zeile`);
+    const where = m.linePrefix(i + 1);
+    if (line === '') throw new BackeError('validation', `${where}${m.emptyLine}`);
     return decode(line, where);
   });
 }

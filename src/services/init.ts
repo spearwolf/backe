@@ -15,6 +15,7 @@ import { exists } from '../store/files.ts';
 import { serializeEntityFile } from '../store/frontmatter.ts';
 import { JUNK_PATTERNS } from '../store/layout.ts';
 import { authorOf } from './env.ts';
+import { m } from './init.messages.ts';
 
 export type InitInput = {
   homes: Homes;
@@ -67,35 +68,35 @@ export function firstStderrLine(error: unknown): string {
 export async function initBacklog(input: InitInput): Promise<{ root: string; anchor: string }> {
   const { homes, env, name, prefix, remote, handle, key } = input;
   if (!BACKLOG_NAME_RE.test(name)) {
-    throw new BackeError('validation', `Ungültiger Backlog-Name »${name}«`, {
-      hint: 'Erlaubt sind Kleinbuchstaben, Ziffern und Bindestriche (max. 64 Zeichen).',
+    throw new BackeError('validation', m.invalidBacklogName(name), {
+      hint: m.backlogNameRules,
     });
   }
   if (!PREFIX_RE.test(prefix)) {
-    throw new BackeError('validation', `Ungültiges ID-Präfix »${prefix}«`, {
-      hint: 'Erlaubt sind 2 bis 6 Kleinbuchstaben.',
+    throw new BackeError('validation', m.invalidIdPrefix(prefix), {
+      hint: m.idPrefixRules,
     });
   }
   if (!isHandle(handle)) {
-    throw new BackeError('validation', `Ungültiger Handle »${handle}«`, {
-      hint: 'Erlaubt sind Kleinbuchstaben, Ziffern und Bindestriche (2 bis 32 Zeichen); »me« ist reserviert.',
+    throw new BackeError('validation', m.invalidHandle(handle), {
+      hint: m.handleRules,
     });
   }
   const cfg = await readUserConfig(homes.backeHome);
   if (cfg.backlogs?.[name] !== undefined) {
-    throw new BackeError('conflict', `Backlog »${name}« ist bereits registriert`, {
+    throw new BackeError('conflict', m.alreadyRegistered(name), {
       hint: 'backe backlog list',
     });
   }
 
   if (input.dir !== undefined && !isAbsolute(input.dir)) {
-    throw new BackeError('usage', `Zielverzeichnis muss absolut sein: ${input.dir}`);
+    throw new BackeError('usage', m.targetNotAbsolute(input.dir));
   }
   const root =
     input.dir === undefined ? managedClonePath(homes, name, handle) : await physicalPath(input.dir);
   const existed = await exists(root);
   if (!(await isEmptyOrMissing(root))) {
-    throw new BackeError('conflict', `Zielverzeichnis ist nicht leer: ${root}`);
+    throw new BackeError('conflict', m.targetNotEmpty(root));
   }
 
   const pub = await readPublicKey(key);
@@ -152,11 +153,9 @@ export async function initBacklog(input: InitInput): Promise<{ root: string; anc
     try {
       await git(['push', '-q', '-u', 'origin', 'main'], { cwd: root, env: transportEnv(env) });
     } catch (error) {
-      pushFailure = new BackeError(
-        'sync',
-        `Push nach ${remote} fehlgeschlagen: ${firstStderrLine(error)}`,
-        { hint: `git -C ${root} push -u origin main` },
-      );
+      pushFailure = new BackeError('sync', m.pushFailed(remote, firstStderrLine(error)), {
+        hint: `git -C ${root} push -u origin main`,
+      });
     }
     // Erst ein gelungener Push macht den Anker zum verifizierten Stand des Remotes.
     if (pushFailure === undefined) await writeLocalState(root, 'upstream', anchor);

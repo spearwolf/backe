@@ -3,9 +3,14 @@ import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { revParse, setPullInterval, statusShort, testBacklog } from '../../test/helpers/git.ts';
 import { connectMcp, connectServer } from '../../test/helpers/mcp.ts';
 import { updateUserConfig, userConfigPath } from '../context/user-config.ts';
+import { setLocale } from '../i18n/locale.ts';
 import { contextInfo } from '../services/context-info.ts';
 import { contextJson } from '../services/views.ts';
 import { createBackeMcp, INSTRUCTIONS, prepareMcp } from './server.ts';
+
+// Der MCP-Modus spricht immer Englisch (backe.md §2.18); `backe mcp` setzt die Locale beim Start.
+beforeAll(() => setLocale('en'));
+afterAll(() => setLocale('de'));
 
 test('context_get returns the same object as backe context --json', async () => {
   const b = await testBacklog();
@@ -39,7 +44,7 @@ test('the server reports its identity and the instructions', async () => {
     expect(m.client.getServerVersion()).toMatchObject({ name: 'backe', version: pkg.version });
     expect(m.client.getInstructions()).toBe(INSTRUCTIONS);
     expect(INSTRUCTIONS).toBe(
-      'Ergebnisse sind kompaktes JSON. Fehler kommen als {"error":{code,message,hint}}; Hinweise nennen CLI-Befehle und -Flags von backe: ein Tool entspricht dem gleichnamigen Befehl (issue_move ↔ backe issue move), ein Flag dem Parameter in snake_case (--add-dep ↔ add_deps, --blocked-by ↔ blocked_by).',
+      'Results are compact JSON. Errors come as {"error":{code,message,hint}}; hints name backe CLI commands and flags: a tool corresponds to the command of the same name (issue_move ↔ backe issue move), a flag to the parameter in snake_case (--add-dep ↔ add_deps, --blocked-by ↔ blocked_by).',
     );
     const { tools } = await m.client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
@@ -121,7 +126,7 @@ test('prepareMcp rejects a foreign working copy', async () => {
     }),
   );
   expect(err.code).toBe('usage');
-  expect(err.message).toContain('gehört »spw«');
+  expect(err.message).toContain("belongs to 'spw'");
 });
 
 test.each([

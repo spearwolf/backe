@@ -3,12 +3,14 @@
  * trägt einen maschinenlesbaren Grund, und ein Issue darf nur gültige Referenzen, Kanten und
  * Properties neu einführen. Was schon vorher schief war, blockiert nicht.
  */
+
 import { BackeError, type ErrorCode } from '../core/errors.ts';
 import { parseRepoRef } from '../core/names.ts';
 import type { Issue, PropValue } from '../core/schemas.ts';
 import { isSettled } from '../core/state.ts';
 import type { Draft } from './draft.ts';
 import { ancestors, findPath, graphOf } from './graph.ts';
+import { m } from './invariants.messages.ts';
 import { checkProps } from './props.ts';
 
 export type Violation =
@@ -111,25 +113,25 @@ function missingRefs(d: Draft, before: Issue | undefined, after: Issue): [string
   const missing: [string, string][] = [];
   for (const field of EDGE_FIELDS) {
     for (const id of added(edgeTargets(before, field), edgeTargets(after, field))) {
-      if (d.findIssue(id) === undefined) missing.push(['Issue', id]);
+      if (d.findIssue(id) === undefined) missing.push([m.refIssue, id]);
     }
   }
   for (const p of added(before?.projects, after.projects)) {
-    if (d.findEntity('project', p) === undefined) missing.push(['Projekt', p]);
+    if (d.findEntity('project', p) === undefined) missing.push([m.refProject, p]);
   }
   for (const sl of added(before?.sprints, after.sprints)) {
-    if (d.findEntity('sprint', sl) === undefined) missing.push(['Sprint', sl]);
+    if (d.findEntity('sprint', sl) === undefined) missing.push([m.refSprint, sl]);
   }
   for (const entry of added(before?.repos, after.repos)) {
     const { name } = parseRepoRef(entry);
-    if (d.findEntity('repo', name) === undefined) missing.push(['Repo', name]);
+    if (d.findEntity('repo', name) === undefined) missing.push([m.refRepo, name]);
   }
   const assignee = added(
     before?.assignee === undefined ? [] : [before.assignee],
     after.assignee === undefined ? [] : [after.assignee],
   );
   for (const handle of assignee) {
-    if (d.findEntity('user', handle) === undefined) missing.push(['User', handle]);
+    if (d.findEntity('user', handle) === undefined) missing.push([m.refUser, handle]);
   }
   return missing;
 }
@@ -163,7 +165,7 @@ function subtree(d: Draft, root: string): Set<string> {
 }
 
 function hierarchyCycle(a: string, b: string): BackeError {
-  return violation('cycle', `Zyklus über parent und depends_on: ${a} -> ${b}`, { ids: [a, b] });
+  return violation('cycle', m.hierarchyCycle(a, b), { ids: [a, b] });
 }
 
 /**
@@ -200,7 +202,7 @@ function checkSettledParent(d: Draft, before: Issue | undefined, after: Issue): 
     before === undefined || isSettled(before.state) || before.parent !== after.parent;
   if (!becameOpenHere) return;
   if (d.issue(after.parent).data.state !== 'done') return;
-  throw violation('settled_parent', `${after.id}: Parent ${after.parent} ist done`, {
+  throw violation('settled_parent', m.parentDone(after.id, after.parent), {
     ids: [after.id, after.parent],
     hint: `backe issue reopen ${after.parent}`,
   });
@@ -216,7 +218,7 @@ export function checkIssueInvariants(d: Draft, before: Issue | undefined, after:
   const missing = missingRefs(d, before, after);
   if (missing.length > 0) {
     const list = missing.map(([label, key]) => `${label} ${key}`).join(', ');
-    throw violation('missing_ref', `${after.id}: Referenz auf Nichtexistierendes: ${list}`, {
+    throw violation('missing_ref', m.missingRefs(after.id, list), {
       ids: missing.map(([, key]) => key),
     });
   }
@@ -228,7 +230,7 @@ export function checkIssueInvariants(d: Draft, before: Issue | undefined, after:
       const back = findPath(d.snapshot, field, target, after.id);
       if (back === undefined) continue;
       const cycle = [after.id, ...back];
-      throw violation('cycle', `Zyklus in ${field}: ${cycle.join(' -> ')}`, { ids: cycle });
+      throw violation('cycle', m.fieldCycle(field, cycle.join(' -> ')), { ids: cycle });
     }
   }
 
@@ -239,8 +241,8 @@ export function checkIssueInvariants(d: Draft, before: Issue | undefined, after:
   for (const entry of added(before?.repos, after.repos)) {
     const { name } = parseRepoRef(entry);
     if (names.filter((n) => n === name).length > 1) {
-      throw violation('schema', `${after.id}: Repo »${name}« steht mehrfach in repos`, {
-        hint: 'Je Repo ist nur ein Eintrag erlaubt ("name" oder "name@ref").',
+      throw violation('schema', m.repoRepeated(after.id, name), {
+        hint: m.repoRepeatedHint,
       });
     }
   }

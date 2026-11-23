@@ -11,6 +11,7 @@ import { normalizeRepoUrl } from '../core/url.ts';
 import { gitRemotes } from '../git/query.ts';
 import { exists } from '../store/files.ts';
 import { openSnapshot } from './read.ts';
+import { m } from './repo-local.messages.ts';
 
 const SCAN_DEPTH = 4;
 
@@ -22,23 +23,23 @@ export async function locateRepo(
   const { snapshot: s } = await openSnapshot(ctx);
   const repo = s.repos.get(name);
   if (repo === undefined) {
-    throw new BackeError('not_found', `Repo »${name}« nicht gefunden`, {
-      hint: 'backe repo list zeigt die registrierten Repos',
+    throw new BackeError('not_found', m.repoNotFound(name), {
+      hint: m.repoNotFoundHint,
     });
   }
   const { url, default_ref: defaultRef } = repo.data;
   const canonical = normalizeRepoUrl(url);
   const configured = ctx.userConfig.repos?.[canonical];
   if (configured === undefined) {
-    throw new BackeError('not_found', `Kein lokaler Pfad für »${name}«`, {
-      hint: `backe repo scan <verzeichnis> oder backe config set repos.${canonical} <pfad>`,
+    throw new BackeError('not_found', m.noLocalPath(name), {
+      hint: m.noLocalPathHint(canonical),
       details: { url, canonical, ...(defaultRef === undefined ? {} : { default_ref: defaultRef }) },
     });
   }
   const path = expandPath(configured, { home: ctx.homes.home, base: ctx.homes.home });
   if (!(await exists(path))) {
-    throw new BackeError('not_found', `${path} existiert nicht`, {
-      hint: `backe config set repos.${canonical} <pfad>`,
+    throw new BackeError('not_found', m.pathMissing(path), {
+      hint: m.pathMissingHint(canonical),
     });
   }
   return { name, url, canonical, ...(defaultRef === undefined ? {} : { defaultRef }), path };
@@ -61,10 +62,10 @@ async function findClones(dir: string): Promise<string[]> {
     } catch (error) {
       if (depth > 0) return; // unlesbare Unterverzeichnisse werden übersprungen
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        throw new BackeError('not_found', `${path} existiert nicht`);
+        throw new BackeError('not_found', m.pathMissing(path));
       }
       const code = (error as NodeJS.ErrnoException).code ?? String(error);
-      throw new BackeError('validation', `${path} lässt sich nicht durchsuchen (${code})`);
+      throw new BackeError('validation', m.notSearchable(path, code));
     }
     if (entries.some((e) => e.name === '.git')) {
       found.push(path);

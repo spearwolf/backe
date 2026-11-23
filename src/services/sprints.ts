@@ -9,6 +9,7 @@ import { compareIssues } from '../ops/order.ts';
 import { compareCreated, hasOpenDeps, type IssueListItem, matchesFilter } from './issue-list.ts';
 import { type WriteOutcome, writeOp } from './outcome.ts';
 import { effectiveFilter, openSnapshot } from './read.ts';
+import { m } from './sprints.messages.ts';
 import type { WriteDeps } from './write.ts';
 
 /** Reihenfolge der States in Gruppen und Zählungen: Hauptlinie, Pausen, Abbrüche. */
@@ -87,7 +88,7 @@ export async function showSprint(
 }> {
   const { snapshot: s } = await openSnapshot(ctx);
   const stored = s.sprints.get(slug);
-  if (stored === undefined) throw new BackeError('not_found', `Sprint »${slug}« nicht gefunden`);
+  if (stored === undefined) throw new BackeError('not_found', m.sprintNotFound(slug));
 
   // Der Sprint ist der Gegenstand; nur Projekt und Repo des Kontexts grenzen weiter ein.
   const { project, repo, header } = effectiveFilter(

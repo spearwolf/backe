@@ -6,6 +6,7 @@ import { type UserConfig, UserConfigSchema } from '../core/schemas.ts';
 import { writeFileAtomic } from '../store/files.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { withFileLock } from './lock.ts';
+import { m } from './user-config.messages.ts';
 
 export type ConfigEdit = { path: readonly (string | number)[]; value: unknown };
 
@@ -193,10 +194,7 @@ function applyConfigEdit(text: string, path: readonly (string | number)[], value
   try {
     return applyEdits(text, modify(text, [...path], value, {}));
   } catch {
-    throw new BackeError(
-      'validation',
-      `Config-Pfad »${path.join('.')}« läuft durch einen Wert, der kein Objekt ist`,
-    );
+    throw new BackeError('validation', m.configPathNotObject(path.join('.')));
   }
 }
 
@@ -222,10 +220,7 @@ export async function updateUserConfig(
       readJsonc(next, file);
     } catch {
       // Der Edit selbst hat die Syntax zerstört, nicht der User: Datei bleibt unangetastet.
-      throw new BackeError(
-        'unexpected',
-        `Edit an ${file} konnte nicht angewendet werden; Datei unverändert`,
-      );
+      throw new BackeError('unexpected', m.editNotApplied(file));
     }
     const updated = parseUserConfigText(next, file);
     await writeFileAtomic(file, next);

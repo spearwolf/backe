@@ -6,6 +6,7 @@ import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
 import { bodyHash } from '../ops/operation.ts';
 import { listComments } from '../store/snapshot.ts';
+import { m } from './comments.messages.ts';
 import { type CommentView, commentView } from './issue-show.ts';
 import { type WriteOutcome, writeOp } from './outcome.ts';
 import { openSnapshot, resolveIssueRef } from './read.ts';
@@ -19,7 +20,7 @@ export function addComment(
   body: string,
   deps?: WriteDeps,
 ): Promise<WriteOutcome> {
-  if (body.trim() === '') throw new BackeError('validation', 'Kommentar ist leer');
+  if (body.trim() === '') throw new BackeError('validation', m.commentEmpty);
   return writeOp(ctx, (s) => ({ op: 'comment.add', id: resolveIssueRef(s, ref), body }), deps);
 }
 
@@ -30,8 +31,8 @@ export async function listIssueComments(
 ): Promise<CommentView[]> {
   const { limit } = opts;
   if (limit !== undefined && !(Number.isInteger(limit) && limit >= 1)) {
-    throw new BackeError('validation', `Ungültiges Limit: »${limit}«`, {
-      hint: 'erwartet eine ganze Zahl ab 1',
+    throw new BackeError('validation', m.invalidLimit(limit), {
+      hint: m.limitExpects,
     });
   }
   const { root, snapshot: s } = await openSnapshot(ctx);
@@ -47,8 +48,8 @@ export function resolveCommentRef(comments: readonly CommentView[], ref: string)
     const byIndex = comments[Number(ref) - 1];
     if (byIndex !== undefined) return byIndex.file;
   }
-  throw new BackeError('not_found', `Kommentar »${ref}« nicht gefunden`, {
-    hint: 'Dateiname oder Nummer ab 1 aus der Kommentarliste angeben',
+  throw new BackeError('not_found', m.commentNotFound(ref), {
+    hint: m.commentRefHint,
   });
 }
 
@@ -75,7 +76,7 @@ export async function editComment(
   body: string,
   deps?: WriteDeps,
 ): Promise<WriteOutcome> {
-  if (body.trim() === '') throw new BackeError('validation', 'Kommentar ist leer');
+  if (body.trim() === '') throw new BackeError('validation', m.commentEmpty);
   const t = await target(ctx, ref, comment);
   return writeOp(
     ctx,

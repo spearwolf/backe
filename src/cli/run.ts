@@ -36,25 +36,9 @@ import {
   trackAllDispatch,
   trackDispatch,
 } from './options.ts';
+import { m as outputMessages } from './output.messages.ts';
 import { exitCodeOf, type Format, renderError, resolveFormat, safeText } from './output.ts';
-
-const QUICKSTART = [
-  '',
-  'Schnellstart:',
-  '  backe config set user <handle>    eigenes Handle setzen',
-  '  backe init <verz> --name <n> --prefix <p> --remote <url>',
-  '                                    neues Backlog anlegen',
-  '  backe backlog clone <url>         vorhandenes Backlog klonen',
-  '  backe project create web          Projekt anlegen (-t für einen Titel)',
-  '  backe sprint create 2026-w48      Sprint anlegen',
-  '  backe new -t "…" -p web           Issue anlegen (-s für den Sprint)',
-  '  backe ls                          offene Issues',
-  '  backe show <id>                   Issue anzeigen',
-  '  backe mv <id> in_progress         State ändern',
-  '  backe next --claim                nächstes Issue holen und übernehmen',
-  'Mehr: backe <befehl> --help',
-  '',
-].join('\n');
+import { m } from './run.messages.ts';
 
 /**
  * Das Programm samt aller Befehle. Einstellungen (Fehlerbehandlung, Ausgabe, positionale Optionen)
@@ -62,10 +46,11 @@ const QUICKSTART = [
  */
 export function buildProgram(rt: Runtime): Command {
   const program = new Command('backe')
-    .description('Git-basiertes Backlog für Menschen und Agents')
-    .version(pkg.version, '-V, --version', 'Version ausgeben')
-    .helpOption('-h, --help', 'Hilfe anzeigen')
-    .helpCommand('help [befehl]', 'Hilfe zu einem Befehl')
+    .description(m.programDescription)
+    .version(pkg.version, '-V, --version', m.versionDescription)
+    .helpOption('-h, --help', m.helpDescription)
+    .helpCommand(m.helpCommandFlags, m.helpCommandDescription)
+    .configureHelp({ styleTitle: (title) => m.helpTitle(title) })
     .exitOverride()
     .configureOutput({
       writeOut: (s) => rt.io.stdout(s),
@@ -79,7 +64,7 @@ export function buildProgram(rt: Runtime): Command {
     // Optionen gehören zu der Ebene, hinter der sie stehen; jede Ebene kennt die globalen. So
     // frisst das Programm keine Optionswerte eines Unterbefehls (`-t --json` bleibt ein Titel).
     .enablePositionalOptions()
-    .addHelpText('after', QUICKSTART);
+    .addHelpText('after', m.quickstart());
   addGlobalOptions(trackDispatch(program));
   contextCommand(program, rt);
   initCommand(program, rt);
@@ -119,6 +104,49 @@ function helpOf(cmd: Command): string {
   return text;
 }
 
+/** `(Did you mean …?)` aus commanders Meldung, übersetzt; leer ohne Vorschlag. */
+function suggestionOf(several: string | undefined, candidates: string | undefined): string {
+  return candidates === undefined ? '' : ` ${m.didYouMean(candidates, several !== undefined)}`;
+}
+
+/** Bezug in einer Konflikt-Meldung: eine Option oder eine Umgebungsvariable. */
+function referenceOf(kind: string | undefined, name: string): string {
+  return kind === 'environment variable' ? m.envVarRef(name) : m.optionRef(name);
+}
+
+const SUGGESTION = String.raw`(?:\n\(Did you mean (one of )?(.*)\?\))?`;
+
+/**
+ * Meldungen, die commander selbst erzeugt, in der Sprache des Prozesses. Die Namen holt je ein
+ * Muster aus dem englischen Text (der Teil in `'…'`); passt keines, bleibt das Original.
+ */
+const COMMANDER_MESSAGES: Record<string, (match: RegExpMatchArray) => string> = {
+  'commander.unknownOption': (x) => m.unknownOption(x[1] as string, suggestionOf(x[2], x[3])),
+  'commander.unknownCommand': (x) => m.unknownCommand(x[1] as string, suggestionOf(x[2], x[3])),
+  'commander.excessArguments': (x) =>
+    m.excessArguments(x[1], Number(x[2]), Number(x[3]), x[4] as string),
+  'commander.optionMissingArgument': (x) => m.optionMissingArgument(x[1] as string),
+  'commander.conflictingOption': (x) =>
+    m.conflictingOption(referenceOf(x[1], x[2] as string), referenceOf(x[3], x[4] as string)),
+};
+
+const COMMANDER_PATTERNS: Record<string, RegExp> = {
+  'commander.unknownOption': new RegExp(`^unknown option '([^']*)'${SUGGESTION}$`),
+  'commander.unknownCommand': new RegExp(`^unknown command '([^']*)'${SUGGESTION}$`),
+  'commander.excessArguments':
+    /^too many arguments(?: for '([^']*)')?\. Expected (\d+) arguments? but got (\d+): (.*)\.$/s,
+  'commander.optionMissingArgument': /^option '(.*)' argument missing$/,
+  'commander.conflictingOption':
+    /^(option|environment variable) '(.*?)' cannot be used with (option|environment variable) '(.*)'$/,
+};
+
+function translated(code: string, original: string): string {
+  const pattern = COMMANDER_PATTERNS[code];
+  const match = pattern === undefined ? null : original.match(pattern);
+  const build = COMMANDER_MESSAGES[code];
+  return match === null || build === undefined ? original : build(match);
+}
+
 /**
  * commander-Fehler als `usage`. `commander.help` mit Exit 1 heißt: einer Gruppe fehlt der
  * Unterbefehl; welcher, sagt der zuletzt betretene Befehl (`trackDispatch`). Fehlt ein Befehl,
@@ -135,12 +163,12 @@ function fromCommander(
   const hint = `${path} --help`;
   const original = err.message.replace(/^error: /, '');
   if (err.code === 'commander.help') {
-    const message = path === 'backe' ? 'Befehl fehlt' : 'Unterbefehl fehlt';
+    const message = path === 'backe' ? m.commandMissing : m.subcommandMissing;
     return { error: new BackeError('usage', message, { hint }), help: helpOf(failed) };
   }
   if (err.code === 'commander.missingArgument') {
     const missing = failed.registeredArguments.find((a, i) => a.required && failed.args[i] == null);
-    const message = missing === undefined ? original : `Argument »${missing.name()}« fehlt`;
+    const message = missing === undefined ? original : m.argumentMissing(missing.name());
     return { error: new BackeError('usage', message, { hint }), help: helpOf(failed) };
   }
   if (err.code === 'commander.missingMandatoryOptionValue') {
@@ -156,10 +184,10 @@ function fromCommander(
       );
       missing = found?.flags;
     }
-    const message = missing === undefined ? original : `Option »${missing}« fehlt`;
+    const message = missing === undefined ? original : m.optionMissing(missing);
     return { error: new BackeError('usage', message, { hint }), help: helpOf(failed) };
   }
-  return { error: new BackeError('usage', original) };
+  return { error: new BackeError('usage', translated(err.code, original)) };
 }
 
 /**
@@ -212,7 +240,9 @@ export async function run(io: CliIo): Promise<number> {
     const format = rt.state.format ?? (await fallbackFormat(io));
     if (format !== 'json' && helped !== undefined) {
       // Die Hilfe folgt der Meldung und ersetzt den Hinweis `… --help`.
-      io.stderr(`${safeText(`Fehler: ${helped.message}\n`)}\n${safeText(helped.help)}`);
+      io.stderr(
+        `${safeText(`${outputMessages.errorPrefix} ${helped.message}\n`)}\n${safeText(helped.help)}`,
+      );
       return exitCodeOf(err);
     }
     io.stderr(renderError(err, format === 'json' ? 'json' : 'text'));

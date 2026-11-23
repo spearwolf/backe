@@ -1,5 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { CATALOG_TEXTS } from '../src/i18n/catalog.ts';
+import { findGermanLiterals, germanVocabulary } from './helpers/german-literals.ts';
 
 const SRC = join(import.meta.dirname, '..', 'src');
 /**
@@ -11,7 +13,7 @@ const STRAIGHT_QUOTED_VALUE = /"\$\{[^}]+\}"/;
 
 /** Dateien, in denen `"${…}"` gewollt ist, mit dem Grund. */
 const ALLOWED: Record<string, string> = {
-  'store/frontmatter.ts':
+  'store/frontmatter.messages.ts':
     'der Hinweis zeigt buchstäblich, wie ein Zahlenwert in YAML mit Anführungszeichen zu schreiben ist',
 };
 
@@ -122,7 +124,92 @@ test('flag names are not quoted', async () => {
   for (const file of await sources(SRC)) {
     const lines = (await readFile(file, 'utf8')).split('\n');
     for (const [i, line] of lines.entries()) {
-      if (line.includes('»--')) hits.push(`${file.slice(SRC.length + 1)}:${i + 1}: ${line.trim()}`);
+      // Deutsch »--x«, Englisch '--x' (nur in Katalogen; im Code sind '--x' gewöhnliche Literale).
+      // Ein Text, der mit einem Flag beginnt (`'--force gehört zu --purge'`), zitiert es nicht:
+      // gesucht ist das Flag direkt zwischen den Anführungszeichen.
+      const quoted =
+        line.includes('»--') || (file.endsWith('.messages.ts') && /'--[\w-]+'/.test(line));
+      if (quoted) hits.push(`${file.slice(SRC.length + 1)}:${i + 1}: ${line.trim()}`);
+    }
+  }
+  expect(hits).toEqual([]);
+});
+
+/**
+ * Gewollter deutscher Text außerhalb eines Katalogs: ein Treffer ist erlaubt, wenn seine Zeile
+ * `text` enthält. Je Eintrag mit Grund.
+ */
+const GERMAN_ALLOWED: { file: string; text: string; reason: string }[] = [
+  {
+    file: 'ops/delete-op.ts',
+    text: 'Blocker ',
+    reason:
+      'Transition-Kommentar: Backlog-Inhalt, muss beim Replay auf jedem Rechner gleich entstehen',
+  },
+  {
+    file: 'services/write.ts',
+    text: 'manual: ',
+    reason: 'Commit-Subject: Backlog-Inhalt, muss beim Replay auf jedem Rechner gleich entstehen',
+  },
+  {
+    file: 'services/resign.ts',
+    text: 'manual: ',
+    reason: 'Commit-Subject: Backlog-Inhalt, muss beim Replay auf jedem Rechner gleich entstehen',
+  },
+];
+
+/** Alle Kataloge unter `src`, geladen aus ihren `*.messages.ts`. */
+async function loadCatalogs(): Promise<Parameters<typeof germanVocabulary>[0]> {
+  const catalogs: Parameters<typeof germanVocabulary>[0][number][] = [];
+  for (const file of await sources(SRC)) {
+    if (!file.endsWith('.messages.ts')) continue;
+    const mod = (await import(file)) as { m?: Record<symbol, never> };
+    const texts = mod.m?.[CATALOG_TEXTS as symbol];
+    if (texts !== undefined) catalogs.push(texts);
+  }
+  return catalogs;
+}
+
+test('the German-literal check ignores comments and catches literals', () => {
+  const text = [
+    '// Datei fehlt',
+    '/** Zeile',
+    ' * nicht */',
+    "const a = 'ok'; // ungültig",
+    'throw new Error(`Datei fehlt`);',
+    "const b = 'Grüße';",
+    "const url = 'https://example.org'; const c = 'keine';",
+  ].join('\n');
+  expect(findGermanLiterals('x.ts', text)).toEqual([
+    'x.ts:5: throw new Error(`Datei fehlt`);',
+    "x.ts:6: const b = 'Grüße';",
+    "x.ts:7: const url = 'https://example.org'; const c = 'keine';",
+  ]);
+});
+
+test('the German vocabulary derives from the catalogs', () => {
+  const vocabulary = germanVocabulary([
+    {
+      en: { a: 'Not found', b: (n: string) => `Missing ${n}` },
+      de: { a: 'Nicht gefunden', b: (n: string) => `Fehlt ${n}`, c: 'gefunden' },
+    },
+  ]);
+  expect([...vocabulary].sort()).toEqual(['fehlt', 'gefunden', 'nicht']);
+  expect(findGermanLiterals('x.ts', "throw new Error('Wurde gefunden');", vocabulary)).toHaveLength(
+    1,
+  );
+  expect(findGermanLiterals('x.ts', "throw new Error('Found it');", vocabulary)).toEqual([]);
+});
+
+test('user-facing literals live in *.messages.ts', async () => {
+  const vocabulary = germanVocabulary(await loadCatalogs());
+  const hits: string[] = [];
+  for (const file of await sources(SRC)) {
+    const rel = file.slice(SRC.length + 1);
+    if (rel.endsWith('.messages.ts') || rel.startsWith('i18n/')) continue;
+    const allowed = GERMAN_ALLOWED.filter((a) => a.file === rel);
+    for (const hit of findGermanLiterals(rel, await readFile(file, 'utf8'), vocabulary)) {
+      if (!allowed.some((a) => hit.includes(a.text))) hits.push(hit);
     }
   }
   expect(hits).toEqual([]);

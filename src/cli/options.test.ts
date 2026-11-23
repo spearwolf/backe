@@ -4,6 +4,7 @@ import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { testBacklog } from '../../test/helpers/git.ts';
 import type { Env } from '../context/paths.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
+import { setLocale } from '../i18n/locale.ts';
 import { writeSyncState } from '../services/sync-state.ts';
 import type { CliIo } from './io.ts';
 import {
@@ -168,6 +169,17 @@ test('a rejected default context does not hide the status line of the context th
   expect(await statusLineOf([])).toBe(
     'Sync: letzter Sync fehlgeschlagen: kaputt\nHinweis: backe sync status\n',
   );
+});
+
+test('the status line speaks English with an English locale', async () => {
+  setLocale('en');
+  try {
+    expect(await statusLineOf([])).toBe(
+      'Sync: last sync failed: kaputt\nHint: backe sync status\n',
+    );
+  } finally {
+    setLocale('de');
+  }
 });
 
 test('the status line is printed for text only, not for md or json', async () => {

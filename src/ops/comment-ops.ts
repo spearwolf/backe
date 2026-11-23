@@ -2,18 +2,20 @@
  * Kommentare und Anhänge (backe.md §2.7, §2.8, §2.13): `comment.add`, `comment.edit`,
  * `comment.delete`, `attach.add` und `attach.rm`. Kommentare ändert nur ihr Autor.
  */
+
 import { BackeError } from '../core/errors.ts';
 import type { Comment, Issue } from '../core/schemas.ts';
 import { canonicalBody, serializeEntityFile } from '../store/frontmatter.ts';
 import { attachmentsDir, commentsDir, hasLfsRule, LFS_RULE } from '../store/layout.ts';
 import type { StoredEntity } from '../store/snapshot.ts';
+import { m } from './comment-ops.messages.ts';
 import type { Draft } from './draft.ts';
 import { violation } from './invariants.ts';
 import { bodyHash, type OpOf } from './operation.ts';
 
 export function commentAdd(d: Draft, op: OpOf<'comment.add'>): OpOf<'comment.add'> {
   if (op.body.trim() === '') {
-    throw violation('schema', 'Ein Kommentar braucht einen Text');
+    throw violation('schema', m.commentNeedsText);
   }
   const file = d.addComment(op.id, {}, op.body, op.file);
   return { ...op, file };
@@ -24,18 +26,15 @@ function ownComment(d: Draft, id: string, file: string): StoredEntity<Comment> {
   d.issue(id);
   const loaded = d.ctx.comments?.get(id);
   if (loaded === undefined) {
-    throw new BackeError('unexpected', `Kommentare von ${id} wurden nicht geladen`);
+    throw new BackeError('unexpected', m.commentsNotLoaded(id));
   }
   const path = `${commentsDir(id)}/${file}`;
   const found = loaded.find((c) => c.path === path);
   if (found === undefined) {
-    throw violation('missing_ref', `Kommentar ${path} nicht gefunden`, { ids: [id] });
+    throw violation('missing_ref', m.commentNotFound(path), { ids: [id] });
   }
   if (found.data.author !== d.ctx.actor) {
-    throw violation(
-      'policy',
-      `Kommentar ${file} gehört ${found.data.author}, nicht ${d.ctx.actor}`,
-    );
+    throw violation('policy', m.commentNotOwn(file, found.data.author, d.ctx.actor));
   }
   return found;
 }
@@ -44,7 +43,7 @@ export function commentEdit(d: Draft, op: OpOf<'comment.edit'>): OpOf<'comment.e
   const comment = ownComment(d, op.id, op.file);
   if (comment.body === canonicalBody(op.body)) return op;
   if (bodyHash(comment.body) !== op.from_hash) {
-    throw violation('precondition', `${op.id}: Kommentar ${op.file} wurde inzwischen geändert`, {
+    throw violation('precondition', m.commentChanged(op.id, op.file), {
       ids: [op.id],
     });
   }
@@ -84,11 +83,9 @@ export function attachmentTooLarge(
 ): BackeError | undefined {
   const max = limits.max_bytes;
   if (max === null || size <= max) return undefined;
-  return violation('too_large', `Anhang »${file}« hat ${size} Bytes, erlaubt sind ${max}`, {
+  return violation('too_large', m.attachmentTooLarge(file, size, max), {
     // Die Grenze gilt auch mit LFS; ohne LFS ist LFS der Weg für große Dateien.
-    hint: limits.lfs
-      ? 'Grenze attachments.max_bytes anheben (backe.md §2.8).'
-      : 'Grenze attachments.max_bytes anheben; für große Dateien attachments.lfs aktivieren (backe.md §2.8).',
+    hint: limits.lfs ? m.raiseLimitHint : m.raiseLimitOrLfsHint,
   });
 }
 
@@ -96,16 +93,16 @@ export function attachAdd(d: Draft, op: OpOf<'attach.add'>): OpOf<'attach.add'> 
   const issue = d.issue(op.id).data;
   const list = issue.attachments ?? [];
   if (list.some((a) => a.name === op.name)) {
-    throw violation('exists', `${op.id}: Anhang »${op.name}« existiert bereits`, { ids: [op.id] });
+    throw violation('exists', m.attachmentExists(op.id, op.name), { ids: [op.id] });
   }
   let entry: NonNullable<Issue['attachments']>[number];
   if (op.file !== undefined) {
     const { content } = op;
     if (content === undefined) {
-      throw new BackeError('unexpected', `attach.add für »${op.file}« ohne Dateiinhalt`);
+      throw new BackeError('unexpected', m.attachWithoutContent(op.file));
     }
     if (list.some((a) => a.file === op.file)) {
-      throw violation('exists', `${op.id}: Datei »${op.file}« gehört schon einem anderen Anhang`, {
+      throw violation('exists', m.fileBelongsToOtherAttachment(op.id, op.file), {
         ids: [op.id],
       });
     }
@@ -126,7 +123,7 @@ export function attachRm(d: Draft, op: OpOf<'attach.rm'>): OpOf<'attach.rm'> {
   const list = issue.attachments ?? [];
   const entry = list.find((a) => a.name === op.name);
   if (entry === undefined) {
-    throw violation('missing_ref', `${op.id}: Anhang »${op.name}« nicht gefunden`, {
+    throw violation('missing_ref', m.attachmentNotFound(op.id, op.name), {
       ids: [op.id],
     });
   }

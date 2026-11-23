@@ -1,0 +1,38 @@
+import { catalog } from '../../i18n/catalog.ts';
+
+export const m = catalog({
+  en: {
+    description: 'Attachments of an issue',
+    addCommand: 'add <id> [file]',
+    addDescription: 'Attach a file, URL or JSON',
+    nameOption: 'Name of the attachment',
+    urlOption: 'URL instead of a file',
+    jsonOption: "JSON content ('-' reads stdin)",
+    listDescription: 'List attachments',
+    getDescription: 'Get an attachment: content to stdout, or to a file with -o',
+    outputFlags: '-o, --output <path>',
+    outputOption: 'Write to this file (overwrites) and print the path',
+    rmDescription: 'Remove an attachment',
+    isDirectory: (target: string) => `'${target}' is a directory`,
+    directoryMissing: (target: string) => `Directory for '${target}' does not exist`,
+    exactlyOneSource: 'Specify exactly one source',
+    sourceHint: '<file>, --url <url> or --json <json|->',
+  },
+  de: {
+    description: 'Anhänge eines Issues',
+    addCommand: 'add <id> [datei]',
+    addDescription: 'Datei, URL oder JSON anhängen',
+    nameOption: 'Name des Anhangs',
+    urlOption: 'URL statt Datei',
+    jsonOption: 'JSON-Inhalt (»-« liest stdin)',
+    listDescription: 'Anhänge auflisten',
+    getDescription: 'Anhang holen: Inhalt nach stdout oder mit -o in eine Datei',
+    outputFlags: '-o, --output <pfad>',
+    outputOption: 'in diese Datei schreiben (überschreibt) und den Pfad drucken',
+    rmDescription: 'Anhang entfernen',
+    isDirectory: (target: string) => `${target} ist ein Verzeichnis`,
+    directoryMissing: (target: string) => `Verzeichnis für ${target} existiert nicht`,
+    exactlyOneSource: 'Genau eine Quelle angeben',
+    sourceHint: '<datei>, --url <url> oder --json <json|->',
+  },
+});

@@ -1,4 +1,5 @@
 import type { ZodError } from 'zod';
+import { m } from './errors.messages.ts';
 
 /**
  * Fehlercodes. `usage` heißt: der Aufruf passt nicht (fehlende oder sich ausschließende
@@ -47,7 +48,7 @@ export class BackeError extends Error {
 /** Schemafehler als `validation`: je Issue eine Zeile `<datei>: <key.pfad>: <meldung>`. */
 export function schemaError(file: string, error: ZodError, hint?: string): BackeError {
   const lines = error.issues.map(
-    (issue) => `${file}: ${issue.path.join('.') || '(Wurzel)'}: ${issue.message}`,
+    (issue) => `${file}: ${issue.path.join('.') || m.root}: ${issue.message}`,
   );
   return new BackeError('validation', lines.join('\n'), hint === undefined ? undefined : { hint });
 }

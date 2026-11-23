@@ -4,6 +4,7 @@
  */
 import { BackeError } from '../core/errors.ts';
 import { git, gitBytes } from './exec.ts';
+import { m } from './history.messages.ts';
 
 const USER_FILE = /^users\/([^/]+)\.md$/;
 const OBJECT_HEADER = /^([0-9a-f]+) ([a-z]+) (\d+)$/;
@@ -56,7 +57,7 @@ export async function removedHandles(wc: string, rev: string): Promise<Set<strin
 
 type CatObject = { oid: string; type: string; content: Buffer | undefined };
 
-const truncated = () => new BackeError('unexpected', 'Ausgabe von git cat-file ist abgeschnitten');
+const truncated = () => new BackeError('unexpected', m.catFileTruncated);
 
 /**
  * Zerlegt die Ausgabe von `cat-file --batch[-check] -Z` zu `specs`; fehlende oder mehrdeutige
@@ -266,6 +267,6 @@ export async function resolveCommit(wc: string, rev: string): Promise<string> {
     { cwd: wc, env: ENV, okExitCodes: [1, 128] },
   );
   const sha = stdout.trim();
-  if (sha === '') throw new BackeError('not_found', `Revision ${rev} nicht gefunden`);
+  if (sha === '') throw new BackeError('not_found', m.revisionNotFound(rev));
   return sha;
 }
