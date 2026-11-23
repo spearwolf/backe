@@ -417,6 +417,15 @@ test('a reason that looks like a global option stays the reason', async () => {
   expect(after.code).toBe(0);
 });
 
+test('issue edit --help names the editor mode and its variables', async () => {
+  const { env, cwd } = await emptyHome();
+  const r = await cli(['issue', 'edit', '--help'], { env, cwd });
+  expect(r.code).toBe(0);
+  expect(r.stderr).toBe('');
+  expect(r.stdout).toContain('im Editor');
+  for (const name of ['BACKE_EDITOR', 'VISUAL', 'EDITOR']) expect(r.stdout).toContain(name);
+});
+
 test('--help and --version exit 0', async () => {
   const { env, cwd } = await emptyHome();
   for (const args of [

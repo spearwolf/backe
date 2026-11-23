@@ -311,7 +311,7 @@ function defineEdit(parent: Command, rt: Runtime): void {
   // commander legt `--parent <id>` und `--no-parent` auf dasselbe Feld, die letzte Angabe gewönne
   // still. Beide Events zu sehen heißt: widersprüchlicher Aufruf.
   const parentFlags = new Set<string>();
-  subcommand(parent, 'edit <id>', 'Felder eines Issues ändern')
+  subcommand(parent, 'edit <id>', 'Felder eines Issues ändern oder im Editor bearbeiten')
     .on('option:parent', () => parentFlags.add('--parent'))
     .on('option:no-parent', () => parentFlags.add('--no-parent'))
     .option('--title <titel>', 'neuer Titel')
@@ -328,6 +328,16 @@ function defineEdit(parent: Command, rt: Runtime): void {
     .option(
       '--body-file <pfad|->',
       'neuer Body aus Datei, eine leere Datei leert ihn; »-« liest stdin, das nicht leer sein darf',
+    )
+    .addHelpText(
+      'after',
+      [
+        '',
+        'Ohne Änderungs-Flags öffnet `backe issue edit <id>` die Issue-Datei (Frontmatter und',
+        'Body) im Editor. Editor: BACKE_EDITOR, sonst VISUAL, dann EDITOR — die beiden letzten',
+        'nur, wenn stdin und stdout ein Terminal sind.',
+        '',
+      ].join('\n'),
     )
     .action(
       action(
