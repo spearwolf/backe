@@ -546,7 +546,7 @@ function opStep(
 
 /**
  * Wendet die übersetzten Operationen der Hand-Edits als Batch an. Ein Fehler behält Code und
- * Message, verliert aber die Batch-Zeile (`Zeile <n>: `, `details.line`): Sie zählt Operationen,
+ * Message, verliert aber die Batch-Zeile (Präfix `<Wort> <n>: `, `n` aus `details.line`): Sie zählt Operationen,
  * die der User nie gesehen hat. Eine Verletzung ohne eigenen Hinweis bekommt den, die Änderung
  * aufzuteilen.
  */

@@ -34,7 +34,7 @@ export type ClaimDeps = SyncDeps & WriteDeps;
 const MAX_ATTEMPTS = 5;
 
 /** Text der Notice, wenn der Claim nur lokal bleibt; erst bei Verwendung gelesen (Locale). */
-const localNotice = (reason: 'no_remote' | 'manual'): string =>
+export const localNotice = (reason: 'no_remote' | 'manual'): string =>
   reason === 'no_remote' ? m.claimLocalNoRemote : m.claimLocalManual;
 
 /** Grund in `details.reason`, wenn ein Claim beim Push an einen Schnelleren verloren ging. */
