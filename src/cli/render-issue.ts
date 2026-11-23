@@ -12,6 +12,7 @@ import type {
   MissingRefView,
 } from '../services/issue-show.ts';
 import { lines, paint, type Style, safeText, width } from './output.ts';
+import { m } from './render-issue.messages.ts';
 
 /** Breite der State-Spalte: `in_progress`, der längste State. */
 const STATE_WIDTH = 11;
@@ -88,7 +89,7 @@ const refLines = (refs: readonly IssueRefView[], color: boolean): string[] => li
 /** `<id> [<state>]`, eine fehlende Referenz als `<id> [fehlt]`. */
 const refWithState = (r: IssueRefView | MissingRefView, color: boolean): string =>
   'missing' in r
-    ? `${safeText(r.id)} [${paint(color, 'red', 'fehlt')}]`
+    ? `${safeText(r.id)} [${paint(color, 'red', m.missingRef)}]`
     : `${safeText(r.id)} [${stateText(r.state, color, false)}]`;
 
 const firstLine = (body: string): string => body.split('\n', 1)[0] ?? '';
@@ -147,7 +148,7 @@ export function issueDetailText(d: IssueDetail, color: boolean): string {
   field('depends_on', joined(d.dependsOn.map((r) => refWithState(r, color))));
   field('dependents', joined(d.dependents.map((r) => refWithState(r, color))));
   if (d.progress !== undefined) {
-    field('children', `${d.progress.settled}/${d.progress.total} erledigt`);
+    field('children', m.childrenProgress(d.progress.settled, d.progress.total));
     for (const line of refLines(d.children, color)) more(line);
   }
   field('rank', i.rank === undefined ? undefined : String(i.rank));

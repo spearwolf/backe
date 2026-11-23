@@ -19,8 +19,8 @@ const isFormat = (value: string): value is Format => (FORMATS as readonly string
 
 function checked(value: string, source: string): Format {
   if (isFormat(value)) return value;
-  throw new BackeError('validation', `Unbekanntes Ausgabeformat »${value}« (Quelle: ${source})`, {
-    hint: 'text, json oder md',
+  throw new BackeError('validation', m.unknownFormat(value, source), {
+    hint: m.formatChoices,
   });
 }
 
