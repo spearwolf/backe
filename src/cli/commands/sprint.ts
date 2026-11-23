@@ -17,7 +17,7 @@ import { bodyBlock, columns, headerLine, json, lines, paint, safeText } from '..
 import { issueLines } from '../render-issue.ts';
 
 type CreateOpts = {
-  title: string;
+  title?: string;
   start?: string;
   end?: string;
   description?: string;
@@ -65,7 +65,7 @@ export function sprintCommands(program: Command, rt: Runtime): void {
   const sprint = subcommand(program, 'sprint', 'Sprints anlegen, listen, zeigen und abschließen');
 
   subcommand(sprint, 'create <slug>', 'Sprint anlegen')
-    .requiredOption('-t, --title <titel>', 'Titel')
+    .option('-t, --title <titel>', 'Titel (Default: Slug)')
     .option('--start <datum>', 'Beginn (JJJJ-MM-TT)')
     .option('--end <datum>', 'Ende (JJJJ-MM-TT)')
     .option(
@@ -80,7 +80,7 @@ export function sprintCommands(program: Command, rt: Runtime): void {
           const body = await bodyArg(env, opts);
           const r = await createSprint(await env.context(), {
             slug,
-            title: opts.title,
+            ...(opts.title === undefined ? {} : { title: opts.title }),
             ...(opts.start === undefined ? {} : { start: opts.start }),
             ...(opts.end === undefined ? {} : { end: opts.end }),
             ...(body === undefined ? {} : { body }),

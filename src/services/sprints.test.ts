@@ -16,6 +16,16 @@ beforeEach(async () => {
 });
 
 describe('sprints', () => {
+  test('create without title defaults to the slug, an explicit title stays', async () => {
+    await createSprint(ctx, { slug: '2026-w48' });
+    await createSprint(ctx, { slug: 'x', title: 'X-Sprint' });
+    const rows = await listSprints(ctx);
+    expect(rows.map((r) => [r.slug, r.title]).sort()).toEqual([
+      ['2026-w48', '2026-w48'],
+      ['x', 'X-Sprint'],
+    ]);
+  });
+
   test('sprints list open ones first', async () => {
     await createSprint(ctx, { slug: 'b', title: 'B', start: '2026-02-01' });
     await createSprint(ctx, { slug: 'a', title: 'A', start: '2026-03-01' });

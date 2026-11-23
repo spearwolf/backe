@@ -237,7 +237,7 @@ Warte auf Freigabe der Redirect-URIs durch das IdP-Team.
 ### 2.9 Projekte
 
 - Identifiziert über einen Pfad aus Slug-Segmenten: `web`, `web/auth` (`[a-z0-9][a-z0-9-]*` je Segment, max. 5 Ebenen).
-- Datei `projects/<pfad>.md`; Frontmatter `title`, optional `lead` (User-Handle), Body = Beschreibung.
+- Datei `projects/<pfad>.md`; Frontmatter `title`, optional `lead` (User-Handle), Body = Beschreibung. `title` ist beim Anlegen optional; ohne Angabe gilt das letzte Pfadsegment.
 - Ein Unterprojekt setzt das Elternprojekt voraus.
 - Filter sind rekursiv: `--project web` umfasst `web/auth`; `--project web --exact` nur `web`.
 - `backe project mv <alt> <neu>` benennt Projekt und alle Unterprojekte um und schreibt alle betroffenen Issues um — in **einem** Commit.
@@ -246,7 +246,7 @@ Warte auf Freigabe der Redirect-URIs durch das IdP-Team.
 
 ### 2.10 Sprints
 
-- Slug frei wählbar im Muster `[a-z0-9][a-z0-9-]{0,63}` (`2026-w47`, `auth-hardening`). Datei `sprints/<slug>.md`, Frontmatter `title`, optional `start`, `end` (Datum), `closed: true`; Body = Sprint-Ziel.
+- Slug frei wählbar im Muster `[a-z0-9][a-z0-9-]{0,63}` (`2026-w47`, `auth-hardening`). Datei `sprints/<slug>.md`, Frontmatter `title`, optional `start`, `end` (Datum), `closed: true`; Body = Sprint-Ziel. `title` ist beim Anlegen optional; ohne Angabe gilt der Slug.
 - Sprints sind in erster Linie Filter: `backe issue list --sprint 2026-w47`, `backe sprint show 2026-w47` (Issues gruppiert nach State, innerhalb der Gruppe nach `rank`, dann `created` — §2.18).
 - `backe sprint close <slug>` setzt `closed: true`; offene Issues bleiben unverändert zugeordnet, `--carry-over <slug>` hängt sie zusätzlich dem Nachfolger an.
 - **Arbeitsauftrag für Agents:** `backe next --sprint <slug> [--claim]` liefert das nächste bearbeitbare Issue. Auswahl und Reihenfolge regelt §2.22.

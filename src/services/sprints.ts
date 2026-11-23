@@ -26,10 +26,14 @@ export const STATE_ORDER: readonly State[] = [
 
 export function createSprint(
   ctx: ResolvedContext,
-  input: { slug: string; title: string; start?: string; end?: string; body?: string },
+  input: { slug: string; title?: string; start?: string; end?: string; body?: string },
   deps?: WriteDeps,
 ): Promise<WriteOutcome> {
-  const op: OpOf<'sprint.create'> = { op: 'sprint.create', slug: input.slug, title: input.title };
+  const op: OpOf<'sprint.create'> = {
+    op: 'sprint.create',
+    slug: input.slug,
+    title: input.title ?? input.slug,
+  };
   if (input.start !== undefined) op.start = input.start;
   if (input.end !== undefined) op.end = input.end;
   if (input.body !== undefined) op.body = input.body;

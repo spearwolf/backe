@@ -19,7 +19,7 @@ import {
 } from '../options.ts';
 import { bodyBlock, columns, fieldRows, lines, paint, safeText } from '../output.ts';
 
-type CreateOpts = { title: string; lead?: string; description?: string; file?: string };
+type CreateOpts = { title?: string; lead?: string; description?: string; file?: string };
 
 export function projectCommands(program: Command, rt: Runtime): void {
   const project = subcommand(program, 'project', 'Projekte anlegen, listen, zeigen und ändern');
@@ -29,7 +29,7 @@ export function projectCommands(program: Command, rt: Runtime): void {
     'create <pfad>',
     'Projekt anlegen; ein Unterprojekt braucht sein Elternprojekt',
   )
-    .requiredOption('-t, --title <titel>', 'Titel')
+    .option('-t, --title <titel>', 'Titel (Default: letztes Pfadsegment)')
     .option('--lead <user|me>', 'verantwortlicher User')
     .option(
       '-d, --description <md|->',
@@ -43,7 +43,7 @@ export function projectCommands(program: Command, rt: Runtime): void {
           const body = await bodyArg(env, opts);
           const r = await createProject(await env.context(), {
             path,
-            title: opts.title,
+            ...(opts.title === undefined ? {} : { title: opts.title }),
             ...(opts.lead === undefined ? {} : { lead: opts.lead }),
             ...(body === undefined ? {} : { body }),
           });

@@ -11,10 +11,14 @@ import type { WriteDeps } from './write.ts';
 
 export function createProject(
   ctx: ResolvedContext,
-  input: { path: string; title: string; lead?: string; body?: string },
+  input: { path: string; title?: string; lead?: string; body?: string },
   deps?: WriteDeps,
 ): Promise<WriteOutcome> {
-  const op: OpOf<'project.create'> = { op: 'project.create', path: input.path, title: input.title };
+  const op: OpOf<'project.create'> = {
+    op: 'project.create',
+    path: input.path,
+    title: input.title ?? input.path.split('/').at(-1) ?? input.path,
+  };
   if (input.lead !== undefined) op.lead = resolveHandle(ctx, input.lead);
   if (input.body !== undefined) op.body = input.body;
   return writeOp(ctx, () => op, deps);

@@ -67,6 +67,26 @@ async function fails(s: Setup, args: string[], code: number, errorCode: string) 
   return errorOf(r);
 }
 
+test('project create und sprint create ohne -t nehmen Pfadsegment bzw. Slug als Titel', async () => {
+  const s = await setup();
+  ok(await run(s, ['project', 'create', 'web']));
+  ok(await run(s, ['project', 'create', 'web/auth']));
+  ok(await run(s, ['sprint', 'create', '2026-w48']));
+  const projects = JSON.parse(ok(await run(s, ['project', 'list', '--json']))) as {
+    path: string;
+    title: string;
+  }[];
+  expect(projects.map((p) => [p.path, p.title])).toEqual([
+    ['web', 'web'],
+    ['web/auth', 'auth'],
+  ]);
+  const sprints = JSON.parse(ok(await run(s, ['sprint', 'list', '--json']))) as {
+    slug: string;
+    title: string;
+  }[];
+  expect(sprints.map((x) => [x.slug, x.title])).toEqual([['2026-w48', '2026-w48']]);
+});
+
 test('project create, list, show, mv, rm', async () => {
   const s = await setup();
   await writeFile(join(s.cwd, 'auth.md'), 'Login, SSO und Tokens.\n');

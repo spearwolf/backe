@@ -33,6 +33,17 @@ describe('projects', () => {
     ]);
   });
 
+  test('create without title defaults to the last path segment', async () => {
+    await createProject(ctx, { path: 'web' });
+    await createProject(ctx, { path: 'web/auth' });
+    await createProject(ctx, { path: 'web/ui', title: 'Oberfläche' });
+    expect((await listProjects(ctx)).map((p) => [p.path, p.title])).toEqual([
+      ['web', 'web'],
+      ['web/auth', 'auth'],
+      ['web/ui', 'Oberfläche'],
+    ]);
+  });
+
   test('project list counts open issues of subprojects', async () => {
     await createProject(ctx, { path: 'web', title: 'Web' });
     await createProject(ctx, { path: 'web/auth', title: 'Auth' });
