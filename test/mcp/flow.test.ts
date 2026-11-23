@@ -1,3 +1,4 @@
+import { setLocale } from '../../src/i18n/locale.ts';
 /**
  * Der Ablauf eines Agents aus backe.md §2.19 über alle Türen des MCP-Servers: anlegen, das
  * nächste Issue holen, claimen, kommentieren, in den Review schieben, nachlesen. Hintergrund-Starts
@@ -7,6 +8,10 @@ import { parseOpTrailer } from '../../src/ops/operation.ts';
 import type { SyncDeps } from '../../src/services/sync.ts';
 import { logTrailers, revParse, testBacklog } from '../helpers/git.ts';
 import { type CallResult, connectMcp } from '../helpers/mcp.ts';
+
+// Der MCP-Modus spricht immer Englisch (backe.md §2.18); `backe mcp` setzt die Locale beim Start.
+beforeAll(() => setLocale('en'));
+afterAll(() => setLocale('de'));
 
 // biome-ignore lint/suspicious/noExplicitAny: Tests greifen ohne Narrowing in das Ergebnis.
 function ok(r: CallResult): any {

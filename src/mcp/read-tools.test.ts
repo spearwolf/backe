@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { testBacklog } from '../../test/helpers/git.ts';
 import { connectMcp } from '../../test/helpers/mcp.ts';
+import { setLocale } from '../i18n/locale.ts';
 import type { Operation } from '../ops/operation.ts';
 import { addAttachment } from '../services/attachments.ts';
 import { addComment } from '../services/comments.ts';
@@ -12,6 +13,10 @@ import { listSprints, showSprint } from '../services/sprints.ts';
 import { issueListResultJson, sprintShowJson } from '../services/views.ts';
 import { executeWrite } from '../services/write.ts';
 import { BACKLOG_CONFIG, issueFile } from '../store/layout.ts';
+
+// Der MCP-Modus spricht immer Englisch (backe.md §2.18); `backe mcp` setzt die Locale beim Start.
+beforeAll(() => setLocale('en'));
+afterAll(() => setLocale('de'));
 
 const listSpy = vi.hoisted(() => vi.fn());
 const nextSpy = vi.hoisted(() => vi.fn());
@@ -76,7 +81,7 @@ test('unknown fields are usage before any service runs', () =>
     const i = await id(createIssue(await b.context(), { title: 'A' }));
     listSpy.mockClear();
     nextSpy.mockClear();
-    const usage = { error: { code: 'usage', message: 'Unbekannte Felder für --fields: »bogus«' } };
+    const usage = { error: { code: 'usage', message: "Unknown fields for --fields: 'bogus'" } };
     expect(await m.call('issue_list', { fields: ['bogus'] })).toMatchObject(usage);
     expect(await m.call('issue_next', { fields: ['bogus'] })).toMatchObject(usage);
     expect(await m.call('issue_get', { id: i, fields: ['bogus'] })).toMatchObject(usage);
@@ -194,14 +199,14 @@ test('the issue resource serves the file as markdown', () =>
     expect((r.contents[0] as { text: string }).text).toBe(file);
     expect((r.contents[0] as { text: string }).text).toContain('Text');
     await expect(m.client.readResource({ uri: 'backe://issue/zzzzzzzz' })).rejects.toThrow(
-      /Keine Issue-ID passt zu »zzzzzzzz«/,
+      /No issue ID matches 'zzzzzzzz'/,
     );
   }));
 
-test('a malformed percent encoding in the resource URI is a German validation error', () =>
+test('a malformed percent encoding in the resource URI is a validation error', () =>
   withMcp(async (m) => {
     await expect(m.client.readResource({ uri: 'backe://issue/bk-%E0%A4%A' })).rejects.toThrow(
-      'Ungültige Issue-ID in der URI: »bk-%E0%A4%A«',
+      "Invalid issue ID in the URI: 'bk-%E0%A4%A'",
     );
   }));
 

@@ -5,10 +5,15 @@
  */
 import { PassThrough } from 'node:stream';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
+import { setLocale } from '../../src/i18n/locale.ts';
 import { createBackeMcp } from '../../src/mcp/server.ts';
 import { runStdio } from '../../src/mcp/stdio.ts';
 import { catchErrAsync } from '../helpers/catch.ts';
 import { testBacklog } from '../helpers/git.ts';
+
+// Der MCP-Modus spricht immer Englisch (backe.md §2.18); `backe mcp` setzt die Locale beim Start.
+beforeAll(() => setLocale('en'));
+afterAll(() => setLocale('de'));
 
 const INITIALIZE = {
   jsonrpc: '2.0',
@@ -120,7 +125,7 @@ test('runStdio refuses to start before writing a byte', async () => {
   const t = await setup();
   const err = await catchErrAsync(() => runStdio({ ...t.opts, flags: {} }, t.io));
   expect(err.code).toBe('usage');
-  expect(err.message).toContain('Kein User aufgelöst');
+  expect(err.message).toContain('No user resolved');
   expect(t.stdout.read()).toBeNull();
 });
 

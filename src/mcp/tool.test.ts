@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { testBacklog } from '../../test/helpers/git.ts';
 import { connectServer } from '../../test/helpers/mcp.ts';
 import { BackeError } from '../core/errors.ts';
+import { setLocale } from '../i18n/locale.ts';
 import { scheduleSync } from '../services/background.ts';
 import type { SyncDeps } from '../services/sync.ts';
 import {
@@ -14,6 +15,10 @@ import {
   toolResult,
   writeQueue,
 } from './tool.ts';
+
+// Der MCP-Modus spricht immer Englisch (backe.md §2.18); `backe mcp` setzt die Locale beim Start.
+beforeAll(() => setLocale('en'));
+afterAll(() => setLocale('de'));
 
 vi.mock('../services/background.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../services/background.ts')>()),
@@ -66,7 +71,7 @@ test('an unexpected error becomes an error result without a stack', async () => 
     expect(text).not.toContain('stack');
     expect(text).not.toContain('tool.test.ts');
     expect(JSON.parse(text)).toEqual({
-      error: { code: 'unexpected', message: 'Unerwarteter Fehler: boom' },
+      error: { code: 'unexpected', message: 'Unexpected error: boom' },
     });
     expect(await m.call('fine')).toEqual({ ok: { fine: true } });
   } finally {

@@ -7,6 +7,7 @@
 import { revParse, setPullInterval, twoClones } from '../../test/helpers/git.ts';
 import { connectMcp } from '../../test/helpers/mcp.ts';
 import { git } from '../git/exec.ts';
+import { setLocale } from '../i18n/locale.ts';
 import { scheduleSync } from '../services/background.ts';
 import { isoNow } from '../services/env.ts';
 import { createIssue } from '../services/issues.ts';
@@ -15,6 +16,10 @@ import { syncNow } from '../services/sync.ts';
 import { writeSyncState } from '../services/sync-state.ts';
 import type { McpDeps } from './server.ts';
 import { startPeriodicSync, syncResult } from './sync-tools.ts';
+
+// Der MCP-Modus spricht immer Englisch (backe.md §2.18); `backe mcp` setzt die Locale beim Start.
+beforeAll(() => setLocale('en'));
+afterAll(() => setLocale('de'));
 
 vi.mock('../services/background.ts', async (orig) => {
   const actual = await orig<typeof import('../services/background.ts')>();
@@ -116,7 +121,7 @@ test('a parallel claim has exactly one winner', async () => {
     await g.atGate;
     const rb = await b.call('issue_claim', { id: x }).finally(g.release);
     expect(await ra).toMatchObject({
-      error: { code: 'conflict', message: `${x} wurde inzwischen von claude-1 übernommen` },
+      error: { code: 'conflict', message: `${x} was taken by claude-1 in the meantime` },
     });
     expect(rb).toHaveProperty('ok.commit', await remoteHead());
   });
@@ -142,7 +147,7 @@ test('issue_next with claim and an unknown field claims nothing', async () => {
   await using([m], async () => {
     const r = await m.call('issue_next', { claim: true, fields: ['id', 'bogus'] });
     expect(r).toMatchObject({
-      error: { code: 'usage', message: 'Unbekannte Felder für --fields: »bogus«' },
+      error: { code: 'usage', message: "Unknown fields for --fields: 'bogus'" },
     });
     expect(await remoteHead()).toBe(head);
     expect(await revParse(t.agent.wc, 'HEAD')).toBe(local);

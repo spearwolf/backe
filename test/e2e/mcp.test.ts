@@ -12,6 +12,7 @@ import { readSyncState, syncFile } from '../../src/services/sync-state.ts';
 import { executeWrite } from '../../src/services/write.ts';
 import { exists } from '../../src/store/files.ts';
 import { tempDir } from '../helpers/backlog.ts';
+import { findGermanLiterals } from '../helpers/german-literals.ts';
 import { type TestBacklog, testBacklog, testKey } from '../helpers/git.ts';
 import { SPEC_TOOLS } from '../helpers/mcp.ts';
 import { CLI, childEnv, cli } from './cli.ts';
@@ -46,8 +47,11 @@ function childOf(transport: StdioClientTransport): ChildProcess {
  * `backe mcp` im Backlog `b`, mit Default-Handshake oder fest auf `pin`; ohne `as` als `spw` in
  * dessen Arbeitskopie, mit `as` aus einem fremden Verzeichnis mit `-B acme`.
  */
-async function serve(b: TestBacklog, opts: { pin?: string; as?: string } = {}): Promise<Session> {
-  const env: Env = { ...b.env, BACKE_USER: opts.as ?? 'spw', NO_COLOR: '1' };
+async function serve(
+  b: TestBacklog,
+  opts: { pin?: string; as?: string; env?: Env } = {},
+): Promise<Session> {
+  const env: Env = { ...b.env, BACKE_USER: opts.as ?? 'spw', NO_COLOR: '1', ...opts.env };
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: opts.as === undefined ? [CLI, 'mcp'] : [CLI, '-B', 'acme', 'mcp'],
@@ -171,11 +175,28 @@ test('serves protocol revision 2026-07-28', async () => {
   });
 });
 
+/** Deutsche Locale ohne die deutsche Vorgabe der Testsuite: Der MCP-Modus bleibt trotzdem englisch. */
+const GERMAN: Env = { BACKE_LANG: '', LANG: 'de_DE.UTF-8' };
+
+test('mcp speaks English under a German locale: tools, errors and hints', async () => {
+  const b = await testBacklog();
+  const s = await serve(b, { env: GERMAN });
+  const { tools } = await s.client.listTools();
+  expect(tools.length).toBeGreaterThan(0);
+  const described = tools.map((t) => `'${t.description ?? ''}'`).join('\n');
+  expect(findGermanLiterals('tools', described)).toEqual([]);
+  expect(s.client.getInstructions()).toMatch(/^Results are compact JSON/);
+  await expect(s.call('issue_get', { id: 'bk-zzzzz' })).rejects.toThrow(
+    /"message":"Issue '[^']+' not found"/,
+  );
+  expect(await s.close()).toBe(0);
+});
+
 test('mcp refuses to start without an identity', async () => {
   const b = await testBacklog();
-  const r = await cli(['mcp'], { env: { ...b.env, NO_COLOR: '1' }, cwd: b.root });
+  const r = await cli(['mcp'], { env: { ...b.env, NO_COLOR: '1', ...GERMAN }, cwd: b.root });
   expect({ code: r.code, stdout: r.stdout }).toEqual({ code: 2, stdout: '' });
-  expect(r.stderr).toMatch(/^Fehler: Kein User aufgelöst/);
+  expect(r.stderr).toMatch(/^Error: No user resolved/);
 });
 
 test('mcp refuses an identity without key', async () => {
@@ -187,6 +208,6 @@ test('mcp refuses an identity without key', async () => {
     cwd: await tempDir(),
   });
   expect({ code: r.code, stdout: r.stdout }).toEqual({ code: 2, stdout: '' });
-  expect(r.stderr).toMatch(/^Fehler: Für »claude-1« ist kein Signing-Key eingetragen\n/);
-  expect(r.stderr).toContain('\nHinweis: identities.acme.claude-1 ');
+  expect(r.stderr).toMatch(/^Error: No signing key registered for 'claude-1'\n/);
+  expect(r.stderr).toContain('\nHint: Add identities.acme.claude-1 ');
 });

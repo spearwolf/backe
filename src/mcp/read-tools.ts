@@ -99,7 +99,7 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
     'issue_list',
     {
       description:
-        'Issues listen und filtern (wie backe issue list); Standard: alle offenen im Kontextfilter',
+        'List and filter issues (like backe issue list); default: all open issues within the context filter',
       input: z.strictObject({
         state: strings.optional(),
         project: strings.optional(),
@@ -131,7 +131,8 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
     env,
     'issue_get',
     {
-      description: 'Issue mit Beziehungen zeigen (wie backe issue show); Kurz-IDs sind erlaubt',
+      description:
+        'Show an issue with its relations (like backe issue show); short IDs are allowed',
       input: z.strictObject({
         id: z.string(),
         comments: z.enum(['none', 'last', 'all']).optional(),
@@ -153,7 +154,7 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
     'issue_next',
     {
       description:
-        'Nächstes Issue für mich zeigen (wie backe next); mit claim gleich übernehmen, synchron mit dem Remote',
+        'Show the next issue for me (like backe next); with claim, take it over right away, synchronously with the remote',
       input: z.strictObject({
         level: z.enum(['leaf', 'top']).optional(),
         project: z.string().optional(),
@@ -198,7 +199,7 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
     env,
     'project_list',
     {
-      description: 'Projekte mit der Zahl offener Issues (wie backe project list)',
+      description: 'Projects with their number of open issues (like backe project list)',
       input: z.strictObject({}),
       kind: 'read',
     },
@@ -210,7 +211,8 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
     env,
     'sprint_list',
     {
-      description: 'Sprints, offene zuerst, mit der Zahl offener Issues (wie backe sprint list)',
+      description:
+        'Sprints, open ones first, with their number of open issues (like backe sprint list)',
       input: z.strictObject({}),
       kind: 'read',
     },
@@ -222,7 +224,7 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
     env,
     'sprint_get',
     {
-      description: 'Issues eines Sprints, gruppiert nach State (wie backe sprint show)',
+      description: 'Issues of a sprint, grouped by state (like backe sprint show)',
       input: z.strictObject({
         slug: z.string(),
         project: strings.optional(),
@@ -249,7 +251,7 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
     env,
     'repo_locate',
     {
-      description: 'Lokaler Pfad eines Repos aus der User-Config (wie backe repo where)',
+      description: 'Local path of a repo from the user config (like backe repo where)',
       input: z.strictObject({ name: z.string() }),
       kind: 'read',
     },
@@ -262,7 +264,7 @@ export function registerReadTools(server: McpServer, env: ToolEnv): void {
     'attachment_get',
     {
       description:
-        'Anhang eines Issues holen (wie backe attach get); kleine UTF-8-Dateien kommen als text mit',
+        'Get an attachment of an issue (like backe attach get); small UTF-8 files are included as text',
       input: z.strictObject({ id: z.string(), name: z.string() }),
       kind: 'read',
     },
@@ -281,7 +283,7 @@ function decodeId(raw: string): string {
   try {
     return decodeURIComponent(raw);
   } catch {
-    throw new BackeError('validation', `Ungültige Issue-ID in der URI: »${raw}«`);
+    throw new BackeError('validation', `Invalid issue ID in the URI: '${raw}'`);
   }
 }
 
@@ -292,7 +294,7 @@ export function registerIssueResource(server: McpServer, env: ToolEnv): void {
     // Ohne `list`: ein Backlog kann zehntausende Issues haben.
     new ResourceTemplate('backe://issue/{id}', { list: undefined }),
     {
-      description: 'Issue-Datei (Frontmatter und Markdown) nach ID oder Kurz-ID',
+      description: 'Issue file (frontmatter and Markdown) by ID or short ID',
       mimeType: 'text/markdown',
     },
     async (_uri, variables) => {
