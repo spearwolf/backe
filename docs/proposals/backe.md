@@ -1,6 +1,6 @@
 # backe — Git-basiertes Backlog für Menschen und Agents
 
-> **Status: umgesetzt (M1–M8); erste Veröffentlichung steht aus.**
+> **Status: umgesetzt (M1–M8); veröffentlicht auf npm als `@spearwolf/backe` (erste Version 0.1.1).**
 > Verbindlicher Spec, beschreibt den gebauten Stand. Keine offenen Entscheidungen.
 > Bezug: — (erstes Proposal des Projekts)
 
