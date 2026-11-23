@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.1](https://github.com/spearwolf/backe/compare/v0.1.0...v0.1.1) (2026-11-23)
+
+
+### Behoben
+
+* npm-Paket heißt @spearwolf/backe ([038905c](https://github.com/spearwolf/backe/commit/038905c46480c4964a8650be3a145d8c97b31740))
+
+
+### Schneller
+
+* weniger Git-Prozesse für Zustandsverzeichnis und HEAD-Status ([246aa67](https://github.com/spearwolf/backe/commit/246aa671b8123c52f28a8f3aa6c1d494bfc17b35))
+
 ## 0.1.0 (2026-11-23)
 
 
