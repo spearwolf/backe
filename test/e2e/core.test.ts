@@ -423,7 +423,7 @@ test('issue edit --help names the editor mode and its variables', async () => {
   expect(r.code).toBe(0);
   expect(r.stderr).toBe('');
   expect(r.stdout).toContain('im Editor');
-  for (const name of ['BACKE_EDITOR', 'VISUAL', 'EDITOR']) expect(r.stdout).toContain(name);
+  expect(r.stdout).toContain('BACKE_EDITOR, sonst VISUAL, dann EDITOR');
 });
 
 test('--help and --version exit 0', async () => {
