@@ -40,6 +40,7 @@ import { firstStderrLine } from './init.ts';
 import { lfsPull, SKIP_SMUDGE } from './lfs.ts';
 import { assertVerified, trustedVerifyMode, type VerifyReport, verifyRange } from './verify.ts';
 import { parseJsoncAs } from './verify-state.ts';
+import { m } from './working-copy.messages.ts';
 
 /** Nur für Tests: läuft zwischen Clone und Abschluss. */
 export type CloneHooks = { beforeFinish?: () => Promise<void> };
@@ -73,7 +74,7 @@ async function readCloneConfig(wc: string, source: string): Promise<CloneConfig>
     text = await readFile(join(wc, BACKLOG_CONFIG), 'utf8');
   } catch (error) {
     if (!isMissing(error)) throw error;
-    throw new BackeError('validation', `${source} ist kein Backlog: ${BACKLOG_CONFIG} fehlt`);
+    throw new BackeError('validation', m.notABacklog(source, BACKLOG_CONFIG));
   }
   const result = CloneConfigSchema.safeParse(readJsonc(text, BACKLOG_CONFIG));
   if (!result.success) throw schemaError(BACKLOG_CONFIG, result.error);
@@ -84,10 +85,7 @@ async function readCloneConfig(wc: string, source: string): Promise<CloneConfig>
 async function singleRoot(wc: string, source: string): Promise<string> {
   const roots = await rootCommits(wc, 'HEAD');
   if (roots.length !== 1) {
-    throw new BackeError(
-      'verify',
-      `Historie von ${source} hat ${roots.length} Wurzel-Commits, erwartet genau einen`,
-    );
+    throw new BackeError('verify', m.rootCount(source, roots.length));
   }
   return roots[0] as string;
 }
@@ -201,7 +199,7 @@ async function gitClone(
       error instanceof BackeError &&
       (error.details as { exitCode?: number } | undefined)?.exitCode !== undefined;
     if (!ran) throw error;
-    throw new BackeError('sync', `Clone von ${source} fehlgeschlagen: ${firstStderrLine(error)}`);
+    throw new BackeError('sync', m.cloneFailed(source, firstStderrLine(error)));
   }
 }
 
@@ -245,10 +243,7 @@ async function cloneInto(input: {
   const base = trusted === undefined ? undefined : await descentBase(trusted);
   if (base !== undefined) {
     if (!(await descendsFrom(temp, base))) {
-      throw new BackeError(
-        'verify',
-        `${source} ist kein Nachfahre des zuletzt verifizierten Stands ${shortSha(base)}`,
-      );
+      throw new BackeError('verify', m.notDescendantOfVerified(source, shortSha(base)));
     }
     await writeLocalState(temp, 'verified', base);
   }
@@ -260,9 +255,7 @@ async function cloneInto(input: {
   }
   if (input.fromRemote) await writeLocalState(temp, 'upstream', await resolveCommit(temp, 'HEAD'));
   if (version > BACKLOG_FORMAT_VERSION) {
-    notices.unshift(
-      `Backlog-Format ${version} ist neuer als dieses backe (${BACKLOG_FORMAT_VERSION}); nur lesen`,
-    );
+    notices.unshift(m.formatTooNew(version, BACKLOG_FORMAT_VERSION));
   }
   return { name, notices };
 }
@@ -284,17 +277,13 @@ async function finish(homes: Homes, name: string, temp: string, target: string):
   return withFileLock(configLockPath(homes.backeHome), async () => {
     const cfg = await readUserConfig(homes.backeHome);
     if (cfg.backlogs?.[name] === undefined) {
-      throw new BackeError('conflict', `Backlog ${name} wurde während des Klonens entfernt`);
+      throw new BackeError('conflict', m.removedWhileCloning(name));
     }
     if (await exists(target)) {
       if (await isWorkingCopyOf(target, name)) return target;
-      throw new BackeError(
-        'conflict',
-        `${target} existiert, ist aber keine Arbeitskopie von ${name}`,
-        {
-          hint: `${target} prüfen und entfernen`,
-        },
-      );
+      throw new BackeError('conflict', m.targetNotAWorkingCopy(target, name), {
+        hint: m.targetNotAWorkingCopyHint(target),
+      });
     }
     await mkdir(dirname(target), { recursive: true });
     await rename(temp, target);
@@ -312,8 +301,8 @@ export async function cloneBacklog(
 ): Promise<CloneResult> {
   const { homes, env, url, handle } = input;
   if (!isHandle(handle)) {
-    throw new BackeError('validation', `Ungültiger Handle »${handle}«`, {
-      hint: 'Erlaubt sind Kleinbuchstaben, Ziffern und Bindestriche (2 bis 32 Zeichen); »me« ist reserviert.',
+    throw new BackeError('validation', m.invalidHandle(handle), {
+      hint: m.handleRules,
     });
   }
   return withTempClone(homes, async (temp) => {
@@ -325,11 +314,9 @@ export async function cloneBacklog(
       handle,
       trust: async (actual) => {
         if (input.name !== undefined && input.name !== actual) {
-          throw new BackeError(
-            'validation',
-            `Der Backlog heißt »${actual}«, nicht »${input.name}«`,
-            { hint: '--name weglassen; lokale Aliasnamen gibt es in v1 nicht.' },
-          );
+          throw new BackeError('validation', m.backlogNameMismatch(actual, input.name), {
+            hint: m.backlogNameMismatchHint('--name'),
+          });
         }
         const cfg = await readUserConfig(homes.backeHome);
         const existing = await fallbackRoot(cfg, homes, actual, undefined);
@@ -384,7 +371,7 @@ async function assertUserPushed(temp: string, reference: string, handle: string)
   const spec = `HEAD:${userFile(handle)}`;
   if ((await readBlobs(reference, [spec])).get(spec) == null) return;
   const identity = await readLocalState(reference, 'identity');
-  throw new BackeError('sync', `User ${handle} ist noch nicht gepusht`, {
+  throw new BackeError('sync', m.userNotPushed(handle), {
     hint: identity === undefined ? 'backe sync' : `backe sync --as ${identity}`,
   });
 }
@@ -407,16 +394,16 @@ export async function ensureWorkingCopy(
   if (await exists(join(wc, BACKLOG_CONFIG))) return { root: wc, notices: [] };
   const entry = ctx.userConfig.backlogs?.[name];
   if (entry?.paths?.[handle] !== undefined) {
-    throw new BackeError('not_found', `Arbeitskopie ${wc} fehlt`, {
-      hint: `backe backlog add ${name} <pfad> --as ${handle} oder paths.${handle} in ${userConfigPath(ctx.homes.backeHome)} entfernen`,
+    throw new BackeError('not_found', m.workingCopyMissing(wc), {
+      hint: m.workingCopyMissingHint(name, handle, userConfigPath(ctx.homes.backeHome)),
     });
   }
   const root = ctx.backlog.root;
   const reference =
     root !== undefined && (await exists(join(root, BACKLOG_CONFIG))) ? root : undefined;
   if (entry?.remote === undefined && reference === undefined) {
-    throw new BackeError('not_found', `Keine Quelle zum Klonen von Backlog ${name}`, {
-      hint: 'backe backlog clone <url>',
+    throw new BackeError('not_found', m.noCloneSource(name), {
+      hint: m.noCloneSourceHint,
     });
   }
   let source = entry?.remote;
@@ -446,10 +433,7 @@ export async function ensureWorkingCopy(
       handle,
       trust: async (actual) => {
         if (actual !== name) {
-          throw new BackeError(
-            'validation',
-            `${url}: gehört zum Backlog »${actual}«, erwartet wurde »${name}«`,
-          );
+          throw new BackeError('validation', m.urlBelongsToOtherBacklog(url, actual, name));
         }
         return reference;
       },
@@ -460,7 +444,7 @@ export async function ensureWorkingCopy(
       const { from, sync } = viaHub;
       const hub = await ensureHub(ctx.homes, name, from, sync);
       if (hub.created && hub.linked) {
-        created = `Lokaler Hub ${hub.hub} angelegt; ${from} synct jetzt darüber`;
+        created = m.hubCreated(hub.hub, from);
       }
       await linkToHub(temp, hub.hub, sync);
     }
@@ -484,10 +468,7 @@ export function identityMismatch(
   handle: string,
   own: string,
 ): BackeError {
-  return new BackeError(
-    'usage',
-    `Die Arbeitskopie ${wc} gehört »${identity}«; die Arbeitskopie von »${handle}« ist ${own}`,
-  );
+  return new BackeError('usage', m.workingCopyBelongsToOther(wc, identity, handle, own));
 }
 
 /**
@@ -504,16 +485,13 @@ export async function addBacklog(input: {
 }): Promise<{ root: string; notices: string[] }> {
   const { homes, name, handle } = input;
   if (!isAbsolute(input.path)) {
-    throw new BackeError('usage', `Pfad muss absolut sein: ${input.path}`);
+    throw new BackeError('usage', m.pathMustBeAbsolute(input.path));
   }
   const wanted = await physicalPath(input.path);
   const top = await gitToplevel(wanted).catch(() => undefined);
   const actual = top === wanted ? await readBacklogName(wanted) : undefined;
   if (top !== wanted || actual !== name) {
-    throw new BackeError(
-      'validation',
-      `${input.path} ist keine Arbeitskopie des Backlogs »${name}« (Git-Toplevel: ${top ?? 'keines'}, Backlog: ${actual ?? 'keiner'}, erwartet: ${wanted})`,
-    );
+    throw new BackeError('validation', m.notAWorkingCopyOf(input.path, name, top, actual, wanted));
   }
   const cfg = await readUserConfig(homes.backeHome);
   const identity = await readLocalState(wanted, 'identity');
@@ -593,13 +571,9 @@ async function assertNoBoundInManaged(homes: Homes, name: string): Promise<void>
     const path = await physicalPath(expandPath(bound, { home: homes.home, base: homes.backeHome }));
     if (path === (await physicalPath(managedClonePath(homes, name, handle)))) continue;
     if (path === managedDir || path.startsWith(managedDir + sep)) {
-      throw new BackeError(
-        'conflict',
-        `${path} ist gebunden und liegt im verwalteten Verzeichnis`,
-        {
-          hint: `paths.${handle} in ${userConfigPath(homes.backeHome)} entfernen oder den Clone verschieben`,
-        },
-      );
+      throw new BackeError('conflict', m.boundInManagedDir(path), {
+        hint: m.boundInManagedDirHint(handle, userConfigPath(homes.backeHome)),
+      });
     }
   }
 }
@@ -620,16 +594,14 @@ async function assertNothingOnlyHere(homes: Homes, name: string): Promise<void> 
     if (clone === hub) continue;
     if ((await gitToplevel(clone)) !== (await physicalPath(clone))) continue;
     const refuse = (what: string) =>
-      new BackeError('conflict', `Der verwaltete Clone »${clone}« ${what}`, {
-        hint: `backe backlog remove ${name} --purge --force löscht trotzdem`,
+      new BackeError('conflict', m.managedCloneRefused(clone, what), {
+        hint: m.purgeForceHint(name),
       });
     const remotes = (await gitRemotes(clone)).filter((r) => r.url !== hub);
-    if (remotes.length === 0) throw refuse('hat keine Remote');
+    if (remotes.length === 0) throw refuse(m.cloneHasNoRemote);
     const unpushed = await branchesWithUnpushed(clone);
     if (unpushed.length > 0) {
-      throw refuse(
-        `enthält Commits, die auf keiner Remote liegen (Branches: ${unpushed.map((b) => `»${b}«`).join(', ')})`,
-      );
+      throw refuse(m.cloneHasUnpushed(unpushed));
     }
   }
 }
@@ -658,8 +630,8 @@ export async function removeBacklog(
   return withFileLock(configLockPath(homes.backeHome), async () => {
     const cfg = await readUserConfig(homes.backeHome);
     if (cfg.backlogs?.[name] !== undefined) {
-      throw new BackeError('conflict', `Backlog ${name} wurde inzwischen neu registriert`, {
-        hint: 'backe backlog remove --purge erneut ausführen',
+      throw new BackeError('conflict', m.reregisteredMeanwhile(name), {
+        hint: m.rerunPurgeHint,
       });
     }
     if (!(await exists(managedDir))) return { purged: undefined };
@@ -685,7 +657,7 @@ export async function showBacklog(
 ): Promise<{ entry: BacklogEntry; workingCopies: WorkingCopyInfo[] }> {
   const entry = listBacklogs(cfg).find((e) => e.name === name);
   if (entry === undefined) {
-    throw new BackeError('not_found', `Backlog »${name}« ist nicht registriert`, {
+    throw new BackeError('not_found', m.backlogNotRegistered(name), {
       hint: 'backe backlog list',
     });
   }

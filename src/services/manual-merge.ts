@@ -6,6 +6,7 @@ import { BackeError } from '../core/errors.ts';
 import { readBlobs, treeChanges } from '../git/history.ts';
 import { mergeText } from '../git/merge-file.ts';
 import type { FileChange } from '../store/files.ts';
+import { m } from './manual-merge.messages.ts';
 
 /** Konfliktpfad eines `manual`-Commits; `ours` ist der aktuelle Stand (Remote), `theirs` lokal. */
 export type ManualConflictPath = {
@@ -38,11 +39,10 @@ const same = (a: Buffer | null, b: Buffer | null) =>
 const isText = (b: Buffer | null) => b === null || !b.includes(0);
 
 function manualConflict(sha: string, paths: readonly string[]): BackeError {
-  return new BackeError(
-    'conflict',
-    `Textkonflikt in manual-Commit ${sha.slice(0, 7)}: ${paths.join(', ')}`,
-    { hint: 'backe sync --interactive', details: { commit: sha, paths } },
-  );
+  return new BackeError('conflict', m.textConflict(sha.slice(0, 7), paths.join(', ')), {
+    hint: 'backe sync --interactive',
+    details: { commit: sha, paths },
+  });
 }
 
 /**

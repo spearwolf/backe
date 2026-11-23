@@ -41,6 +41,7 @@ import {
 import { overlaySource, type TreeSource } from '../store/source.ts';
 import { isoNow } from './env.ts';
 import { type ManualResolver, manualChanges } from './manual-merge.ts';
+import { m } from './replay.messages.ts';
 import type { ConflictEntry, ConflictUnit } from './sync-state.ts';
 import { loadStates, signatureCache, signatureReasons } from './verify-state.ts';
 import { manualMessage, opMessage, touches } from './write.ts';
@@ -90,8 +91,8 @@ const short = (sha: string) => sha.slice(0, 7);
 // --- Einheiten lesen ------------------------------------------------------------------------
 
 function foreign(sha: string): BackeError {
-  return new BackeError('verify', `Lokaler Commit ${short(sha)} ist nicht von backe signiert`, {
-    hint: 'backe commit --resign',
+  return new BackeError('verify', m.foreignCommit(short(sha)), {
+    hint: m.foreignCommitHint,
   });
 }
 
@@ -146,7 +147,7 @@ export async function localCommits(
   );
   const merge = commits.find((c) => c.parents.length > 1);
   if (merge !== undefined) {
-    throw new BackeError('verify', `Lokaler Commit ${short(merge.sha)} ist ein Merge-Commit`);
+    throw new BackeError('verify', m.mergeCommit(short(merge.sha)));
   }
   const parents = [...new Set(commits.flatMap((c) => c.parents))];
   const states = await loadStates(wc, parents);
@@ -410,10 +411,7 @@ export async function replayOnto(wc: string, input: ReplayInput): Promise<Replay
       if (isClaim) {
         const claim = ops.find((op) => op.op === 'issue.claim');
         if (claim === undefined) {
-          throw new BackeError(
-            'unexpected',
-            `Claim-Einheit ${short(unit.sha)} enthält kein issue.claim`,
-          );
+          throw new BackeError('unexpected', m.claimUnitWithoutClaim(short(unit.sha)));
         }
         claimLost = { id: claim.id, error: err };
         continue;
@@ -422,7 +420,7 @@ export async function replayOnto(wc: string, input: ReplayInput): Promise<Replay
         const ids = ops.map((op) => (op as { id: string }).id);
         notices.push({
           code: 'claim_lost',
-          message: `Claim ${ids.join(', ')} verloren: ${err.message}`,
+          message: m.claimLost(ids.join(', '), err.message),
           ids,
         });
         continue;

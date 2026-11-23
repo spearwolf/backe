@@ -40,6 +40,7 @@ import {
 import { authorOf, isoNow } from './env.ts';
 import { canonicalEdit } from './hand-edits.ts';
 import { type LocalCommit, localCommits, type ReplayUnit, replayOnto } from './replay.ts';
+import { m } from './resign.messages.ts';
 import { resetKeep, underWriteLock } from './sync.ts';
 import { builtCommitReasons } from './verify.ts';
 import {
@@ -134,10 +135,7 @@ async function translateCommit(b: Build, c: CommitInfo, current: string): Promis
   const raw = await treeChanges(wc, parent, c.sha);
   const odd = raw.find((r) => !REGULAR.has(r.newMode));
   if (odd !== undefined) {
-    throw new BackeError(
-      'validation',
-      `Commit ${short(c.sha)}: ${odd.path} ist keine reguläre Datei`,
-    );
+    throw new BackeError('validation', m.notRegularFile(short(c.sha), odd.path));
   }
   const paths = raw.map((r) => r.path);
   const blobs = await readBlobs(
@@ -216,15 +214,13 @@ async function replayCommit(
   } catch (err) {
     // Ein Textkonflikt eines `manual`-Commits: `sync --interactive` hilft hier nicht.
     if (!(err instanceof BackeError) || err.code !== 'conflict') throw err;
-    throw new BackeError(err.code, err.message, { hint: RESIGN_HINT, details: err.details });
+    throw new BackeError(err.code, err.message, { hint: m.resignHint, details: err.details });
   }
   const [conflict] = r.conflicts;
   if (conflict !== undefined) {
-    throw new BackeError(
-      'conflict',
-      `Lokaler Commit ${short(unit.sha)} lässt sich nach dem Neusignieren nicht mehr anwenden: ${conflict.reason.message}`,
-      { hint: RESIGN_HINT },
-    );
+    throw new BackeError('conflict', m.cannotReapply(short(unit.sha), conflict.reason.message), {
+      hint: m.resignHint,
+    });
   }
   return { head: r.head, notices: r.notices };
 }
@@ -239,12 +235,9 @@ async function localBase(wc: string): Promise<string> {
     if (ref !== undefined) return ref;
   }
   const anchor = await readLocalState(wc, 'anchor');
-  if (anchor === undefined) throw new BackeError('verify', `Kein Vertrauensanker in ${wc}`);
+  if (anchor === undefined) throw new BackeError('verify', m.noTrustAnchor(wc));
   return anchor;
 }
-
-/** Hinweis, wenn ein gültiger Commit nach einem übersetzten nicht mehr passt. */
-const RESIGN_HINT = 'Hand-Edits per backe commit neu anlegen';
 
 const kindOf = (message: string): ChainEntry['kind'] => {
   const op = parseCommitMessage(message).trailers.get(TRAILER_OP)?.[0];
@@ -272,8 +265,8 @@ export async function resignCommits(
     async () => {
       await recoverJournal(wc);
       if ((await changedEntries(wc)).length > 0) {
-        throw new BackeError('usage', '--resign geht nicht zusammen mit Hand-Edits', {
-          hint: 'erst backe commit',
+        throw new BackeError('usage', m.resignWithHandEdits('--resign'), {
+          hint: m.resignWithHandEditsHint,
         });
       }
       const config = await requireHeadConfig(wc);
@@ -281,10 +274,7 @@ export async function resignCommits(
       const ref = await localBase(wc);
       const base = await mergeBase(wc, ref, head);
       if (base === undefined) {
-        throw new BackeError(
-          'verify',
-          `HEAD hat keinen gemeinsamen Vorfahren mit ${short(ref)}; lokale Commits unbestimmbar`,
-        );
+        throw new BackeError('verify', m.noCommonAncestor(short(ref)));
       }
       const local = await localCommits(wc, { base, head }, handle);
       const first = local.findIndex((l) => l.unit === undefined);
@@ -320,11 +310,9 @@ export async function resignCommits(
         // Ab `clean`, nicht ab `start`: Ein eingefrorener Stand kann vor `start` begonnen haben.
         const reasons = await builtCommitReasons(wc, { base: start, head: current });
         if (reasons.length > 0) {
-          throw new BackeError(
-            'validation',
-            `verify würde den Commit ablehnen: ${reasons.join('; ')}`,
-            { details: { reasons } },
-          );
+          throw new BackeError('validation', m.verifyWouldReject(reasons.join('; ')), {
+            details: { reasons },
+          });
         }
       }
       await resetKeep(wc, head, current);

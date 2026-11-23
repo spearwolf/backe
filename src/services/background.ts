@@ -13,6 +13,7 @@ import { resolveCommit } from '../git/history.ts';
 import { readLocalState } from '../git/local-state.ts';
 import { exists } from '../store/files.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
+import { m } from './background.messages.ts';
 import { isoNow } from './env.ts';
 import {
   effectiveMode,
@@ -160,17 +161,13 @@ export async function syncStatus(
 ): Promise<SyncStatus> {
   const wc = ctx.backlog.workingCopy;
   if (wc === undefined) {
-    throw new BackeError(
-      'usage',
-      'Kein User aufgelöst, der Sync-Status gehört zu einer Identität',
-      {
-        hint: `--as <handle>, BACKE_USER oder »user« in ${userConfigPath(ctx.homes.backeHome)}`,
-      },
-    );
+    throw new BackeError('usage', m.noUserResolved, {
+      hint: m.noUserResolvedHint(userConfigPath(ctx.homes.backeHome)),
+    });
   }
   if (!(await exists(join(wc, BACKLOG_CONFIG)))) {
-    throw new BackeError('not_found', `Keine Arbeitskopie unter ${wc}`, {
-      hint: 'backe sync legt sie an',
+    throw new BackeError('not_found', m.noWorkingCopy(wc), {
+      hint: m.noWorkingCopyHint,
     });
   }
   const config = await requireHeadConfig(wc);
@@ -195,10 +192,10 @@ export function statusLine(s: SyncStatus): string | undefined {
   const parts: string[] = [];
   const error = s.state.last_error;
   if (s.remote !== undefined && s.unpushed > 0 && (error !== undefined || s.mode === 'manual')) {
-    parts.push(`${s.unpushed} ungepusht`);
+    parts.push(m.statusUnpushed(s.unpushed));
   }
   const n = s.conflicts.length;
-  if (n > 0) parts.push(`${n} ${n === 1 ? 'Konflikt' : 'Konflikte'}`);
-  if (error !== undefined) parts.push(`letzter Sync fehlgeschlagen: ${error.message}`);
+  if (n > 0) parts.push(m.statusConflicts(n));
+  if (error !== undefined) parts.push(m.statusLastFailed(error.message));
   return parts.length === 0 ? undefined : `Sync: ${parts.join(' · ')}`;
 }

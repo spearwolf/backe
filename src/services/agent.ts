@@ -11,6 +11,7 @@ import { BackeError } from '../core/errors.ts';
 import { shortSha } from '../core/ids.ts';
 import { isHandle } from '../core/names.ts';
 import { generateKeypair } from '../git/ssh.ts';
+import { m } from './agent.messages.ts';
 import { executeWrite, type WriteDeps } from './write.ts';
 
 export type CreateAgentInput = { handle: string; name?: string; body?: string };
@@ -21,12 +22,12 @@ export async function createAgent(
   deps?: WriteDeps,
 ): Promise<{ keyPath: string; commit: string }> {
   const { handle } = input;
-  if (!isHandle(handle)) throw new BackeError('validation', `Ungültiger Handle: »${handle}«`);
+  if (!isHandle(handle)) throw new BackeError('validation', m.invalidHandle(handle));
   const { handle: actor } = requireWriter(ctx);
   const backlog = ctx.backlog.value;
   if (ctx.userConfig.identities?.[backlog]?.[handle] !== undefined) {
-    throw new BackeError('conflict', `Für »${handle}« ist schon eine Identität eingetragen`, {
-      hint: `identities.${backlog}.${handle} in der User-Config prüfen`,
+    throw new BackeError('conflict', m.identityExists(handle), {
+      hint: m.identityExistsHint(backlog, handle),
     });
   }
   const keyPath = join(ctx.homes.backeHome, 'keys', backlog, handle);
@@ -56,20 +57,16 @@ export async function createAgent(
     throw error;
   }
   if (commit === undefined) {
-    throw new BackeError('unexpected', `Der Write für »${handle}« hat keinen Commit erzeugt`);
+    throw new BackeError('unexpected', m.writeProducedNoCommit(handle));
   }
   try {
     await setIdentity(ctx.homes, backlog, handle, keyPath);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    throw new BackeError(
-      'unexpected',
-      `Agent ${handle} ist angelegt (Commit ${shortSha(commit)}), aber die Identität konnte nicht eingetragen werden: ${reason}`,
-      {
-        hint: `identities.${backlog}.${handle}.key = ${keyPath} in ${userConfigPath(ctx.homes.backeHome)} eintragen`,
-        details: error,
-      },
-    );
+    throw new BackeError('unexpected', m.identityNotSaved(handle, shortSha(commit), reason), {
+      hint: m.identityNotSavedHint(backlog, handle, keyPath, userConfigPath(ctx.homes.backeHome)),
+      details: error,
+    });
   }
   return { keyPath, commit };
 }

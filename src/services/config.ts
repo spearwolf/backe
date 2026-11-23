@@ -14,6 +14,7 @@ import { BackeError } from '../core/errors.ts';
 import { type UserConfig, UserConfigSchema } from '../core/schemas.ts';
 import { normalizeRepoUrl } from '../core/url.ts';
 import { writeFileAtomic } from '../store/files.ts';
+import { m } from './config.messages.ts';
 
 /**
  * Spec backe.md §2.15.1 (`config`-Pfade): `a.b.c`; unter `repos.` ist der ganze Rest ein Key und
@@ -43,7 +44,7 @@ function levelOf(schema: z.core.$ZodType): Level {
 /** Top-Level-Keys der Config-Struktur (für den Abgleich mit dem Schema im Test). */
 export function configKeyShape(): Record<string, true> {
   const level = levelOf(UserConfigSchema);
-  if (level.kind !== 'object') throw new Error('UserConfigSchema ist kein Objekt');
+  if (level.kind !== 'object') throw new Error(m.schemaNotAnObject);
   return Object.fromEntries(Object.keys(level.shape).map((k) => [k, true]));
 }
 
@@ -60,25 +61,28 @@ function resolveKey(key: string, schema: z.core.$ZodType = UserConfigSchema): Re
   let level = levelOf(schema);
   const path: string[] = [];
   const unsupported = (type: string) =>
-    new BackeError('validation', `»${path.join('.')}« (${type}) wird von config nicht unterstützt`);
+    new BackeError('validation', m.unsupportedType(path.join('.'), type));
   for (const [i, segment] of segments.entries()) {
-    const prefix = path.length === 0 ? '' : ` (unter »${path.join('.')}«)`;
     if (level.kind === 'unsupported') throw unsupported(level.type);
     if (level.kind === 'leaf') {
-      throw new BackeError('validation', `»${path.join('.')}« hat keine Unterkeys`);
+      throw new BackeError('validation', m.noSubkeys(path.join('.')));
     }
     if (level.kind === 'object') {
       const next = level.shape[segment];
       if (next === undefined) {
         throw new BackeError(
           'validation',
-          `Unbekannter Key »${segment}«; erlaubt: ${Object.keys(level.shape).join(', ')}`,
+          m.unknownKey(segment, Object.keys(level.shape).join(', ')),
         );
       }
       path.push(segment);
       level = levelOf(next);
     } else {
-      if (segment === '') throw new BackeError('validation', `Leerer Key${prefix}`);
+      if (segment === '')
+        throw new BackeError(
+          'validation',
+          m.emptyKey(path.length === 0 ? undefined : path.join('.')),
+        );
       path.push(
         path.length === 1 && path[0] === 'repos' && i === 1 ? normalizeRepoUrl(segment) : segment,
       );
@@ -95,7 +99,7 @@ function resolveKey(key: string, schema: z.core.$ZodType = UserConfigSchema): Re
  */
 export function parseConfigKey(key: string, schema: z.core.$ZodType = UserConfigSchema): string[] {
   const { path, leaf } = resolveKey(key, schema);
-  if (!leaf) throw new BackeError('validation', `»${key}« ist kein setzbarer Wert`);
+  if (!leaf) throw new BackeError('validation', m.notSettable(key));
   return path;
 }
 
@@ -119,7 +123,7 @@ export async function getConfig(
   const { path } = resolveKey(key);
   const value = lookup(config, path);
   if (value === undefined) {
-    throw new BackeError('not_found', `»${key}« ist nicht gesetzt`);
+    throw new BackeError('not_found', m.notSet(key));
   }
   return { config, value };
 }
@@ -163,7 +167,7 @@ export async function editConfigText(
 
   const keepDraft = async (): Promise<string> => {
     await writeFileAtomic(draft, edited);
-    return `Dein Entwurf liegt in ${draft}`;
+    return m.draftKept(draft);
   };
 
   try {
@@ -175,13 +179,9 @@ export async function editConfigText(
 
   await withFileLock(configLockPath(homes.backeHome), async () => {
     if ((await readConfigText(file)) !== original) {
-      throw new BackeError(
-        'conflict',
-        `${file} hat sich geändert, seit der Editor gestartet wurde`,
-        {
-          hint: await keepDraft(),
-        },
-      );
+      throw new BackeError('conflict', m.changedWhileEditing(file), {
+        hint: await keepDraft(),
+      });
     }
     await writeFileAtomic(file, edited);
   });

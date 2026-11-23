@@ -35,6 +35,7 @@ import { parseEntityFile } from '../store/frontmatter.ts';
 import { readJsonc } from '../store/jsonc.ts';
 import { BACKLOG_CONFIG, classifyPath, QUARANTINE } from '../store/layout.ts';
 import { type BacklogSnapshot, loadSnapshot } from '../store/snapshot.ts';
+import { m } from './quarantine.messages.ts';
 import { blobsAt, nextCommitBasis, treeChangesWithContent } from './verify.ts';
 import { activeFingerprints, zodMessage } from './verify-state.ts';
 import { executeWrite, type WriteDeps, type WriteResult } from './write.ts';
@@ -46,7 +47,7 @@ const EMPTY = '{\n  "entries": []\n}\n';
 const parseQuarantine = (text: string): Quarantine =>
   QuarantineSchema.parse(readJsonc(text, QUARANTINE));
 
-const manual = (reason: string) => new BackeError('conflict', `Umkehr von Hand nötig: ${reason}`);
+const manual = (reason: string) => new BackeError('conflict', m.manualRevertNeeded(reason));
 
 const sameBytes = (a: Buffer | null | undefined, b: Buffer | null | undefined) =>
   (a ?? null) === (b ?? null) || (a != null && b != null && a.equals(b));
@@ -95,8 +96,8 @@ async function revertChanges(
 ): Promise<FileChange[]> {
   const { sha, parent, raw, admin, basis, checked } = ctx;
   for (const c of raw) {
-    if (['120000', '160000'].some((m) => m === c.oldMode || m === c.newMode)) {
-      throw manual(`Symlink oder Submodule ${c.path}`);
+    if (['120000', '160000'].some((mode) => mode === c.oldMode || mode === c.newMode)) {
+      throw manual(m.symlinkOrSubmodule(c.path));
     }
   }
   const paths = raw.map((c) => c.path).filter((path) => path !== QUARANTINE);
@@ -109,10 +110,7 @@ async function revertChanges(
   const parentMode = new Map(raw.map((c) => [c.path, c.oldMode]));
   const changes: FileChange[] = paths.map((path) => {
     if (!sameBytes(blobs.get(`${checked}:${path}`), blobs.get(`${sha}:${path}`))) {
-      throw new BackeError(
-        'conflict',
-        `${path} wurde nach ${shortSha(sha)} geändert; Umkehr von Hand`,
-      );
+      throw new BackeError('conflict', m.changedSince(path, shortSha(sha)));
     }
     const content = blobs.get(`${parent}:${path}`) ?? null;
     // Auch der Modus kehrt um: Ein Commit, der nur 100644 → 100755 ändert, hat gleiche Bytes.
@@ -157,7 +155,7 @@ export async function quarantineCommit(
   input: QuarantineInput,
   deps: WriteDeps = {},
 ): Promise<WriteResult> {
-  if (input.reason.trim() === '') throw new BackeError('validation', 'Grund darf nicht leer sein');
+  if (input.reason.trim() === '') throw new BackeError('validation', m.reasonEmpty);
   const { handle, key, workingCopy: wc } = requireWriter(ctx);
   // Der Stand, gegen den geprüft wird; bewegt sich HEAD bis zum Write, scheitert er (`expectHead`).
   const checked = await resolveCommit(wc, 'HEAD');
@@ -167,22 +165,22 @@ export async function quarantineCommit(
   const { state, quarantineText } = await nextCommitBasis(wc);
   const config = state.config;
   if (typeof config === 'string' || !isAdmin(config, handle, state.users.get(handle))) {
-    throw violation('policy', 'Quarantäne ändern nur Admins');
+    throw violation('policy', m.adminsOnly);
   }
   const pub = sshFingerprint(await readPublicKey(key));
   if (!activeFingerprints(state.users.get(handle)).has(pub)) {
-    throw manual(`der Signier-Key von ${handle} gilt im maßgeblichen Stand nicht`);
+    throw manual(m.signingKeyNotValid(handle));
   }
   const sha = await resolveCommit(wc, input.sha);
   if (!(await isAncestor(wc, sha, checked))) {
-    throw new BackeError('not_found', `Commit ${input.sha} liegt nicht in der Historie von HEAD`);
+    throw new BackeError('not_found', m.commitNotInHistory(input.sha));
   }
   const isRoot = (await rootCommits(wc, checked)).includes(sha);
   const parent = isRoot ? undefined : await resolveCommit(wc, `${sha}^`);
   const raw = parent === undefined ? [] : await treeChanges(wc, parent, sha);
   const text = quarantineText ?? EMPTY;
   if (parseQuarantine(text).entries.some((e) => e.sha === sha)) {
-    throw new BackeError('conflict', `Commit ${shortSha(sha)} steht schon in der Quarantäne`);
+    throw new BackeError('conflict', m.alreadyQuarantined(shortSha(sha)));
   }
   const edits = modify(
     text,
@@ -195,7 +193,7 @@ export async function quarantineCommit(
   const changes: FileChange[] = [{ path: QUARANTINE, content: next }];
   if (input.decision === 'reverted') {
     if (parent === undefined) {
-      throw new BackeError('conflict', 'Der Vertrauensanker lässt sich nicht umkehren');
+      throw new BackeError('conflict', m.anchorNotRevertible);
     }
     const basis = { config, users: state.users };
     changes.push(
