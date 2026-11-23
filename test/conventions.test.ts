@@ -138,7 +138,7 @@ test('flag names are not quoted', async () => {
  * Bereiche, deren Texte noch nicht in Katalogen liegen (Pfadpräfixe relativ zu `src/`). Jeder
  * migrierte Bereich fällt heraus; danach entfällt die Liste.
  */
-const PENDING = ['core/', 'mcp/', 'ops/', 'services/', 'store/'];
+const PENDING = ['core/', 'mcp/', 'ops/', 'services/commit.ts', 'store/'];
 
 /** Dateien mit gewolltem deutschen Text außerhalb eines Katalogs, mit dem Grund. */
 const GERMAN_ALLOWED: Record<string, string> = {};
