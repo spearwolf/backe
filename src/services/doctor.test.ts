@@ -259,12 +259,14 @@ describe('runDoctor', () => {
     expect(one(checks, 'identity').status).toBe('warn');
   });
 
-  test('identity fails instead of aborting when the working copy git config is broken', async () => {
+  test('identity fails instead of aborting when the local state cannot be read', async () => {
     const start = await input();
-    await writeFile(join(b.root, '.git/config'), '[broken\n');
+    const identity = join(b.root, '.git/backe/identity');
+    await rm(identity, { force: true });
+    await mkdir(identity);
     const checks = await runDoctor(start, deps());
     expect(one(checks, 'identity')).toMatchObject({ status: 'fail' });
-    expect(one(checks, 'identity').detail).toMatch(/config/);
+    expect(one(checks, 'identity').detail).toMatch(/EISDIR/);
   });
 
   test('lfs-rule warns about a missing rule and a missing local filter', async () => {

@@ -18,19 +18,20 @@ const OPERATION_MARKERS: readonly (readonly [string, Operation])[] = [
   ['REVERT_HEAD', 'revert'],
 ];
 
-async function gitPath(wc: string, name: string): Promise<string> {
-  const { stdout } = await git(['rev-parse', '--path-format=absolute', '--git-path', name], {
-    cwd: wc,
-  });
-  return stdout.replace(/\n$/, '');
+/** Absolute Pfade aller Marker in der Reihenfolge von `OPERATION_MARKERS`, mit einem Git-Aufruf. */
+async function markerPaths(wc: string): Promise<string[]> {
+  const args = OPERATION_MARKERS.flatMap(([marker]) => ['--git-path', marker]);
+  const { stdout } = await git(['rev-parse', '--path-format=absolute', ...args], { cwd: wc });
+  return stdout.replace(/\n$/, '').split('\n');
 }
 
 export async function headState(wc: string): Promise<HeadState> {
   const sym = await git(['symbolic-ref', '-q', '--short', 'HEAD'], { cwd: wc, okExitCodes: [1] });
   const rev = await git(['rev-parse', '-q', '--verify', 'HEAD'], { cwd: wc, okExitCodes: [1] });
+  const paths = await markerPaths(wc);
   let operation: Operation | undefined;
-  for (const [marker, op] of OPERATION_MARKERS) {
-    if (await exists(await gitPath(wc, marker))) {
+  for (const [i, [, op]] of OPERATION_MARKERS.entries()) {
+    if (await exists(paths[i] as string)) {
       operation = op;
       break;
     }

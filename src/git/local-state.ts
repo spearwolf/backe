@@ -1,5 +1,5 @@
-import { mkdir, readFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readFile, rm, stat } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { isMissing, writeFileAtomic } from '../store/files.ts';
 import { git } from './exec.ts';
 
@@ -14,6 +14,44 @@ import { git } from './exec.ts';
 export type LocalStateName = 'anchor' | 'verified' | 'clean' | 'identity' | 'upstream' | 'warned';
 
 /**
+ * Kennung von `<wc>/.git`, an der ein Cache-Eintrag hängt: dasselbe Verzeichnis liefert immer
+ * dasselbe Git-Dir; eine `.git`-Datei (Worktree, `--separate-git-dir`) kann git an Ort und Stelle
+ * umschreiben, deshalb zählt dort auch die mtime. Die mtime eines Verzeichnisses ändert sich bei
+ * jedem Commit und taugt dort nicht.
+ */
+async function dotGitId(wc: string): Promise<string | undefined> {
+  try {
+    const st = await stat(join(wc, '.git'));
+    return st.isFile() ? `f:${st.dev}:${st.ino}:${st.mtimeMs}` : `d:${st.dev}:${st.ino}`;
+  } catch {
+    // Kein `.git` direkt unter `wc` (Unterverzeichnis, kein Repo) oder nicht lesbar: git fragen.
+    return undefined;
+  }
+}
+
+/**
+ * Zuletzt aufgelöstes Zustandsverzeichnis je Arbeitskopie. Fast jeder Zugriff auf den lokalen
+ * Zustand fragt danach; ohne Cache startete jeder ein eigenes `git rev-parse`. Ein Eintrag gilt nur,
+ * solange `<wc>/.git` dieselbe Kennung trägt — ersetzt ein Klon am selben Pfad einen Worktree,
+ * fragt der nächste Aufruf git neu.
+ */
+const stateDirs = new Map<string, { id: string; dir: string }>();
+
+async function resolveStateDir(wc: string): Promise<string> {
+  const key = resolve(wc);
+  const id = await dotGitId(key);
+  const cached = stateDirs.get(key);
+  if (id !== undefined && cached?.id === id) return cached.dir;
+  const { stdout } = await git(['rev-parse', '--path-format=absolute', '--git-path', 'backe'], {
+    cwd: wc,
+  });
+  const dir = stdout.replace(/\n$/, '');
+  if (id === undefined) stateDirs.delete(key);
+  else stateDirs.set(key, { id, dir });
+  return dir;
+}
+
+/**
  * Zustandsverzeichnis unter dem Git-Dir (auch hinter einer `.git`-Datei). `create: true` (Default)
  * legt es an; wer nur liest (`doctor`, `readLocalState`), lässt es mit `create: false` fehlen.
  */
@@ -21,10 +59,7 @@ export async function stateDir(
   wc: string,
   opts: { create: boolean } = { create: true },
 ): Promise<string> {
-  const { stdout } = await git(['rev-parse', '--path-format=absolute', '--git-path', 'backe'], {
-    cwd: wc,
-  });
-  const dir = stdout.replace(/\n$/, '');
+  const dir = await resolveStateDir(wc);
   if (opts.create) await mkdir(dir, { recursive: true });
   return dir;
 }

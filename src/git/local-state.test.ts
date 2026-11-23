@@ -1,4 +1,4 @@
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { mkdir, readFile, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { git } from './exec.ts';
@@ -27,6 +27,26 @@ describe('local state', () => {
     expect(dir.endsWith('/backe')).toBe(true);
     await writeLocalState(linked, 'anchor', 'abc');
     expect(await readFile(join(dir, 'anchor'), 'utf8')).toBe('abc\n');
+  });
+
+  test('a worktree replaced by a plain repo at the same path gets the new state dir', async () => {
+    const wc = await repo();
+    await git([...IDENT, 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: wc });
+    const path = join(await realpath(await tempDir()), 'wc');
+    await git(['worktree', 'add', '-q', '-b', 'other', path], { cwd: wc });
+    expect((await stateDir(path)).startsWith(`${join(wc, '.git', 'worktrees')}/`)).toBe(true);
+
+    await git(['worktree', 'remove', path], { cwd: wc });
+    await git(['init', '-q', path], { cwd: wc });
+    expect(await stateDir(path)).toBe(join(path, '.git', 'backe'));
+  });
+
+  test('a subdirectory without its own .git resolves to the repo state dir', async () => {
+    const wc = await repo();
+    const sub = join(wc, 'sub');
+    await mkdir(sub);
+    expect(await stateDir(sub, { create: false })).toBe(join(wc, '.git', 'backe'));
+    expect(await stateDir(sub, { create: false })).toBe(join(wc, '.git', 'backe'));
   });
 
   test('reading a missing state file yields undefined', async () => {
