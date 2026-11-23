@@ -15,20 +15,28 @@ on:
 permissions: {}
 
 jobs:
+  # Schreibt mit dem Token der GitHub App statt mit GITHUB_TOKEN: Einen PR, den GITHUB_TOKEN
+  # anlegt oder aktualisiert, prüft die CI erst nach manueller Freigabe.
   release-please:
     if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
+    permissions: {}
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
       version: ${{ steps.release.outputs.version }}
     steps:
+      - id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
       - id: release
         uses: googleapis/release-please-action@v5
         with:
+          token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
