@@ -8,8 +8,9 @@ import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import type { Env } from '../../src/context/paths.ts';
 import { managedClonePath, setIdentity } from '../../src/context/registry.ts';
-import { readSyncState } from '../../src/services/sync-state.ts';
+import { readSyncState, syncFile } from '../../src/services/sync-state.ts';
 import { executeWrite } from '../../src/services/write.ts';
+import { exists } from '../../src/store/files.ts';
 import { tempDir } from '../helpers/backlog.ts';
 import { type TestBacklog, testBacklog, testKey } from '../helpers/git.ts';
 import { SPEC_TOOLS } from '../helpers/mcp.ts';
@@ -124,6 +125,14 @@ test('stdout carries only JSON-RPC when a write clones through the hub and start
   const s = await serve(b, { as: 'claude-1' });
   const created = await s.call('issue_create', { title: 'Vom Agent' });
   expect(created.notices).toEqual([expect.objectContaining({ code: 'hub_created' })]);
+  // Genau ein Hintergrund-Sync: Der zweite Write soll keinen weiteren Prozess starten, der nach
+  // dem Ende des Tests noch in die Arbeitskopie schreibt (das Aufräumen scheitert sonst an
+  // ENOTEMPTY). Der Server liest die User-Config bei jedem Aufruf neu.
+  const manual = await cli(['config', 'set', 'backlogs.acme.sync.mode', 'manual'], {
+    env: { ...b.env, BACKE_USER: 'claude-1', NO_COLOR: '1' },
+    cwd: b.root,
+  });
+  expect({ code: manual.code, stderr: manual.stderr }).toEqual({ code: 0, stderr: '' });
   expect(await s.call('comment_add', { id: created.id, body: 'zweiter Write' })).toHaveProperty(
     'id',
     created.id,
@@ -134,11 +143,17 @@ test('stdout carries only JSON-RPC when a write clones through the hub and start
     errors: [],
     stderr: '',
   });
-  // Der Hintergrund-Sync lief als eigener Prozess und hat seine Runde ins Log geschrieben.
+  // Der Hintergrund-Sync lief als eigener Prozess, hat seine Runde abgeschlossen und `sync.lock`
+  // freigegeben; danach legt er in der Arbeitskopie nichts mehr an.
   const wc = managedClonePath(b.homes, 'acme', 'claude-1');
-  await vi.waitFor(async () => expect((await readSyncState(wc)).last_success).toBeDefined(), {
-    timeout: 20_000,
-  });
+  const lock = await syncFile(wc, 'sync.lock');
+  await vi.waitFor(
+    async () => {
+      expect((await readSyncState(wc)).last_success).toBeDefined();
+      expect(await exists(lock)).toBe(false);
+    },
+    { timeout: 20_000 },
+  );
 });
 
 test('serves protocol revision 2026-07-28', async () => {
