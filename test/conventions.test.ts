@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { findGermanLiterals } from './helpers/german-literals.ts';
 
 const SRC = join(import.meta.dirname, '..', 'src');
 /**
@@ -122,8 +123,48 @@ test('flag names are not quoted', async () => {
   for (const file of await sources(SRC)) {
     const lines = (await readFile(file, 'utf8')).split('\n');
     for (const [i, line] of lines.entries()) {
-      if (line.includes('»--')) hits.push(`${file.slice(SRC.length + 1)}:${i + 1}: ${line.trim()}`);
+      // Deutsch »--x«, Englisch '--x' (nur in Katalogen; im Code sind '--x' gewöhnliche Literale).
+      const quoted =
+        line.includes('»--') || (file.endsWith('.messages.ts') && line.includes("'--"));
+      if (quoted) hits.push(`${file.slice(SRC.length + 1)}:${i + 1}: ${line.trim()}`);
     }
+  }
+  expect(hits).toEqual([]);
+});
+
+/**
+ * Bereiche, deren Texte noch nicht in Katalogen liegen (Pfadpräfixe relativ zu `src/`). Jeder
+ * migrierte Bereich fällt heraus; danach entfällt die Liste.
+ */
+const PENDING = ['cli/', 'context/', 'core/', 'git/', 'mcp/', 'ops/', 'services/', 'store/'];
+
+/** Dateien mit gewolltem deutschen Text außerhalb eines Katalogs, mit dem Grund. */
+const GERMAN_ALLOWED: Record<string, string> = {};
+
+test('the German-literal check ignores comments and catches literals', () => {
+  const text = [
+    '// Datei fehlt',
+    '/** Zeile',
+    ' * nicht */',
+    "const a = 'ok'; // ungültig",
+    'throw new Error(`Datei fehlt`);',
+    "const b = 'Grüße';",
+    "const url = 'https://example.org'; const c = 'keine';",
+  ].join('\n');
+  expect(findGermanLiterals('x.ts', text)).toEqual([
+    'x.ts:5: throw new Error(`Datei fehlt`);',
+    "x.ts:6: const b = 'Grüße';",
+    "x.ts:7: const url = 'https://example.org'; const c = 'keine';",
+  ]);
+});
+
+test('user-facing literals live in *.messages.ts', async () => {
+  const hits: string[] = [];
+  for (const file of await sources(SRC)) {
+    const rel = file.slice(SRC.length + 1);
+    if (rel.endsWith('.messages.ts') || rel.startsWith('i18n/') || rel in GERMAN_ALLOWED) continue;
+    if (PENDING.some((prefix) => rel.startsWith(prefix))) continue;
+    hits.push(...findGermanLiterals(rel, await readFile(file, 'utf8')));
   }
   expect(hits).toEqual([]);
 });

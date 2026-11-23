@@ -36,6 +36,7 @@ import {
   trackAllDispatch,
   trackDispatch,
 } from './options.ts';
+import { m } from './output.messages.ts';
 import { exitCodeOf, type Format, renderError, resolveFormat, safeText } from './output.ts';
 
 const QUICKSTART = [
@@ -212,7 +213,7 @@ export async function run(io: CliIo): Promise<number> {
     const format = rt.state.format ?? (await fallbackFormat(io));
     if (format !== 'json' && helped !== undefined) {
       // Die Hilfe folgt der Meldung und ersetzt den Hinweis `… --help`.
-      io.stderr(`${safeText(`Fehler: ${helped.message}\n`)}\n${safeText(helped.help)}`);
+      io.stderr(`${safeText(`${m.errorPrefix} ${helped.message}\n`)}\n${safeText(helped.help)}`);
       return exitCodeOf(err);
     }
     io.stderr(renderError(err, format === 'json' ? 'json' : 'text'));

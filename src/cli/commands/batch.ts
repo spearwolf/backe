@@ -13,6 +13,7 @@ import {
   subcommand,
   text,
 } from '../options.ts';
+import { m } from '../output.messages.ts';
 import { columns, json, lines } from '../output.ts';
 
 /** Der Batch-Text aus `-f <pfad|->` oder `-` (stdin); genau eine Quelle. */
@@ -54,7 +55,7 @@ export function batchCommand(program: Command, rt: Runtime): void {
           }
           env.out(
             lines([
-              r.ops.length === 0 ? 'unverändert: batch' : summarizeBatch(r.ops),
+              r.ops.length === 0 ? `${m.unchanged} batch` : summarizeBatch(r.ops),
               ...columns(Object.entries(r.refs)),
             ]),
           );

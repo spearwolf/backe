@@ -4,6 +4,7 @@ import { tempDir } from '../../test/helpers/backlog.ts';
 import { revParse, testBacklog } from '../../test/helpers/git.ts';
 import { connectMcp } from '../../test/helpers/mcp.ts';
 import { git } from '../git/exec.ts';
+import { setLocale } from '../i18n/locale.ts';
 import { issueFile } from '../store/layout.ts';
 import { propsArgs } from './write-tools.ts';
 
@@ -130,6 +131,9 @@ test('a schema violation is rejected by the SDK with its own message', () =>
 
 test('an unknown parameter is rejected by the SDK and names the key', () =>
   withMcp(async (m, b) => {
+    // Der MCP-Modus ist englisch, auch die Schemameldungen von Zod.
+    setLocale('en');
+    onTestFinished(() => setLocale('de'));
     const head = await revParse(b.root, 'HEAD');
     const r = await m.call('issue_create', { title: 'X', project: ['p'] });
     expect(r).toMatchObject({ error: { code: 'protocol' } });
