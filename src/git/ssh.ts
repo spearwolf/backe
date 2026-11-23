@@ -4,6 +4,7 @@ import { BackeError } from '../core/errors.ts';
 import { parseSshPublicKey } from '../core/ssh.ts';
 import { exists, isMissing } from '../store/files.ts';
 import { sshKeygen } from './exec.ts';
+import { m } from './ssh.messages.ts';
 
 async function readText(path: string): Promise<string | undefined> {
   try {
@@ -38,17 +39,15 @@ async function deriveFromPrivateKey(keyPath: string): Promise<string> {
     if (firstLine(stderr) === '') {
       throw new BackeError(
         'validation',
-        `Key »${keyPath}« ist nicht lesbar (ssh-keygen ohne Ausgabe, Exit ${String(details?.exitCode)})`,
+        m.keyUnreadableNoOutput(keyPath, String(details?.exitCode)),
       );
     }
     if (/passphrase/i.test(stderr)) {
-      throw new BackeError(
-        'usage',
-        `Key »${keyPath}« ist verschlüsselt und hat keine ».pub« daneben`,
-        { hint: `ssh-keygen -y -f ${keyPath} > ${keyPath}.pub` },
-      );
+      throw new BackeError('usage', m.keyEncrypted(keyPath), {
+        hint: `ssh-keygen -y -f ${keyPath} > ${keyPath}.pub`,
+      });
     }
-    throw new BackeError('validation', `Key »${keyPath}« ist nicht lesbar: ${firstLine(stderr)}`);
+    throw new BackeError('validation', m.keyUnreadable(keyPath, firstLine(stderr)));
   }
 }
 
@@ -56,7 +55,7 @@ async function deriveFromPrivateKey(keyPath: string): Promise<string> {
 export async function readPublicKey(keyPath: string): Promise<string> {
   const own = await readText(keyPath);
   if (own === undefined) {
-    throw new BackeError('not_found', `Key-Datei nicht gefunden: ${keyPath}`);
+    throw new BackeError('not_found', m.keyFileNotFound(keyPath));
   }
   let line = firstLine(own);
   if (!line.startsWith('ssh-')) {
@@ -74,7 +73,7 @@ export async function readPublicKey(keyPath: string): Promise<string> {
 export async function generateKeypair(path: string, comment: string): Promise<string> {
   for (const file of [path, `${path}.pub`]) {
     if (await exists(file)) {
-      throw new BackeError('conflict', `Key-Datei existiert bereits: ${file}`);
+      throw new BackeError('conflict', m.keyFileExists(file));
     }
   }
   const dir = dirname(path);

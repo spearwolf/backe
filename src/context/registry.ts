@@ -4,6 +4,7 @@ import { BackeError } from '../core/errors.ts';
 import type { UserConfig } from '../core/schemas.ts';
 import { normalizeRepoUrl } from '../core/url.ts';
 import { expandPath, type Homes } from './paths.ts';
+import { m } from './registry.messages.ts';
 import { type ConfigEdit, updateUserConfig, userConfigPath } from './user-config.ts';
 
 export type BacklogEntry = {
@@ -53,7 +54,7 @@ export function workingCopyPath(
 }
 
 function unknownBacklog(name: string): BackeError {
-  return new BackeError('not_found', `Backlog »${name}« ist nicht registriert`, {
+  return new BackeError('not_found', m.backlogNotRegistered(name), {
     hint: 'backe backlog list',
   });
 }
@@ -79,24 +80,18 @@ export async function registerBacklogTracked(
   const config = await updateUserConfig(homes.backeHome, (cfg) => {
     before = cfg;
     if (path !== undefined && handle === undefined) {
-      throw new BackeError('usage', '--path braucht --user (Handle), dem der Pfad gehört');
+      throw new BackeError('usage', m.pathNeedsUser);
     }
     const existing = cfg.backlogs?.[name];
     const edits: ConfigEdit[] = [];
     if (remote !== undefined) {
       const canonical = normalizeRepoUrl(remote);
       if (existing?.remote !== undefined && normalizeRepoUrl(existing.remote) !== canonical) {
-        throw new BackeError(
-          'conflict',
-          `Backlog »${name}« ist bereits mit einer anderen Remote registriert: ${existing.remote}`,
-        );
+        throw new BackeError('conflict', m.backlogOtherRemote(name, existing.remote));
       }
       const other = findBacklogByRemote(cfg, remote);
       if (other !== undefined && other !== name) {
-        throw new BackeError(
-          'conflict',
-          `Die Remote ist bereits als Backlog »${other}« registriert`,
-        );
+        throw new BackeError('conflict', m.remoteAlreadyRegistered(other));
       }
       if (existing?.remote === undefined)
         edits.push({ path: ['backlogs', name, 'remote'], value: remote });
@@ -106,13 +101,9 @@ export async function registerBacklogTracked(
       if (bound !== undefined) {
         const expand = (p: string) => expandPath(p, { home: homes.home, base: homes.backeHome });
         if (expand(bound) !== expand(path)) {
-          throw new BackeError(
-            'conflict',
-            `»${handle}« ist in ${name} schon an ${bound} gebunden`,
-            {
-              hint: `paths.${handle} in ${userConfigPath(homes.backeHome)} ändern oder entfernen`,
-            },
-          );
+          throw new BackeError('conflict', m.handleAlreadyBound(handle, name, bound), {
+            hint: m.handleAlreadyBoundHint(handle, userConfigPath(homes.backeHome)),
+          });
         }
       } else {
         edits.push({ path: ['backlogs', name, 'paths', handle], value: path });

@@ -1,6 +1,7 @@
 import { type ChildProcessWithoutNullStreams, execFileSync, spawn } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { BackeError } from '../core/errors.ts';
+import { m } from './exec.messages.ts';
 
 export type GitEnv = Readonly<Record<string, string | undefined>>;
 
@@ -25,7 +26,7 @@ type Bin = 'git' | 'ssh-keygen';
 
 function startFailure(bin: Bin, args: readonly string[], error: unknown): BackeError {
   const cause = error instanceof Error ? error.message : String(error);
-  return new BackeError('unexpected', `${bin} konnte nicht gestartet werden: ${cause}`, {
+  return new BackeError('unexpected', m.startFailed(bin, cause), {
     details: { args, cause },
   });
 }
@@ -204,20 +205,19 @@ function run(bin: Bin, args: readonly string[], opts: GitOptions): Promise<GitBy
       if (tracked !== undefined) openChildren.delete(tracked);
     };
     // Sofort ablehnen statt auf `close` zu warten: Enkelprozesse (ssh, Remote-Helper) halten die Pipes offen.
+    const { timeoutMs } = opts;
     const timer =
-      opts.timeoutMs === undefined
+      timeoutMs === undefined
         ? undefined
         : setTimeout(() => {
             if (tracked !== undefined) killTree(tracked);
             release();
             reject(
-              new BackeError(
-                'unexpected',
-                `${label(bin, args)}: Zeitüberschreitung nach ${opts.timeoutMs} ms`,
-                { details: { args, timeoutMs: opts.timeoutMs } },
-              ),
+              new BackeError('unexpected', m.timedOut(label(bin, args), timeoutMs), {
+                details: { args, timeoutMs },
+              }),
             );
-          }, opts.timeoutMs);
+          }, timeoutMs);
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout.on('data', (chunk: Buffer) => out.push(chunk));
@@ -238,13 +238,13 @@ function run(bin: Bin, args: readonly string[], opts: GitOptions): Promise<GitBy
       stat(opts.cwd).then(
         () =>
           reject(
-            new BackeError('unexpected', `${bin} nicht gefunden`, {
-              hint: `${bin === 'git' ? 'git' : 'openssh'} installieren; backe doctor prüft die Voraussetzungen.`,
+            new BackeError('unexpected', m.binNotFound(bin), {
+              hint: m.binNotFoundHint(bin === 'git' ? 'git' : 'openssh'),
             }),
           ),
         () =>
           reject(
-            new BackeError('unexpected', `Arbeitsverzeichnis nicht gefunden: ${opts.cwd}`, {
+            new BackeError('unexpected', m.cwdNotFound(opts.cwd), {
               details: { args, cwd: opts.cwd },
             }),
           ),
@@ -264,7 +264,7 @@ function run(bin: Bin, args: readonly string[], opts: GitOptions): Promise<GitBy
         reject(
           new BackeError(
             'unexpected',
-            `${label(bin, args)} durch Signal beendet (${signal ?? 'unbekannt'})`,
+            m.killedBySignal(label(bin, args), signal ?? m.unknownSignal),
             {
               details: { args, signal, stderr },
             },

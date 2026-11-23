@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BackeError } from '../core/errors.ts';
+import { m } from './commit.messages.ts';
 import { type GitEnv, git, transportEnv } from './exec.ts';
 import { stateDir } from './local-state.ts';
 
@@ -84,8 +85,8 @@ export async function signedCommit(wc: string, input: SignedCommitInput): Promis
     const failure = gitFailure(error);
     if (failure) {
       const first = (failure.stderr ?? '').split('\n')[0] ?? '';
-      throw new BackeError('usage', `Signieren mit ${input.key} fehlgeschlagen: ${first}`, {
-        hint: 'Key-Pfad in identities prüfen; ein Public Key braucht einen laufenden ssh-agent.',
+      throw new BackeError('usage', m.signingFailed(input.key, first), {
+        hint: m.signingFailedHint,
         details: failure,
       });
     }
@@ -115,7 +116,7 @@ export async function commitPaths(wc: string, input: CommitInput): Promise<strin
     await git(['add', '-A', '-f', ...pathspec], { cwd: wc, env, input: pathList(input.paths) });
     const tree = (await git(['write-tree'], { cwd: wc, env })).stdout.trim();
     if (tree === (await treeOf(wc, parent))) {
-      throw new BackeError('unexpected', 'Write ohne Änderung am Baum');
+      throw new BackeError('unexpected', m.noTreeChange);
     }
 
     const sha = await signedCommit(wc, { ...input, tree });
@@ -131,7 +132,7 @@ export async function commitPaths(wc: string, input: CommitInput): Promise<strin
           failure?.exitCode === 128 &&
           (stderr.includes('but expected') || stderr.includes('cannot lock ref'))
         ) {
-          throw new BackeError('conflict', 'HEAD hat sich während des Writes bewegt', {
+          throw new BackeError('conflict', m.headMoved, {
             details: failure,
           });
         }
