@@ -1,5 +1,6 @@
 import { randomBytes as cryptoRandomBytes } from 'node:crypto';
 import { BackeError } from './errors.ts';
+import { m } from './ids.messages.ts';
 
 export const CROCKFORD = '0123456789abcdefghjkmnpqrstvwxyz';
 
@@ -50,10 +51,7 @@ export function generateIssueId(
     const id = `${prefix}-${rand}`;
     if (!opts.exists(id)) return id;
   }
-  throw new BackeError(
-    'unexpected',
-    `Keine freie Issue-ID nach ${MAX_ID_ATTEMPTS} Versuchen gefunden`,
-  );
+  throw new BackeError('unexpected', m.noFreeId(MAX_ID_ATTEMPTS));
 }
 
 const FULL_SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
@@ -80,17 +78,14 @@ export function resolveShortId(input: string, ids: readonly string[]): string {
   const wanted = input.toLowerCase();
   if (isIssueId(wanted)) {
     if (ids.includes(wanted)) return wanted;
-    throw new BackeError('not_found', `Issue »${wanted}« nicht gefunden`);
+    throw new BackeError('not_found', m.issueNotFound(wanted));
   }
-  const notFound = () => new BackeError('not_found', `Keine Issue-ID passt zu »${input}«`);
+  const notFound = () => new BackeError('not_found', m.noIdMatches(input));
   const prefixed = /^([a-z]{2,6})-(.*)$/s.exec(wanted);
   if (prefixed !== null && !ids.some((id) => id.startsWith(`${prefixed[1]}-`))) throw notFound();
   const short = prefixed === null ? wanted : (prefixed[2] as string);
   if (short.length < MIN_SHORT_LENGTH) {
-    throw new BackeError(
-      'validation',
-      `ID-Kurzform braucht mindestens ${MIN_SHORT_LENGTH} Zeichen: »${input}«`,
-    );
+    throw new BackeError('validation', m.shortIdTooShort(MIN_SHORT_LENGTH, input));
   }
   const randomPart = (id: string) => id.slice(id.indexOf('-') + 1);
   const candidates = ids.filter((id) => randomPart(id).startsWith(short));
@@ -101,7 +96,7 @@ export function resolveShortId(input: string, ids: readonly string[]): string {
   if (candidates.length > 1) {
     const listed = candidates.slice(0, MAX_LISTED_CANDIDATES).join(', ');
     const more = candidates.length > MAX_LISTED_CANDIDATES ? ', …' : '';
-    throw new BackeError('ambiguous', `ID-Kurzform »${input}« ist mehrdeutig: ${listed}${more}`, {
+    throw new BackeError('ambiguous', m.shortIdAmbiguous(input, `${listed}${more}`), {
       details: { candidates },
     });
   }

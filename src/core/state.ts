@@ -1,4 +1,5 @@
 import { BackeError } from './errors.ts';
+import { m } from './state.messages.ts';
 
 export type State =
   | 'backlog'
@@ -39,8 +40,8 @@ export function normalizeStateInput(s: string): State {
   const snake = s.trim().replaceAll('-', '_');
   const found = ALL_STATES.find((st) => st === snake);
   if (found === undefined) {
-    throw new BackeError('validation', `Unbekannter State: »${s}«`, {
-      hint: `Erlaubt: ${ALL_STATES.join(', ')} (auch kebab-case)`,
+    throw new BackeError('validation', m.unknownState(s), {
+      hint: m.unknownStateHint(ALL_STATES.join(', ')),
     });
   }
   return found;
@@ -54,27 +55,27 @@ function isNeighbour(a: State, b: State): boolean {
 }
 
 function invalid(cur: State, to: State, why: string): BackeError {
-  return new BackeError('validation', `Übergang ${cur} -> ${to} nicht erlaubt: ${why}`);
+  return new BackeError('validation', m.transitionNotAllowed(cur, to, why));
 }
 
 function plan(cur: StateFields, opts: TransitionOpts): StateFields | null {
   const { to } = opts;
-  if (to === undefined) throw new BackeError('usage', 'Zielzustand fehlt (--to)');
+  if (to === undefined) throw new BackeError('usage', m.targetStateMissing);
   if (to === cur.state) return null;
 
   const from = cur.state;
   if (opts.blockedBy !== undefined && to !== 'blocked') {
-    throw invalid(from, to, 'blocked_by nur zusammen mit dem Ziel blocked');
+    throw invalid(from, to, m.blockedByNeedsBlocked);
   }
   if (isSettled(from)) {
-    throw invalid(from, to, `${from} ist nur über reopen verlassbar`);
+    throw invalid(from, to, m.leaveOnlyViaReopen(from));
   }
 
   if (to === 'cancelled' || to === 'rejected') return { state: to };
 
   if (to === 'blocked') {
     if (opts.blockedBy === undefined || opts.blockedBy.length === 0) {
-      throw invalid(from, to, 'blocked braucht mindestens eine ID in blocked_by');
+      throw invalid(from, to, m.blockedNeedsId);
     }
     const origin = isPaused(from) ? cur.paused_from : from;
     return {
@@ -92,13 +93,12 @@ function plan(cur: StateFields, opts: TransitionOpts): StateFields | null {
   // Ziel ist ein Hauptlinien-Zustand.
   if (opts.strict) {
     if (isMain(from)) {
-      if (!isNeighbour(from, to))
-        throw invalid(from, to, 'strict erlaubt nur den direkten Nachbarn');
+      if (!isNeighbour(from, to)) throw invalid(from, to, m.strictNeighbourOnly);
     } else {
       const anchor = cur.paused_from;
-      if (anchor === undefined) throw invalid(from, to, 'paused_from fehlt');
+      if (anchor === undefined) throw invalid(from, to, m.pausedFromMissing);
       if (to !== anchor && !isNeighbour(anchor, to)) {
-        throw invalid(from, to, `strict erlaubt nur paused_from (${anchor}) oder dessen Nachbarn`);
+        throw invalid(from, to, m.strictPausedFromOrNeighbour(anchor));
       }
     }
   }
@@ -116,28 +116,19 @@ export function planTransition(
     case 'claim':
       if (cur.state === 'in_progress') return null;
       if (cur.state === 'backlog' || cur.state === 'todo') return { state: 'in_progress' };
-      throw new BackeError('validation', `claim aus ${cur.state} nicht möglich`);
+      throw new BackeError('validation', m.claimImpossible(cur.state));
     case 'resume':
       if (!isPaused(cur.state))
-        throw new BackeError(
-          'validation',
-          `resume nur aus blocked/on_hold, nicht aus ${cur.state}`,
-        );
+        throw new BackeError('validation', m.resumeOnlyFromPaused(cur.state));
       if (cur.paused_from === undefined)
-        throw new BackeError('validation', 'paused_from fehlt, resume nicht möglich');
+        throw new BackeError('validation', m.resumeWithoutPausedFrom);
       return { state: cur.paused_from };
     case 'reopen': {
       if (!isSettled(cur.state))
-        throw new BackeError(
-          'validation',
-          `reopen nur aus done/cancelled/rejected, nicht aus ${cur.state}`,
-        );
+        throw new BackeError('validation', m.reopenOnlyFromSettled(cur.state));
       const to = opts.to ?? 'backlog';
       if (!isMain(to) || to === 'done') {
-        throw new BackeError(
-          'validation',
-          `reopen-Ziel muss ein Hauptlinien-Zustand außer done sein, nicht ${to}`,
-        );
+        throw new BackeError('validation', m.reopenTargetInvalid(to));
       }
       return { state: to };
     }

@@ -2,7 +2,9 @@
  * `issue.delete` (backe.md §2.6 »Letzter Blocker gelöscht«, §2.17): Sub-Issues und Verweise auf
  * die gelöschten Issues aufräumen, bevor deren Verzeichnisse entfallen.
  */
+
 import type { Issue } from '../core/schemas.ts';
+import { m } from './delete-op.messages.ts';
 import type { Draft } from './draft.ts';
 import { graphOf } from './graph.ts';
 import { violation } from './invariants.ts';
@@ -33,9 +35,9 @@ export function issueDelete(d: Draft, op: OpOf<'issue.delete'>): OpOf<'issue.del
   d.issue(op.id);
   const direct = [...(graphOf(d.snapshot).children.get(op.id) ?? [])].sort();
   if (direct.length > 0 && op.children === undefined) {
-    throw violation('has_children', `${op.id} hat Sub-Issues: ${direct.join(', ')}`, {
+    throw violation('has_children', m.hasChildren(op.id, direct.join(', ')), {
       ids: direct,
-      hint: 'Mit --orphan lösen sich die Sub-Issues vom Parent, mit --recursive werden sie mitgelöscht.',
+      hint: m.hasChildrenHint,
     });
   }
   const doomed = deletedSet(d, op.id, op.children === 'recursive');
@@ -56,8 +58,8 @@ export function issueDelete(d: Draft, op: OpOf<'issue.delete'>): OpOf<'issue.del
   if (referencing.length > 0 && op.force !== true) {
     throw violation(
       'references',
-      `${[...doomed].sort().join(', ')} wird noch referenziert von ${referencing.join(', ')}`,
-      { ids: referencing, hint: 'Mit --force werden die Verweise entfernt.' },
+      m.stillReferenced([...doomed].sort().join(', '), referencing.join(', ')),
+      { ids: referencing, hint: m.stillReferencedHint },
     );
   }
 
@@ -91,7 +93,7 @@ export function issueDelete(d: Draft, op: OpOf<'issue.delete'>): OpOf<'issue.del
     const ids = onHold.map((h) => h.id);
     d.notice({
       code: 'blocker_deleted',
-      message: `${op.id}: letzter Blocker gelöscht, auf on_hold gesetzt: ${ids.join(', ')}`,
+      message: m.lastBlockerDeleted(op.id, ids.join(', ')),
       ids,
     });
   }

@@ -12,7 +12,7 @@ const STRAIGHT_QUOTED_VALUE = /"\$\{[^}]+\}"/;
 
 /** Dateien, in denen `"${…}"` gewollt ist, mit dem Grund. */
 const ALLOWED: Record<string, string> = {
-  'store/frontmatter.ts':
+  'store/frontmatter.messages.ts':
     'der Hinweis zeigt buchstäblich, wie ein Zahlenwert in YAML mit Anführungszeichen zu schreiben ist',
 };
 
@@ -138,10 +138,13 @@ test('flag names are not quoted', async () => {
  * Bereiche, deren Texte noch nicht in Katalogen liegen (Pfadpräfixe relativ zu `src/`). Jeder
  * migrierte Bereich fällt heraus; danach entfällt die Liste.
  */
-const PENDING = ['core/', 'mcp/', 'ops/', 'services/commit.ts', 'store/'];
+const PENDING = ['mcp/', 'services/commit.ts'];
 
 /** Dateien mit gewolltem deutschen Text außerhalb eines Katalogs, mit dem Grund. */
-const GERMAN_ALLOWED: Record<string, string> = {};
+const GERMAN_ALLOWED: Record<string, string> = {
+  'ops/delete-op.ts':
+    'der Text des Transition-Kommentars ist Backlog-Inhalt, kein Ausgabetext: er steht in der Datei und muss beim Replay auf jedem Rechner gleich entstehen, egal in welcher Sprache der Akteur arbeitet',
+};
 
 test('the German-literal check ignores comments and catches literals', () => {
   const text = [

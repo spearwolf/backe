@@ -3,10 +3,12 @@
  * Zyklen, Bereitschaft und Belegung. Alles iterativ — die Stack-Tiefe hängt nicht an der
  * Kettenlänge.
  */
+
 import { BackeError } from '../core/errors.ts';
 import type { Issue } from '../core/schemas.ts';
 import { isSettled } from '../core/state.ts';
 import type { BacklogSnapshot, StoredEntity } from '../store/snapshot.ts';
+import { m } from './graph.messages.ts';
 import { LayeredMap } from './layered-map.ts';
 import { compareIssues } from './order.ts';
 
@@ -175,7 +177,7 @@ class OverriddenMap implements ReadonlyMap<string, readonly string[]> {
 
 function lookup(s: BacklogSnapshot, id: string): Issue {
   const found = s.issues.get(id);
-  if (!found) throw new BackeError('not_found', `Issue ${id} nicht gefunden`);
+  if (!found) throw new BackeError('not_found', m.issueNotFound(id));
   return found.data;
 }
 

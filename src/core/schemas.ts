@@ -15,6 +15,7 @@ import {
   REPO_NAME_RE,
   SPRINT_SLUG_RE,
 } from './names.ts';
+import { m } from './schemas.messages.ts';
 import { parseSshPublicKey } from './ssh.ts';
 import type { State } from './state.ts';
 import { normalizeRepoUrl } from './url.ts';
@@ -66,12 +67,10 @@ const PausedFromSchema = z.enum(['backlog', 'todo', 'in_progress', 'review']);
 
 const nonEmpty = z.string().min(1);
 /** Als `regex`, nicht als `refine`, damit das Muster ins JSON Schema übernommen wird. */
-const BacklogName = z.string().regex(BACKLOG_NAME_RE, 'ungültiger Backlog-Name');
-const GitArg = z
-  .string()
-  .regex(GIT_ARG_RE, 'nicht leer, ohne führendes "-", ohne Leer- und Steuerzeichen erwartet');
-const Handle = z.string().regex(HANDLE_PATTERN, 'kein gültiger Handle');
-const IssueIdSchema = z.string().refine((s) => isIssueId(s), 'keine gültige Issue-ID');
+const BacklogName = z.string().regex(BACKLOG_NAME_RE, { error: () => m.invalidBacklogName });
+const GitArg = z.string().regex(GIT_ARG_RE, { error: () => m.gitArgExpected });
+const Handle = z.string().regex(HANDLE_PATTERN, { error: () => m.invalidHandle });
+const IssueIdSchema = z.string().refine((s) => isIssueId(s), { error: () => m.invalidIssueId });
 
 const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -88,16 +87,13 @@ function isRealDate(s: string): boolean {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 }
 
-const Timestamp = z
-  .string()
-  .refine(isRealTimestamp, 'erwartet UTC-Zeitstempel YYYY-MM-DDTHH:MM:SSZ');
-const DateOnly = z.string().refine(isRealDate, 'erwartet Datum YYYY-MM-DD');
+const Timestamp = z.string().refine(isRealTimestamp, { error: () => m.timestampExpected });
+const DateOnly = z.string().refine(isRealDate, { error: () => m.dateExpected });
 
 /** Liste ohne Duplikate. */
 function uniqueList<T extends z.ZodType<string>>(item: T) {
   return z.array(item).superRefine((list, ctx) => {
-    if (new Set(list).size !== list.length)
-      ctx.addIssue({ code: 'custom', message: 'enthält Duplikate' });
+    if (new Set(list).size !== list.length) ctx.addIssue({ code: 'custom', message: m.duplicates });
   });
 }
 
@@ -105,7 +101,7 @@ const SSH_KEY_RE = /^ssh-ed25519 [A-Za-z0-9+/]+={0,2}( [^\r\n]*)?$/;
 /** Form per Regex, Inhalt per `parseSshPublicKey`: ein Key im Schema ist für `sameKey` und `sshFingerprint` lesbar. */
 const SshKey = z
   .string()
-  .refine((s) => SSH_KEY_RE.test(s), 'erwartet "ssh-ed25519 <base64> [kommentar]"')
+  .refine((s) => SSH_KEY_RE.test(s), { error: () => m.sshKeyExpected })
   .superRefine((s, ctx) => {
     if (!SSH_KEY_RE.test(s)) return;
     try {
@@ -123,7 +119,7 @@ export type PropValue = string | number | boolean | PropValue[] | { [key: string
 const PropValueSchema: z.ZodType<PropValue> = z.lazy(() =>
   z.union([
     z.string(),
-    z.number().refine((v) => !Object.is(v, -0), '-0 ist kein gültiger Wert'),
+    z.number().refine((v) => !Object.is(v, -0), { error: () => m.minusZero }),
     z.boolean(),
     z.array(PropValueSchema),
     z.record(z.string(), PropValueSchema),
@@ -133,7 +129,7 @@ const PropValueSchema: z.ZodType<PropValue> = z.lazy(() =>
 const PropsSchema = z.record(z.string(), PropValueSchema).superRefine((props, ctx) => {
   for (const k of Object.keys(props)) {
     if (!PROP_KEY_RE.test(k))
-      ctx.addIssue({ code: 'custom', path: [k], message: 'ungültiger Property-Key' });
+      ctx.addIssue({ code: 'custom', path: [k], message: m.invalidPropKey });
   }
 });
 
@@ -141,20 +137,20 @@ const PropsSchema = z.record(z.string(), PropValueSchema).superRefine((props, ct
 
 const AttachmentSchema = z
   .strictObject({
-    name: z.string().regex(ATTACHMENT_NAME_RE, 'ungültiger Anhangsname'),
+    name: z.string().regex(ATTACHMENT_NAME_RE, { error: () => m.invalidAttachmentName }),
     file: z
       .string()
       .min(1)
-      .refine((s) => !s.includes('/'), 'Dateiname ohne "/"')
+      .refine((s) => !s.includes('/'), { error: () => m.fileNameNoSlash })
       .optional(),
     url: z
       .string()
-      .refine((s) => /^https?:\/\/./.test(s), 'erwartet http(s)-URL')
+      .refine((s) => /^https?:\/\/./.test(s), { error: () => m.httpUrlExpected })
       .optional(),
   })
   .superRefine((a, ctx) => {
     if ((a.file === undefined) === (a.url === undefined)) {
-      ctx.addIssue({ code: 'custom', message: 'genau eines von "file" oder "url" erwartet' });
+      ctx.addIssue({ code: 'custom', message: m.fileOrUrl });
     }
   })
   // Die Prüfung davor garantiert genau eins von beiden; der Typ hält das fest.
@@ -167,8 +163,8 @@ export type Attachment =
 
 const Title = z
   .string()
-  .refine((s) => s.length > 0 && [...s].length <= 200, '1 bis 200 Zeichen erwartet')
-  .refine((s) => !/[\r\n]/.test(s), 'muss einzeilig sein');
+  .refine((s) => s.length > 0 && [...s].length <= 200, { error: () => m.titleLength })
+  .refine((s) => !/[\r\n]/.test(s), { error: () => m.titleSingleLine });
 
 export const IssueSchema = z
   .object({
@@ -182,24 +178,31 @@ export const IssueSchema = z
     rank: z.number().int().optional(),
     creator: Handle,
     assignee: Handle.optional(),
-    projects: uniqueList(z.string().refine(isProjectPath, 'kein gültiger Projekt-Pfad')).optional(),
-    sprints: uniqueList(z.string().refine(isSprintSlug, 'kein gültiger Sprint-Slug')).optional(),
+    projects: uniqueList(
+      z.string().refine(isProjectPath, { error: () => m.invalidProjectPath }),
+    ).optional(),
+    sprints: uniqueList(
+      z.string().refine(isSprintSlug, { error: () => m.invalidSprintSlug }),
+    ).optional(),
     repos: uniqueList(
-      z.string().refine((s) => {
-        try {
-          parseRepoRef(s);
-          return true;
-        } catch {
-          return false;
-        }
-      }, 'erwartet "name" oder "name@ref"'),
+      z.string().refine(
+        (s) => {
+          try {
+            parseRepoRef(s);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        { error: () => m.repoRefExpected },
+      ),
     ).optional(),
     attachments: z
       .array(AttachmentSchema)
       .superRefine((list, ctx) => {
         const names = list.map((a) => a.name);
         if (new Set(names).size !== names.length) {
-          ctx.addIssue({ code: 'custom', message: 'Anhangsnamen müssen eindeutig sein' });
+          ctx.addIssue({ code: 'custom', message: m.attachmentNamesUnique });
         }
       })
       .optional(),
@@ -213,45 +216,45 @@ export const IssueSchema = z
         ctx.addIssue({
           code: 'custom',
           path: ['blocked_by'],
-          message: 'bei state "blocked" mindestens eine ID erforderlich',
+          message: m.blockedNeedsId,
         });
       }
     } else if (issue.blocked_by !== undefined) {
       ctx.addIssue({
         code: 'custom',
         path: ['blocked_by'],
-        message: 'nur bei state "blocked" erlaubt',
+        message: m.blockedByOnlyBlocked,
       });
     }
     if (paused && issue.paused_from === undefined) {
       ctx.addIssue({
         code: 'custom',
         path: ['paused_from'],
-        message: 'bei "blocked"/"on_hold" erforderlich',
+        message: m.pausedFromRequired,
       });
     } else if (!paused && issue.paused_from !== undefined) {
       ctx.addIssue({
         code: 'custom',
         path: ['paused_from'],
-        message: 'nur bei "blocked"/"on_hold" erlaubt',
+        message: m.pausedFromOnlyPaused,
       });
     }
     if (issue.blocked_by?.includes(issue.id)) {
       ctx.addIssue({
         code: 'custom',
         path: ['blocked_by'],
-        message: 'darf nicht die eigene ID enthalten',
+        message: m.mustNotContainOwnId,
       });
     }
     if (issue.depends_on?.includes(issue.id)) {
       ctx.addIssue({
         code: 'custom',
         path: ['depends_on'],
-        message: 'darf nicht die eigene ID enthalten',
+        message: m.mustNotContainOwnId,
       });
     }
     if (issue.parent === issue.id) {
-      ctx.addIssue({ code: 'custom', path: ['parent'], message: 'darf nicht die eigene ID sein' });
+      ctx.addIssue({ code: 'custom', path: ['parent'], message: m.mustNotBeOwnId });
     }
   });
 
@@ -269,9 +272,9 @@ export const CommentSchema = z
     const transition = c.kind === 'transition';
     for (const k of ['from', 'to'] as const) {
       if (transition && c[k] === undefined) {
-        ctx.addIssue({ code: 'custom', path: [k], message: 'bei kind "transition" erforderlich' });
+        ctx.addIssue({ code: 'custom', path: [k], message: m.transitionRequired });
       } else if (!transition && c[k] !== undefined) {
-        ctx.addIssue({ code: 'custom', path: [k], message: 'nur bei kind "transition" erlaubt' });
+        ctx.addIssue({ code: 'custom', path: [k], message: m.transitionOnly });
       }
     }
   });
@@ -289,13 +292,13 @@ export const UserSchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['operator'],
-        message: 'bei kind "agent" erforderlich',
+        message: m.operatorRequired,
       });
     } else if (u.kind === 'human' && u.operator !== undefined) {
       ctx.addIssue({
         code: 'custom',
         path: ['operator'],
-        message: 'bei kind "human" nicht erlaubt',
+        message: m.operatorForbidden,
       });
     }
   });
@@ -317,20 +320,23 @@ export const SprintSchema = z
       isRealDate(s.end) &&
       s.end < s.start
     ) {
-      ctx.addIssue({ code: 'custom', path: ['end'], message: 'darf nicht vor "start" liegen' });
+      ctx.addIssue({ code: 'custom', path: ['end'], message: m.endBeforeStart });
     }
   });
 
 export const RepoSchema = z.object({
-  url: z.string().refine((s) => {
-    try {
-      normalizeRepoUrl(s);
-      return true;
-    } catch {
-      return false;
-    }
-  }, 'keine gültige Repo-URL'),
-  default_ref: GitArg.refine(isGitRef, 'kein gültiger Git-Ref').optional(),
+  url: z.string().refine(
+    (s) => {
+      try {
+        normalizeRepoUrl(s);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { error: () => m.invalidRepoUrl },
+  ),
+  default_ref: GitArg.refine(isGitRef, { error: () => m.invalidGitRef }).optional(),
 });
 
 export type Issue = z.infer<typeof IssueSchema>;
@@ -362,10 +368,7 @@ function assertNoProtoKey(data: unknown, file: string): void {
     for (const [k, v] of Object.entries(value)) {
       const childPath = `${path}.${k}`;
       if (k === '__proto__') {
-        throw new BackeError(
-          'validation',
-          `${file}: ${childPath}: Key "__proto__" ist nicht erlaubt`,
-        );
+        throw new BackeError('validation', m.protoKey(file, childPath));
       }
       stack.push([v, childPath]);
     }
@@ -399,16 +402,13 @@ export function validateEntity(
 
 const SchemaRef = z.string().optional();
 
-const ProjectPath = z.string().regex(PROJECT_PATH_RE, 'ungültiger Projektpfad');
-const SprintSlug = z.string().regex(SPRINT_SLUG_RE, 'ungültiger Sprint-Slug');
-const RepoName = z.string().regex(REPO_NAME_RE, 'ungültiger Repo-Name');
+const ProjectPath = z.string().regex(PROJECT_PATH_RE, { error: () => m.invalidProjectPathPattern });
+const SprintSlug = z.string().regex(SPRINT_SLUG_RE, { error: () => m.invalidSprintSlugPattern });
+const RepoName = z.string().regex(REPO_NAME_RE, { error: () => m.invalidRepoNamePattern });
 /** Ein lokaler Pfad; `~name/…` (Home eines anderen Users) wird beim Expandieren nicht unterstützt. */
-const LocalPath = nonEmpty.regex(
-  /^(?!~[^/])/,
-  '~name wird nicht unterstützt, nur ~/… oder ein Pfad',
-);
+const LocalPath = nonEmpty.regex(/^(?!~[^/])/, { error: () => m.localPathTilde });
 /** Eine Repo-URL, die `normalizeRepoUrl` zur kanonischen Form auflösen kann. */
-const RepoUrl = GitArg.refine(normalizesWithoutError, 'keine erkennbare Repo-URL');
+const RepoUrl = GitArg.refine(normalizesWithoutError, { error: () => m.unrecognizedRepoUrl });
 
 /**
  * Kanonische Formen (`<host>/<pfad>`, `file:<abs-pfad>`) sind selbst keine gültigen Eingaben für
@@ -445,16 +445,16 @@ const PropDeclarationSchema = z
         ctx.addIssue({
           code: 'custom',
           path: ['values'],
-          message: 'bei type "enum" erforderlich und nicht leer',
+          message: m.enumValuesRequired,
         });
       } else if (new Set(p.values).size !== p.values.length) {
-        ctx.addIssue({ code: 'custom', path: ['values'], message: 'Werte müssen eindeutig sein' });
+        ctx.addIssue({ code: 'custom', path: ['values'], message: m.valuesUnique });
       }
     } else {
       if (p.values !== undefined)
-        ctx.addIssue({ code: 'custom', path: ['values'], message: 'nur bei type "enum" erlaubt' });
+        ctx.addIssue({ code: 'custom', path: ['values'], message: m.enumOnly });
       if (p.ordered !== undefined)
-        ctx.addIssue({ code: 'custom', path: ['ordered'], message: 'nur bei type "enum" erlaubt' });
+        ctx.addIssue({ code: 'custom', path: ['ordered'], message: m.enumOnly });
     }
   });
 
@@ -462,7 +462,7 @@ export const BacklogConfigSchema = z.strictObject({
   $schema: SchemaRef,
   version: z.number().int().min(1),
   name: BacklogName,
-  id_prefix: z.string().regex(PREFIX_RE, 'ungültiges Präfix'),
+  id_prefix: z.string().regex(PREFIX_RE, { error: () => m.invalidPrefix }),
   admins: z.array(Handle).min(1),
   workflow: z.strictObject({ strict: z.boolean().default(false) }).default({ strict: false }),
   sync: z
@@ -482,7 +482,7 @@ export const BacklogConfigSchema = z.strictObject({
     .default({ max_bytes: 10485760, lfs: false }),
   props_strict: z.boolean().default(false),
   props: z
-    .record(z.string().regex(PROP_KEY_RE, 'ungültiger Property-Key'), PropDeclarationSchema)
+    .record(z.string().regex(PROP_KEY_RE, { error: () => m.invalidPropKey }), PropDeclarationSchema)
     .default({}),
 });
 
@@ -525,7 +525,7 @@ export const UserConfigSchema = z.strictObject({
     )
     .optional(),
   repos: z
-    .record(z.string().refine(isCanonicalRepoKey, 'Key ist keine kanonische Repo-URL'), LocalPath)
+    .record(z.string().refine(isCanonicalRepoKey, { error: () => m.canonicalRepoKey }), LocalPath)
     .optional(),
   output: z
     .strictObject({

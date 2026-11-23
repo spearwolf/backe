@@ -3,6 +3,7 @@
  * `issue.reopen` und `issue.claim`. Welcher Übergang erlaubt ist, entscheidet `planTransition`;
  * hier kommen Vorbedingung, offene Sub-Issues, Belegung und der Transition-Kommentar dazu.
  */
+
 import { BackeError } from '../core/errors.ts';
 import type { Issue } from '../core/schemas.ts';
 import {
@@ -17,6 +18,7 @@ import { isClaimable, openChildren } from './graph.ts';
 import { violation } from './invariants.ts';
 import { expectFrom, settle } from './issue-ops.ts';
 import type { OpOf } from './operation.ts';
+import { m } from './state-ops.messages.ts';
 
 /** `planTransition` mit Fehlern als `transition`-Verletzung; `null` heißt: nichts zu tun. */
 function plan(
@@ -74,20 +76,20 @@ function checkOpenChildren(d: Draft, id: string, to: State, force: boolean): voi
   if (to !== 'done') {
     d.notice({
       code: 'open_children',
-      message: `${id} ist ${to}, hat aber noch offene Sub-Issues: ${list}`,
+      message: m.openChildrenNotice(id, to, list),
       ids: open,
     });
     return;
   }
   if (!force) {
-    throw violation('open_children', `${id} hat noch offene Sub-Issues: ${list}`, {
+    throw violation('open_children', m.openChildren(id, list), {
       ids: open,
-      hint: 'Mit --force trotzdem abschließen, oder erst die Sub-Issues erledigen.',
+      hint: m.openChildrenHint,
     });
   }
   d.notice({
     code: 'forced_done',
-    message: `${id} mit force auf done gesetzt, offene Sub-Issues bleiben: ${list}`,
+    message: m.forcedDone(id, list),
     ids: open,
   });
 }
@@ -132,14 +134,10 @@ export function issueClaim(d: Draft, op: OpOf<'issue.claim'>): OpOf<'issue.claim
   if (!check.ok) {
     const list = check.ids.join(', ');
     if (check.reason === 'occupied') {
-      throw violation(
-        'occupied',
-        `${op.id} liegt unter ${list}, das schon jemand anderes bearbeitet`,
-        { ids: check.ids },
-      );
+      throw violation('occupied', m.occupied(op.id, list), { ids: check.ids });
     }
-    const why = check.ids.length > 0 ? `, wartet auf ${list}` : '';
-    throw violation('not_claimable', `${op.id} ist nicht claimbar (State ${cur.state})${why}`, {
+    const why = check.ids.length > 0 ? m.waitingFor(list) : '';
+    throw violation('not_claimable', m.notClaimable(op.id, cur.state, why), {
       ids: check.ids,
     });
   }
