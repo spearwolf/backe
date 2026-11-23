@@ -76,7 +76,49 @@ test('usage errors exit with 2', async () => {
     noStack(u);
   }
   const group = await cli(['backlog'], opts);
-  expect(group.stderr).toBe('Fehler: Unterbefehl fehlt\nHinweis: backe backlog --help\n');
+  expect(group.stderr).toMatch(/^Fehler: Unterbefehl fehlt\n\nUsage: backe backlog /);
+  expect(group.stderr).not.toContain('Hinweis:');
+});
+
+test('missing command, subcommand, argument or option prints the help of the failed command', async () => {
+  const { env, cwd } = await emptyHome();
+  const opts = { env, cwd };
+
+  const root = await cli([], opts);
+  expect(root.code).toBe(2);
+  expect(root.stdout).toBe('');
+  expect(root.stderr.startsWith('Fehler: Befehl fehlt\n\n')).toBe(true);
+  expect(root.stderr).toContain('Usage: backe');
+  expect(root.stderr).toContain('Schnellstart:');
+  expect(root.stderr).not.toContain('Hinweis:');
+
+  const group = await cli(['issue'], opts);
+  expect(group.code).toBe(2);
+  expect(group.stdout).toBe('');
+  expect(group.stderr).toMatch(/^Fehler: Unterbefehl fehlt\n\nUsage: backe issue \[options\]/);
+
+  const arg = await cli(['issue', 'show'], opts);
+  expect(arg.code).toBe(2);
+  expect(arg.stdout).toBe('');
+  expect(arg.stderr).toMatch(/^Fehler: Argument »id« fehlt\n\nUsage: backe issue show /);
+
+  const option = await cli(['issue', 'create'], opts);
+  expect(option.code).toBe(2);
+  expect(option.stdout).toBe('');
+  expect(option.stderr).toMatch(
+    /^Fehler: Option »-t, --title <titel>« fehlt\n\nUsage: backe issue create /,
+  );
+
+  const asJson = await cli(['issue', 'show', '--json'], opts);
+  expect(asJson.code).toBe(2);
+  expect(asJson.stdout).toBe('');
+  expect(JSON.parse(asJson.stderr)).toEqual({
+    error: { code: 'usage', message: 'Argument »id« fehlt', hint: 'backe issue show --help' },
+  });
+
+  const unknown = await cli(['issue', 'show', 'x', '--frobnicate'], opts);
+  expect(unknown.code).toBe(2);
+  expect(unknown.stderr).toBe("Fehler: unknown option '--frobnicate'\n");
 });
 
 test('errors in json mode', async () => {

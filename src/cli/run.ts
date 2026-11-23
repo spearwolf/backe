@@ -36,7 +36,7 @@ import {
   trackAllDispatch,
   trackDispatch,
 } from './options.ts';
-import { exitCodeOf, type Format, renderError, resolveFormat } from './output.ts';
+import { exitCodeOf, type Format, renderError, resolveFormat, safeText } from './output.ts';
 
 const QUICKSTART = [
   '',
@@ -102,18 +102,51 @@ export function buildProgram(rt: Runtime): Command {
   return program;
 }
 
+/** Hilfe eines Befehls samt `addHelpText`-Blöcken, als String statt auf stdout. */
+function helpOf(cmd: Command): string {
+  let text = '';
+  const saved = cmd.configureOutput();
+  cmd.configureOutput({ ...saved, writeOut: (s) => (text += s) });
+  try {
+    cmd.outputHelp();
+  } finally {
+    cmd.configureOutput(saved);
+  }
+  return text;
+}
+
 /**
  * commander-Fehler als `usage`. `commander.help` mit Exit 1 heißt: einer Gruppe fehlt der
- * Unterbefehl; welcher, sagt der zuletzt betretene Befehl (`trackDispatch`).
+ * Unterbefehl; welcher, sagt der zuletzt betretene Befehl (`trackDispatch`). Fehlt ein Befehl,
+ * Unterbefehl, Pflichtargument oder eine Pflichtoption, steht die Hilfe dieses Befehls dabei
+ * (backe.md §2.18); sie ersetzt im Text-Modus den Hinweis.
  */
-function fromCommander(err: CommanderError, program: Command): BackeError {
+function fromCommander(
+  err: CommanderError,
+  program: Command,
+): { error: BackeError; help?: string } {
+  const failed = lastDispatched(program);
+  const path = commandPath(failed);
+  const hint = `${path} --help`;
   if (err.code === 'commander.help') {
-    const path = commandPath(lastDispatched(program));
-    return new BackeError('usage', path === 'backe' ? 'Befehl fehlt' : 'Unterbefehl fehlt', {
-      hint: `${path} --help`,
-    });
+    const message = path === 'backe' ? 'Befehl fehlt' : 'Unterbefehl fehlt';
+    return { error: new BackeError('usage', message, { hint }), help: helpOf(failed) };
   }
-  return new BackeError('usage', err.message.replace(/^error: /, ''));
+  if (err.code === 'commander.missingArgument') {
+    const name = /'([^']*)'/.exec(err.message)?.[1] ?? '';
+    return {
+      error: new BackeError('usage', `Argument »${name}« fehlt`, { hint }),
+      help: helpOf(failed),
+    };
+  }
+  if (err.code === 'commander.missingMandatoryOptionValue') {
+    const flags = /'([^']*)'/.exec(err.message)?.[1] ?? '';
+    return {
+      error: new BackeError('usage', `Option »${flags}« fehlt`, { hint }),
+      help: helpOf(failed),
+    };
+  }
+  return { error: new BackeError('usage', err.message.replace(/^error: /, '')) };
 }
 
 /**
@@ -154,11 +187,18 @@ export async function run(io: CliIo): Promise<number> {
     return 0;
   } catch (caught) {
     let err = caught;
+    let help: string | undefined;
     if (caught instanceof CommanderError && program !== undefined) {
       if (caught.exitCode === 0) return 0;
-      err = fromCommander(caught, program);
+      ({ error: err, help } = fromCommander(caught, program));
     }
     const format = rt.state.format ?? (await fallbackFormat(io));
+    if (format !== 'json' && help !== undefined && err instanceof BackeError) {
+      // Die Hilfe folgt der Meldung und ersetzt den Hinweis `… --help`.
+      const bare = new BackeError(err.code, err.message);
+      io.stderr(`${renderError(bare, 'text')}\n${safeText(help)}`);
+      return exitCodeOf(err);
+    }
     io.stderr(renderError(err, format === 'json' ? 'json' : 'text'));
     return exitCodeOf(err);
   }
