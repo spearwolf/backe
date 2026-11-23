@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.0](https://github.com/spearwolf/backe/compare/v0.1.1...v0.2.0) (2026-11-23)
+
+
+### Neu
+
+* **cli:** Hilfe bei fehlendem Befehl, Argument oder Pflichtoption ([a675ff3](https://github.com/spearwolf/backe/commit/a675ff3191208ba6323698cdce1e86ccfe6e124a))
+* **cli:** project create und sprint create ohne Pflicht-Titel ([b0846e7](https://github.com/spearwolf/backe/commit/b0846e7f66b5733713b18d31790b28634e77a54b))
+* **cli:** Schnellstart in backe --help ([fcaca20](https://github.com/spearwolf/backe/commit/fcaca207215840eb580218bbc29ede6b4b941c7c))
+
+
+### Behoben
+
+* **cli:** Hilfetexte auf 80 Spalten, ohne Backticks, JSDoc an buildProgram ([99ea565](https://github.com/spearwolf/backe/commit/99ea565f871909b90472a6312b2586c8c32e13c1))
+
 ## [0.1.1](https://github.com/spearwolf/backe/compare/v0.1.0...v0.1.1) (2026-11-23)
 
 
