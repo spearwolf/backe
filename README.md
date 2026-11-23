@@ -67,7 +67,7 @@ After the access token refresh the user lands on `/login` again.
 ## Install
 
 ```sh
-npm install -g backe
+npm install -g @spearwolf/backe
 backe doctor            # checks the requirements below
 ```
 

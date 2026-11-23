@@ -1,5 +1,5 @@
 {
-  "name": "backe",
+  "name": "@spearwolf/backe",
   "version": "0.1.0",
   "description": "Git-based backlog CLI",
   "author": "Wolfger Schramm",

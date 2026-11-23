@@ -135,6 +135,8 @@ Eingaben, die der Spec impliziert, aber keine seiner Testlisten (§5) abdeckt. J
 
 **Abgenommen** am 2026-11-21: Abschluss-Review über den ganzen Meilenstein, seine Befunde (ein kritischer, drei wichtige) in einer Fix-Welle behoben, der Rückweg per `workflow_dispatch` im Abnahme-Commit nachgezogen; 2727 Tests grün, Coverage 99,04 % Lines / 94,11 % Branches. CI auf `ubuntu-latest` und `macos-latest` und der erste Release-Lauf stehen nach der Freigabe aus. Offene Kleinbefunde stehen unter »Übernommen aus M8«.
 
+**Erste Veröffentlichung** am 2026-11-23: Der Release-Lauf für `v0.1.0` baute und signierte, npm lehnte den Namen `backe` aber ab (»too similar to existing packages base, jake, brace«). Es greift der Ausweichname `@spearwolf/backe` (backe.md §2.20); Tag und GitHub-Release `v0.1.0` bleiben ohne npm-Paket, erste Version auf npm ist `0.1.1`. Dabei behoben: `.release-please-manifest.json` außerhalb von Biome (release-please schreibt es einzeilig) und ein E2E-Test, dessen zweiter Hintergrund-Sync nach Testende noch in die Arbeitskopie schrieb.
+
 ## Übernommen aus M1
 
 Ergebnisse der M1-Reviews, die ein späterer Detailplan einlösen muss. Abgehakt wird hier, sobald der jeweilige Detailplan sie aufgenommen hat.
