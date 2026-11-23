@@ -20,7 +20,7 @@ export async function addUser(
   deps?: WriteDeps,
 ): Promise<WriteOutcome> {
   if (input.operator !== undefined && input.agent !== true) {
-    throw new BackeError('usage', m.operatorNeedsAgent('--operator', '--agent'));
+    throw new BackeError('usage', m.operatorNeedsAgent);
   }
   const handle = resolveHandle(ctx, input.handle);
   const key = await readPublicKey(input.keyFile);

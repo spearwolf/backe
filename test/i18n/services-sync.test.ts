@@ -1,11 +1,18 @@
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { BackeError } from '../../src/core/errors.ts';
 import { setLocale } from '../../src/i18n/locale.ts';
+import type { Operation } from '../../src/ops/operation.ts';
 import { type SyncStatus, statusLine } from '../../src/services/background.ts';
+import { commitEdits } from '../../src/services/commit.ts';
 import { parseConfigKey } from '../../src/services/config.ts';
 import { runDoctor } from '../../src/services/doctor.ts';
 import { initBacklog } from '../../src/services/init.ts';
 import { quarantineCommit } from '../../src/services/quarantine.ts';
+import { executeWrite } from '../../src/services/write.ts';
+import { issueFile } from '../../src/store/layout.ts';
 import { tempDir } from '../helpers/backlog.ts';
+import { testBacklog } from '../helpers/git.ts';
 
 beforeAll(() => setLocale('en'));
 afterAll(() => setLocale('de'));
@@ -33,9 +40,7 @@ test('init rejects an invalid backlog name with an English message and hint', as
     }),
   );
   expect(error.message).toBe("Invalid backlog name 'Bad Name'");
-  expect(error.hint).toBe(
-    'Allowed are lowercase letters, digits and hyphens (max. 64 characters).',
-  );
+  expect(error.hint).toBe('Use lowercase letters, digits and hyphens (max. 64 characters)');
 });
 
 test('config key errors are English', () => {
@@ -81,4 +86,18 @@ test('doctor explains a missing git in English and keeps the check format', asyn
     status: 'warn',
     detail: 'No backlog resolved',
   });
+});
+
+test('commit warns in English when -m has no manual change to name', async () => {
+  const b = await testBacklog();
+  const ctx = await b.context();
+  const created = await executeWrite(ctx, {
+    kind: 'batch',
+    ops: [{ op: 'issue.create', title: 'B' } as Operation],
+  });
+  const id = (created.recorded[0] as { id: string }).id;
+  const file = join(b.root, issueFile(id));
+  await writeFile(file, (await readFile(file, 'utf8')).replace('title: B', 'title: B2'));
+  const out = await commitEdits(ctx, { message: 'Notes' });
+  expect(out.warnings).toEqual(['-m only applies to manual changes']);
 });

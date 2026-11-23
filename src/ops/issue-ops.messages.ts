@@ -10,7 +10,7 @@ export const m = catalog({
       `${id}: blocked_by can only be changed in state 'blocked', state is '${state}'`,
     blockedNeedsBlocker: (id: string) => `${id}: a blocked issue needs at least one blocker`,
     resumeHint: (id: string) => `To lift the block: backe issue resume ${id}`,
-    bodyChanged: (id: string) => `${id}: Body has been changed in the meantime`,
+    bodyChanged: (id: string) => `${id}: body has been changed in the meantime`,
   },
   de: {
     issueExists: (id: string) => `Issue ${id} existiert bereits`,

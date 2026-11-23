@@ -30,7 +30,7 @@ export const m = catalog({
     staleJournalHint: (root: string, journal: string) =>
       `The next write resets it; otherwise check git -C ${root} status and delete ${journal}`,
     noUserResolved: 'no user resolved',
-    noUserResolvedHint: (asFlag: string) => `${asFlag} <handle> or BACKE_USER`,
+    noUserResolvedHint: '--as <handle> or BACKE_USER',
     noSigningKey: (handle: string) => `no signing key is configured for '${handle}'`,
     noSigningKeyHint: 'backe user create-agent or identities in the user config',
     keyNotActive: (handle: string) => `The key is not an active key of '${handle}' in the snapshot`,
@@ -90,7 +90,7 @@ export const m = catalog({
     staleJournalHint: (root: string, journal: string) =>
       `Der nächste Write setzt es zurück; sonst git -C ${root} status prüfen und ${journal} löschen`,
     noUserResolved: 'kein User aufgelöst',
-    noUserResolvedHint: (asFlag: string) => `${asFlag} <handle> oder BACKE_USER`,
+    noUserResolvedHint: '--as <handle> oder BACKE_USER',
     noSigningKey: (handle: string) => `für »${handle}« ist kein Signing-Key eingetragen`,
     noSigningKeyHint: 'backe user create-agent oder identities in der User-Config',
     keyNotActive: (handle: string) => `Der Key ist kein aktiver Key von »${handle}« im Snapshot`,

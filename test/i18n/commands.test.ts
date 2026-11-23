@@ -85,14 +85,19 @@ test('help shows English descriptions, placeholders and the editor note', async 
   expect(batch.stdout).toContain("JSONL file ('-' reads stdin)");
 });
 
-/** Befehlsbaum als Text: Namen, Aliase, Argumente (mit Pflicht/variadisch) und Options-Flags. */
+/** Befehlsbaum als Text: Namen, Aliase, Argumente (mit Pflicht/variadisch) und Optionen (Flags, Attributname, Pflicht, Wertform). */
 function shape(cmd: Command, depth = 0): string[] {
   const own = [
     `${'  '.repeat(depth)}${cmd.name()} [${cmd.aliases().join(',')}]`,
     ...cmd.registeredArguments.map(
       (a) => `${'  '.repeat(depth)}  arg ${a.required ? 'req' : 'opt'}${a.variadic ? '...' : ''}`,
     ),
-    ...cmd.options.map((o) => `${'  '.repeat(depth)}  opt ${o.short ?? ''} ${o.long ?? ''}`),
+    ...cmd.options.map(
+      (o) =>
+        `${'  '.repeat(depth)}  opt ${o.short ?? ''} ${o.long ?? ''} -> ${o.attributeName()}` +
+        `${o.mandatory ? ' mandatory' : ''}${o.required ? ' value-required' : ''}` +
+        `${o.optional ? ' value-optional' : ''}`,
+    ),
   ];
   return [...own, ...cmd.commands.flatMap((c) => shape(c, depth + 1))];
 }

@@ -2,7 +2,7 @@ import { catalog } from '../i18n/catalog.ts';
 
 export const m = catalog({
   en: {
-    noUserResolved: 'No user resolved, the sync status belongs to an identity',
+    noUserResolved: 'No user resolved; the sync status belongs to an identity',
     noUserResolvedHint: (configPath: string) =>
       `--as <handle>, BACKE_USER or 'user' in ${configPath}`,
     noWorkingCopy: (wc: string) => `No working copy at ${wc}`,

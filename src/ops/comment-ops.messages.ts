@@ -8,17 +8,17 @@ export const m = catalog({
     commentNotOwn: (file: string, author: string, actor: string) =>
       `Comment ${file} belongs to ${author}, not ${actor}`,
     commentChanged: (id: string, file: string) =>
-      `${id}: Comment ${file} has been changed in the meantime`,
+      `${id}: comment ${file} has been changed in the meantime`,
     attachmentTooLarge: (file: string, size: number, max: number) =>
       `Attachment '${file}' has ${size} bytes, ${max} are allowed`,
-    raiseLimitHint: 'Raise the limit attachments.max_bytes (backe.md §2.8).',
+    raiseLimitHint: 'Raise attachments.max_bytes (backe.md §2.8).',
     raiseLimitOrLfsHint:
-      'Raise the limit attachments.max_bytes; enable attachments.lfs for large files (backe.md §2.8).',
-    attachmentExists: (id: string, name: string) => `${id}: Attachment '${name}' already exists`,
+      'Raise attachments.max_bytes; enable attachments.lfs for large files (backe.md §2.8).',
+    attachmentExists: (id: string, name: string) => `${id}: attachment '${name}' already exists`,
     attachWithoutContent: (file: string) => `attach.add for '${file}' without file content`,
     fileBelongsToOtherAttachment: (id: string, file: string) =>
-      `${id}: File '${file}' already belongs to another attachment`,
-    attachmentNotFound: (id: string, name: string) => `${id}: Attachment '${name}' not found`,
+      `${id}: file '${file}' already belongs to another attachment`,
+    attachmentNotFound: (id: string, name: string) => `${id}: attachment '${name}' not found`,
   },
   de: {
     commentNeedsText: 'Ein Kommentar braucht einen Text',

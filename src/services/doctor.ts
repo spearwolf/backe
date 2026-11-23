@@ -209,7 +209,7 @@ async function backlogProblem(
       hint: remote === undefined ? m.addBacklogHint(name) : m.cloneBacklogHint(remote),
     };
   }
-  if (snapshot === undefined) return { detail: m.snapshotNotLoadable(loadError as string) };
+  if (snapshot === undefined) return { detail: m.snapshotNotLoadable(loadError ?? '') };
   const problems: string[] = [];
   let hint: string | undefined;
   try {
@@ -244,7 +244,7 @@ async function checkIdentity(
 ): Promise<DoctorCheck> {
   const handle = ctx.user.value;
   if (handle === undefined)
-    return check('identity', 'warn', m.noUserResolved, m.noUserResolvedHint('--as'));
+    return check('identity', 'warn', m.noUserResolved, m.noUserResolvedHint);
   if (ctx.user.key === undefined) {
     return check('identity', 'warn', m.noSigningKey(handle), m.noSigningKeyHint);
   }

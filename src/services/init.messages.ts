@@ -3,12 +3,11 @@ import { catalog } from '../i18n/catalog.ts';
 export const m = catalog({
   en: {
     invalidBacklogName: (name: string) => `Invalid backlog name '${name}'`,
-    backlogNameRules: 'Allowed are lowercase letters, digits and hyphens (max. 64 characters).',
+    backlogNameRules: 'Use lowercase letters, digits and hyphens (max. 64 characters)',
     invalidIdPrefix: (prefix: string) => `Invalid ID prefix '${prefix}'`,
-    idPrefixRules: 'Allowed are 2 to 6 lowercase letters.',
+    idPrefixRules: 'Use 2 to 6 lowercase letters',
     invalidHandle: (handle: string) => `Invalid handle '${handle}'`,
-    handleRules:
-      "Allowed are lowercase letters, digits and hyphens (2 to 32 characters); 'me' is reserved.",
+    handleRules: "Use lowercase letters, digits and hyphens (2 to 32 characters); 'me' is reserved",
     alreadyRegistered: (name: string) => `Backlog '${name}' is already registered`,
     targetNotAbsolute: (dir: string) => `Target directory must be absolute: ${dir}`,
     targetNotEmpty: (root: string) => `Target directory is not empty: ${root}`,

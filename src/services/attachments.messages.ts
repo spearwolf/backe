@@ -3,7 +3,7 @@ import { catalog } from '../i18n/catalog.ts';
 export const m = catalog({
   en: {
     invalidAttachmentName: (file: string) => `Invalid file name for the attachment: '${file}'`,
-    attachmentNameHint: 'give --name <n>.<ext>; allowed are [a-z0-9][a-z0-9._-]{0,63}',
+    attachmentNameHint: 'give --name <n>.<ext> matching [a-z0-9][a-z0-9._-]{0,63}',
     fileNotFound: (raw: string) => `File '${raw}' not found`,
     fileUnreadable: (raw: string, code: string) => `File '${raw}' cannot be read (${code})`,
     fileOutsideWorkdir: (raw: string) => `File '${raw}' is outside the working directory`,
@@ -18,7 +18,7 @@ export const m = catalog({
   },
   de: {
     invalidAttachmentName: (file: string) => `Ungültiger Dateiname für den Anhang: »${file}«`,
-    attachmentNameHint: `--name <n>.<ext> angeben; erlaubt sind [a-z0-9][a-z0-9._-]{0,63}`,
+    attachmentNameHint: '--name <n>.<ext> angeben; erlaubt sind [a-z0-9][a-z0-9._-]{0,63}',
     fileNotFound: (raw: string) => `Datei »${raw}« nicht gefunden`,
     fileUnreadable: (raw: string, code: string) =>
       `Datei »${raw}« lässt sich nicht lesen (${code})`,
