@@ -1,7 +1,10 @@
 import type { Command } from 'commander';
+import { m as projectMessages } from '../../src/cli/commands/project.messages.ts';
+import { m as repoMessages } from '../../src/cli/commands/repo.messages.ts';
 import type { CliIo } from '../../src/cli/io.ts';
 import { buildProgram, run } from '../../src/cli/run.ts';
 import type { Env } from '../../src/context/paths.ts';
+import { CATALOG_TEXTS } from '../../src/i18n/catalog.ts';
 import { setLocale } from '../../src/i18n/locale.ts';
 import { tempDir } from '../helpers/backlog.ts';
 import { testBacklog } from '../helpers/git.ts';
@@ -83,6 +86,25 @@ test('help shows English descriptions, placeholders and the editor note', async 
   const batch = await backe(['batch', '--help']);
   expect(batch.stdout).toContain('backe batch [options] [source]');
   expect(batch.stdout).toContain("JSONL file ('-' reads stdin)");
+});
+
+test('project and repo help end with an English guide', async () => {
+  const backe = await setup();
+  const project = await backe(['project', '--help']);
+  expect(project.stdout).toContain('How projects work:');
+  expect(project.stdout).toContain('backe issue edit <id> --add-project api --rm-project web');
+  const repo = await backe(['repo', '--help']);
+  expect(repo.stdout).toContain('How repos work:');
+  expect(repo.stdout).toContain('compares the git');
+});
+
+test('the project and repo guides fit 80 columns in both languages', () => {
+  for (const catalog of [projectMessages, repoMessages]) {
+    for (const lang of ['en', 'de'] as const) {
+      const long = catalog[CATALOG_TEXTS][lang].guide.split('\n').filter((l) => l.length > 80);
+      expect(long).toEqual([]);
+    }
+  }
 });
 
 /** Befehlsbaum als Text: Namen, Aliase, Argumente (mit Pflicht/variadisch) und Optionen (Flags, Attributname, Pflicht, Wertform). */

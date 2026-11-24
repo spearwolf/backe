@@ -24,6 +24,7 @@ type CreateOpts = { title?: string; lead?: string; description?: string; file?: 
 
 export function projectCommands(program: Command, rt: Runtime): void {
   const project = subcommand(program, 'project', m.description);
+  project.addHelpText('after', () => m.guide);
 
   subcommand(project, m.createCommand, m.createDescription)
     .option(m.titleFlags, m.titleOption)

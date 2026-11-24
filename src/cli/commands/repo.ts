@@ -22,6 +22,7 @@ type AddOpts = { name?: string; ref?: string; description?: string };
 
 export function repoCommands(program: Command, rt: Runtime): void {
   const repo = subcommand(program, 'repo', m.description);
+  repo.addHelpText('after', () => m.guide);
 
   subcommand(repo, 'add <url>', m.addDescription)
     .option('--name <name>', m.nameOption)
