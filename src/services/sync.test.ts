@@ -1083,23 +1083,27 @@ describe('with attachments.lfs', () => {
     expect(await statusShort(agentWc())).toEqual([]);
   });
 
-  test.skipIf(!lfs)('an lfs push that fails stops the round before the git push', async () => {
-    await lfsOn();
-    const id = await create(agent(), 'mit Anhang');
-    await attach(agent(), id);
-    const before = await remoteHead();
-    const store = join(t.remote, 'lfs');
-    await mkdir(store, { recursive: true });
-    await chmod(store, 0o555);
-    try {
-      const err = await catchErrAsync(() => syncNow(agent(), deps()));
-      expect(err.code).toBe('sync');
-      expect(err.message).toMatch(/^LFS-Push nach origin fehlgeschlagen: \S/);
-    } finally {
-      await chmod(store, 0o755);
-    }
-    expect(await remoteHead()).toBe(before);
-  });
+  // root ignoriert die Dateirechte, chmod 0o555 lässt den LFS-Push dann nicht scheitern.
+  test.skipIf(!lfs || process.getuid?.() === 0)(
+    'an lfs push that fails stops the round before the git push',
+    async () => {
+      await lfsOn();
+      const id = await create(agent(), 'mit Anhang');
+      await attach(agent(), id);
+      const before = await remoteHead();
+      const store = join(t.remote, 'lfs');
+      await mkdir(store, { recursive: true });
+      await chmod(store, 0o555);
+      try {
+        const err = await catchErrAsync(() => syncNow(agent(), deps()));
+        expect(err.code).toBe('sync');
+        expect(err.message).toMatch(/^LFS-Push nach origin fehlgeschlagen: \S/);
+      } finally {
+        await chmod(store, 0o755);
+      }
+      expect(await remoteHead()).toBe(before);
+    },
+  );
 
   test.skipIf(!lfs)('a round that brings lfs pulls the attachment content', async () => {
     const config = await readFile(join(t.spw.root, BACKLOG_CONFIG), 'utf8');

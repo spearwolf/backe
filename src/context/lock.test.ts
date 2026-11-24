@@ -332,18 +332,22 @@ test('a lock path that is a directory surfaces the read error', async () => {
   });
 });
 
-test('a failure to publish other than EEXIST is rethrown and leaves nothing behind', async () => {
-  const dir = await tempDir();
-  await chmod(dir, 0o500);
-  try {
-    await expect(withFileLock(join(dir, 'x.lock'), async () => 1)).rejects.toMatchObject({
-      code: 'EACCES',
-    });
-  } finally {
-    await chmod(dir, 0o700);
-  }
-  expect(await readdir(dir)).toEqual([]);
-});
+// root ignoriert die Dateirechte, chmod 0o500 sperrt dann nichts.
+test.skipIf(process.getuid?.() === 0)(
+  'a failure to publish other than EEXIST is rethrown and leaves nothing behind',
+  async () => {
+    const dir = await tempDir();
+    await chmod(dir, 0o500);
+    try {
+      await expect(withFileLock(join(dir, 'x.lock'), async () => 1)).rejects.toMatchObject({
+        code: 'EACCES',
+      });
+    } finally {
+      await chmod(dir, 0o700);
+    }
+    expect(await readdir(dir)).toEqual([]);
+  },
+);
 
 test('lockHeld sees a live holder and ignores a missing or takeable lock', async () => {
   const lock = join(await tempDir(), 'x.lock');
