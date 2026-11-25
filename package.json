@@ -1,6 +1,6 @@
 {
   "name": "@spearwolf/backe",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Git-based backlog CLI",
   "author": "Wolfger Schramm",
   "repository": {
