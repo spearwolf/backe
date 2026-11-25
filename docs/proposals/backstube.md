@@ -19,7 +19,9 @@ Der Name: In der Backstube wird gebacken (BK, »Der Name«).
 - Jede Session bearbeitet genau eine Phase eines Issues und hinterlässt ihr Ergebnis in `backe` und im Branch. Sessions sind damit austauschbar, und ein Absturz kostet höchstens eine Phase (§3.4).
 - Jede Rückfrage erreicht den Menschen mit einer Benachrichtigung auf dem Handy. In Stufe 1 bleiben die Rückfragen interaktiv in der Session (§2.8.1), ab Stufe 2 werden sie zu Issues (§2.8.2), und in Stufe 3 sortiert eine Triage vor, was wirklich nur der Mensch entscheiden kann (§2.8.3).
 - Jeder Write ist einer Rollen-Identität zurechenbar (BK §2.12): Orchestrator, Worker-Slot, Reviewer, Triage.
+- Nicht jedes Issue braucht Superpowers. Ein Issue wählt per `backstube.workflow` seinen Workflow, also die Folge seiner Phasen und die Skills darin (§2.5.1). `superpowers` ist ein Workflow unter mehreren, wenn auch der für ernsthafte Feature-Arbeit.
 - Superpowers wird unverändert genutzt. Die Anpassungen an den Factory-Betrieb liegen in einem eigenen Skill, der davor sitzt (§2.6).
+- Jede Session startet im richtigen Verzeichnis des richtigen Repos, damit Claude Code dessen Kontext lädt: `CLAUDE.md`, repo-lokale Skills, Settings, Hooks und MCP-Konfiguration (§2.5.3). Ein Repo ist optional; Workflows ohne Code-Bezug laufen in einem Scratch-Verzeichnis.
 
 ### 0.3 Nicht-Ziele (erste Version)
 
@@ -42,7 +44,7 @@ Das Projekt ist gescheitert, auch wenn alles technisch funktioniert, wenn …
 
 - **`backe` 0.3** liefert die Bausteine: synchroner Claim mit genau einem Gewinner (BK §2.16.5), `next --ready`-Semantik samt `depends_on` und Sub-Issues (BK §2.22, §2.23), `blocked`/`resume` und `issue list --unblockable` (BK §2.6), deklarierte Properties (BK §2.24), atomare Batches (BK §2.16.6) und das Muster »Entscheidungen sind Issues« (BK §2.25). Einen Daemon hat `backe` bewusst nicht (BK §3.8). Die Backstube ist genau dieser langlebige Prozess, nur außerhalb von `backe`.
 - **Superpowers** bringt die Skills mit, die die Backstube braucht: `brainstorming`, `writing-plans`, `using-git-worktrees`, `subagent-driven-development`, `test-driven-development`, `systematic-debugging`, `requesting-code-review`, `verification-before-completion` und `finishing-a-development-branch`. Sie sind **interaktiv** ausgelegt: `brainstorming` stellt dem Menschen Frage für Frage und reicht am Ende selbst an `writing-plans` weiter; `finishing-a-development-branch` fragt, ob gemergt, ein PR geöffnet, der Branch behalten oder verworfen werden soll. Spec und Plan landen als Dateien im Code-Repo (`docs/superpowers/specs/`, `docs/superpowers/plans/`), so auch in diesem Repo.
-- **Claude Code** läuft interaktiv oder headless (`claude -p`). Über Remote Control ist eine lokale interaktive Session in der Claude-App erreichbar, auch auf dem Handy, mitsamt Benachrichtigung, sobald sie auf Eingabe wartet. Eine Headless-Session hat keinen Rückkanal zum Menschen.
+- **Claude Code** läuft interaktiv oder headless (`claude -p`). Über Remote Control ist eine lokale interaktive Session in der Claude-App erreichbar, auch auf dem Handy, mitsamt Benachrichtigung, sobald sie auf Eingabe wartet. Eine Headless-Session hat keinen Rückkanal zum Menschen. Den Projektkontext lädt Claude Code aus dem Arbeitsverzeichnis: `CLAUDE.md` (auch aus übergeordneten Verzeichnissen) und `CLAUDE.local.md`, unter `.claude/` Skills, Subagents, Settings und Hooks, dazu projektbezogene MCP-Server aus `.mcp.json`. Wo eine Session startet, entscheidet also, was sie kann und weiß. Neue Verzeichnisse verlangen beim ersten Start eine Vertrauensbestätigung, Projekt-MCP-Server eine Freigabe.
 
 ## 2. Soll-Zustand
 
@@ -54,8 +56,8 @@ Das Projekt ist gescheitert, auch wenn alles technisch funktioniert, wenn …
    backe-Backlog (Git)                                    Backstube (Loop, deterministisch)
      ▲          ▲                                           │ spawn / reap │ Session-Tabelle
      │          │ signierte Writes (State, Props, Kommentare)▼              ▼
-     │          └──────────── Worker-Session: Claude Code, eine Phase, eigener Worktree
-     │                          └─ Skill backstube-worker → Superpowers-Skills
+     │          └──────────── Worker-Session: Claude Code, eine Phase, im Repo-Kontext
+     │                          └─ Skill backstube-worker → Skills des Workflows
      │
      └── Mensch: Claude-App (Stufe 1) · backe CLI (ab Stufe 2) · Merge des PRs
 ```
@@ -69,8 +71,8 @@ Alle Rollen sind Agent-Identitäten mit dem Menschen als `operator`, angelegt pe
 | Handle | Rolle | Schreibt |
 | --- | --- | --- |
 | `backstube` | Orchestrator | `resume`, Recovery-Moves, Zähler und Status bei Abstürzen, `on_hold` bei erschöpftem Budget |
-| `bs-w1` … `bs-wN` | Worker-Slots | Claim (`next --claim --as bs-wK`), Ergebnisse der Phasen `spec`, `plan`, `build`, `ship` |
-| `bs-review` | Reviewer | Urteil der Phase `review` |
+| `bs-w1` … `bs-wN` | Worker-Slots | Claim (`next --claim --as bs-wK`), Ergebnisse aller Phasen, die der Workflow nicht dem Reviewer zuweist |
+| `bs-review` | Reviewer | Urteil der Phasen mit `role: reviewer` |
 | `bs-triage` | Triage (Stufe 3) | Antworten oder Eskalationen auf Fragen |
 
 **Slot gleich Identität.** Der Assignee eines Issues sagt, welcher Slot es hält. Darüber gleicht die Backstube Issues mit laufenden Sessions ab, ohne eigene Lease (§3.5). Die Zahl der Keys bleibt dadurch auf die Zahl der Slots begrenzt. Ein Slot kann mehrere Issues halten (eins in Arbeit, weitere in `review`, `blocked` oder beim Warten auf den Merge), aber nur eine Session gleichzeitig. Die Kapazität zählt Sessions, nicht Issues. Dass `backe next` das eigene laufende Issue zuerst liefert (BK §2.22), passt zur Regel »erst fertig machen, dann neu anfangen« (§2.7, Punkt 3).
@@ -84,22 +86,34 @@ Host-lokal unter `~/.backstube/config.jsonc` (§3.9):
   "backlog": "acme",
   "watch": [                          // Reihenfolge = Priorität beim Dispatch
     { "sprint": "2026-w48" },
-    { "project": "web/auth", "level": "top" }   // level wie bei backe next (BK §2.23)
+    { "project": "web/auth", "level": "top" },  // level wie bei backe next (BK §2.23)
+    { "project": "ops", "workflow": "direct" }  // Default-Workflow dieses Eintrags
   ],
+  "workflow": "superpowers",          // globaler Default-Workflow
+  "workflows": { /* eigene Workflows und Overrides der eingebauten, §2.5.1 */ },
+  "repos": {                          // je backe-Repo-Name, alles optional (§2.5.3)
+    "webapp": {
+      "local_files": ["CLAUDE.local.md", ".claude/settings.local.json"],
+      "add_dirs": []
+    }
+  },
   "slots": ["bs-w1", "bs-w2"],
   "reviewer": "bs-review",
   "triage": null,                     // Stufe 3: "bs-triage"
   "questions": "interactive",         // interactive (Stufe 1) | issues (ab Stufe 2)
   "human": "spw",                     // Empfänger von Entscheidungen
-  "gates": { "plan": false },         // Plan-Freigabe durch den Menschen (§2.5)
+  "gates": { "plan": false },         // Plan-Freigabe im Workflow superpowers (§2.5.2)
   "runtime": { "kind": "remote-control" },      // remote-control | headless (§2.9)
   "worktrees": "~/.backstube/worktrees",
+  "scratch": "~/.backstube/scratch",
   "limits": { "attempts": 2, "phase_timeout_min": 240, "tick_s": 60 },
   "session_title": "{id} · {phase} · {title}"
 }
 ```
 
-**Opt-in:** Die Backstube fasst nur Issues an, die einem `watch`-Eintrag entsprechen und `repos` gesetzt haben. Ein Issue ohne Repo bekommt einen Kommentar und geht auf `on_hold`. Einzelne Issues lassen sich per `backstube.skip: true` ausnehmen.
+**Opt-in:** Die Backstube fasst nur Issues an, die einem `watch`-Eintrag entsprechen. Ob ein Repo nötig ist, sagt der Workflow (§2.5.1): Fehlt es bei einem Workflow mit `repo: required` oder liefert `backe repo where` keinen lokalen Pfad, bekommt das Issue einen Kommentar mit dem Hinweis auf `backe repo scan` und geht auf `on_hold`. Einzelne Issues lassen sich per `backstube.skip: true` ausnehmen.
+
+**Workflow eines Issues:** `backstube.workflow` am Issue, sonst `workflow` des passenden `watch`-Eintrags, sonst der globale `workflow`.
 
 ### 2.4 Properties
 
@@ -107,7 +121,10 @@ Deklariert in `backlog.jsonc` (BK §2.24), alle unter dem Präfix `backstube.`:
 
 | Property | Typ | Bedeutung | Setzt |
 | --- | --- | --- | --- |
-| `backstube.phase` | enum `spec`, `plan`, `build`, `review`, `ship` | aktuelle Phase; fehlt sie, gilt `spec` | Worker beim Abschluss; Mensch beim Anlegen, um später einzusteigen (ein Bug mit klarem Repro startet in `plan`, ein Chore in `build`) |
+| `backstube.workflow` | string | Workflow des Issues (§2.5.1); fehlt sie, gilt der Default aus der Config | Mensch, beim Anlegen oder später |
+| `backstube.phase` | string | aktuelle Phase, gültig sind die Phasen des Workflows; fehlt sie, gilt dessen erste Phase | Worker beim Abschluss; Mensch, um später einzusteigen (ein Bug mit klarem Repro startet in `superpowers` bei `plan`) |
+| `backstube.repo` | string | Haupt-Repo, wenn `repos` mehrere Einträge hat; sonst gilt der erste (§2.5.3) | Mensch |
+| `backstube.dir` | string | Unterverzeichnis im Repo als Arbeitsverzeichnis, etwa ein Paket im Monorepo (§2.5.3) | Mensch |
 | `backstube.status` | enum `running`, `waiting`, `done`, `failed`, `stalled` | Zustand der Phase | `running`: Backstube beim Start; `done`, `failed`, `waiting`: Worker; `stalled`: Backstube bei Timeout |
 | `backstube.attempts` | integer | gescheiterte Versuche der aktuellen Phase | Backstube |
 | `backstube.session` | string | Session-Name bzw. Link zur Remote-Control-Session | Backstube |
@@ -117,9 +134,42 @@ Deklariert in `backlog.jsonc` (BK §2.24), alle unter dem Präfix `backstube.`:
 | `backstube.asked_by` | string | ab Stufe 2: Issue, dessen Arbeit die Frage gestellt hat | Worker |
 | `backstube.route` | enum `answered`, `escalated`, `invalid` | Stufe 3: Ergebnis der Triage | Triage |
 
-Den Branch trägt das eingebaute Feld `repos` (`webapp@backstube/bk-7f3k2`). `kind` (`question`, `decision`) folgt der Konvention aus BK §2.25 und wird nicht als Enum deklariert, weil die Audit-Skills `kind` mit eigenen Werten belegen.
+`backstube.workflow` und `backstube.phase` sind bewusst `string` statt `enum`: Welche Workflows es gibt, steht in der Host-Config, nicht im Backlog (§3.10). Die Backstube prüft die Werte beim Dispatch; ein unbekannter Workflow oder eine Phase, die es im Workflow nicht gibt, führt zu `on_hold` mit Begründung. Den Branch trägt das eingebaute Feld `repos` (`webapp@backstube/bk-7f3k2`). `kind` (`question`, `decision`) folgt der Konvention aus BK §2.25 und wird nicht als Enum deklariert, weil die Audit-Skills `kind` mit eigenen Werten belegen.
 
-### 2.5 Lebenszyklus eines Issues
+### 2.5 Workflows und Lebenszyklus
+
+#### 2.5.1 Workflows
+
+Ein Workflow ist eine benannte, geordnete Liste von Phasen. Er legt fest, welche Phasen ein Issue durchläuft, wer sie ausführt, welche Skills die Session nutzen soll und wo sie startet. Superpowers ist ein guter Workflow für Feature-Arbeit mit offenem Design, für einen Dependency-Bump oder eine Textkorrektur aber reine Zeremonie: Spec, Plan und Review kosten dort mehr, als sie bringen.
+
+```jsonc
+"workflows": {
+  "direct": {
+    "repo": "required",               // required | optional | none
+    "cwd": "worktree",                // worktree | repo | scratch (§2.5.3)
+    "phases": [
+      { "name": "build", "skills": [], "state_after": "review" },
+      { "name": "ship",  "skills": [], "pr": true }
+    ]
+  }
+}
+```
+
+Je Phase: `name`, `role` (`slot`, Default, oder `reviewer`), `skills` (Namen, die der Start-Prompt der Session nennt; leer heißt, die Session nutzt, was Repo und Host mitbringen), optional `state_after` (backe-State nach erfolgreichem Abschluss), `pr` (die Phase öffnet einen PR), `gate` (Rückfrage zur Freigabe am Ende, §3.8), `model`. Bei »changes« eines Reviewers springt das Issue in die Phase davor zurück.
+
+**Eingebaute Workflows.** Die Backstube bringt drei mit, die Config kann sie überschreiben oder eigene hinzufügen:
+
+| Workflow | Phasen | `repo` | `cwd` | Wofür |
+| --- | --- | --- | --- | --- |
+| `superpowers` | `spec` → `plan` → `build` → `review` → `ship` | required | worktree | Features und Änderungen mit offenem Design (§2.5.2) |
+| `direct` | `build` → `ship` | required | worktree | kleine, klar umrissene Änderungen: Chores, Bugs mit klarem Repro, Bumps. Arbeitet nach den Konventionen des Repos, ohne Superpowers |
+| `task` | `run` | optional | repo bzw. scratch | Arbeit ohne Branch und PR: Recherche, Analysen, ein Audit mit einem repo-lokalen Skill, Text im Backlog. Ergebnis als Kommentar, danach `done` |
+
+Ein eigener Workflow für die Audit-Skills aus BK §2.25 wäre etwa `audit` mit einer Phase `run`, `skills: ["js-ts-project-audit"]` und `cwd: repo`. Der Skill liegt im Code-Repo unter `.claude/skills/` und ist deshalb nur in einer Session verfügbar, die dort startet (§2.5.3).
+
+**Workflow wechseln:** Der Mensch ändert `backstube.workflow`, solange keine Session für das Issue läuft. Gibt es die aktuelle Phase im neuen Workflow nicht, setzt die Backstube auf dessen erste Phase zurück und schreibt das als Kommentar.
+
+#### 2.5.2 Workflow `superpowers`
 
 | Phase | Identität | Superpowers-Skills | Artefakt | Erfolg → |
 | --- | --- | --- | --- | --- |
@@ -130,17 +180,32 @@ Den Branch trägt das eingebaute Feld `repos` (`webapp@backstube/bk-7f3k2`). `ki
 | `ship` | Slot | `finishing-a-development-branch`, Option »Push + PR« fest vorgegeben | PR, `backstube.pr` | wartet auf den Merge |
 
 - **States:** Der Claim setzt `in_progress` (BK §2.16.5); `spec`, `plan` und `build` laufen darin. `build` endet mit `review`. Eine Rückweisung im Review geht zurück auf `in_progress`, das erlaubt die Hauptlinie ohne `workflow.strict` (BK §2.6). Nach `ship` bleibt das Issue auf `review`, bis der Mensch den PR merged und `done` setzt. Die automatische Erkennung des Merges ist Stufe 4.
-- **Worktree:** Beim Start von `spec` legt die Backstube `git worktree add <worktrees>/<id> -b backstube/<id> <default_ref>` im Clone an, den `backe repo where` liefert, und verknüpft den Branch per `backe issue link`. Alle Phasen arbeiten im selben Worktree. Spec und Plan liegen dort als Dateien; jede neue Session findet so die Arbeit der vorigen. Nach `done`, `cancelled` oder `rejected` räumt die Backstube den Worktree ab, den Branch nur nach einem Merge.
+- **Worktree:** `superpowers` arbeitet mit `cwd: worktree` (§2.5.3). Spec und Plan liegen dort als Dateien; jede neue Session findet so die Arbeit der vorigen.
+- **Overrides:** Der Workflow gibt `backstube-worker` drei Superpowers-spezifische Regeln mit: `brainstorming` reicht nicht von sich aus an `writing-plans` weiter, die Phase endet mit der committeten Spec; `using-git-worktrees` entfällt, denn der Worktree existiert schon; `finishing-a-development-branch` wählt immer »Push + PR«.
 - **Review-Unabhängigkeit:** Der Reviewer ist eine eigene Identität in einer frischen Session. Er sieht Spec, Plan und Diff, aber nicht den Verlauf der Build-Session.
 - **Plan-Gate:** Ist das Gate aktiv, stellt die `plan`-Session am Ende die Frage »Plan freigeben?« mit den Optionen Freigeben, Überarbeiten (mit Hinweis) und Abbrechen. Das Gate ist eine gewöhnliche Rückfrage und folgt dem Modus aus `questions` (§3.8).
 
+#### 2.5.3 Arbeitsverzeichnis und Projektkontext
+
+Claude Code lädt seinen Projektkontext aus dem Arbeitsverzeichnis (§1). Die Backstube bestimmt es deshalb ausdrücklich, statt es der Session zu überlassen:
+
+1. **Haupt-Repo:** `backstube.repo`, sonst der erste Eintrag in `repos`. Lokaler Pfad über `backe repo where <name>` (BK §2.11).
+2. **Modus** aus dem Workflow (`cwd`):
+   - **`worktree`** (Workflows, die Code ändern): `git worktree add <worktrees>/<repo>/<id> -b backstube/<id> <default_ref>` im lokalen Clone; der Branch wird per `backe issue link` am Issue verknüpft. Der Pfad ist je Issue stabil, alle Phasen arbeiten im selben Worktree. Nach `done`, `cancelled` oder `rejected` räumt die Backstube den Worktree ab, den Branch nur nach einem Merge.
+   - **`repo`** (lesende Arbeit): direkt im lokalen Clone. Weil dort auch der Mensch arbeitet, läuft je Repo höchstens eine Session im Modus `repo` gleichzeitig, und der Workflow-Vertrag verbietet ihr Commits und Branch-Wechsel.
+   - **`scratch`**: `<scratch>/<id>`, für Issues ohne Repo (`repo: optional` ohne Eintrag oder `repo: none`). Bleibt bis `done` erhalten, damit Wiedereinstiege den Stand finden.
+3. **Unterverzeichnis:** `backstube.dir` macht ein Verzeichnis im Repo zum Arbeitsverzeichnis, etwa `packages/web` im Monorepo. `CLAUDE.md` aus übergeordneten Verzeichnissen bis zur Repo-Wurzel lädt Claude Code dabei mit.
+4. **Lokale Dateien:** Ein Worktree enthält nur, was eingecheckt ist. Projekt-Settings, Skills, Hooks und ein eingechecktes `.mcp.json` sind damit da; `CLAUDE.local.md`, `.claude/settings.local.json` oder ein nicht eingechecktes `.mcp.json` fehlen. Die Backstube kopiert die Dateien aus `repos.<name>.local_files` beim Anlegen des Worktrees und frisch vor jeder Phase aus dem Clone. Kopie statt Symlink, damit eine Session die Konfiguration des Menschen nicht verändert. Dateien mit Secrets (`.env`) gehören nur bewusst in die Liste.
+5. **Weitere Repos** des Issues (alle Einträge in `repos` außer dem Haupt-Repo) und `repos.<name>.add_dirs` gibt die Backstube der Session als zusätzliche Verzeichnisse mit (`--add-dir`): lesbar, aber ohne eigenen Worktree. Wer in zwei Repos schreiben muss, schneidet das Issue in Sub-Issues je Repo (BK §2.23).
+6. **Vertrauen und MCP-Freigabe:** Ein neues Worktree-Verzeichnis ist für Claude Code ein unbekanntes Projekt. Eine interaktive Session bliebe an der Vertrauensabfrage und an der Freigabe der Projekt-MCP-Server hängen, bevor sie den Prompt überhaupt liest. Die Backstube erledigt beides vor dem Start, für genau dieses Verzeichnis und nur für Repos aus dem Backlog. Wie das zuverlässig geht, klärt F1 (§4.1).
+
 ### 2.6 Der Worker-Vertrag: Skill `backstube-worker`
 
-Die Backstube startet jede Session mit einem minimalen Prompt: »Worker der Backstube. Issue `<id>`, Phase `<phase>`. Lade den Skill `backstube-worker`.« Den eigentlichen Vertrag trägt der Skill. So bleibt er versioniert und testbar, und Prompts in der Backstube bleiben dünn.
+Die Backstube startet jede Session mit einem minimalen Prompt: »Worker der Backstube. Issue `<id>`, Workflow `<workflow>`, Phase `<phase>`. Skills dieser Phase: `<skills>`. Lade den Skill `backstube-worker`.« Den eigentlichen Vertrag trägt der Skill. So bleibt er versioniert und testbar, und Prompts in der Backstube bleiben dünn.
 
-1. **Kontext laden:** `backe issue show <id> --comments --format json`, dazu Spec und Plan im Worktree. Beim Wiedereinstieg nach einer Rückfrage zusätzlich die Antworten an den Issues aus dem letzten `blocked_by`.
-2. **Genau eine Phase.** Kein Vorgreifen. Das betrifft vor allem `brainstorming`, das von sich aus an `writing-plans` weiterreicht: Im Factory-Betrieb endet die Phase mit der committeten Spec.
-3. **Entscheidungspunkte der Superpowers-Skills übersteuern:** `using-git-worktrees` entfällt, denn der Worktree existiert schon. `finishing-a-development-branch` wählt immer »Push + PR«. Der Default-Branch wird nie angefasst.
+1. **Kontext laden:** `backe issue show <id> --comments --format json`, dazu die Artefakte früherer Phasen im Arbeitsverzeichnis (bei `superpowers` Spec und Plan). Beim Wiedereinstieg nach einer Rückfrage zusätzlich die Antworten an den Issues aus dem letzten `blocked_by`.
+2. **Genau eine Phase.** Kein Vorgreifen, auch wenn ein Skill von sich aus weiterreichen will.
+3. **Workflow-Overrides beachten:** Regeln, die ein Workflow für seine Skills mitbringt, gehen den Skills vor (für `superpowers` §2.5.2). Unabhängig vom Workflow: Der Default-Branch wird nie angefasst, und im Modus `repo` gibt es weder Commits noch Branch-Wechsel (§2.5.3).
 4. **Abschluss als ein Batch** (BK §2.16.6): Ergebnis-Kommentar, `backstube.phase` = nächste Phase, `backstube.status: done`, gegebenenfalls der State-Move. Atomar, damit die Backstube nie einen halben Abschluss sieht.
 5. **Scheitern:** `backstube.status: failed` plus Kommentar mit Grund und letztem Stand. Kein State-Move, die Wiederholung entscheidet die Backstube.
 6. **Nie:** fremde Issues claimen oder ändern (Ausnahme: Fragen anlegen, §2.8.2), mergen, eigene Phasen überspringen.
@@ -160,8 +225,8 @@ Alle `tick_s` Sekunden:
    6. **Timeout:** `status: running` länger als `phase_timeout_min` → `status: stalled`. Die Session bleibt am Leben, denn in Stufe 1 lässt sich ein Hänger nicht von einem Menschen unterscheiden, der noch nicht geantwortet hat. `backstube status` zeigt das Issue an, der Mensch entscheidet.
    7. **Neustart der Backstube:** Ein Issue gehört einem Slot und steht auf `running`, die Session-Tabelle kennt es aber nicht → per Session-Name (`bs-<id>-<phase>`) in der Runtime suchen und übernehmen, sonst gilt Punkt 3.
 3. **Dispatch.** Erst fertig machen, dann neu anfangen:
-   1. Issues in Arbeit, deren Phase `done` oder `failed` (mit Restbudget) ist und die keine Session haben → nächste bzw. dieselbe Phase im selben Slot starten. Ist die nächste Phase `review`, übernimmt `bs-review`, sofern frei.
-   2. Freie Slots → `backe next --claim --as <slot>` je `watch`-Eintrag in Reihenfolge, gefiltert um `backstube.skip`; Worktree anlegen, Phase aus `backstube.phase` starten.
+   1. Issues in Arbeit, deren Phase `done` oder `failed` (mit Restbudget) ist und die keine Session haben → nächste bzw. dieselbe Phase im selben Slot starten. Hat die nächste Phase `role: reviewer`, übernimmt `bs-review`, sofern frei.
+   2. Freie Slots → `backe next --claim --as <slot>` je `watch`-Eintrag in Reihenfolge, gefiltert um `backstube.skip`; Workflow bestimmen, Arbeitsverzeichnis vorbereiten (§2.5.3), Phase aus `backstube.phase` starten. Ein Issue, dessen Workflow `cwd: repo` verlangt, wartet, solange im selben Repo schon eine solche Session läuft.
 4. Aktionen ausführen, Session-Tabelle schreiben.
 
 Die **Session-Tabelle** (`~/.backstube/state.json`: Issue, Slot, Phase, Session-Name, Startzeit, Link) ist nur ein Cache. Sie lässt sich aus Backlog und Runtime vollständig wieder aufbauen, weil Session-Namen die Issue-ID tragen.
@@ -214,11 +279,11 @@ Eine selbst gemeldete Konfidenz des Modells ist als Schwelle schwach. Die harten
 
 ### 2.9 Session-Runtime
 
-Schnittstelle: `spawn(slot, issue, phase, prompt, cwd) → handle`, `alive(handle)`, `kill(handle)`, `link(handle)`.
+Schnittstelle: `spawn(slot, issue, phase, prompt, cwd, add_dirs, settings) → handle`, `alive(handle)`, `kill(handle)`, `link(handle)`.
 
-- **`remote-control`** (Stufe 1, Default): eine interaktive Claude-Code-Session in einer tmux-Session `bs-<id>-<phase>`, Arbeitsverzeichnis = Worktree, Remote Control aktiv, `BACKE_USER=<slot>`. Die Session läuft lokal, weil der Worker `backe`-Commits signiert: Der private Key des Slots liegt auf dem Host (BK §2.12) und gehört in keinen Cloud-Container.
+- **`remote-control`** (Stufe 1, Default): eine interaktive Claude-Code-Session in einer tmux-Session `bs-<id>-<phase>`, Arbeitsverzeichnis nach §2.5.3, Remote Control aktiv, `BACKE_USER=<slot>`. Die Session läuft lokal, weil der Worker `backe`-Commits signiert: Der private Key des Slots liegt auf dem Host (BK §2.12) und gehört in keinen Cloud-Container.
 - **`headless`** (ab Stufe 2, optional): `claude -p` ohne Rückkanal, nur zulässig mit `questions: "issues"`. Ohne TTY und ohne wartende Sessions, also billiger im Betrieb.
-- **Voraussetzungen auf dem Host:** Superpowers und `backstube-worker` sind installiert. Die Worker brauchen eine Permission-Allowlist für Tests, Git und `backe`, sonst wird jede Freigabe zum Ping aufs Handy und verletzt das erste Anti-Ziel. Die Backstube übergibt sie als Settings-Datei beim Start und schreibt nichts in das Code-Repo.
+- **Voraussetzungen auf dem Host:** `backstube-worker` und die Skills der benutzten Workflows sind auf User-Ebene installiert (Superpowers als Plugin); repo-lokale Skills bringt das Arbeitsverzeichnis mit. Die Worker brauchen eine Permission-Allowlist für Tests, Git und `backe`, sonst wird jede Freigabe zum Ping aufs Handy und verletzt das erste Anti-Ziel. Die Backstube übergibt sie als Settings-Datei beim Start und schreibt nichts in das Code-Repo.
 
 ### 2.10 Kommandos
 
@@ -228,8 +293,9 @@ Schnittstelle: `spawn(slot, issue, phase, prompt, cwd) → handle`, `alive(handl
 | `backstube tick` | genau ein Durchlauf, für Tests und Cron |
 | `backstube plan` | Trockenlauf: die Aktionen des nächsten Ticks, ohne sie auszuführen. Fällt aus dem reinen Reconcile ab |
 | `backstube status` | Slots, Sessions, Phasen, Links, `stalled`-Issues |
-| `backstube kick <id> [--phase <p>]` | Phase von Hand starten oder zurücksetzen, `attempts` auf 0 |
-| `backstube doctor` | Identitäten und Keys, deklarierte Properties, `backe`-Version, tmux, Claude Code, Skills, Remote Control |
+| `backstube kick <id> [--workflow <w>] [--phase <p>]` | Phase von Hand starten oder zurücksetzen, `attempts` auf 0 |
+| `backstube workflows` | eingebaute und konfigurierte Workflows mit Phasen, Skills und `cwd` |
+| `backstube doctor` | Identitäten und Keys, deklarierte Properties, `backe`-Version, tmux, Claude Code, Skills der Workflows, Remote Control, lokale Pfade der Repos und ihre `local_files` |
 
 ## 3. Designentscheidungen
 
@@ -276,6 +342,14 @@ Kein eigener Freigabe-Mechanismus: Das Gate nutzt denselben Kanal wie jede ander
 
 Slots, Runtime, Timeouts und Worktree-Pfade sind Betriebsparameter eines Hosts, nicht Inhalt des Backlogs. Die `watch`-Liste wäre im Backlog für alle sichtbar; das spräche dafür, sie dort abzulegen. In der ersten Version bleibt sie trotzdem lokal, weil es nur einen Host gibt.
 
+### 3.10 Workflows in der Host-Config, Auswahl am Issue
+
+Die Auswahl gehört ans Issue, weil der Mensch beim Anlegen am besten weiß, wie viel Zeremonie es braucht. Die Definition gehört in die Host-Config, weil sie Skills nennt, die auf diesem Host installiert sein müssen. Darum ist `backstube.workflow` im Backlog nur ein String (§2.4). Verworfen: Workflow aus Labels oder Projekt ableiten (implizit, und genau die Ausnahmen gehen schief); feste Phasen mit überspringbaren Schritten (jeder neue Workflow würde dann zur Sonderregel im Kern).
+
+### 3.11 Die Session startet im Repo, nicht in der Backstube
+
+Der Kontext eines Projekts liegt im Projekt: Konventionen in `CLAUDE.md`, Werkzeuge als repo-lokale Skills und MCP-Server, Leitplanken als Hooks. Startet eine Session woanders und bekommt das Repo nur als Pfad im Prompt, fehlt ihr all das, oder die Backstube müsste es nachbauen. Mit dem richtigen Arbeitsverzeichnis lädt Claude Code den Kontext selbst, und ein Repo bestimmt sein Verhalten in der Fabrik mit denselben Dateien wie bei der Arbeit von Hand. Verworfen: Kontext durch die Backstube in den Prompt kopieren (doppelte Pflege, und MCP-Server lassen sich so gar nicht übertragen).
+
 ## 4. Was offen bleibt
 
 ### 4.1 Offene Entscheidungen
@@ -287,6 +361,8 @@ Slots, Runtime, Timeouts und Worktree-Pfade sind Betriebsparameter eines Hosts, 
   - (c) **GitHub-Brücke** (BK §4.2): Entscheidungen als GitHub-Issues, Antworten dort.
   
   Vorschlag: (a). Kipp-Punkt: Wiegt Zurechenbarkeit schwerer als Bequemlichkeit, dann (c).
+- **Vertrauen und MCP-Freigabe in frischen Worktrees** (§2.5.3, Punkt 6): Kandidaten sind die Vorab-Freigabe des Verzeichnisses in der Claude-Code-Konfiguration und eine Settings-Datei, die die Projekt-MCP-Server des Repos ausdrücklich freigibt. Muss in F1 mit der aktuellen Claude-Code-Version geprüft werden. Kipp-Punkt: Geht es nur über das pauschale Abschalten der Abfragen, beschränkt sich die Backstube auf Repos, die der Mensch per `repos.<name>` ausdrücklich freigegeben hat.
+- **Kontext aus `--add-dir`:** Ob und welche `CLAUDE.md`, Skills und MCP-Konfigurationen Claude Code aus zusätzlichen Verzeichnissen lädt, ist zu prüfen. Bis dahin gelten weitere Repos nur als lesbarer Code, nicht als Kontext.
 - **Modell je Phase** (etwa das stärkste Modell für `spec` und `review`, ein schnelleres für `build`): nur Konfiguration, entschieden wird nach Messung in F1.
 - **Ort des Codes:** eigenes Repo `spearwolf/backstube` oder ein Paket in diesem Repo. Vorschlag: eigenes Repo. `backe` bleibt ein Werkzeug und wird kein Framework; der Vertrag zwischen beiden ist das CLI (§3.3).
 
@@ -301,7 +377,8 @@ Slots, Runtime, Timeouts und Worktree-Pfade sind Betriebsparameter eines Hosts, 
 ## 5. Tests
 
 - **Reconcile tabellengetrieben:** jede Regel aus §2.7 als Fall `Snapshot → Aktionen`, inklusive Neustart der Backstube mitten in jeder Phase.
-- **Property-Based** (fast-check, wie in `backe`): Für beliebige Snapshots gibt es nie zwei Sessions für dasselbe Issue, nie mehr Sessions als Slots, und jedes Issue eines Slots auf `in_progress` hat danach eine lebende Session oder eine Recovery-Aktion.
+- **Workflows und Arbeitsverzeichnis tabellengetrieben:** Auflösung von Workflow (Issue, `watch`, global) und Phase, Rücksprung bei »changes«, Wechsel des Workflows; Auflösung von Haupt-Repo, Modus, `backstube.dir`, `local_files` und `add_dirs`, inklusive fehlender lokaler Pfade und `repo: none`.
+- **Property-Based** (fast-check, wie in `backe`): Für beliebige Snapshots gibt es nie zwei Sessions für dasselbe Issue, nie mehr Sessions als Slots, und jedes Issue eines Slots auf `in_progress` hat danach eine lebende Session oder eine Recovery-Aktion, und je Repo läuft höchstens eine Session im Modus `repo`.
 - **E2E gegen echtes `backe`** mit lokalem Hub (BK §2.16.1) und einer Fake-Runtime, deren Worker die `backe`-Writes des Vertrags skriptgesteuert ausführen: ein Issue durch alle Phasen, eine Rückweisung im Review, ein Absturz, eine Rückfrage (Stufe 2), ein Veto (Stufe 3).
 - **Skill-Vertrag:** ein Sandbox-Repo mit einem kleinen Issue, das ein echter Headless-Worker bearbeitet. Nightly und manuell, nicht in der CI: zu teuer und nicht deterministisch.
 
@@ -309,7 +386,7 @@ Slots, Runtime, Timeouts und Worktree-Pfade sind Betriebsparameter eines Hosts, 
 
 | Schritt | Inhalt | Fertig, wenn |
 | --- | --- | --- |
-| **F1 — MVP** | Config, `doctor`, Identitäten, Worktrees, Reconcile und Dispatch, Runtime `remote-control`, Skill `backstube-worker` mit `questions: interactive`, Phasen `spec` bis `ship`, `status` und `plan` | Ein Issue in einem beobachteten Sprint endet als PR, und der Mensch hat dafür nur am Handy Fragen beantwortet |
+| **F1 — MVP** | Config, `doctor`, Identitäten, Reconcile und Dispatch, Runtime `remote-control`, Skill `backstube-worker` mit `questions: interactive`, Workflows `superpowers`, `direct` und `task`, Arbeitsverzeichnis nach §2.5.3 samt `local_files` und Vertrauensfreigabe, `status`, `plan` und `workflows` | Ein Issue in einem beobachteten Sprint endet als PR, und der Mensch hat dafür nur am Handy Fragen beantwortet; ein `direct`-Issue kommt ohne Spec und Plan zum PR; eine `task`-Session nutzt einen repo-lokalen Skill und einen Projekt-MCP-Server |
 | **F2 — Fragen als Issues** | `questions: issues`, Batch-Protokoll, Wiedereinstieg, Runtime `headless`, Benachrichtigung nach §4.1 | Eine Rückfrage blockiert nur ihr Issue, nicht ihren Slot, und die Antwort steht als Entscheidung im Backlog |
 | **F3 — Triage** | `bs-triage`, Quellen, Pflicht-Eskalation, Veto, Veto-Quote | Über zwei Wochen Betrieb landen messbar weniger Fragen beim Menschen, bei einer Veto-Quote, die der Mensch akzeptiert |
 | **F4 — Rundum** | Merge-Erkennung, CI-Rückkanal, Kosten je Issue, mehrere Hosts nach BK-Lease | je Punkt aus §4.2 |
