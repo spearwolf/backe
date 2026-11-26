@@ -402,3 +402,16 @@ export async function setPullInterval(b: TestBacklog, seconds: number): Promise<
 export async function setAttachmentsLfs(b: TestBacklog): Promise<void> {
   await appendConfigBlock(b, 'attachments', '{ "lfs": true }', 'attachments.lfs: true');
 }
+
+/**
+ * Ein gültiger Admin-Commit von `b.handle` setzt `attachments.max_bytes`; die Config darf noch
+ * keinen `attachments`-Block haben.
+ */
+export async function setAttachmentsMaxBytes(b: TestBacklog, bytes: number): Promise<void> {
+  await appendConfigBlock(
+    b,
+    'attachments',
+    `{ "max_bytes": ${bytes} }`,
+    `attachments.max_bytes: ${bytes}`,
+  );
+}

@@ -2,12 +2,21 @@
  * Der Tool-Endpunkt von `backe ui` (ui.md §2.3.2) über echtes HTTP gegen einen Test-Backlog mit
  * Remote. Hintergrund-Syncs starten nie wirklich: `tools.sync.spawn` zeichnet nur auf.
  */
+import { readdir, stat } from 'node:fs/promises';
+import { request as httpRequest } from 'node:http';
+import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
-import { revParse, type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
+import {
+  revParse,
+  setAttachmentsMaxBytes,
+  type TestBacklog,
+  testBacklog,
+} from '../../test/helpers/git.ts';
 import { fakeTimers } from '../../test/helpers/live.ts';
-import { rawRequest, startUi, type UiHarness } from '../../test/helpers/ui.ts';
+import { rawRequest, startUi, streamRequest, type UiHarness } from '../../test/helpers/ui.ts';
 import { git } from '../git/exec.ts';
 import { setLocale } from '../i18n/locale.ts';
+import { attachmentTooLarge } from '../ops/comment-ops.ts';
 import { scheduleSync } from '../services/background.ts';
 import type { SpawnFn } from '../services/sync.ts';
 import * as catalog from '../tools/catalog.ts';
@@ -28,17 +37,22 @@ let b: TestBacklog;
 let input: StartInput;
 let ui: UiHarness | undefined;
 let spawned: Parameters<SpawnFn>[0][];
+/** `TMPDIR` des Tests: Hier legt der Server sein Upload-Verzeichnis `backe-ui-*` an. */
+let sandbox: string;
 
 beforeEach(async () => {
   b = await testBacklog({ remote: true });
   input = { cwd: await tempDir(), env: b.env, flags: { as: 'spw' } };
   spawned = [];
+  sandbox = await tempDir();
+  vi.stubEnv('TMPDIR', sandbox);
 });
 afterEach(async () => {
   await ui?.close();
   ui = undefined;
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 const syncDeps = (): ToolDeps => ({
@@ -175,13 +189,6 @@ test('an unknown tool is 404', async () => {
 test('get on a tool path is 404', async () => {
   const u = await start();
   const r = await u.get(tool('issue_create'));
-  expect([r.status, r.json().error.code]).toEqual([404, 'not_found']);
-});
-
-test('an upload is not served yet', async () => {
-  const u = await start();
-  const id = await create(u);
-  const r = await u.put(`/api/b/acme/issues/${id}/attachments/a.txt`, 'hallo');
   expect([r.status, r.json().error.code]).toEqual([404, 'not_found']);
 });
 
@@ -396,4 +403,241 @@ test('a write to an unknown backlog is 404', async () => {
   const u = await start();
   const r = await u.post('/api/b/ghost/tools/issue_create', { title: 'x' });
   expect([r.status, r.json().error.code]).toEqual([404, 'not_found']);
+});
+
+const attachment = (id: string, name: string) => `/api/b/acme/issues/${id}/attachments/${name}`;
+
+/** Die Upload-Verzeichnisse `backe-ui-*` im Sandbox-`TMPDIR`. */
+async function uploadDirs(): Promise<string[]> {
+  return (await readdir(sandbox))
+    .filter((n) => n.startsWith('backe-ui-'))
+    .map((n) => join(sandbox, n));
+}
+
+/** Alle Temp-Dateien in den Upload-Verzeichnissen. */
+async function uploadFiles(): Promise<string[]> {
+  const dirs = await uploadDirs();
+  return (
+    await Promise.all(dirs.map(async (d) => (await readdir(d)).map((n) => join(d, n))))
+  ).flat();
+}
+
+/** Chunked PUT ohne `Content-Length` mit eigenem `Origin` und `application/octet-stream`. */
+function chunkedPut(u: UiHarness, path: string, chunks: Uint8Array[], end = true) {
+  return streamRequest(u.port, {
+    method: 'PUT',
+    path,
+    headers: {
+      cookie: u.cookie,
+      origin: `http://127.0.0.1:${u.port}`,
+      'content-type': 'application/octet-stream',
+    },
+    chunks,
+    end,
+  });
+}
+
+const PNG = Uint8Array.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+  0x89, 0x00, 0xff, 0x00, 0x0a, 0x0d,
+]);
+
+test('an upload becomes an attachment', async () => {
+  const u = await start();
+  const id = await create(u);
+  const r = await u.put(attachment(id, 'bild.png'), PNG);
+  expect(r.status).toBe(200);
+  const json = r.json();
+  expect(json.commit).toBe(await head());
+  expect(json.op).toMatchObject({ op: 'attach.add', id, name: 'bild.png', file: 'bild.png' });
+  // Dieselbe Form wie das Tool `attachment_add`.
+  const viaTool = await u.post(tool('attachment_add'), { id, name: 'notiz.txt', text: 'x' });
+  expect(Object.keys(json)).toEqual(Object.keys(viaTool.json()));
+  expect(Object.keys(json.op)).toEqual(Object.keys(viaTool.json().op));
+  const got = await u.get(attachment(id, 'bild.png'));
+  expect(got.status).toBe(200);
+  expect([...got.body]).toEqual([...PNG]);
+  // Ohne Punkt im Namen bleibt der Dateiname der Name; die Temp-Datei hat keine Endung.
+  const plain = await u.put(attachment(id, 'rohdaten'), PNG);
+  expect([plain.status, plain.json().op.file]).toEqual([200, 'rohdaten']);
+});
+
+test('an upload over max_bytes is cut off while streaming', async () => {
+  await setAttachmentsMaxBytes(b, 1024);
+  const u = await start();
+  const id = await create(u);
+  const before = await count();
+  const chunk = new Uint8Array(1024).fill(7);
+  const r = await chunkedPut(u, attachment(id, 'gross.bin'), [chunk, chunk, chunk, chunk], false);
+  expect([r.status, r.json().error.code]).toEqual([400, 'validation']);
+  expect(r.headers.connection).toBe('close');
+  const expected = attachmentTooLarge('gross.bin', 2048, { max_bytes: 1024, lfs: false });
+  expect(r.json().error.message).toMatch(/^Anhang »gross\.bin« hat \d+ Bytes, erlaubt sind 1024$/);
+  expect(r.json().error.hint).toBe(expected?.hint);
+  expect(await count()).toBe(before);
+  await vi.waitFor(async () => expect(await uploadFiles()).toEqual([]), WAIT);
+});
+
+test('a content-length over max_bytes is refused before reading', async () => {
+  await setAttachmentsMaxBytes(b, 1024);
+  const u = await start();
+  const id = await create(u);
+  const before = await count();
+  // Angekündigt, nie gesendet: Die Antwort kommt, ohne dass der Server auf den Body wartet.
+  const r = await rawRequest(u.port, {
+    method: 'PUT',
+    path: attachment(id, 'gross.bin'),
+    headers: {
+      cookie: u.cookie,
+      origin: `http://127.0.0.1:${u.port}`,
+      'content-type': 'application/octet-stream',
+      'content-length': '4096',
+    },
+  });
+  const expected = attachmentTooLarge('gross.bin', 4096, { max_bytes: 1024, lfs: false });
+  expect(r.status).toBe(400);
+  expect(r.json().error).toMatchObject({ code: 'validation', message: expected?.message });
+  expect(r.headers.connection).toBe('close');
+  expect(await count()).toBe(before);
+  expect(await uploadFiles()).toEqual([]);
+});
+
+test('an upload with another content type writes nothing', async () => {
+  const u = await start();
+  const id = await create(u);
+  const before = await count();
+  const tools = vi.spyOn(UiTools.prototype, 'envFor');
+  const r = await u.put(attachment(id, 'a.txt'), 'hallo', {
+    'content-type': 'multipart/form-data; boundary=x',
+  });
+  expect([r.status, r.json().error.code]).toEqual([403, 'forbidden']);
+  expect(tools).not.toHaveBeenCalled();
+  expect(await count()).toBe(before);
+  expect(await uploadDirs()).toEqual([]);
+});
+
+test('an invalid attachment name writes nothing', async () => {
+  const u = await start();
+  const id = await create(u);
+  const before = await count();
+  const tools = vi.spyOn(UiTools.prototype, 'envFor');
+  for (const name of ['..%2Fx', 'a%20b', '.hidden', 'Gross.txt']) {
+    const r = await u.put(attachment(id, name), 'hallo');
+    expect([r.status, r.json().error.code]).toEqual([400, 'validation']);
+    expect(r.json().error.message).toBe(
+      `Ungültiger Dateiname für den Anhang: »${decodeURIComponent(name)}«`,
+    );
+    expect(r.json().error.hint).toContain('[a-z0-9][a-z0-9._-]{0,63}');
+  }
+  // Geprüft vor dem Kontext und vor dem ersten Byte: Es entsteht nicht einmal das Verzeichnis.
+  expect(tools).not.toHaveBeenCalled();
+  expect(await uploadDirs()).toEqual([]);
+  expect(await count()).toBe(before);
+});
+
+test('the temp file is gone after success and failure', async () => {
+  const u = await start();
+  const id = await create(u);
+  expect((await u.put(attachment(id, 'a.txt'), 'eins')).status).toBe(200);
+  // Der Service scheitert: Den Namen gibt es schon.
+  const again = await u.put(attachment(id, 'a.txt'), 'zwei');
+  expect([again.status, again.json().error.code]).toEqual([409, 'conflict']);
+  // Das Issue fehlt.
+  const missing = await u.put(attachment('bk-zzzzzz', 'b.txt'), 'drei');
+  expect([missing.status, missing.json().error.code]).toEqual([404, 'not_found']);
+  const [dir] = await uploadDirs();
+  expect(dir).toBeDefined();
+  expect(await uploadFiles()).toEqual([]);
+});
+
+test('the temp file is gone after the client goes away', async () => {
+  const u = await start();
+  const id = await create(u);
+  const before = await count();
+  const r = httpRequest({
+    host: '127.0.0.1',
+    port: u.port,
+    method: 'PUT',
+    path: attachment(id, 'halb.bin'),
+    headers: {
+      host: `127.0.0.1:${u.port}`,
+      cookie: u.cookie,
+      origin: `http://127.0.0.1:${u.port}`,
+      'content-type': 'application/octet-stream',
+    },
+    agent: false,
+  });
+  r.on('error', () => {});
+  r.write(new Uint8Array(100));
+  await vi.waitFor(async () => expect(await uploadFiles()).toHaveLength(1), WAIT);
+  r.destroy();
+  await vi.waitFor(async () => expect(await uploadFiles()).toEqual([]), WAIT);
+  expect(await count()).toBe(before);
+});
+
+test('a reader cannot upload', async () => {
+  const u = await start({ flags: { as: 'reader' } });
+  const before = await head();
+  const r = await u.put(attachment('bk-zzzzzz', 'a.txt'), 'x');
+  expect([r.status, r.json().error.code]).toEqual([400, 'usage']);
+  expect(await head()).toBe(before);
+  expect(await uploadDirs()).toEqual([]);
+});
+
+test('uploads share the queue with tools', async () => {
+  let entered = 0;
+  let hold: Promise<void> | undefined;
+  const u = await start({
+    tools: {
+      ...syncDeps(),
+      write: {
+        hooks: {
+          beforeLock: async () => {
+            entered += 1;
+            await hold;
+          },
+        },
+      },
+    },
+  });
+  const id = await create(u);
+  const before = await count();
+  let release!: () => void;
+  hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  entered = 0;
+  const upload = u.put(attachment(id, 'a.txt'), 'hallo');
+  const update = u.post(tool('issue_update'), { id, title: 'Parallel' });
+  try {
+    // Beide sind angekommen (die Temp-Datei des Uploads liegt bereit), aber nur einer steht im
+    // Lock-Hook: Der andere wartet in derselben Warteschlange.
+    await vi.waitFor(async () => {
+      expect(entered).toBe(1);
+      expect(await uploadFiles()).toHaveLength(1);
+    }, WAIT);
+    for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    expect(entered).toBe(1);
+  } finally {
+    release();
+  }
+  const [r1, r2] = await Promise.all([upload, update]);
+  expect([r1.status, r2.status]).toEqual([200, 200]);
+  expect(entered).toBe(2);
+  expect(await count()).toBe(before + 2);
+  const merges = (await git(['rev-list', '--merges', 'HEAD'], { cwd: b.root })).stdout.trim();
+  expect(merges).toBe('');
+});
+
+test('close removes the upload temp dir', async () => {
+  const u = await start();
+  const id = await create(u);
+  expect((await u.put(attachment(id, 'a.txt'), 'hallo')).status).toBe(200);
+  const [dir] = await uploadDirs();
+  expect(dir).toBeDefined();
+  await u.close();
+  ui = undefined;
+  expect(await uploadDirs()).toEqual([]);
+  await expect(stat(dir as string)).rejects.toMatchObject({ code: 'ENOENT' });
 });

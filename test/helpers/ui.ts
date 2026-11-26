@@ -1,6 +1,7 @@
 import {
   request as httpRequest,
   type IncomingHttpHeaders,
+  type IncomingMessage,
   type OutgoingHttpHeaders,
 } from 'node:http';
 import { cookieName } from '../../src/ui/security.ts';
@@ -37,23 +38,82 @@ export function rawRequest(
         agent: false,
       },
       (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c: Buffer) => chunks.push(c));
-        res.on('error', reject);
-        res.on('end', () => {
-          const body = Buffer.concat(chunks);
-          resolve({
-            status: res.statusCode ?? 0,
-            headers: res.headers,
-            body,
-            text: () => body.toString('utf8'),
-            json: () => JSON.parse(body.toString('utf8')),
-          });
-        });
+        collect(res).then(resolve, reject);
       },
     );
     r.on('error', reject);
     r.end(req.body);
+  });
+}
+
+/** Liest eine Antwort bis zum Ende. */
+function collect(res: IncomingMessage): Promise<Res> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    res.on('data', (c: Buffer) => chunks.push(c));
+    res.on('error', reject);
+    res.on('end', () => {
+      const body = Buffer.concat(chunks);
+      resolve({
+        status: res.statusCode ?? 0,
+        headers: res.headers,
+        body,
+        text: () => body.toString('utf8'),
+        json: () => JSON.parse(body.toString('utf8')),
+      });
+    });
+  });
+}
+
+/**
+ * Request mit chunked Body ohne `Content-Length`: schreibt `chunks` mit Gegendruck und hört auf,
+ * sobald die Antwort da ist; `end: false` lässt den Body offen. Nach der Antwort ist die eigene
+ * Verbindung zu; ein Schreibfehler danach (der Server hat zugemacht) zählt nicht.
+ */
+export function streamRequest(
+  port: number,
+  req: {
+    method: string;
+    path: string;
+    headers?: OutgoingHttpHeaders;
+    chunks: Iterable<Uint8Array>;
+    end?: boolean;
+  },
+): Promise<Res> {
+  return new Promise((resolve, reject) => {
+    let answered = false;
+    const r = httpRequest(
+      {
+        host: '127.0.0.1',
+        port,
+        method: req.method,
+        path: req.path,
+        headers: { host: `127.0.0.1:${port}`, ...req.headers },
+        agent: false,
+      },
+      (res) => {
+        answered = true;
+        collect(res).then((got) => {
+          r.destroy();
+          resolve(got);
+        }, reject);
+      },
+    );
+    r.on('error', (err) => {
+      if (!answered) reject(err);
+    });
+    void (async () => {
+      for (const chunk of req.chunks) {
+        if (answered || r.destroyed) return;
+        if (!r.write(chunk)) {
+          await new Promise((done) => {
+            r.once('drain', done);
+            r.once('close', done);
+          });
+        }
+      }
+      if (req.end !== false && !answered && !r.destroyed) r.end();
+    })();
   });
 }
 

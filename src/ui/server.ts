@@ -19,6 +19,7 @@ import { appHeaders, checkRequest, type Gate, newToken, ownOrigins } from './sec
 import { m } from './server.messages.ts';
 import { serveStatic } from './static.ts';
 import { UiTools } from './tools.ts';
+import { uploadDir } from './upload.ts';
 import { handleWrite } from './write-api.ts';
 
 export type UiOptions = {
@@ -44,8 +45,9 @@ export type UiServer = {
   /**
    * Nimmt nichts Neues an, wartet die Arbeitsphase laufender Handler ab (`phase.ts`), dann die
    * Write-Warteschlangen samt ihren Hintergrund-Starts und laufende Sync-Tools (ui.md §2.1,
-   * »Lebensdauer«), beendet die Watcher der Live-Updates und schließt zuletzt alle Verbindungen;
-   * das beendet auch Antworten, die noch Bytes streamen, und offene Event-Streams. Idempotent.
+   * »Lebensdauer«), entfernt das Upload-Verzeichnis, beendet die Watcher der Live-Updates und
+   * schließt zuletzt alle Verbindungen; das beendet auch Antworten, die noch Bytes streamen, und
+   * offene Event-Streams. Idempotent.
    */
   close(): Promise<void>;
 };
@@ -105,6 +107,7 @@ export function createUiServer(opts: UiOptions): UiServer {
   const working = new Set<Promise<void>>();
   const hub = new LiveHub(opts.live === undefined ? {} : { deps: opts.live });
   const tools = new UiTools(input, opts.start, opts.tools);
+  const uploads = uploadDir();
   let closing: Promise<void> | undefined;
 
   async function dispatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -135,7 +138,7 @@ export function createUiServer(opts: UiOptions): UiServer {
       if (read !== undefined) {
         await handleRead(read, { input, start: opts.start, hub }, res);
       } else if (write !== undefined) {
-        await handleWrite(write, req, res, { tools });
+        await handleWrite(write, req, res, { tools, uploads });
       } else {
         sendError(res, new BackeError('not_found', m.noEndpoint(url.pathname)));
       }
@@ -200,11 +203,13 @@ export function createUiServer(opts: UiOptions): UiServer {
         // Ein Handler kann über eine noch offene Keep-Alive-Verbindung weitere nach sich ziehen.
         // Wer streamt, zählt nicht mehr: Ein Client, der nicht weiterliest, hielte sonst das Ende auf.
         // Während die Warteschlangen leerlaufen, kann über eine solche Verbindung noch ein Write
-        // ankommen; erst wenn danach kein Handler mehr arbeitet, ist alles abgewartet.
+        // ankommen; erst wenn danach kein Handler mehr arbeitet, ist alles abgewartet. Ein Upload,
+        // der noch Bytes liest, arbeitet.
         do {
           while (working.size > 0) await Promise.all(working);
           await tools.settled();
         } while (working.size > 0);
+        await uploads.remove();
         await hub.close();
         server.closeAllConnections();
         await closed;
