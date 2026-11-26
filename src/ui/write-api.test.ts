@@ -775,3 +775,22 @@ test('a request on a kept-alive connection after close started neither writes no
   expect(entered).toBe(1);
   expect(await count()).toBe(before + 1);
 });
+
+const DEV_ORIGIN = 'http://127.0.0.1:5173';
+
+test('dev origin may write when configured', async () => {
+  ui = await startUi({
+    ...input,
+    env: { ...input.env, BACKE_UI_DEV_ORIGIN: DEV_ORIGIN },
+    start: 'acme',
+    tools: syncDeps(),
+  });
+  const r = await ui.post(tool('issue_list'), {}, { origin: DEV_ORIGIN });
+  expect(r.status).toBe(200);
+});
+
+test('dev origin is foreign without the env', async () => {
+  const u = await start();
+  const r = await u.post(tool('issue_list'), {}, { origin: DEV_ORIGIN });
+  expect([r.status, r.json().error.code]).toEqual([403, 'forbidden']);
+});

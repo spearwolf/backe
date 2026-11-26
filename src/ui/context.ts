@@ -7,6 +7,7 @@ import { readUserConfig } from '../context/user-config.ts';
 import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import { locale } from '../i18n/locale.ts';
+import { headConfig } from '../services/write.ts';
 import type { BacklogEntryJson, BacklogsJson } from './api.ts';
 
 export type StartInput = { cwd: string; env: Env; flags: { backlog?: string; as?: string } };
@@ -50,6 +51,17 @@ export async function uiContext(
   });
 }
 
+/** `id_prefix` aus HEAD der Arbeitskopie; ohne Arbeitskopie oder bei `BackeError` `null`. */
+async function prefixOf(root: string | undefined): Promise<string | null> {
+  if (root === undefined) return null;
+  try {
+    return (await headConfig(root))?.id_prefix ?? null;
+  } catch (err) {
+    if (!(err instanceof BackeError)) throw err;
+    return null;
+  }
+}
+
 async function entry(
   input: StartInput,
   start: string | undefined,
@@ -65,10 +77,11 @@ async function entry(
       if (!(err instanceof BackeError)) throw err;
       canWrite = false;
     }
-    return { name, current, can_write: canWrite, user: ctx.user.value ?? null };
+    const prefix = await prefixOf(ctx.backlog.root);
+    return { name, current, can_write: canWrite, user: ctx.user.value ?? null, prefix };
   } catch (err) {
     if (!(err instanceof BackeError)) throw err;
-    return { name, current, can_write: false, user: null };
+    return { name, current, can_write: false, user: null, prefix: null };
   }
 }
 

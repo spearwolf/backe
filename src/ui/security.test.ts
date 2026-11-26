@@ -5,6 +5,7 @@ import {
   checkRequest,
   cookieName,
   cookiesOf,
+  devOrigins,
   type Gate,
   newToken,
   ownHosts,
@@ -152,4 +153,16 @@ test('the redirect never leaves the own host', () => {
   expect(check(`/.//evil.example/x?token=${TOKEN}`, { host: HOST })).toMatchObject({
     location: '/evil.example/x',
   });
+});
+
+test('devOrigins reads the trimmed env value', () => {
+  expect(devOrigins({ BACKE_UI_DEV_ORIGIN: ' http://127.0.0.1:5173 ' })).toEqual([
+    'http://127.0.0.1:5173',
+  ]);
+});
+
+test('devOrigins ignores an empty value', () => {
+  expect(devOrigins({})).toEqual([]);
+  expect(devOrigins({ BACKE_UI_DEV_ORIGIN: '' })).toEqual([]);
+  expect(devOrigins({ BACKE_UI_DEV_ORIGIN: '  ' })).toEqual([]);
 });

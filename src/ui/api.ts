@@ -10,6 +10,8 @@ export type BacklogEntryJson = {
   current: boolean;
   can_write: boolean;
   user: string | null;
+  /** `id_prefix` aus der Backlog-Config; `null` ohne Arbeitskopie oder lesbare Config. */
+  prefix: string | null;
 };
 export type BacklogsJson = { backlogs: BacklogEntryJson[]; lang: 'en' | 'de' };
 

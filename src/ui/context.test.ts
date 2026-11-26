@@ -4,8 +4,10 @@ import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { testBacklog } from '../../test/helpers/git.ts';
 import * as resolveModule from '../context/resolve.ts';
 import { updateUserConfig } from '../context/user-config.ts';
+import { BackeError } from '../core/errors.ts';
 import { git } from '../git/exec.ts';
 import { initBacklog } from '../services/init.ts';
+import * as writeModule from '../services/write.ts';
 import { backlogsJson, resolveStart, type StartInput, uiContext } from './context.ts';
 
 async function freshEnv() {
@@ -50,7 +52,9 @@ test('a bound working copy outside the registry is the start backlog', async () 
   const input: StartInput = { cwd: clone, env: f.env, flags: {} };
   expect(await resolveStart(input)).toBe('acme');
   const json = await backlogsJson(input, 'acme');
-  expect(json.backlogs).toEqual([{ name: 'acme', current: true, can_write: false, user: null }]);
+  expect(json.backlogs).toEqual([
+    { name: 'acme', current: true, can_write: false, user: null, prefix: 'bk' },
+  ]);
   expect((await uiContext(input, 'acme', 'acme')).backlog.root).toBe(clone);
 });
 
@@ -91,12 +95,12 @@ test('backlogs reports can_write per identity', async () => {
   const cwd = await tempDir();
   const spw = await backlogsJson({ cwd, env: t.env, flags: { as: 'spw' } }, 'acme');
   expect(spw).toEqual({
-    backlogs: [{ name: 'acme', current: true, can_write: true, user: 'spw' }],
+    backlogs: [{ name: 'acme', current: true, can_write: true, user: 'spw', prefix: 'bk' }],
     lang: 'de',
   });
   const reader = await backlogsJson({ cwd, env: t.env, flags: { as: 'reader' } }, 'acme');
   expect(reader.backlogs).toEqual([
-    { name: 'acme', current: true, can_write: false, user: 'reader' },
+    { name: 'acme', current: true, can_write: false, user: 'reader', prefix: 'bk' },
   ]);
 });
 
@@ -130,4 +134,44 @@ test('a programming error while listing backlogs is not swallowed', async () => 
     resolve.mockRestore();
   }
   expect((await backlogsJson(input, 'acme')).backlogs).toHaveLength(1);
+});
+
+test('backlog list carries the id prefix', async () => {
+  const t = await testBacklog();
+  await initBacklog({
+    homes: t.homes,
+    env: t.env,
+    name: 'other',
+    prefix: 'sm',
+    handle: 'spw',
+    key: t.key.priv,
+  });
+  const input: StartInput = { cwd: await tempDir(), env: t.env, flags: { as: 'spw' } };
+  const json = await backlogsJson(input, 'acme');
+  expect(json.backlogs.map((b) => [b.name, b.prefix])).toEqual([
+    ['acme', 'bk'],
+    ['other', 'sm'],
+  ]);
+});
+
+test('a backlog without a working copy has no prefix', async () => {
+  const t = await testBacklog();
+  const input: StartInput = { cwd: await tempDir(), env: t.env, flags: {} };
+  const json = await backlogsJson(input, 'ghost');
+  expect(json.backlogs.find((b) => b.name === 'ghost')?.prefix).toBeNull();
+});
+
+test('an unreadable backlog config leaves the prefix empty, other errors propagate', async () => {
+  const t = await testBacklog();
+  const input: StartInput = { cwd: await tempDir(), env: t.env, flags: { as: 'spw' } };
+  const spy = vi
+    .spyOn(writeModule, 'headConfig')
+    .mockRejectedValue(new BackeError('validation', 'kaputt'));
+  try {
+    expect((await backlogsJson(input, 'acme')).backlogs[0]?.prefix).toBeNull();
+    spy.mockRejectedValue(new TypeError('boom'));
+    await expect(backlogsJson(input, 'acme')).rejects.toThrow(TypeError);
+  } finally {
+    spy.mockRestore();
+  }
 });

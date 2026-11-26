@@ -15,7 +15,14 @@ import { forbiddenPage, noSessionPage } from './pages.ts';
 import { watchPhase } from './phase.ts';
 import { handleRead } from './read-api.ts';
 import { readRoute, writeRoute } from './routes.ts';
-import { appHeaders, checkRequest, type Gate, newToken, ownOrigins } from './security.ts';
+import {
+  appHeaders,
+  checkRequest,
+  devOrigins,
+  type Gate,
+  newToken,
+  ownOrigins,
+} from './security.ts';
 import { m } from './server.messages.ts';
 import { serveStatic } from './static.ts';
 import { UiTools } from './tools.ts';
@@ -103,7 +110,11 @@ export function answerClientError(
 export function createUiServer(opts: UiOptions): UiServer {
   const token = opts.token ?? newToken();
   /** Steht ab `listen`, vorher erreicht keine Anfrage den Handler. */
-  let gate: Gate = { port: opts.port, token, origins: ownOrigins(opts.port) };
+  let gate: Gate = {
+    port: opts.port,
+    token,
+    origins: [...ownOrigins(opts.port), ...devOrigins(opts.env)],
+  };
   const staticDir = opts.staticDir ?? fileURLToPath(new URL('./ui/', import.meta.url));
   const input = { cwd: opts.cwd, env: opts.env, flags: opts.flags };
   /** Arbeitsphasen laufender Handler; eine endet mit dem Handler oder mit `streaming(res)`. */
@@ -205,7 +216,7 @@ export function createUiServer(opts: UiOptions): UiServer {
         server.listen(opts.port, HOST, () => {
           server.off('error', onError);
           const { port } = server.address() as AddressInfo;
-          gate = { port, token, origins: ownOrigins(port) };
+          gate = { port, token, origins: [...ownOrigins(port), ...devOrigins(opts.env)] };
           resolve({ port, url: `http://${HOST}:${port}/?token=${token}` });
         });
       });

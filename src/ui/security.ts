@@ -4,6 +4,7 @@
  */
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingHttpHeaders, OutgoingHttpHeaders } from 'node:http';
+import type { Env } from '../core/env.ts';
 import { m } from './security.messages.ts';
 
 export const CSP =
@@ -57,6 +58,12 @@ export function ownHosts(port: number): string[] {
 /** Die Schreibweisen des eigenen Origins, je erlaubtem `Host` eine. */
 export function ownOrigins(port: number): string[] {
   return ownHosts(port).map((host) => `http://${host}`);
+}
+
+/** Zusätzlich erlaubter Origin des Vite-Dev-Servers: `BACKE_UI_DEV_ORIGIN`, getrimmt; leer = keiner. */
+export function devOrigins(env: Env): string[] {
+  const origin = env.BACKE_UI_DEV_ORIGIN?.trim();
+  return origin ? [origin] : [];
 }
 
 export type Verdict =
