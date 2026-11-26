@@ -1,25 +1,18 @@
+import type { IssueJson } from '@backe/ui/api.ts';
 import type { IssueRelations as Relations } from '../../app/issue-relations.ts';
+import { useWrites } from '../../data/write-context.tsx';
 import { m } from '../../views/issue.messages.ts';
+import { DepsEditor } from './edit/DepsEditor.tsx';
 import { IssueRef } from './IssueRef.tsx';
+import { RelationGroup as Group } from './parts.tsx';
 
-function Group(props: { title: string; note?: string; children: React.ReactNode }) {
-  return (
-    <section aria-label={props.title} className="space-y-1">
-      <h2 className="flex items-baseline gap-2 text-sm font-semibold">
-        {props.title}
-        {props.note !== undefined && (
-          <span className="text-xs font-normal tabular-nums text-muted-foreground">
-            {props.note}
-          </span>
-        )}
-      </h2>
-      <ul className="space-y-1">{props.children}</ul>
-    </section>
-  );
-}
-
-/** Die rechte Spalte: blocked_by, depends_on, Abhängige und Sub-Issues; leere Gruppen fehlen. */
-export function IssueRelations({ relations, backlog }: { relations: Relations; backlog: string }) {
+/**
+ * Die rechte Spalte: blocked_by, depends_on, Abhängige und Sub-Issues; leere Gruppen fehlen. Mit
+ * Schreibrecht steht `depends_on` immer da, mit Entfernen und Hinzufügen.
+ */
+export function IssueRelations(props: { issue: IssueJson; relations: Relations; backlog: string }) {
+  const { issue, relations, backlog } = props;
+  const { canWrite } = useWrites();
   const { blockedBy, dependsOn, dependents, children, progress } = relations;
   const item = (id: string, node: React.ReactNode) => <li key={id}>{node}</li>;
   return (
@@ -29,10 +22,14 @@ export function IssueRelations({ relations, backlog }: { relations: Relations; b
           {blockedBy.map((i) => item(i.id, <IssueRef issue={i} backlog={backlog} />))}
         </Group>
       )}
-      {dependsOn.length > 0 && (
-        <Group title="depends_on">
-          {dependsOn.map((i) => item(i.id, <IssueRef issue={i} backlog={backlog} />))}
-        </Group>
+      {canWrite ? (
+        <DepsEditor issue={issue} dependsOn={dependsOn} backlog={backlog} />
+      ) : (
+        dependsOn.length > 0 && (
+          <Group title="depends_on">
+            {dependsOn.map((i) => item(i.id, <IssueRef issue={i} backlog={backlog} />))}
+          </Group>
+        )
       )}
       {dependents.length > 0 && (
         <Group title={m.dependents}>

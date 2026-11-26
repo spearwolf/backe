@@ -4,6 +4,7 @@ import { m as app } from '../app/app.messages.ts';
 import { IssueDetailModel } from '../app/issue-detail.ts';
 import { ErrorAlert } from '../components/ErrorPage.tsx';
 import { Attachments } from '../components/issue/Attachments.tsx';
+import { TitleEditor } from '../components/issue/edit/TitleEditor.tsx';
 import { IssueFields } from '../components/issue/IssueFields.tsx';
 import { IssueRelations } from '../components/issue/IssueRelations.tsx';
 import { Timeline } from '../components/issue/Timeline.tsx';
@@ -11,6 +12,7 @@ import { Button } from '../components/ui/button.tsx';
 import { fetchAttachments, fetchIssue } from '../data/issue-api.ts';
 import { useStore } from '../data/store-context.tsx';
 import { useSignal } from '../data/use-signal.ts';
+import { useWrites, WriteContext } from '../data/write-context.tsx';
 import { useOwned } from '../lib/use-owned.ts';
 import { cn } from '../lib/utils.ts';
 import { Markdown } from '../markdown/index.tsx';
@@ -35,7 +37,10 @@ function workingCopy(context: Record<string, unknown>): string | undefined {
 
 type Props = { backlog: string; id: string; onClose: (id: string) => void };
 
-/** Der Tab Issue (ui.md §2.9), nur lesend: Felder, Beziehungen, Beschreibung, Zeitleiste. */
+/**
+ * Der Tab Issue (ui.md §2.9): Felder, Beziehungen, Beschreibung, Zeitleiste. Mit Schreibrecht
+ * (`useWrites().canWrite`) tragen Titel und Felder ihre Editoren.
+ */
 export function IssueView({ backlog, id, onClose }: Props) {
   const store = useStore();
   const create = useCallback(
@@ -65,6 +70,13 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
   const attachments = issue?.attachments ?? NO_ATTACHMENTS;
   // Stabil, solange sich Anhänge nicht ändern: Sonst parst jedes Patch das ganze Markdown neu.
   const markdownIssue = useMemo(() => ({ id, attachments }), [id, attachments]);
+  const deleted = state.status === 'deleted';
+  const access = useWrites();
+  // Ein gelöschtes Issue bleibt sichtbar, bearbeiten lässt es sich nicht mehr.
+  const fieldAccess = useMemo(
+    () => (deleted && access.canWrite ? { ...access, canWrite: false } : access),
+    [access, deleted],
+  );
 
   if (state.status === 'error') {
     return (
@@ -73,7 +85,6 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
       </section>
     );
   }
-  const deleted = state.status === 'deleted';
   const detail = ready?.detail;
 
   return (
@@ -88,41 +99,51 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
         </div>
       )}
       {state.status === 'loading' && <p role="status">{app.loading}</p>}
-      <div className={cn('space-y-4', deleted && 'opacity-60')}>
-        <h1 className="text-xl font-semibold">
-          {issue?.title ?? <span className="font-mono">{id}</span>}
-        </h1>
-        {issue !== undefined && (
-          <div className="grid gap-6 md:grid-cols-2">
-            <IssueFields
-              issue={issue}
-              backlog={backlog}
-              parents={relations?.parents ?? []}
-              declared={config?.props}
-              // `last_reason` kommt vom Server und kann nach einem Wechsel im Store schon überholt sein.
-              reason={detail?.last_reason?.to === issue.state ? detail.last_reason.body : undefined}
-              markdownIssue={markdownIssue}
-            />
-            {relations !== undefined && <IssueRelations relations={relations} backlog={backlog} />}
-          </div>
-        )}
-        {detail?.body !== undefined && detail.body !== '' && (
-          <section aria-labelledby="issue-description" className="space-y-2">
-            <h2 id="issue-description" className="text-sm font-semibold">
-              {m.description}
-            </h2>
-            <Markdown source={detail.body} backlog={backlog} issue={markdownIssue} />
-          </section>
-        )}
-        <Attachments
-          attachments={ready?.attachments ?? []}
-          backlog={backlog}
-          id={id}
-          root={workingCopy(context)}
-          issue={markdownIssue}
-        />
-        <Timeline comments={detail?.comments ?? []} backlog={backlog} issue={markdownIssue} />
-      </div>
+      <WriteContext.Provider value={fieldAccess}>
+        <div className={cn('space-y-4', deleted && 'opacity-60')}>
+          {issue === undefined ? (
+            <h1 className="text-xl font-semibold">
+              <span className="font-mono">{id}</span>
+            </h1>
+          ) : (
+            <TitleEditor issue={issue} />
+          )}
+          {issue !== undefined && (
+            <div className="grid gap-6 md:grid-cols-2">
+              <IssueFields
+                issue={issue}
+                backlog={backlog}
+                parents={relations?.parents ?? []}
+                declared={config?.props}
+                // `last_reason` kommt vom Server und kann nach einem Wechsel im Store schon überholt sein.
+                reason={
+                  detail?.last_reason?.to === issue.state ? detail.last_reason.body : undefined
+                }
+                markdownIssue={markdownIssue}
+              />
+              {relations !== undefined && (
+                <IssueRelations issue={issue} relations={relations} backlog={backlog} />
+              )}
+            </div>
+          )}
+          {detail?.body !== undefined && detail.body !== '' && (
+            <section aria-labelledby="issue-description" className="space-y-2">
+              <h2 id="issue-description" className="text-sm font-semibold">
+                {m.description}
+              </h2>
+              <Markdown source={detail.body} backlog={backlog} issue={markdownIssue} />
+            </section>
+          )}
+          <Attachments
+            attachments={ready?.attachments ?? []}
+            backlog={backlog}
+            id={id}
+            root={workingCopy(context)}
+            issue={markdownIssue}
+          />
+          <Timeline comments={detail?.comments ?? []} backlog={backlog} issue={markdownIssue} />
+        </div>
+      </WriteContext.Provider>
     </section>
   );
 }

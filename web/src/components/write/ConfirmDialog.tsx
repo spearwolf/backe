@@ -19,6 +19,8 @@ type Props = {
   confirmLabel: string;
   destructive?: boolean;
   busy: boolean;
+  /** Sperrt nur den Bestätigen-Knopf, etwa solange eine Pflichtangabe fehlt. */
+  confirmDisabled?: boolean;
   error: ApiError | undefined;
   onConfirm: () => void;
   onOpenChange: (open: boolean) => void;
@@ -59,7 +61,7 @@ export function ConfirmDialog(props: Props) {
           <Button
             type="button"
             variant={destructive === true ? 'destructive' : 'default'}
-            disabled={busy}
+            disabled={busy || props.confirmDisabled === true}
             onClick={props.onConfirm}
           >
             {confirmLabel}

@@ -6,6 +6,8 @@ import { m as app } from '../app/app.messages.ts';
 import { Router, RouterContext } from '../app/router.ts';
 import { Store } from '../data/store.ts';
 import { StoreContext } from '../data/store-context.tsx';
+import { WriteContext } from '../data/write-context.tsx';
+import { Writes } from '../data/writes.ts';
 import { testConfig, testIssue, testPatch, testState, tid } from '../test/state.ts';
 import { IssueView } from './IssueView.tsx';
 import { m } from './issue.messages.ts';
@@ -59,10 +61,14 @@ function view(issues: IssueJson[], over: Parameters<typeof testState>[1] = {}, i
   const store = new Store();
   store.load(testState(issues, over));
   const onClose = vi.fn();
+  // Nur lesend: Die Editoren prüft `components/issue/edit/edit.test.tsx`.
+  const writes = new Writes(store, { call: vi.fn(), upload: vi.fn(), refresh: async () => {} });
   render(
     <RouterContext.Provider value={router}>
       <StoreContext.Provider value={store}>
-        <IssueView backlog="acme" id={id} onClose={onClose} />
+        <WriteContext.Provider value={{ backlog: 'acme', canWrite: false, me: 'spw', writes }}>
+          <IssueView backlog="acme" id={id} onClose={onClose} />
+        </WriteContext.Provider>
       </StoreContext.Provider>
     </RouterContext.Provider>,
   );
