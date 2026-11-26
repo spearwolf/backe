@@ -13,8 +13,8 @@ import {
 } from '../../test/helpers/git.ts';
 import { I } from '../../test/helpers/snapshot.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
+import { sshFingerprint } from '../core/fingerprint.ts';
 import type { User } from '../core/schemas.ts';
-import { sshFingerprint } from '../core/ssh.ts';
 import { git } from '../git/exec.ts';
 import { readLocalState, stateDir, writeLocalState } from '../git/local-state.ts';
 import { encodeOp, type Operation } from '../ops/operation.ts';

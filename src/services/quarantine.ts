@@ -7,6 +7,7 @@ import { applyEdits, modify } from 'jsonc-parser';
 import { ZodError } from 'zod';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
+import { sshFingerprint } from '../core/fingerprint.ts';
 import { shortSha } from '../core/ids.ts';
 import {
   type BacklogConfig,
@@ -16,7 +17,6 @@ import {
   type User,
   validateEntity,
 } from '../core/schemas.ts';
-import { sshFingerprint } from '../core/ssh.ts';
 import {
   isAncestor,
   type RawChange,

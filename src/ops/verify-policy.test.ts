@@ -1,6 +1,6 @@
 import { cfg, I, testKey } from '../../test/helpers/snapshot.ts';
+import { sshFingerprint } from '../core/fingerprint.ts';
 import type { User } from '../core/schemas.ts';
-import { sshFingerprint } from '../core/ssh.ts';
 import { serializeEntityFile } from '../store/frontmatter.ts';
 import { commentFileName, commentsDir, issueFile, userFile } from '../store/layout.ts';
 import { checkCommitPolicy, type PolicyState, type TreeChange } from './verify-policy.ts';

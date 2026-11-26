@@ -47,3 +47,11 @@ test('zod default messages follow the locale', () => {
   setLocale('en');
   expect(z.string().safeParse(1).error?.issues[0]?.message).toMatch(/^Invalid input/);
 });
+
+test('locale falls back to en without process', () => {
+  try {
+    expect(initLocale({})).toBe('en');
+  } finally {
+    setLocale('de');
+  }
+});

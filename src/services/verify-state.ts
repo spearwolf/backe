@@ -6,13 +6,13 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { z } from 'zod';
 import { BackeError } from '../core/errors.ts';
+import { sshFingerprint } from '../core/fingerprint.ts';
 import {
   type BacklogConfig,
   BacklogConfigSchema,
   type User,
   validateEntity,
 } from '../core/schemas.ts';
-import { sshFingerprint } from '../core/ssh.ts';
 import {
   type CommitInfo,
   listTree,

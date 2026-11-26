@@ -2,6 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CATALOG_TEXTS } from '../src/i18n/catalog.ts';
 import { findGermanLiterals, germanVocabulary } from './helpers/german-literals.ts';
+import { runtimeImports, WEB_ENTRIES, webClosure, webOffenses } from './helpers/web-closure.ts';
 
 const SRC = join(import.meta.dirname, '..', 'src');
 /**
@@ -213,4 +214,34 @@ test('user-facing literals live in *.messages.ts', async () => {
     }
   }
   expect(hits).toEqual([]);
+});
+
+test('the web closure check catches every form it names', () => {
+  const offenses = (text: string) => webOffenses('x.ts', { imports: runtimeImports(text), text });
+  const caught = [
+    "import { readFile } from 'node:fs/promises';",
+    "import x from 'node:os';",
+    "export { parse } from 'yaml';",
+    "import {\n  a,\n  b,\n} from 'jsonc-parser';",
+    "import 'node:crypto';",
+    'const b = Buffer.from(s);',
+    'const v = process.env.X;',
+  ];
+  for (const text of caught) expect(offenses(text), text).toHaveLength(1);
+  const allowed = [
+    "import type { Stats } from 'node:fs';",
+    "export type { Env } from 'node:process';",
+    "import { z } from 'zod';",
+    "import { m } from './x.messages.ts';",
+    'const env = globalThis.process?.env ?? {};',
+    '// Buffer und process im Kommentar',
+    '/** liest process.env nicht */',
+  ];
+  for (const text of allowed) expect(offenses(text), text).toEqual([]);
+});
+
+test('the web closure imports nothing from node', async () => {
+  const files = await webClosure(WEB_ENTRIES);
+  expect(files.size).toBeGreaterThan(WEB_ENTRIES.length);
+  expect([...files].flatMap(([rel, f]) => webOffenses(rel, f))).toEqual([]);
 });

@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Env } from '../../src/context/paths.ts';
-import { sshFingerprint } from '../../src/core/ssh.ts';
+import { sshFingerprint } from '../../src/core/fingerprint.ts';
 import { executeWrite, type WriteDeps } from '../../src/services/write.ts';
 import { tempDir } from '../helpers/backlog.ts';
 import { type TestBacklog, testBacklog, testKey } from '../helpers/git.ts';

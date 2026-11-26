@@ -3,8 +3,9 @@
  * entfernen darf. Die Regel gilt für `applyOperation` und für die Prüfung fremder Commits.
  */
 
+import { sshFingerprint } from '../core/fingerprint.ts';
 import type { User } from '../core/schemas.ts';
-import { sameKey, sshFingerprint } from '../core/ssh.ts';
+import { sameKey } from '../core/ssh.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { isAdmin } from './admin.ts';
 import { violation } from './invariants.ts';

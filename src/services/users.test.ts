@@ -1,7 +1,7 @@
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { type TestBacklog, testBacklog, testKey } from '../../test/helpers/git.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
-import { sshFingerprint } from '../core/ssh.ts';
+import { sshFingerprint } from '../core/fingerprint.ts';
 import { addUser, listUsers, removeUser, revokeKey, showUser } from './users.ts';
 import { executeWrite } from './write.ts';
 

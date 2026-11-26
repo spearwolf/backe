@@ -1,7 +1,7 @@
 import { catchErr } from '../../test/helpers/catch.ts';
 import { snap, testKey } from '../../test/helpers/snapshot.ts';
+import { sshFingerprint } from '../core/fingerprint.ts';
 import type { User } from '../core/schemas.ts';
-import { sshFingerprint } from '../core/ssh.ts';
 import { userFile } from '../store/layout.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
 import { checkUserChange } from './policy.ts';

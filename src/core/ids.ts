@@ -1,4 +1,3 @@
-import { randomBytes as cryptoRandomBytes } from 'node:crypto';
 import { BackeError } from './errors.ts';
 import { m } from './ids.messages.ts';
 
@@ -22,7 +21,7 @@ export function isIssueId(s: string, prefix?: string): boolean {
 
 /** Standard-Zufallsquelle für IDs und Dateinamen, wenn der Aufrufer keine eigene mitgibt. */
 export function defaultRandomBytes(n: number): Uint8Array {
-  return cryptoRandomBytes(n);
+  return globalThis.crypto.getRandomValues(new Uint8Array(n));
 }
 
 export function generateIssueId(

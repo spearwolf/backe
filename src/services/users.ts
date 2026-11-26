@@ -2,8 +2,8 @@
 import type { ResolvedContext } from '../context/resolve.ts';
 import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
+import { sshFingerprint } from '../core/fingerprint.ts';
 import type { User } from '../core/schemas.ts';
-import { sshFingerprint } from '../core/ssh.ts';
 import { readPublicKey } from '../git/ssh.ts';
 import type { OpOf } from '../ops/operation.ts';
 import { type WriteOutcome, writeOp } from './outcome.ts';

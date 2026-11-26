@@ -1,18 +1,13 @@
 import { access, constants, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
+import { type Env, envValue } from '../core/env.ts';
 import { BackeError } from '../core/errors.ts';
 import { isMissing } from '../store/files.ts';
 import { m } from './paths.messages.ts';
 
-export type Env = Readonly<Record<string, string | undefined>>;
+export { type Env, envValue } from '../core/env.ts';
 export type Homes = { home: string; backeHome: string };
-
-/** Wert einer Umgebungsvariable; ein leerer String zählt als nicht gesetzt. */
-export function envValue(env: Env, name: string): string | undefined {
-  const value = env[name];
-  return value === undefined || value === '' ? undefined : value;
-}
 
 /** Expandiert `~` und relative Pfade, normalisiert; greift nie auf das Dateisystem zu. */
 export function expandPath(p: string, opts: { home: string; base: string }): string {

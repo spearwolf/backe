@@ -10,6 +10,7 @@ import { workingCopyPath } from '../context/registry.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
 import { userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
+import { sshFingerprint } from '../core/fingerprint.ts';
 import {
   BACKLOG_FORMAT_VERSION,
   type BacklogConfig,
@@ -20,7 +21,6 @@ import {
   type User,
   validateEntity,
 } from '../core/schemas.ts';
-import { sshFingerprint } from '../core/ssh.ts';
 import { commitPaths } from '../git/commit.ts';
 import { git } from '../git/exec.ts';
 import { objectInfo, readBlobs, removedHandles } from '../git/history.ts';

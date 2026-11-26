@@ -4,7 +4,7 @@
  * kennen; der MCP-Modus setzt sie fest auf Englisch.
  */
 import { z } from 'zod';
-import { type Env, envValue } from '../context/paths.ts';
+import { type Env, envValue } from '../core/env.ts';
 
 export type Locale = 'en' | 'de';
 
@@ -31,13 +31,13 @@ export function setLocale(l: Locale): void {
 }
 
 /** Bestimmt die Locale aus `env` und setzt sie. */
-export function initLocale(env: Env = process.env): Locale {
+export function initLocale(env: Env = globalThis.process?.env ?? {}): Locale {
   const l = localeFromEnv(env);
   setLocale(l);
   return l;
 }
 
-/** Aktuelle Locale; beim ersten Aufruf ohne `setLocale` aus `process.env`. */
+/** Aktuelle Locale; beim ersten Aufruf ohne `setLocale` aus `process.env`, ohne `process` Englisch. */
 export function locale(): Locale {
   return current ?? initLocale();
 }

@@ -1,8 +1,23 @@
-import { createHash } from 'node:crypto';
 import { BackeError } from './errors.ts';
 import { m } from './ssh.messages.ts';
 
 const TYPE = 'ssh-ed25519';
+
+/** Base64 (bereits auf Form geprüft) als Bytes, ohne `Buffer`. */
+function base64Bytes(b64: string): Uint8Array {
+  const raw = atob(b64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+function latin1(bytes: Uint8Array): string {
+  return String.fromCharCode(...bytes);
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
 
 export type SshPublicKey = { type: 'ssh-ed25519'; blob: Uint8Array; comment?: string };
 
@@ -22,25 +37,19 @@ export function parseSshPublicKey(line: string): SshPublicKey {
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(b64) || b64.length % 4 !== 0) {
     throw invalid(line, m.brokenBase64);
   }
-  const blob = Buffer.from(b64, 'base64');
-  const typeLength = blob.length >= 4 ? blob.readUInt32BE(0) : -1;
-  if (typeLength < 0 || blob.subarray(4, 4 + typeLength).toString('latin1') !== TYPE) {
+  const blob = base64Bytes(b64);
+  const typeLength = blob.length >= 4 ? new DataView(blob.buffer).getUint32(0) : -1;
+  if (typeLength !== TYPE.length || latin1(blob.subarray(4, 4 + typeLength)) !== TYPE) {
     throw invalid(line, m.keyDataWrongType(TYPE));
   }
-  const key: SshPublicKey = { type: TYPE, blob: new Uint8Array(blob) };
+  const key: SshPublicKey = { type: TYPE, blob };
   if (comment) key.comment = comment;
   return key;
-}
-
-/** `SHA256:` + Base64 ohne Padding über den Blob, wie `ssh-keygen -lf`. */
-export function sshFingerprint(line: string): string {
-  const { blob } = parseSshPublicKey(line);
-  return `SHA256:${createHash('sha256').update(blob).digest('base64').replace(/=+$/, '')}`;
 }
 
 /** Gleicher Typ und gleicher Blob; der Kommentar zählt nicht. */
 export function sameKey(a: string, b: string): boolean {
   const ka = parseSshPublicKey(a);
   const kb = parseSshPublicKey(b);
-  return ka.type === kb.type && Buffer.from(ka.blob).equals(kb.blob);
+  return ka.type === kb.type && sameBytes(ka.blob, kb.blob);
 }

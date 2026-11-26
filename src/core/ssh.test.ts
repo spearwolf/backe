@@ -1,8 +1,6 @@
-import { tmpdir } from 'node:os';
 import { catchErr } from '../../test/helpers/catch.ts';
 import { testKey } from '../../test/helpers/git.ts';
-import { sshKeygen } from '../git/exec.ts';
-import { parseSshPublicKey, sameKey, sshFingerprint } from './ssh.ts';
+import { parseSshPublicKey, sameKey } from './ssh.ts';
 
 const field = (s: string): Buffer => {
   const len = Buffer.alloc(4);
@@ -10,17 +8,15 @@ const field = (s: string): Buffer => {
   return Buffer.concat([len, Buffer.from(s)]);
 };
 const B64 = Buffer.concat([field('ssh-ed25519'), field('k'.repeat(32))]).toString('base64');
+const OVERLONG_TYPE = Buffer.concat([
+  Buffer.from([0xff, 0xff, 0xff, 0xff]),
+  Buffer.from('ssh-ed25519'),
+]).toString('base64');
 const RSA_BLOB_AS_ED25519 = Buffer.concat([field('ssh-rsa'), field('k'.repeat(32))]).toString(
   'base64',
 );
 
 describe('ssh public keys', () => {
-  test('fingerprint matches ssh-keygen -lf', async () => {
-    const k = await testKey('a');
-    const { stdout } = await sshKeygen(['-lf', k.pub], { cwd: tmpdir() });
-    expect(sshFingerprint(k.line)).toBe(stdout.split(' ')[1]);
-  });
-
   test('a comment may contain Unicode line separators', () => {
     expect(parseSshPublicKey(`ssh-ed25519 ${B64} a\u2028b`).comment).toBe('a\u2028b');
   });
@@ -48,6 +44,8 @@ describe('ssh public keys', () => {
     `ssh-ed25519 ${RSA_BLOB_AS_ED25519}`,
     'ssh-ed25519',
     'ssh-ed25519 AAAA',
+    'ssh-ed25519 AAA=',
+    `ssh-ed25519 ${OVERLONG_TYPE}`,
   ])('parseSshPublicKey rejects %s', (line) => {
     const err = catchErr(() => parseSshPublicKey(line));
     expect(err.code).toBe('validation');

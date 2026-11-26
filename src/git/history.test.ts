@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { rawCommit, testKey } from '../../test/helpers/git.ts';
-import { sshFingerprint } from '../core/ssh.ts';
+import { sshFingerprint } from '../core/fingerprint.ts';
 import { git } from './exec.ts';
 import {
   isAncestor,
