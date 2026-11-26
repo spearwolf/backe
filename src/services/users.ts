@@ -24,7 +24,7 @@ export async function addUser(
     throw new BackeError('usage', m.operatorNeedsAgent);
   }
   const handle = resolveHandle(ctx, input.handle);
-  const { key } = input;
+  const key = input.key.trim();
   parseSshPublicKey(key);
   return writeOp(
     ctx,

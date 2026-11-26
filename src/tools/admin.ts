@@ -1,7 +1,8 @@
 /**
  * Verwaltungs-Tools nur für `backe ui` (ui.md §2.3.2): Links, Kommentare, Anhänge, Projekte,
- * Sprints, Repos und Users ändern oder löschen. Wie bei den schreibenden Tools ruft jedes genau einen Service, die
- * Ergebnisse sind die `outcomeJson` der CLI-Befehle mit `--format json`. MCP bietet sie nicht an.
+ * Sprints, Repos und Users ändern oder löschen. Wie bei den schreibenden Tools ruft jedes genau
+ * einen Service, die Ergebnisse sind die `outcomeJson` der CLI-Befehle mit `--format json`. MCP
+ * bietet sie nicht an.
  */
 import { z } from 'zod';
 import { createAgent } from '../services/agent.ts';

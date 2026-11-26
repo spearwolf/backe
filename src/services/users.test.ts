@@ -24,6 +24,14 @@ describe('users', () => {
     expect((await showUser(ctx, 'bert')).user.name).toBe('Bert B.');
   });
 
+  test('a padded key line is stored trimmed', async () => {
+    const k = await testKey('anna');
+    await addUser(ctx, { handle: 'anna', key: `  ${k.line}\n` });
+    const shown = await showUser(ctx, 'anna');
+    expect(shown.user.keys).toEqual([k.line]);
+    expect(shown.fingerprints).toEqual([sshFingerprint(k.line)]);
+  });
+
   test('an agent without operator gets the actor as operator', async () => {
     await addUser(ctx, {
       handle: 'bot',
