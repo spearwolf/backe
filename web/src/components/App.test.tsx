@@ -523,3 +523,28 @@ test('Delete closes the focused issue tab and focus lands on the neighbour', asy
   await user.keyboard('{Delete}');
   expect(screen.getAllByRole('tab')).toHaveLength(2);
 });
+
+test('Alt+ArrowLeft and Ctrl+Backspace on an issue tab are left to the browser', async () => {
+  localStorage.setItem('backe-ui:main:tabs', JSON.stringify(['bk-1', 'bk-2']));
+  const { connect, user } = await setup({
+    path: '/b/main/issue/bk-2',
+    states: { main: state([issue(1), issue(2)]) },
+  });
+  await connect();
+  act(() => tab(/bk-2/).focus());
+  await user.keyboard('{Alt>}{ArrowLeft}{/Alt}');
+  await user.keyboard('{Control>}{Backspace}{/Control}');
+  await user.keyboard('{Meta>}{Backspace}{/Meta}');
+  expect(focused()).toBe('bk-2 Issue 2');
+  expect(screen.getAllByRole('tab')).toHaveLength(4);
+  expect(path()).toBe('/b/main/issue/bk-2');
+});
+
+test('menu items show a focus ring in every item kind', async () => {
+  const { user } = await setup({ path: '/b/main/backlog' });
+  await user.click(screen.getByRole('button', { name: 'Theme' }));
+  for (const item of screen.getAllByRole('menuitemradio')) {
+    expect(item.className).toContain('focus:ring-2');
+    expect(item.className).toContain('focus:ring-ring');
+  }
+});

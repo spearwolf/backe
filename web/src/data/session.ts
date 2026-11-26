@@ -97,7 +97,11 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
     connection.on('status', (s) => status.set(s)),
     connection.on('hello', (h) => {
       if (!hasRev(h)) reload();
-      else if (!loading && (!store.loaded.value || stale)) load();
+      else if (!store.loaded.value || stale) {
+        // Läuft gerade eine Probe, kennt sie den Stream noch nicht: ein Laden folgt, genau eines.
+        if (loading) reloadPending = true;
+        else load();
+      }
     }),
     connection.on('patch', (p) => {
       if (!hasRev(p)) {

@@ -345,6 +345,40 @@ describe('openSession', () => {
     session.dispose();
   });
 
+  it('a hello during a failing probe loads again', async () => {
+    const { session, es, urls, answer, fail, flush } = setup();
+    es()?.emitError();
+    expect(urls).toHaveLength(1);
+    // Der Browser öffnet den Stream neu, während die Probe noch läuft.
+    es()?.emitOpen();
+    es()?.emitEvent('hello', hello(1));
+    expect(urls).toHaveLength(1);
+    fail(new Error('down'));
+    await flush();
+    expect(urls).toHaveLength(2);
+    await answer(state(1));
+    expect(session.store.loaded.value).toBe(true);
+    expect(session.error.value).toBeUndefined();
+    session.dispose();
+  });
+
+  it('a hello during a successful probe reloads once', async () => {
+    const { session, es, urls, answer } = setup();
+    es()?.emitError();
+    es()?.emitOpen();
+    es()?.emitEvent('hello', hello(2));
+    es()?.emitEvent('hello', hello(2));
+    expect(urls).toHaveLength(1);
+    await answer(state(1));
+    expect(urls).toHaveLength(2);
+    await answer(state(2));
+    expect(session.store.rev.value).toBe(2);
+    expect(urls).toHaveLength(2);
+    es()?.emitEvent('hello', hello(2));
+    expect(urls).toHaveLength(2);
+    session.dispose();
+  });
+
   it('malformed patch and hello payloads count as reset', async () => {
     const { session, es, urls, answer } = setup();
     es()?.emitEvent('hello', 'null');

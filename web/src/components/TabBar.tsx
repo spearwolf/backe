@@ -76,6 +76,9 @@ export function TabBar({ backlog, route, tabs, onClose }: Props) {
   // Tastatur nach dem Tabs-Muster von WAI-ARIA mit manueller Aktivierung: Pfeile, Home und End
   // bewegen den Fokus, Enter (nativ am Link) und Leertaste öffnen, Entf schließt einen Issue-Tab.
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    // Alt+← ist »Zurück« des Browsers, Strg/Cmd+Rücktaste gehört dem System; beides bleibt dort.
+    // Umschalt lasse ich durch: es verändert die Pfeile und Home/End hier nicht.
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
     const list = [...e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')];
     const at = list.indexOf(e.target as HTMLElement);
     const tab = list[at];
