@@ -9,6 +9,10 @@ import { Markdown } from '../../markdown/index.tsx';
 import { languageOf } from '../../markdown/languages.ts';
 import { m } from '../../views/issue.messages.ts';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../ui/dialog.tsx';
+import { ActionError } from '../write/ActionError.tsx';
+import { RemoveAttachment, UploadButton } from './edit/AttachmentWrites.tsx';
+import type { AttachmentUpload } from './edit/upload.ts';
+import { useFocusRescue } from './edit/use-focus-return.ts';
 
 type Item = AttachmentListJson[number];
 type MarkdownIssue = React.ComponentProps<typeof Markdown>['issue'];
@@ -43,7 +47,9 @@ function hostOf(url: string): string {
 /**
  * Anhänge des Issues (ui.md §2.9.4): Name, Größe und Art je Eintrag, dazu Vorschau für Bilder,
  * Text und Markdown. Der Server liefert nur Bilder und gültiges UTF-8 bis `ATTACHMENT_TEXT_LIMIT`
- * als `text/plain` inline aus; alles andere wird heruntergeladen.
+ * als `text/plain` inline aus; alles andere wird heruntergeladen. Mit `uploads` (nur bei
+ * Schreibrecht) gibt es »Hochladen« und je Eintrag »Entfernen«; Fehler beim Hochladen stehen über
+ * der Liste.
  */
 export function Attachments(props: {
   attachments: AttachmentListJson;
@@ -51,26 +57,36 @@ export function Attachments(props: {
   id: string;
   root: string | undefined;
   issue: MarkdownIssue;
+  uploads?: AttachmentUpload;
 }) {
-  const { attachments, backlog, id, root, issue } = props;
-  if (attachments.length === 0) return null;
+  const { attachments, backlog, id, root, issue, uploads } = props;
+  // Ein entfernter Anhang nimmt seinen Knopf mit; der Fokus bleibt dann in der Liste.
+  const rescue = useFocusRescue<HTMLElement>();
+  if (attachments.length === 0 && uploads === undefined) return null;
   return (
-    <section aria-labelledby="issue-attachments" className="space-y-2">
-      <h2 id="issue-attachments" className="text-sm font-semibold">
-        {m.attachments}
-      </h2>
-      <ul className="space-y-2">
-        {attachments.map((a) => (
-          <AttachmentItem
-            key={a.name}
-            item={a}
-            backlog={backlog}
-            id={id}
-            root={root}
-            issue={issue}
-          />
-        ))}
-      </ul>
+    <section ref={rescue} aria-labelledby="issue-attachments" className="space-y-2">
+      <div className="flex items-center gap-2">
+        <h2 id="issue-attachments" className="text-sm font-semibold">
+          {m.attachments}
+        </h2>
+        {uploads !== undefined && <UploadButton uploads={uploads} />}
+      </div>
+      <ActionError error={uploads?.error} />
+      {attachments.length > 0 && (
+        <ul className="space-y-2">
+          {attachments.map((a) => (
+            <AttachmentItem
+              key={a.name}
+              item={a}
+              backlog={backlog}
+              id={id}
+              root={root}
+              issue={issue}
+              removable={uploads !== undefined}
+            />
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
@@ -81,8 +97,9 @@ function AttachmentItem(props: {
   id: string;
   root: string | undefined;
   issue: MarkdownIssue;
+  removable: boolean;
 }) {
-  const { item, backlog, id, root, issue } = props;
+  const { item, backlog, id, root, issue, removable } = props;
   const kind = attachmentKind(item);
   const href = attachmentUrl(backlog, id, item.name);
   const Icon = KIND_ICON[kind];
@@ -99,7 +116,7 @@ function AttachmentItem(props: {
         {item.size !== undefined && (
           <span className="text-xs text-muted-foreground">{formatBytes(item.size)}</span>
         )}
-        <span className="ml-auto">
+        <span className="ml-auto inline-flex items-center gap-2">
           {item.url !== undefined ? (
             <a
               href={item.url}
@@ -123,6 +140,7 @@ function AttachmentItem(props: {
               </a>
             )
           )}
+          {removable && <RemoveAttachment id={id} name={item.name} />}
         </span>
       </div>
       {kind === 'not-loaded' && (

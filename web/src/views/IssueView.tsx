@@ -1,10 +1,13 @@
 import type { Attachment } from '@backe/core/schemas.ts';
-import { useCallback, useMemo, useRef } from 'react';
+import { type DragEvent, useCallback, useMemo, useRef, useState } from 'react';
 import { m as app } from '../app/app.messages.ts';
 import { IssueDetailModel } from '../app/issue-detail.ts';
 import { ErrorAlert } from '../components/ErrorPage.tsx';
 import { Attachments } from '../components/issue/Attachments.tsx';
+import { DescriptionEditor } from '../components/issue/edit/DescriptionEditor.tsx';
+import { IssueActions } from '../components/issue/edit/IssueActions.tsx';
 import { TitleEditor } from '../components/issue/edit/TitleEditor.tsx';
+import { useAttachmentUpload, useUploader } from '../components/issue/edit/upload.ts';
 import { IssueFields } from '../components/issue/IssueFields.tsx';
 import { IssueRelations } from '../components/issue/IssueRelations.tsx';
 import { Timeline } from '../components/issue/Timeline.tsx';
@@ -15,7 +18,6 @@ import { useSignal } from '../data/use-signal.ts';
 import { useWrites, WriteContext } from '../data/write-context.tsx';
 import { useOwned } from '../lib/use-owned.ts';
 import { cn } from '../lib/utils.ts';
-import { Markdown } from '../markdown/index.tsx';
 import { m } from './issue.messages.ts';
 
 const NO_ATTACHMENTS: readonly Attachment[] = [];
@@ -37,9 +39,12 @@ function workingCopy(context: Record<string, unknown>): string | undefined {
 
 type Props = { backlog: string; id: string; onClose: (id: string) => void };
 
+const hasFiles = (e: DragEvent): boolean => e.dataTransfer.types.includes('Files');
+
 /**
  * Der Tab Issue (ui.md §2.9): Felder, Beziehungen, Beschreibung, Zeitleiste. Mit Schreibrecht
- * (`useWrites().canWrite`) tragen Titel und Felder ihre Editoren.
+ * (`useWrites().canWrite`) tragen Titel, Felder, Beschreibung und Kommentare ihre Editoren, und
+ * Dateien, die auf den Tab fallen, werden Anhänge.
  */
 export function IssueView({ backlog, id, onClose }: Props) {
   const store = useStore();
@@ -77,6 +82,11 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
     () => (deleted && access.canWrite ? { ...access, canWrite: false } : access),
     [access, deleted],
   );
+  // Ein Uploader je Tab: Er kennt die Namen, die der Tab schon vergeben hat (Patch steht noch aus).
+  const upload = useUploader(id);
+  const uploads = useAttachmentUpload(upload);
+  const [dropping, setDropping] = useState(false);
+  const droppable = fieldAccess.canWrite;
 
   if (state.status === 'error') {
     return (
@@ -87,8 +97,38 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
   }
   const detail = ready?.detail;
 
+  // Ohne `preventDefault` beim Darüberziehen löst der Browser kein `drop` aus.
+  const dragHandlers = droppable
+    ? {
+        onDragOver: (e: DragEvent) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          setDropping(true);
+        },
+        onDragLeave: (e: DragEvent) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false);
+        },
+        // Fängt ein Editor das Ablegen selbst ab (Bild in den Text), endet die Drop-Fläche trotzdem.
+        onDropCapture: () => setDropping(false),
+        onDrop: (e: DragEvent) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          uploads.add(Array.from(e.dataTransfer.files));
+        },
+      }
+    : {};
+
   return (
-    <section className="space-y-4 p-4" aria-busy={state.status === 'loading'}>
+    <section
+      className="relative space-y-4 p-4"
+      aria-busy={state.status === 'loading'}
+      {...dragHandlers}
+    >
+      {droppable && dropping && (
+        <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-md border-2 border-dashed border-primary bg-background/80 text-sm font-medium">
+          {m.dropFiles}
+        </div>
+      )}
       {deleted && (
         <div role="status" className="flex items-center gap-3 rounded-md border p-3 text-sm">
           <span className="font-semibold">{app.deleted}</span>
@@ -106,7 +146,10 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
               <span className="font-mono">{id}</span>
             </h1>
           ) : (
-            <TitleEditor issue={issue} />
+            <>
+              <TitleEditor issue={issue} />
+              <IssueActions issue={issue} />
+            </>
           )}
           {issue !== undefined && (
             <div className="grid gap-6 md:grid-cols-2">
@@ -126,22 +169,30 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
               )}
             </div>
           )}
-          {detail?.body !== undefined && detail.body !== '' && (
-            <section aria-labelledby="issue-description" className="space-y-2">
-              <h2 id="issue-description" className="text-sm font-semibold">
-                {m.description}
-              </h2>
-              <Markdown source={detail.body} backlog={backlog} issue={markdownIssue} />
-            </section>
-          )}
+          <DescriptionEditor
+            id={id}
+            body={detail === undefined ? undefined : (detail.body ?? '')}
+            backlog={backlog}
+            issue={markdownIssue}
+            upload={upload}
+          />
           <Attachments
             attachments={ready?.attachments ?? []}
             backlog={backlog}
             id={id}
             root={workingCopy(context)}
             issue={markdownIssue}
+            {...(fieldAccess.canWrite ? { uploads } : {})}
           />
-          <Timeline comments={detail?.comments ?? []} backlog={backlog} issue={markdownIssue} />
+          {detail !== undefined && (
+            <Timeline
+              id={id}
+              comments={detail.comments ?? []}
+              backlog={backlog}
+              issue={markdownIssue}
+              upload={upload}
+            />
+          )}
         </div>
       </WriteContext.Provider>
     </section>
