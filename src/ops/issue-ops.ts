@@ -10,6 +10,7 @@ import type { Issue, PropValue } from '../core/schemas.ts';
 import { deriveRepoName, normalizeRepoUrl } from '../core/url.ts';
 import { canonicalBody } from '../store/frontmatter.ts';
 import type { Draft } from './draft.ts';
+import { editList } from './edit-list.ts';
 import { sameValue, violation } from './invariants.ts';
 import { m } from './issue-ops.messages.ts';
 import { bodyHash, type OpOf } from './operation.ts';
@@ -104,18 +105,6 @@ export function settle<T>(
 }
 
 const LIST_FIELDS = ['projects', 'sprints', 'repos', 'depends_on', 'blocked_by'] as const;
-
-/** Erst entfernen, dann hinten anhängen, was fehlt; eine leere Liste entfällt. */
-function editList(
-  current: readonly string[] | undefined,
-  add: readonly string[] | undefined,
-  remove: readonly string[] | undefined,
-): string[] | undefined {
-  const dropped = new Set(remove ?? []);
-  const out = (current ?? []).filter((x) => !dropped.has(x));
-  for (const x of add ?? []) if (!out.includes(x)) out.push(x);
-  return nonEmpty(out);
-}
 
 function editProps(
   id: string,

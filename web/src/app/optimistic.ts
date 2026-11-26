@@ -5,6 +5,7 @@
  */
 import { BackeError } from '@backe/core/errors.ts';
 import { planTransition } from '@backe/core/state.ts';
+import { editList } from '@backe/ops/edit-list.ts';
 import { type RankPosition, rankPlacement } from '@backe/ops/rank.ts';
 import type { BacklogSnapshot } from '@backe/store/snapshot.ts';
 import type { IssueJson, ToolArgs } from '@backe/ui/api.ts';
@@ -80,18 +81,6 @@ export function rankOverlay(
     if (entry.data.rank !== s.issues.get(key)?.data.rank) out.set(key, { rank: entry.data.rank });
   }
   return out;
-}
-
-/** Wie `editList` in BK: erst entfernen, dann hinten anhängen, was fehlt; leer entfällt. */
-function editList(
-  current: readonly string[] | undefined,
-  add: readonly string[] | undefined,
-  remove: readonly string[] | undefined,
-): string[] | undefined {
-  const dropped = new Set(remove ?? []);
-  const out = (current ?? []).filter((x) => !dropped.has(x));
-  for (const x of add ?? []) if (!out.includes(x)) out.push(x);
-  return out.length > 0 ? out : undefined;
 }
 
 /** Überlagerung von `issue_update`; `body` liegt nicht im Store und entfällt. */

@@ -1,7 +1,7 @@
 /**
  * Entwurf des Anlegen-Dialogs (ui.md §2.12): rein, ohne Browser-Zugriff. Vorbelegt wird aus dem
- * Filter des Tabs Backlog oder, ab U8, aus einer Board-Bahn; `createArgs` macht daraus genau den
- * Aufruf, den der Dialog zeigt.
+ * Filter des Tabs Backlog oder aus einer Board-Bahn (ui.md §2.8); `createArgs` macht daraus genau
+ * den Aufruf, den der Dialog zeigt.
  */
 import { MAIN_LINE, type State } from '@backe/core/state.ts';
 import type { IssueJson, ToolArgs } from '@backe/ui/api.ts';
