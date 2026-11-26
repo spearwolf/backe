@@ -8,6 +8,19 @@ import { testIssue, testPatch, testState, tid } from '../test/state.ts';
 import { BacklogView } from './BacklogView.tsx';
 import { m } from './backlog.messages.ts';
 
+// Zählt, wie oft eine Zeile ihren Inhalt rendert: Jede Zeile rendert genau ein `StateIcon`.
+const renders = vi.hoisted(() => ({ count: 0 }));
+vi.mock('../components/StateIcon.tsx', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../components/StateIcon.tsx')>();
+  return {
+    ...mod,
+    StateIcon: (props: Parameters<typeof mod.StateIcon>[0]) => {
+      renders.count++;
+      return mod.StateIcon(props);
+    },
+  };
+});
+
 // jsdom rechnet kein Layout; der Virtualizer misst die Fläche über `clientWidth`/`clientHeight`.
 const layout = ['clientHeight', 'clientWidth'].map(
   (key) => [key, Object.getOwnPropertyDescriptor(HTMLElement.prototype, key)] as const,
@@ -283,4 +296,55 @@ test('the error region is there before the first error', () => {
   const region = container.querySelector('[aria-live="polite"]');
   expect(region).not.toBeNull();
   expect(region?.textContent).toBe('');
+});
+
+describe('rendering', () => {
+  const fiveRows = () => view([1, 2, 3, 4, 5].map((n) => testIssue(n)));
+
+  test('a patch on one issue renders only its row', () => {
+    const { store } = fiveRows();
+    renders.count = 0;
+    act(() => {
+      store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(3, { title: 'neu' })] } }));
+    });
+    expect(renders.count).toBe(1);
+  });
+
+  test('a new issue renders only its own row', () => {
+    const { store } = fiveRows();
+    renders.count = 0;
+    act(() => {
+      store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(9, { rank: 1 })] } }));
+    });
+    expect(renders.count).toBe(1);
+  });
+
+  test('the end of a fade renders no row', () => {
+    vi.useFakeTimers();
+    try {
+      const { store } = fiveRows();
+      act(() => {
+        store.applyPatch(testPatch(2, { remove: { issues: [tid(1)] } }));
+      });
+      renders.count = 0;
+      act(() => {
+        vi.advanceTimersByTime(1500);
+      });
+      expect(rows()).toHaveLength(4);
+      expect(renders.count).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+test('a project and a sprint of the same name both show', () => {
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    view([testIssue(1, { projects: ['x'], sprints: ['x'] })]);
+    expect(within(rowOf(tid(1))).getAllByText('x')).toHaveLength(2);
+    expect(errors.mock.calls.flat().join(' ')).not.toContain('same key');
+  } finally {
+    errors.mockRestore();
+  }
 });
