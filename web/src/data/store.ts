@@ -122,19 +122,20 @@ export class Store {
   readonly #touches = new Map<string, Signal<number>>();
 
   /**
-   * Snapshot für `graphOf` und `selectIssues`, die nur `issues` und `config` lesen; alles andere
-   * bleibt leer. Darum hängt das Memo weder an Users noch an Sprints oder Repos.
+   * Snapshot für `graphOf` und `selectIssues`; das Memo liest `issues`, `projects` und `config`.
+   * Users, Sprints und Repos bleiben leer, darum rechnet ein Patch darauf nichts neu.
    */
   readonly toSnapshot: SignalReader<BacklogSnapshot | undefined> = createMemo(
     (): BacklogSnapshot | undefined => {
       const config = this.config.get();
       const issues = this.issues.list();
+      const projects = this.projects.list();
       if (config === undefined) return undefined;
       const stored = <T>(data: T): StoredEntity<T> => ({ data, extra: [], body: '', path: '' });
       return {
         config,
         users: new Map(),
-        projects: new Map(),
+        projects: new Map(projects.map((project) => [project.path, stored(project)])),
         sprints: new Map(),
         repos: new Map(),
         issues: new Map(issues.map((issue) => [issue.id, stored(issue)])),
@@ -169,6 +170,9 @@ export class Store {
       this.rev.set(state.rev);
       this.head.set(state.head);
       this.loaded.set(true);
+      // Bodies, Kommentare und Anhänge stehen nicht im JSON: nach einem Neuladen können verpasste
+      // `touched`-Einträge fehlen, also gilt jedes offene Issue als berührt.
+      for (const count of this.#touches.values()) count.set(count.value + 1);
     });
   }
 

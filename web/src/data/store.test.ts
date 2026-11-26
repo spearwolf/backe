@@ -231,7 +231,9 @@ describe('Store', () => {
     const reference: BacklogSnapshot = {
       config: BacklogConfigSchema.parse(state().config),
       users: new Map(),
-      projects: new Map(),
+      projects: new Map(
+        state().projects.map((p) => [p.path, { data: p, extra: [], body: '', path: '' }] as const),
+      ),
       sprints: new Map(),
       repos: new Map(),
       issues: new Map(
@@ -275,6 +277,39 @@ describe('Store', () => {
     store.applyPatch(patch({ rev: 3, upsert: { issues: [issue(2, { title: 'x' })] } }));
     expect(runs).toBe(2);
     SignalGroup.delete(owner);
+    store.dispose();
+  });
+
+  it('a project patch recomputes the snapshot', () => {
+    const store = new Store();
+    store.load(state());
+    expect([...(store.toSnapshot()?.projects.keys() ?? [])]).toEqual(['web']);
+    const owner = {};
+    let runs = 0;
+    createEffect(
+      () => {
+        store.toSnapshot();
+        runs++;
+      },
+      { attach: owner },
+    );
+    store.applyPatch(
+      patch({
+        upsert: { projects: [{ path: 'api', title: 'API' } as StateJson['projects'][number]] },
+      }),
+    );
+    expect(runs).toBe(2);
+    expect([...(store.toSnapshot()?.projects.keys() ?? [])]).toEqual(['web', 'api']);
+    SignalGroup.delete(owner);
+    store.dispose();
+  });
+
+  it('load bumps every existing touch count', () => {
+    const store = new Store();
+    store.load(state());
+    const count = store.touchCount(id(2));
+    store.load(state({ rev: 7 }));
+    expect(count.value).toBe(1);
     store.dispose();
   });
 
