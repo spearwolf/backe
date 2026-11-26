@@ -306,3 +306,40 @@ test('a row whose progress changes is a new row', () => {
   expect(model.selected()[0]?.progress).toEqual({ settled: 1, total: 1 });
   model.dispose();
 });
+
+test('a fade survives the search answer that follows its patch', async () => {
+  const { model, store, filter, pending } = setup([
+    testIssue(1, { title: 'x eins' }),
+    testIssue(2, { title: 'x zwei' }),
+  ]);
+  filter.set({ ...EMPTY_FILTER, text: 'x' });
+  vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+  pending[0]?.resolve([]);
+  await vi.runAllTimersAsync();
+  store.applyPatch(
+    testPatch(2, { upsert: { issues: [testIssue(2, { title: 'x zwei', state: 'done' })] } }),
+  );
+  expect(model.rows.value.map((r) => r.live)).toEqual([undefined, 'leaving']);
+  vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+  pending[1]?.resolve([]);
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(model.rows.value.map((r) => r.live)).toEqual([undefined, 'leaving']);
+  vi.advanceTimersByTime(FADE_MS - SEARCH_DEBOUNCE_MS);
+  expect(ids(model.rows.value)).toEqual([tid(1)]);
+  model.dispose();
+});
+
+test('a patch burst does not starve the description search', () => {
+  const { model, store, filter, pending } = setup();
+  filter.set({ ...EMPTY_FILTER, text: 'x' });
+  vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+  expect(pending).toHaveLength(1);
+  for (let rev = 2; rev <= 11; rev++) {
+    store.applyPatch(testPatch(rev));
+    vi.advanceTimersByTime(100);
+  }
+  // Zehn Patches im Abstand von 100 ms: spätestens 200 ms nach dem ersten sucht das Modell.
+  expect(pending.length).toBeGreaterThanOrEqual(4);
+  model.dispose();
+});

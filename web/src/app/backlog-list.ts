@@ -123,6 +123,7 @@ export class BacklogListModel {
   readonly #hits: Signal<BodyHits | undefined>;
   readonly #timers: Timers;
   #seq = 0;
+  #searchTimer: unknown;
 
   constructor(
     store: Store,
@@ -192,57 +193,76 @@ export class BacklogListModel {
       { attach: this },
     );
 
+    // Ein neuer Text startet den Debounce neu. Ein neuer `head` sucht nur, wenn noch keine Suche
+    // wartet — sonst verschöbe eine Salve von Patches die Suche, bis sie abebbt.
+    let prevNeedle: string | undefined;
     createEffect(
       () => {
         const needle = text();
         store.head.get();
+        const changed = needle !== prevNeedle;
+        prevNeedle = needle;
+        if (changed) this.#cancelSearch();
         if (needle === undefined) {
           this.#seq++;
           this.bodySearch.set('idle');
           return;
         }
+        if (this.#searchTimer !== undefined) return;
         this.bodySearch.set('pending');
-        const handle = this.#timers.setTimeout(
-          () => this.#search(needle, opts.search),
-          SEARCH_DEBOUNCE_MS,
-        );
-        return () => this.#timers.clearTimeout(handle);
+        this.#searchTimer = this.#timers.setTimeout(() => {
+          this.#searchTimer = undefined;
+          this.#search(needle, opts.search);
+        }, SEARCH_DEBOUNCE_MS);
       },
       { attach: this },
     );
 
-    // Ein Objekt je Stand der Eingaben: gleiche Identität heißt, nur der Store hat sich bewegt.
-    const inputs = createMemo(() => ({ q: query(), hits: this.#hits.get() }), { attach: this });
-    this.#track(this.selected, inputs, store);
+    this.#track(this.selected, query, store);
+  }
+
+  #cancelSearch(): void {
+    if (this.#searchTimer === undefined) return;
+    this.#timers.clearTimeout(this.#searchTimer);
+    this.#searchTimer = undefined;
   }
 
   /**
-   * Ein Patch (neues `lastChange`) bei unveränderten Eingaben markiert seine Issues als frisch und
-   * lässt Zeilen, die er aus der Liste nimmt, ausblenden. Jede andere Änderung der Liste — Filter,
-   * Ansicht, Suchtreffer, Neuladen — markiert nichts und beendet laufendes Ausblenden.
+   * Ein neuer Filter (neues Selektor-Objekt) und ein Neuladen markieren nichts und beenden
+   * laufendes Ausblenden. Bei gleichem Filter ist jede Änderung der Liste eine Änderung der Daten:
+   * Ein Patch markiert seine Issues als frisch, und Zeilen, die ein Patch oder eine neue
+   * Suchantwort aus der Liste nimmt, blenden aus.
    */
-  #track(selected: SignalReader<readonly ListRow[]>, inputs: () => unknown, store: Store): void {
-    let prevInputs: unknown;
+  #track(selected: SignalReader<readonly ListRow[]>, query: () => unknown, store: Store): void {
+    let prevQuery: unknown;
+    let prevHits: BodyHits | undefined;
     let prevChange = store.lastChange.value;
     createEffect(
       () => {
         const next = selected();
-        const current = inputs();
+        const q = query();
+        const hits = this.#hits.get();
         const change = store.lastChange.get();
-        const byPatch = change !== prevChange && current === prevInputs;
-        prevInputs = current;
+        const sameFilter = q === prevQuery;
+        const patched = change !== prevChange;
+        const byData = sameFilter && (patched || hits !== prevHits);
+        prevQuery = q;
+        prevHits = hits;
         prevChange = change;
-        if (byPatch && change !== undefined) {
+        if (byData) {
           const present = new Set(next.map((r) => r.issue.id));
-          for (const id of change.issues) {
-            if (present.has(id)) this.#mark(this.#fresh, id, HIGHLIGHT_MS);
+          if (patched && change !== undefined) {
+            for (const id of change.issues) {
+              if (present.has(id)) this.#mark(this.#fresh, id, HIGHLIGHT_MS);
+            }
           }
           for (const row of this.#base) {
             if (!present.has(row.issue.id)) this.#mark(this.#leaving, row.issue.id, FADE_MS);
           }
-          for (const id of this.#leaving.keys())
+          for (const id of [...this.#leaving.keys()]) {
             if (present.has(id)) this.#unmark(this.#leaving, id);
-        } else if (!byPatch) {
+          }
+        } else {
           for (const id of [...this.#leaving.keys()]) this.#unmark(this.#leaving, id);
         }
         this.#base = next;
@@ -297,6 +317,7 @@ export class BacklogListModel {
 
   dispose(): void {
     this.#seq++;
+    this.#cancelSearch();
     for (const marks of [this.#fresh, this.#leaving]) {
       for (const id of [...marks.keys()]) this.#unmark(marks, id);
     }
