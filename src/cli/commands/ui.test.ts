@@ -38,7 +38,14 @@ test('signal handlers are in place when the start line is written', async () => 
     prompt: async () => '',
   };
   const exit = run(io);
-  await started;
+  // Scheitert `run` vor der Startzeile, soll der Test sofort mit dem Exit-Code scheitern, nicht
+  // erst im Timeout.
+  await Promise.race([
+    started,
+    exit.then((code) => {
+      throw new Error(`backe ui endete vor der Startzeile mit Exit-Code ${code}`);
+    }),
+  ]);
   // Kein echtes Signal: `emit` ruft nur die Listener, die der Befehl registriert hat.
   process.emit('SIGTERM');
   expect(await exit).toBe(0);

@@ -335,6 +335,28 @@ test('close ends open connections', async () => {
   }
 });
 
+test('a failing upload dir removal does not keep close from ending hub and connections', async () => {
+  const failure = new Error('EBUSY: temp dir in use');
+  const server = createUiServer({
+    ...opts,
+    port: 0,
+    uploads: { file: () => Promise.reject(failure), remove: () => Promise.reject(failure) },
+  });
+  const { port } = await server.listen();
+  // Eine halb gesendete Anfrage hält den Server am Leben; nur `closeAllConnections` beendet sie.
+  const socket = connect({ host: '127.0.0.1', port });
+  socket.on('error', () => {});
+  const ended = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+  await new Promise<void>((resolve) =>
+    socket.write(`GET / HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n`, () => resolve()),
+  );
+  await expect(server.close()).rejects.toBe(failure);
+  await ended;
+  expect(await connectError('127.0.0.1', port)).toBe('ECONNREFUSED');
+  // Memoisiert: dasselbe Ergebnis, kein zweiter Versuch.
+  await expect(server.close()).rejects.toBe(failure);
+});
+
 test('close does not wait for a client that stopped reading a download', async () => {
   // Dünn besetzt: 256 MiB ohne Schreiblast, mehr als Socket-Puffer beider Seiten fassen.
   const size = 256 * 1024 * 1024;

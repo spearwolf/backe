@@ -16,7 +16,7 @@ test('attachment_add refuses a path when the adapter has no working directory', 
   const env: ToolEnv = {
     context: () => b.context(),
     allowDelete: true,
-    surface: 'mcp',
+    surface: 'ui',
     queue: writeQueue(),
     pending: pendingStarts(),
   };
@@ -55,7 +55,8 @@ test('tool errors speak german under de', async () => {
     const err = await catchErrAsync(() => invokeTool(rank, env, { id: 'bk-zzzzz' }));
     expect(err.code).toBe('usage');
     expect(err.message).not.toBe('Give exactly one position');
-    expect(err.message).toMatch(/Position/);
+    expect(err.message).toBe('Genau eine Position angeben');
+    expect(err.hint).toBe('top, bottom, before, after oder value');
   } finally {
     setLocale('en');
   }

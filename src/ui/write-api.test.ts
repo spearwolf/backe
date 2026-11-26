@@ -25,6 +25,7 @@ import type { ToolDeps } from '../tools/run.ts';
 import { TOOL_BODY_LIMIT } from './body.ts';
 import type { StartInput } from './context.ts';
 import { UiTools } from './tools.ts';
+import { tooLarge } from './write-api.ts';
 
 vi.mock('../services/background.ts', async (orig) => {
   const actual = await orig<typeof import('../services/background.ts')>();
@@ -629,6 +630,52 @@ test('uploads share the queue with tools', async () => {
   expect(await count()).toBe(before + 2);
   const merges = (await git(['rev-list', '--merges', 'HEAD'], { cwd: b.root })).stdout.trim();
   expect(merges).toBe('');
+});
+
+test('close waits for an upload that is still reading its body', async () => {
+  const u = await start();
+  const id = await create(u);
+  const before = await count();
+  const socket = connect(u.port, '127.0.0.1');
+  const received: Buffer[] = [];
+  socket.on('data', (chunk: Buffer) => received.push(chunk));
+  const ended = new Promise<void>((resolve) => socket.on('close', () => resolve()));
+  const chunk = (bytes: string) => `${bytes.length.toString(16)}\r\n${bytes}\r\n`;
+  socket.write(
+    [
+      `PUT ${attachment(id, 'spaet.txt')} HTTP/1.1`,
+      `Host: 127.0.0.1:${u.port}`,
+      `Cookie: ${u.cookie}`,
+      `Origin: http://127.0.0.1:${u.port}`,
+      'Content-Type: application/octet-stream',
+      'Transfer-Encoding: chunked',
+      '',
+      chunk('erste '),
+    ].join('\r\n'),
+  );
+  // Das Temp-Verzeichnis steht, sobald der Handler den Upload angenommen hat.
+  await vi.waitFor(async () => expect(await uploadDirs()).toHaveLength(1), WAIT);
+  let closed = false;
+  const closing = u.close().then(() => {
+    closed = true;
+  });
+  ui = undefined;
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(closed).toBe(false);
+  socket.write(`${chunk('Rest')}0\r\n\r\n`);
+  await closing;
+  await ended;
+  const raw = Buffer.concat(received).toString('utf8');
+  expect(raw).toMatch(/^HTTP\/1\.1 200 /);
+  expect(await count()).toBe(before + 1);
+  expect(await uploadDirs()).toEqual([]);
+});
+
+test('an oversize upload without a disagreeing size check still throws', () => {
+  // `attachmentTooLarge` kennt keine Grenze (null), `receiveUpload` hat trotzdem abgebrochen.
+  const err = tooLarge('x.bin', 10, null, false).error;
+  expect(err.code).toBe('validation');
+  expect(err.message).toBe('Anhang »x.bin« ist größer als die erlaubten konfigurierten Bytes');
 });
 
 test('close removes the upload temp dir', async () => {
