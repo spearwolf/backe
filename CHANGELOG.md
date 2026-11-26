@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/spearwolf/backe/compare/v0.3.0...v0.4.0) (2026-11-25)
+
+
+### Neu
+
+* **cli:** Guide in der Hilfe von project und repo ([b85d269](https://github.com/spearwolf/backe/commit/b85d269d948fb5dc57497b67572b13fe6019299b))
+
 ## [0.3.0](https://github.com/spearwolf/backe/compare/v0.2.0...v0.3.0) (2026-11-23)
 
 
