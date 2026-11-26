@@ -1,4 +1,5 @@
 import { readdir, readFile } from 'node:fs/promises';
+import { builtinModules } from 'node:module';
 import { join, posix, relative, sep } from 'node:path';
 import { CATALOG_TEXTS } from '../src/i18n/catalog.ts';
 import { findGermanLiterals, germanVocabulary } from './helpers/german-literals.ts';
@@ -325,21 +326,29 @@ test('adapters import each other only through the ui command', async () => {
 
 const WEB_SRC = join(import.meta.dirname, '..', 'web', 'src');
 
+/** Quelltext unter `web/src/`, auch Skripte in reinem JavaScript; Tests nicht. */
+const isWebSource = (name: string) => /\.(?:tsx?|m?js)$/.test(name) && !/\.test\./.test(name);
+
 /** Quelldateien unter `web/src/` ohne Tests, Pfade relativ zum Repo mit `/`. */
 async function webSources(dir: string): Promise<string[]> {
   const found: string[] = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) found.push(...(await webSources(path)));
-    else if (/\.tsx?$/.test(entry.name) && !/\.test\./.test(entry.name)) found.push(path);
+    else if (isWebSource(entry.name)) found.push(path);
   }
   return found;
 }
 
+// Module von Node gibt es auch ohne `node:` (`'fs'`, `'path/posix'`); im Browser fehlen sie so oder so.
+const NODE_BUILTINS = new Set(builtinModules.map((s) => s.replace(/^node:/, '')));
+const isNodeBuiltin = (s: string) =>
+  s.startsWith('node:') || NODE_BUILTINS.has(s) || NODE_BUILTINS.has(s.split('/')[0] as string);
+
 /**
  * Verstöße einer Datei unter `web/src/` (`rel` relativ zum Repo): ein Laufzeit-Import per
  * `@backe/…` außerhalb der reinen Hülle (Schlüssel wie `src/core/ids.ts`), statisch oder
- * dynamisch; jeder `node:`-Import, auch als Typ; jeder relative Import, der aus `web/src/`
+ * dynamisch; jeder Import eines Node-Moduls, mit `node:` oder ohne, auch als Typ; jeder relative Import, der aus `web/src/`
  * hinausführt, auch als Typ: `src/` erreicht der Client nur über `@backe/…`, sonst sähe die
  * Hüllenprüfung den Import nicht.
  */
@@ -352,7 +361,7 @@ function webSourceOffenses(rel: string, text: string, closure: ReadonlySet<strin
     s.startsWith('.') && !posix.join(posix.dirname(rel), s).startsWith('web/src/');
   return [
     ...[...runtimeImports(text), ...dynamic].filter(outsideClosure),
-    ...everything.filter((s) => s.startsWith('node:') || leavesWebSrc(s)),
+    ...everything.filter((s) => isNodeBuiltin(s) || leavesWebSrc(s)),
   ].map((s) => `${rel}: import ${s}`);
 }
 
@@ -379,6 +388,20 @@ test('web sources import only the pure closure from src', async () => {
   expect(flagged("const r = await import('../../src/core/ids.ts');")).toHaveLength(1);
   expect(flagged("const ids = await import('@backe/core/ids.ts');")).toEqual([]);
   expect(flagged("// import('node:fs') im Kommentar")).toEqual([]);
+  // Node-Module ohne `node:` zählen genauso, auch als Typ und dynamisch.
+  expect(flagged("import { readFileSync } from 'fs';")).toHaveLength(1);
+  expect(flagged("import { join } from 'path';")).toHaveLength(1);
+  expect(flagged("import { posix } from 'path/posix';")).toHaveLength(1);
+  expect(flagged("import type { Stats } from 'fs';")).toHaveLength(1);
+  expect(flagged("const fs = await import('fs/promises');")).toHaveLength(1);
+  expect(flagged("import { z } from 'zod';")).toEqual([]);
+  expect(flagged("import { useState } from 'react';")).toEqual([]);
+  expect(flagged("import { X } from 'lucide-react';")).toEqual([]);
+  expect(isWebSource('theme.js')).toBe(true);
+  expect(isWebSource('worker.mjs')).toBe(true);
+  expect(isWebSource('App.tsx')).toBe(true);
+  expect(isWebSource('App.test.tsx')).toBe(false);
+  expect(isWebSource('styles.css')).toBe(false);
 
   const files = await webSources(WEB_SRC);
   expect(files.length).toBeGreaterThan(0);
