@@ -36,6 +36,8 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
   let disposed = false;
   let loading = false;
   let reloadPending = false;
+  // Nach einem gescheiterten Laden ist der Store womöglich veraltet; das nächste hello lädt neu.
+  let failed = false;
   const buffer: PatchJson[] = [];
 
   const drain = (): void => {
@@ -55,6 +57,7 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
       (state) => {
         if (disposed) return;
         loading = false;
+        failed = false;
         store.load(state);
         error.set(undefined);
         if (reloadPending) {
@@ -67,6 +70,7 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
       (cause: unknown) => {
         if (disposed) return;
         loading = false;
+        failed = true;
         reloadPending = false;
         error.set(cause instanceof ApiError ? cause : new ApiError(0, 'offline', String(cause)));
       },
@@ -82,7 +86,7 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
     connection.on('status', (s) => status.set(s)),
     connection.on('hello', (h) => {
       if (!hasRev(h)) reload();
-      else if (!loading && !store.loaded.value) load();
+      else if (!loading && (!store.loaded.value || failed)) load();
     }),
     connection.on('patch', (p) => {
       if (!hasRev(p)) {

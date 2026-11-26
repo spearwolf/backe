@@ -215,6 +215,23 @@ describe('openSession', () => {
     session.dispose();
   });
 
+  it('a failed reload retries on the next hello', async () => {
+    const { session, es, urls, answer, fail, flush } = setup();
+    es()?.emitEvent('hello', hello(1));
+    await answer(state(1));
+    es()?.emitEvent('reset', {});
+    fail(new Error('boom'));
+    await flush();
+    expect(session.error.value).toBeDefined();
+    es()?.emitEvent('hello', hello(2));
+    expect(urls).toHaveLength(3);
+    await answer(state(2));
+    expect(session.store.rev.value).toBe(2);
+    es()?.emitEvent('hello', hello(2));
+    expect(urls).toHaveLength(3);
+    session.dispose();
+  });
+
   it('a failed load drops a reset that came in meanwhile', async () => {
     const { session, es, urls, fail, flush } = setup();
     es()?.emitEvent('hello', hello(1));
