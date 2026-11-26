@@ -1,4 +1,6 @@
-import { defineConfig } from 'vitest/config';
+import react from '@vitejs/plugin-react';
+import { configDefaults, defineConfig } from 'vitest/config';
+import { alias } from './web/vite.config.ts';
 
 // Ein Shard sieht nur seinen Teil der Coverage und reißt jede Schwelle. Geprüft wird darum erst
 // beim Zusammenführen der Blob-Reports (`vitest run --merge-reports --coverage`), das ohne
@@ -16,6 +18,7 @@ const thresholds = {
   'src/tools/**': { lines: 90, branches: 85 },
   'src/mcp/**': { lines: 90, branches: 85 },
   'src/ui/**': { lines: 90, branches: 85 },
+  'web/src/data/**': { lines: 90, branches: 85 },
 };
 
 export default defineConfig({
@@ -35,11 +38,32 @@ export default defineConfig({
     setupFiles: ['test/setup-locale.ts'],
     coverage: {
       provider: 'v8',
-      include: ['src/**'],
+      include: ['src/**', 'web/src/**'],
       // CLI-Code wird über E2E abgedeckt, nicht über Unit-Coverage; der MCP-Adapter läuft in den
-      // Tests in-process über den In-Memory-Transport und zählt.
-      exclude: ['src/cli/**', 'src/**/*.test.ts'],
+      // Tests in-process über den In-Memory-Transport und zählt. Die shadcn-Vorlagen sind fremder
+      // Code, `main.tsx` nur der Einstieg, der die App einhängt.
+      exclude: [
+        'src/cli/**',
+        'src/**/*.test.ts',
+        'web/src/**/*.test.{ts,tsx}',
+        'web/src/components/ui/**',
+        'web/src/main.tsx',
+        'web/src/test/**',
+      ],
       thresholds: sharded ? undefined : thresholds,
     },
+    // Beide Projekte erben `env`, `setupFiles` und die Coverage von oben; `pnpm test` läuft beide.
+    projects: [
+      {
+        extends: true,
+        test: { name: 'node', exclude: [...configDefaults.exclude, 'web/**'] },
+      },
+      {
+        extends: true,
+        plugins: [react()],
+        resolve: { alias },
+        test: { name: 'web', environment: 'jsdom', include: ['web/src/**/*.test.{ts,tsx}'] },
+      },
+    ],
   },
 });

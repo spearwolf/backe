@@ -321,3 +321,50 @@ test('adapters import each other only through the ui command', async () => {
   }
   expect(hits).toEqual([]);
 });
+
+const WEB_SRC = join(import.meta.dirname, '..', 'web', 'src');
+
+/** Quelldateien unter `web/src/` ohne Tests, Pfade relativ zum Repo mit `/`. */
+async function webSources(dir: string): Promise<string[]> {
+  const found: string[] = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) found.push(...(await webSources(path)));
+    else if (/\.tsx?$/.test(entry.name) && !/\.test\./.test(entry.name)) found.push(path);
+  }
+  return found;
+}
+
+/**
+ * Verstöße einer Datei unter `web/src/`: ein Laufzeit-Import per `@backe/…` außerhalb der reinen
+ * Hülle (Schlüssel wie `src/core/ids.ts`) und jeder `node:`-Import, auch als Typ.
+ */
+function webSourceOffenses(rel: string, text: string, closure: ReadonlySet<string>): string[] {
+  const outside = runtimeImports(text)
+    .filter((s) => s.startsWith('@backe/') && !closure.has(`src/${s.slice('@backe/'.length)}`))
+    .map((s) => `${rel}: import ${s}`);
+  const node = allImports(text)
+    .filter((s) => s.startsWith('node:'))
+    .map((s) => `${rel}: import ${s}`);
+  return [...outside, ...node];
+}
+
+test('web sources import only the pure closure from src', async () => {
+  const closure = new Set((await webClosure(WEB_ENTRIES)).keys());
+  const flagged = (text: string) => webSourceOffenses('web/src/x.ts', text, closure);
+  expect(flagged("import { openSnapshot } from '@backe/services/read.ts';")).toHaveLength(1);
+  expect(flagged("import type { Stats } from 'node:fs';")).toHaveLength(1);
+  expect(flagged("import { readFile } from 'node:fs/promises';")).toHaveLength(1);
+  expect(flagged("import type { Ctx } from '@backe/services/read.ts';")).toEqual([]);
+  expect(flagged("import { catalog } from '@backe/i18n/catalog.ts';")).toEqual([]);
+  expect(flagged("import { cn } from '@/lib/utils';")).toEqual([]);
+
+  const files = await webSources(WEB_SRC);
+  expect(files.length).toBeGreaterThan(0);
+  const hits: string[] = [];
+  for (const file of files) {
+    const rel = relative(join(SRC, '..'), file).split(sep).join('/');
+    hits.push(...webSourceOffenses(rel, await readFile(file, 'utf8'), closure));
+  }
+  expect(hits).toEqual([]);
+});
