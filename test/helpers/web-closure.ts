@@ -14,6 +14,7 @@ export const WEB_ENTRIES: readonly string[] = [
   'src/core/schemas.ts',
   'src/core/state.ts',
   'src/core/ids.ts',
+  'src/core/sync-line.ts',
   'src/i18n/catalog.ts',
   'src/ui/api.ts',
 ];

@@ -8,6 +8,7 @@ import { lockHeld, withFileLock } from '../context/lock.ts';
 import { type ResolvedContext, requireWriter } from '../context/resolve.ts';
 import { userConfigPath } from '../context/user-config.ts';
 import { BackeError } from '../core/errors.ts';
+import { syncLineParts } from '../core/sync-line.ts';
 import { git } from '../git/exec.ts';
 import { resolveCommit } from '../git/history.ts';
 import { readLocalState } from '../git/local-state.ts';
@@ -189,13 +190,10 @@ export async function syncStatus(
  * nur mit Remote und nur, wenn die letzte Runde fehlschlug oder der Modus `manual` ist.
  */
 export function statusLine(s: SyncStatus): string | undefined {
+  const { unpushed, conflicts, failed } = syncLineParts({ ...s, last_error: s.state.last_error });
   const parts: string[] = [];
-  const error = s.state.last_error;
-  if (s.remote !== undefined && s.unpushed > 0 && (error !== undefined || s.mode === 'manual')) {
-    parts.push(m.statusUnpushed(s.unpushed));
-  }
-  const n = s.conflicts.length;
-  if (n > 0) parts.push(m.statusConflicts(n));
-  if (error !== undefined) parts.push(m.statusLastFailed(error.message));
+  if (unpushed !== undefined) parts.push(m.statusUnpushed(unpushed));
+  if (conflicts !== undefined) parts.push(m.statusConflicts(conflicts));
+  if (failed !== undefined) parts.push(m.statusLastFailed(failed));
   return parts.length === 0 ? undefined : `Sync: ${parts.join(' · ')}`;
 }
