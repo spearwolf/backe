@@ -15,6 +15,7 @@ const thresholds = {
   'src/services/**': { lines: 90, branches: 90 },
   'src/tools/**': { lines: 90, branches: 85 },
   'src/mcp/**': { lines: 90, branches: 85 },
+  'src/ui/**': { lines: 90, branches: 85 },
 };
 
 export default defineConfig({

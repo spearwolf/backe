@@ -15,6 +15,7 @@ export const WEB_ENTRIES: readonly string[] = [
   'src/core/state.ts',
   'src/core/ids.ts',
   'src/i18n/catalog.ts',
+  'src/ui/api.ts',
 ];
 
 /** Nackte Imports, die das Web-Bundle mitbringen darf. */

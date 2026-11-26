@@ -1,0 +1,45 @@
+/** HTTP-Helfer des UI-Servers: Fehler-Mapping und JSON-Antworten. Schreibt nie nach stdout. */
+import type { OutgoingHttpHeaders, ServerResponse } from 'node:http';
+import { BackeError } from '../core/errors.ts';
+import { errorJson } from '../services/views.ts';
+
+export const JSON_TYPE = 'application/json; charset=utf-8';
+
+const STATUS_BY_EXIT_CODE: Readonly<Record<number, number>> = {
+  2: 400,
+  3: 404,
+  4: 409,
+  5: 422,
+  6: 502,
+  1: 500,
+};
+
+/** Exit-Code → Status: 2 → 400, 3 → 404, 4 → 409, 5 → 422, 6 → 502, 1 → 500; Fremdfehler 500. */
+export function httpStatus(err: unknown): number {
+  return err instanceof BackeError ? (STATUS_BY_EXIT_CODE[err.exitCode] ?? 500) : 500;
+}
+
+/**
+ * Kompaktes JSON ohne Zeilenende, `Content-Length`, `Cache-Control: no-store`. Sicherheits-Header
+ * setzt der Server vor dem Dispatch, nicht dieser Helfer.
+ */
+export function sendJson(
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: OutgoingHttpHeaders = {},
+): void {
+  const text = JSON.stringify(body);
+  res.writeHead(status, {
+    'Content-Type': JSON_TYPE,
+    'Content-Length': Buffer.byteLength(text),
+    'Cache-Control': 'no-store',
+    ...headers,
+  });
+  res.end(text);
+}
+
+/** `errorJson(err)` mit `httpStatus(err)`. */
+export function sendError(res: ServerResponse, err: unknown): void {
+  sendJson(res, httpStatus(err), errorJson(err));
+}

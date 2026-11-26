@@ -1,5 +1,5 @@
 import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, posix, relative, sep } from 'node:path';
 import { CATALOG_TEXTS } from '../src/i18n/catalog.ts';
 import { findGermanLiterals, germanVocabulary } from './helpers/german-literals.ts';
 import { runtimeImports, WEB_ENTRIES, webClosure, webOffenses } from './helpers/web-closure.ts';
@@ -68,7 +68,7 @@ test('CLI JSON keys are snake_case in every golden file', async () => {
 });
 
 /** Schichten unter den Adaptern und der MCP-Adapter selbst: stdout gehört dort dem Protokoll. */
-const QUIET_LAYERS = ['core', 'store', 'context', 'git', 'ops', 'services', 'tools', 'mcp'];
+const QUIET_LAYERS = ['core', 'store', 'context', 'git', 'ops', 'services', 'tools', 'mcp', 'ui'];
 /** Zeilenweise: `process.stdout` und jede `console`-Methode, die nach stdout schreibt. */
 const STDOUT_WRITE =
   /process\.stdout|console\.(log|info|debug|dir|dirxml|table|group|groupCollapsed|count|timeLog|timeEnd)\b/;
@@ -245,4 +245,70 @@ test('the web closure imports nothing from node', async () => {
   const files = await webClosure(WEB_ENTRIES);
   expect(files.size).toBeGreaterThan(WEB_ENTRIES.length);
   expect([...files].flatMap(([rel, f]) => webOffenses(rel, f))).toEqual([]);
+});
+
+/** Jeder Import und jedes `export … from`, auch `import type` und mehrzeilig; nackte Pakete bleiben. */
+const ANY_IMPORT_RE =
+  /^\s*(?:import|export)\s+(?:type\s+)?(?:[^'";]*?\s+from\s+)?['"]([^'"]+)['"]/gm;
+
+/** Relative Importe einer Quelldatei, aufgelöst zu Pfaden relativ zu `src` (mit `/`). */
+function resolvedImports(rel: string, text: string): string[] {
+  const dir = posix.dirname(rel);
+  return [...text.matchAll(ANY_IMPORT_RE)]
+    .map((m) => m[1] ?? '')
+    .filter((spec) => spec.startsWith('.'))
+    .map((spec) => posix.normalize(posix.join(dir, spec)));
+}
+
+/** Schichtenregel der Adapter: die verbotenen Ziele einer Quelldatei (Pfad relativ zu `src`). */
+function forbiddenAdapterImports(rel: string, text: string): string[] {
+  const forbidden = (target: string): boolean => {
+    const into = (layer: string) => target === layer || target.startsWith(`${layer}/`);
+    if (rel.startsWith('ui/')) return into('cli') || into('mcp');
+    if (rel.startsWith('mcp/')) return into('ui') || into('cli');
+    if (rel.startsWith('cli/')) return into('ui') && rel !== 'cli/commands/ui.ts';
+    return false;
+  };
+  return resolvedImports(rel, text)
+    .filter(forbidden)
+    .map((target) => `${rel}: ${target}`);
+}
+
+test('the adapter layer check catches every form it names', () => {
+  expect(
+    resolvedImports(
+      'ui/a.ts',
+      [
+        "import { x } from '../cli/x.ts';",
+        "import type { T } from '../mcp/t.ts';",
+        "export { y } from './sub/y.ts';",
+        "export type { Z } from '../ui/z.ts';",
+        "import {\n  a,\n  b,\n} from '../cli/multi.ts';",
+        "import 'node:fs';",
+        "import { z } from 'zod';",
+      ].join('\n'),
+    ),
+  ).toEqual(['cli/x.ts', 'mcp/t.ts', 'ui/sub/y.ts', 'ui/z.ts', 'cli/multi.ts']);
+  // relativ zur importierenden Datei: dasselbe Literal trifft je nach Ort ein anderes Ziel
+  expect(resolvedImports('cli/commands/ui.ts', "import { s } from '../../ui/s.ts';")).toEqual([
+    'ui/s.ts',
+  ]);
+  expect(resolvedImports('ui/sub/a.ts', "import { s } from '../../cli/s.ts';")).toEqual([
+    'cli/s.ts',
+  ]);
+  const flagged = (rel: string, text: string) => forbiddenAdapterImports(rel, text);
+  expect(flagged('ui/a.ts', "import type { T } from '../cli/t.ts';")).toHaveLength(1);
+  expect(flagged('ui/a.ts', "import { T } from '../tools/t.ts';")).toEqual([]);
+  expect(flagged('mcp/a.ts', "export { T } from '../ui/t.ts';")).toHaveLength(1);
+  expect(flagged('cli/commands/x.ts', "import { T } from '../../ui/t.ts';")).toHaveLength(1);
+  expect(flagged('cli/commands/ui.ts', "import { T } from '../../ui/t.ts';")).toEqual([]);
+});
+
+test('adapters import each other only through the ui command', async () => {
+  const hits: string[] = [];
+  for (const file of await sources(SRC)) {
+    const rel = relative(SRC, file).split(sep).join('/');
+    hits.push(...forbiddenAdapterImports(rel, await readFile(file, 'utf8')));
+  }
+  expect(hits).toEqual([]);
 });
