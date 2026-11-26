@@ -60,6 +60,9 @@ function normalized(value: unknown, ids: readonly string[]): unknown {
   // Kommentar-Dateinamen tragen Zeit und Zufall: `<zeit>-<handle>-<zufall>.md`; die Zwillinge
   // schreiben in verschiedenen Sekunden, also bleibt nur der Handle stehen.
   text = text.replace(/\d{8}T\d{6}Z-([a-z]+)-[a-z0-9]+\.md/g, '<zeit>-$1-<x>.md');
+  // Zeitstempel in Sekundenauflösung (`revoked`, `created`, …): Die Zwillinge schreiben in
+  // verschiedenen Sekunden, also zählt nur, dass einer dasteht.
+  text = text.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z/g, '<zeitstempel>');
   const { commit: _commit, ...rest } = JSON.parse(text) as Record<string, unknown>;
   return rest;
 }
