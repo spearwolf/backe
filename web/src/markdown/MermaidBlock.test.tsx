@@ -42,9 +42,8 @@ const show = () =>
 test('mermaid loads only when visible', async () => {
   const { container } = render(<MermaidBlock source="graph TD; A-->B" />);
   expect(container.querySelector('code')?.textContent).toBe('graph TD; A-->B');
-  await act(async () => {
-    await new Promise((r) => setTimeout(r, 10));
-  });
+  await act(async () => {});
+  expect(mermaid.initialize).not.toHaveBeenCalled();
   expect(mermaid.render).not.toHaveBeenCalled();
   await show();
   await waitFor(() => expect(mermaid.render).toHaveBeenCalledTimes(1));

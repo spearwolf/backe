@@ -1,12 +1,15 @@
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { act, cleanup, render, waitFor } from '@testing-library/react';
 import { CodeBlock } from './CodeBlock.tsx';
-import { languageOf } from './languages.ts';
+import { LANGUAGES, languageOf } from './languages.ts';
 
 afterEach(cleanup);
 
 test('unknown language stays plain', async () => {
   const { container } = render(<CodeBlock code="let x = 1" language="klingon" />);
-  await new Promise((r) => setTimeout(r, 0));
+  // Keine Sprache, kein Loader: der Effekt kehrt früh zurück, nichts wird geladen.
+  expect(languageOf('klingon')).toBeUndefined();
+  expect(LANGUAGES.klingon).toBeUndefined();
+  await act(async () => {});
   expect(container.querySelector('[class*="hljs-"]')).toBeNull();
   expect(container.querySelector('code')?.textContent).toBe('let x = 1');
 });
@@ -20,8 +23,9 @@ test('known language highlights after loading', async () => {
 
 test('a language change does not keep stale highlighting', async () => {
   const { container, rerender } = render(<CodeBlock code="a: 1" language="yaml" />);
+  await waitFor(() => expect(container.querySelector('[class*="hljs-"]')).not.toBeNull());
   rerender(<CodeBlock code="a: 1" language="klingon" />);
-  await new Promise((r) => setTimeout(r, 50));
+  await act(async () => {});
   expect(container.querySelector('[class*="hljs-"]')).toBeNull();
 });
 
