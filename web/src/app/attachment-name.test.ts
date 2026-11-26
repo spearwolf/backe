@@ -20,6 +20,29 @@ test.each([
   expect(got).toMatch(ATTACHMENT_NAME_RE);
 });
 
+test.each([
+  ['a.', 'image/png'],
+  ['---', 'image/png'],
+  ['---', 'text/plain'],
+  ['😀.png', 'image/png'],
+  ['😀', 'image/gif'],
+  [`x.${'e'.repeat(200)}`, 'image/png'],
+  ['x.-', 'image/png'],
+  ['..', 'application/octet-stream'],
+  ['é.', 'image/webp'],
+  ['a b/c\\d.PNG', 'image/png'],
+])('hostile name %j always fits the attachment rule', (name, mime) => {
+  const got = attachmentNameFor(name, mime, new Set());
+  expect(got).toMatch(ATTACHMENT_NAME_RE);
+  expect(got).toHaveLength(Math.min(got.length, 64));
+});
+
+test('an extension is cut to 16 characters', () => {
+  expect(attachmentNameFor(`x.${'e'.repeat(200)}`, 'image/png', new Set())).toBe(
+    `x.${'e'.repeat(16)}`,
+  );
+});
+
 test('long names keep their extension within 64', () => {
   const got = attachmentNameFor(`${'a'.repeat(200)}.png`, 'image/png', new Set());
   expect(got).toHaveLength(64);

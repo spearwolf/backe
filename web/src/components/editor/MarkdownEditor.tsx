@@ -1,9 +1,16 @@
-import { type ClipboardEvent, type DragEvent, useLayoutEffect, useRef, useState } from 'react';
+import {
+  type ClipboardEvent,
+  type DragEvent,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
+import { ApiError } from '../../data/api-client.ts';
 import { Markdown, type MarkdownProps } from '../../markdown/index.tsx';
 import { Button } from '../ui/button.tsx';
 import { Textarea } from '../ui/textarea.tsx';
 import { ActionError } from '../write/ActionError.tsx';
-import { useAction } from '../write/use-action.ts';
 import { m } from '../write/write.messages.ts';
 
 export type MarkdownEditorProps = {
@@ -27,8 +34,8 @@ function imagesOf(files: FileList | readonly File[] | undefined | null): File[] 
 
 /**
  * Textfeld mit Umschalter Text/Vorschau. Bilder aus Einfügen und Ablegen laufen nacheinander durch
- * `onImage`; der Link steht danach an der Cursorstelle. Der erste Fehler bricht den Rest des
- * Stapels ab und bleibt unter dem Feld stehen, der Text bleibt, wie er war.
+ * `onImage`; der Link steht danach an der Cursorstelle. Weitere Stapel reihen sich hinten an,
+ * statt verloren zu gehen. Der erste Fehler eines Stapels bricht dessen Rest ab und bleibt unter dem Feld stehen, der Text bleibt, wie er war.
  */
 export function MarkdownEditor({
   value,
@@ -43,46 +50,98 @@ export function MarkdownEditor({
 }: MarkdownEditorProps) {
   const [preview, setPreview] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
-  const upload = useAction();
   // Während eines Uploads kann der Text sich ändern; Einfügungen rechnen immer gegen den neuesten.
   const latest = useRef(value);
   latest.current = value;
   const cursor = useRef<number | undefined>(undefined);
+  // Stapel laufen nacheinander: `chain` hängt den nächsten hinter den laufenden, `queued` zählt sie
+  // für die Statuszeile, `tail` ist das Ende des zuletzt eingefügten Links.
+  const chain = useRef<Promise<void>>(Promise.resolve());
+  const queued = useRef(0);
+  const tail = useRef<number | undefined>(undefined);
+  const mounted = useRef(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<ApiError>();
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   // Der Cursor springt erst nach dem Render hinter den Link, wenn der Wert beim Feld angekommen ist.
+  // Ohne Textfeld (Vorschau) verfällt er, damit er nicht später ins Leere greift.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `value` ist der Auslöser, nicht Eingabe.
   useLayoutEffect(() => {
     const at = cursor.current;
-    if (at === undefined || area.current === null) return;
-    area.current.setSelectionRange(at, at);
+    if (at === undefined) return;
     cursor.current = undefined;
+    area.current?.setSelectionRange(at, at);
   }, [value]);
 
-  const insert = (link: string, start: number, end: number): number => {
+  const insert = (link: string, at: { start: number; end: number }): number => {
     const text = latest.current;
-    const from = Math.min(start, text.length);
-    const to = Math.min(Math.max(end, from), text.length);
+    const from = Math.min(at.start, text.length);
+    const to = Math.min(Math.max(at.end, from), text.length);
     const next = `${text.slice(0, from)}${link}${text.slice(to)}`;
+    // Der Cursor folgt dem Link nur, wenn der Nutzer ihn zwischenzeitlich nicht woanders hingesetzt hat.
+    const el = area.current;
+    const unmoved =
+      el !== null &&
+      (cursor.current !== undefined ||
+        (el.selectionStart === at.start && el.selectionEnd === at.end));
     latest.current = next;
-    cursor.current = from + link.length;
+    cursor.current = unmoved ? from + link.length : undefined;
     onChange(next);
     return from + link.length;
   };
 
   const take = (files: File[]) => {
     if (onImage === undefined) return;
+    if (queued.current === 0) {
+      tail.current = undefined;
+      setError(undefined);
+    }
     const el = area.current;
+    // Hinter einem laufenden Stapel gilt dessen Ende, sonst die Auswahl zum Zeitpunkt des Einfügens.
+    const behind = queued.current > 0;
     let at = { start: el?.selectionStart ?? value.length, end: el?.selectionEnd ?? value.length };
-    void upload.run(async () => {
-      let first = true;
-      for (const file of files) {
-        const name = await onImage(file);
-        const link = `![${name}](attachments/${name})`;
-        const end = insert(first ? link : `\n${link}`, at.start, at.end);
-        at = { start: end, end };
-        first = false;
+    queued.current += 1;
+    setBusy(true);
+    const batch = async () => {
+      try {
+        let first = true;
+        for (const file of files) {
+          const name = await onImage(file);
+          if (!mounted.current) return;
+          const link = `![${name}](attachments/${name})`;
+          if (first && behind && tail.current !== undefined) {
+            at = { start: tail.current, end: tail.current };
+          }
+          const end = insert(first ? link : `\n${link}`, at);
+          at = { start: end, end };
+          tail.current = end;
+          first = false;
+        }
+      } catch (cause) {
+        if (mounted.current) {
+          setError(
+            cause instanceof ApiError
+              ? cause
+              : new ApiError(
+                  0,
+                  'unexpected',
+                  cause instanceof Error ? cause.message : String(cause),
+                ),
+          );
+        }
+      } finally {
+        queued.current -= 1;
+        if (mounted.current && queued.current === 0) setBusy(false);
       }
-    });
+    };
+    chain.current = chain.current.then(batch);
   };
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -149,9 +208,9 @@ export function MarkdownEditor({
         />
       )}
       <p role="status" className="text-sm text-muted-foreground">
-        {upload.busy ? m.editorUploading : ''}
+        {busy ? m.editorUploading : ''}
       </p>
-      <ActionError error={upload.error} />
+      <ActionError error={error} />
     </div>
   );
 }

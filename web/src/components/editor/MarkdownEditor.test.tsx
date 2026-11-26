@@ -165,3 +165,112 @@ test('other files are ignored without preventDefault', () => {
   expect(paste.defaultPrevented).toBe(false);
   expect(onImage).not.toHaveBeenCalled();
 });
+
+test('a second paste during a running upload is queued, not lost', async () => {
+  const gates: Array<(n: string) => void> = [];
+  const onImage = vi.fn((_f: File) => new Promise<string>((r) => gates.push(r)));
+  setup({ onImage });
+  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
+  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
+  await waitFor(() => expect(gates).toHaveLength(1));
+  expect(onImage).toHaveBeenCalledTimes(1);
+  gates[0]?.('one.png');
+  await waitFor(() => expect(gates).toHaveLength(2));
+  // Die Statuszeile bleibt, bis die Warteschlange leer ist.
+  expect(screen.getByRole('status').textContent).toBe('Bild wird hochgeladen…');
+  gates[1]?.('two.png');
+  await waitFor(() => expect(screen.getByRole('status').textContent).toBe(''));
+  expect(box().value).toBe('![one.png](attachments/one.png)![two.png](attachments/two.png)');
+});
+
+test('the status line names the upload while it runs', async () => {
+  let done: (n: string) => void = () => {};
+  setup({ onImage: () => new Promise<string>((r) => (done = r)) });
+  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
+  expect((await screen.findByRole('status')).textContent).toBe('Bild wird hochgeladen…');
+  done('shot.png');
+  await waitFor(() => expect(screen.getByRole('status').textContent).toBe(''));
+});
+
+test('the caret stays where the user put it meanwhile', async () => {
+  let done: (n: string) => void = () => {};
+  const started = vi.fn();
+  setup({
+    initial: 'abcdef',
+    onImage: () =>
+      new Promise<string>((r) => {
+        started();
+        done = r;
+      }),
+  });
+  box().setSelectionRange(1, 1);
+  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
+  await waitFor(() => expect(started).toHaveBeenCalled());
+  box().setSelectionRange(5, 5);
+  done('s.png');
+  await waitFor(() => expect(box().value).toBe('a![s.png](attachments/s.png)bcdef'));
+  expect(box().selectionStart).not.toBe('a![s.png](attachments/s.png)'.length);
+});
+
+test('a pending caret does not jump after a detour through the preview', async () => {
+  let done: (n: string) => void = () => {};
+  const started = vi.fn();
+  setup({
+    initial: 'ab',
+    onImage: () =>
+      new Promise<string>((r) => {
+        started();
+        done = r;
+      }),
+  });
+  box().setSelectionRange(1, 1);
+  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
+  await waitFor(() => expect(started).toHaveBeenCalled());
+  await userEvent.click(screen.getByRole('button', { name: 'Vorschau' }));
+  done('s.png');
+  await waitFor(() => expect(screen.getByRole('status').textContent).toBe(''));
+  await userEvent.click(screen.getByRole('button', { name: 'Text' }));
+  box().setSelectionRange(0, 0);
+  await userEvent.type(box(), 'x', { initialSelectionStart: 0, initialSelectionEnd: 0 });
+  expect(box().selectionStart).toBe(1);
+});
+
+test('nothing is inserted after unmount mid-batch', async () => {
+  const gates: Array<(n: string) => void> = [];
+  const spy = vi.fn();
+  const view = setup({ spy, onImage: () => new Promise<string>((r) => gates.push(r)) });
+  const a = new File(['1'], 'a.png', { type: 'image/png' });
+  const b = new File(['2'], 'b.png', { type: 'image/png' });
+  fireEvent.paste(box(), { clipboardData: { files: [a, b] } });
+  await waitFor(() => expect(gates).toHaveLength(1));
+  gates[0]?.('a.png');
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(gates).toHaveLength(2));
+  view.unmount();
+  gates[1]?.('b.png');
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(spy).toHaveBeenCalledTimes(1);
+});
+
+test('local previews and the issue context reach the preview', async () => {
+  setup({
+    initial: '![s](attachments/shot.png)',
+    local: new Map([['shot.png', 'blob:local-shot']]),
+    issue: { id: 'bk-7f3k2', attachments: [] },
+  });
+  await userEvent.click(screen.getByRole('button', { name: 'Vorschau' }));
+  await waitFor(() =>
+    expect(document.querySelector('img')?.getAttribute('src')).toBe('blob:local-shot'),
+  );
+});
+
+test('dragging files over the field allows the drop', () => {
+  setup({ onImage: async () => 'x.png' });
+  const over = createEvent.dragOver(box(), { dataTransfer: { types: ['Files'] } });
+  fireEvent(box(), over);
+  expect(over.defaultPrevented).toBe(true);
+  const text = createEvent.dragOver(box(), { dataTransfer: { types: ['text/plain'] } });
+  fireEvent(box(), text);
+  expect(text.defaultPrevented).toBe(false);
+});
