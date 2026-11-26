@@ -31,12 +31,13 @@ export type ToolDeps = { sync?: SyncDeps; write?: WriteDeps; claim?: ClaimDeps }
 
 /**
  * Zustand, den ein Adapter für seine Tools hält: Kontext je Aufruf, Warteschlange, Laufendes.
- * `cwd` ist das Arbeitsverzeichnis, gegen das `attachment_add` einen `path` auflöst;
+ * `cwd` ist das Arbeitsverzeichnis, gegen das `attachment_add` einen `path` auflöst; ohne `cwd`
+ * (`backe ui`, ui.md §2.15: Uploads bestimmen nie einen Pfad) gibt es keinen `path`.
  * `allowDelete` öffnet `issue.delete` im `batch`.
  */
 export type ToolEnv = {
   context(): Promise<ResolvedContext>;
-  cwd: string;
+  cwd?: string;
   allowDelete: boolean;
   deps?: ToolDeps;
   queue: WriteQueue;

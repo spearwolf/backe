@@ -226,6 +226,7 @@ test('the web closure check catches every form it names', () => {
     "import 'node:crypto';",
     'const b = Buffer.from(s);',
     'const v = process.env.X;',
+    'const w = globalThis.process.env.X;',
   ];
   for (const text of caught) expect(offenses(text), text).toHaveLength(1);
   const allowed = [

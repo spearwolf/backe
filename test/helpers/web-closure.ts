@@ -46,7 +46,10 @@ export function webOffenses(rel: string, f: ClosureFile): string[] {
   // Modulnamen wie `'node:process'` sind keine Verwendung; die Imports prüft die Liste oben.
   const code = stripComments(f.text).replace(IMPORT_RE, '');
   if (/\bBuffer\b/.test(code)) hits.push(`${rel}: Buffer`);
-  if (/(?<!globalThis\.)\bprocess\b/.test(code)) hits.push(`${rel}: process`);
+  // `process` nur als `globalThis.process?.…`: Im Browser fehlt es, ein ungeschützter Zugriff wirft.
+  if (/(?<!globalThis\.)\bprocess\b|\bglobalThis\.process(?!\?\.)/.test(code)) {
+    hits.push(`${rel}: process`);
+  }
   return hits;
 }
 

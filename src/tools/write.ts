@@ -99,19 +99,25 @@ type AttachArgs = {
 /**
  * Die Quelle eines Anhangs. `path` darf nur auf eine Datei im Arbeitsverzeichnis des Servers
  * zeigen, auch über Symlinks hinweg: Ein Agent soll keine beliebige Datei, die der Prozess lesen
- * kann, in den geteilten, signierten Backlog committen.
+ * kann, in den geteilten, signierten Backlog committen. Ohne Arbeitsverzeichnis gibt es keinen `path`.
  */
 async function attachSource(
   a: AttachArgs,
   ctx: ResolvedContext,
-  cwd: string,
+  cwd: string | undefined,
 ): Promise<AttachmentSource> {
   const given = [a.path, a.url, a.json, a.text].filter((v) => v !== undefined).length;
   if (given !== 1) {
     throw new BackeError('usage', 'Give exactly one of path, url, json, text');
   }
+  if (cwd === undefined && a.path !== undefined) {
+    throw new BackeError('validation', "Parameter 'path' is not available here", {
+      hint: 'pass the content via text or json',
+    });
+  }
   return loadAttachmentSource(a, {
-    base: cwd,
+    // Ohne `cwd` ist `path` oben abgelehnt; `base` liest der Lader nur für `path`.
+    base: cwd ?? '',
     home: ctx.homes.home,
     ...(await attachmentLimits(ctx)),
     confine: true,
