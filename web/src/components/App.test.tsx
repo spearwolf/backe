@@ -560,3 +560,8 @@ test('the backlog tab keeps its filter across an issue tab', async () => {
   await user.click(tab('Backlog'));
   expect(window.location.pathname + window.location.search).toBe('/b/main/backlog?state=all&q=x');
 });
+
+test('a bare backlog path keeps its filter', async () => {
+  await setup({ path: '/b/main?state=all' });
+  expect(window.location.pathname + window.location.search).toBe('/b/main/backlog?state=all');
+});

@@ -105,7 +105,8 @@ export function App({ backlogs, router, theme, deps }: Props) {
       return;
     }
     const canonical = canonicalPath(location.pathname);
-    if (canonical !== undefined) router.navigate(canonical, { replace: true });
+    // Die Query bleibt: `/b/<b>?state=all` ist ein geteilter Filter.
+    if (canonical !== undefined) router.navigate(canonical + location.search, { replace: true });
   }, [route, location, start, router]);
 
   const backlogSearch = route.kind === 'backlog' ? location.search : undefined;
