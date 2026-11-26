@@ -255,7 +255,7 @@ Nach `issue-details.png`. Ein Issue-Tab zeigt Felder und Beziehungen aus dem Cli
 
 #### 2.9.4 Anhänge
 
-- **Liste** mit Name, Größe und Art; Hochladen per Dateiauswahl oder Drag auf den Tab; Entfernen (`attachment_rm`).
+- **Liste** mit Name, Größe und Art; Hochladen per Dateiauswahl oder Drag auf den Tab; Entfernen (`attachment_rm`). Eine Datei, die neben einer Drop-Fläche landet, bleibt folgenlos: Der Browser öffnet sie nicht und verlässt die App nicht.
 - **Bilder** (`png`, `jpg`/`jpeg`, `gif`, `webp`, `avif`, `svg`) direkt als Vorschau, per Klick vergrößert. SVG wird nur als `<img>` eingebunden, nie als Dokument.
 - **Text, Code und JSON** bis 262 144 Bytes und gültigem UTF-8 (dieselbe Grenze wie `attachment_get`, BK §2.19) direkt mit Highlighting, einklappbar; Markdown-Anhänge gerendert wie §2.9.2. Größere Dateien und alle anderen Arten: Download. Der Server liefert nur Bilder und gültiges UTF-8 bis zu dieser Grenze inline (§2.15); HTML-Endungen gehen immer als Download.
 - **URL-Anhänge** als Link mit Hostname.

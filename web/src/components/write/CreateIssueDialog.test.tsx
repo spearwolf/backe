@@ -14,7 +14,7 @@ import {
   titleBox,
   writes,
 } from '../../test/create-issue.tsx';
-import { tid } from '../../test/state.ts';
+import { testIssue, testState, tid } from '../../test/state.ts';
 import { m as b } from '../../views/backlog.messages.ts';
 import { m } from '../../views/issue.messages.ts';
 import { m as w } from './write.messages.ts';
@@ -236,4 +236,16 @@ test('the title is required', async () => {
   expect(writes()).toEqual([]);
   await user.type(titleBox(), 'x');
   expect(createButton().disabled).toBe(false);
+});
+
+test('lists without anything to choose show a dash', async () => {
+  const { user } = await setup('/b/acme/backlog', {
+    answer: (c) => (c.url === '/api/b/acme/state' ? json(testState([testIssue(1)])) : undefined),
+  });
+  await user.keyboard('c');
+  for (const label of [m.fieldProjects, m.fieldSprints, m.fieldRepos]) {
+    const row = inDialog().getByRole('group', { name: label });
+    expect(within(row).getByText(m.noValues)).toBeTruthy();
+    expect(within(row).queryByRole('button')).toBeNull();
+  }
 });

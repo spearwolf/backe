@@ -23,7 +23,11 @@ import { issueOptions } from './store-options.ts';
 
 export { type DeclaredProps, type PropDeclaration, PropInput } from './PropInput.tsx';
 
-/** Chips mit ×, dazu ein Menü der übrigen Optionen zum Hinzufügen. */
+/**
+ * Chips mit ×, dazu ein Menü der übrigen Optionen zum Hinzufügen. Gibt es weder Werte noch etwas
+ * zu wählen (der Backlog hat keine Projekte), steht ein gedämpfter Strich da: Eine leere Zeile
+ * sähe aus wie ein fehlendes Feld.
+ */
 export function MultiPick(props: {
   label: string;
   values: readonly string[];
@@ -33,6 +37,14 @@ export function MultiPick(props: {
 }) {
   const { label, values, options, onChange, disabled } = props;
   const rest = options.filter((o) => !values.includes(o));
+  if (values.length === 0 && rest.length === 0) {
+    return (
+      <span className="text-sm text-muted-foreground">
+        <span aria-hidden="true">—</span>
+        <span className="sr-only">{m.noValues}</span>
+      </span>
+    );
+  }
   return (
     <div className="flex flex-wrap items-center gap-1">
       {values.length > 0 && (

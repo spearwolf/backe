@@ -6,6 +6,7 @@ import { App } from '../components/App.tsx';
 import { ErrorPage } from '../components/ErrorPage.tsx';
 import { ApiError, getJson } from '../data/api-client.ts';
 import type { ConnectionDeps } from '../data/connection.ts';
+import { guardFileDrops } from './file-drop-guard.ts';
 import { Router } from './router.ts';
 import { Theme } from './theme.ts';
 
@@ -14,9 +15,11 @@ export type BootDeps = Partial<ConnectionDeps> & { win?: Window };
 /**
  * Hängt die App in `root` ein und liefert die Funktion, die sie wieder abbaut (Tests). Erst die
  * Backlog-Liste, denn sie bringt die Sprache des Servers: Vor dem ersten Rendern steht die Locale.
+ * Ab dem ersten Moment hält `guardFileDrops` Dateien fest, die niemand nimmt.
  */
 export async function mountApp(root: HTMLElement, deps: BootDeps = {}): Promise<() => void> {
   const { win = window, ...connection } = deps;
+  const unguard = guardFileDrops(win);
   const reactRoot = createRoot(root);
   let list: BacklogsJson;
   try {
@@ -29,7 +32,10 @@ export async function mountApp(root: HTMLElement, deps: BootDeps = {}): Promise<
         <ErrorPage message={error.message} hint={error.hint} />
       </StrictMode>,
     );
-    return () => reactRoot.unmount();
+    return () => {
+      reactRoot.unmount();
+      unguard();
+    };
   }
 
   setLocale(list.lang);
@@ -45,6 +51,7 @@ export async function mountApp(root: HTMLElement, deps: BootDeps = {}): Promise<
     reactRoot.unmount();
     router.dispose();
     theme.dispose();
+    unguard();
   };
 }
 

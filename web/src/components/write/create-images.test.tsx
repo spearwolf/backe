@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { createEvent, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import {
   bodyBox,
   createButton,
@@ -128,4 +128,19 @@ test('creating waits until a pasted image is linked', async () => {
   // Der Link steht vor dem Ende des Stapels im Text; frei wird »Anlegen« erst danach.
   await waitFor(() => expect(createButton().disabled).toBe(false));
   expect(bodyBox().value).toBe('![a.png](attachments/a.png)');
+});
+
+test('a file the dialog does not take never leaves the app', async () => {
+  const { user } = await setup('/b/acme/backlog');
+  await user.keyboard('c');
+  await user.type(titleBox(), 'Entwurf');
+  const txt = new File(['t'], 'notes.txt', { type: 'text/plain' });
+  // Auf den Editor (er nimmt nur Bilder) und neben ihn: Der Browser darf die Datei nicht öffnen.
+  for (const target of [bodyBox(), dialog()]) {
+    const drop = createEvent.drop(target, { dataTransfer: { types: ['Files'], files: [txt] } });
+    fireEvent(target, drop);
+    expect(drop.defaultPrevented).toBe(true);
+  }
+  expect(titleBox().value).toBe('Entwurf');
+  expect(writes()).toEqual([]);
 });
