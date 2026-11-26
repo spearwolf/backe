@@ -38,7 +38,7 @@ export async function handleRead(
       if ('url' in a) {
         throw new BackeError('not_found', attachmentMessages.linkAttachment(route.id, route.name));
       }
-      await sendAttachment(res, a, res.req.method === 'HEAD');
+      await sendAttachment(res, { name: a.name, path: a.path }, res.req.method === 'HEAD');
     } else {
       if (route.q === undefined || route.q === '') {
         throw new BackeError('usage', m.searchNeedsQuery, { hint: '?q=<text>' });

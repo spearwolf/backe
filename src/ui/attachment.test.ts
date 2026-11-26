@@ -1,4 +1,9 @@
-import { attachmentDelivery, contentDisposition } from './attachment.ts';
+import { writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { join } from 'node:path';
+import { tempDir } from '../../test/helpers/backlog.ts';
+import { rawRequest } from '../../test/helpers/ui.ts';
+import { attachmentDelivery, contentDisposition, sendAttachment } from './attachment.ts';
 
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 
@@ -26,4 +31,46 @@ test('contentDisposition encodes the name', () => {
   expect(contentDisposition('inline', 'a b ä.png')).toBe(
     "inline; filename*=UTF-8''a%20b%20%C3%A4.png",
   );
+});
+
+test('contentDisposition encodes quotes, parentheses and asterisks', () => {
+  expect(contentDisposition('attachment', "it's (1)*.txt")).toBe(
+    "attachment; filename*=UTF-8''it%27s%20%281%29%2A.txt",
+  );
+});
+
+test('sendAttachment takes length and bytes from the opened file', async () => {
+  const dir = await tempDir();
+  const path = join(dir, 'a.txt');
+  await writeFile(path, 'hello');
+  const server = createServer((_req, res) => {
+    sendAttachment(res, { name: 'a.txt', path }, false).catch(() => res.destroy());
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const { port } = server.address() as { port: number };
+    const r = await rawRequest(port, { path: '/' });
+    expect(r.headers['content-length']).toBe('5');
+    expect(r.text()).toBe('hello');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('a streamed file that is larger than the limit keeps its fstat length', async () => {
+  const dir = await tempDir();
+  const path = join(dir, 'big.log');
+  await writeFile(path, Buffer.alloc(300_000, 0x61));
+  const server = createServer((_req, res) => {
+    sendAttachment(res, { name: 'big.log', path }, false).catch(() => res.destroy());
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const { port } = server.address() as { port: number };
+    const r = await rawRequest(port, { path: '/' });
+    expect(r.headers['content-length']).toBe('300000');
+    expect(r.body.length).toBe(300_000);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
 });

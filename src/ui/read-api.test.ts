@@ -1,3 +1,5 @@
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { writeOp } from '../../test/helpers/context.ts';
 import { testBacklog } from '../../test/helpers/git.ts';
@@ -6,6 +8,7 @@ import { addAttachment } from '../services/attachments.ts';
 import { listIssues } from '../services/issue-list.ts';
 import { showIssue } from '../services/issue-show.ts';
 import { issueListResultJson, issueShowJson } from '../services/views.ts';
+import { attachmentsDir } from '../store/layout.ts';
 import { backlogsJson, type StartInput } from './context.ts';
 
 let ui: UiHarness;
@@ -55,7 +58,8 @@ async function seedIssue(): Promise<string> {
 test('issue matches issue show with all comments', async () => {
   const id = await seedIssue();
   const ctx = await backlog.context();
-  const res = await ui.get(`/api/b/acme/issues/${id}`);
+  const short = id.slice(id.indexOf('-') + 1);
+  const res = await ui.get(`/api/b/acme/issues/${short}`);
   expect(res.status).toBe(200);
   expect(res.json()).toEqual(
     JSON.parse(JSON.stringify(issueShowJson(await showIssue(ctx, id, { comments: 'all' })))),
@@ -111,9 +115,17 @@ test('HEAD on an attachment sends headers only', async () => {
 
 test('attachment names never become paths', async () => {
   const id = await seedIssue();
-  const r = await ui.get(`/api/b/acme/issues/${id}/attachments/..%2F..%2F.backe%2Fbacklog.jsonc`);
-  expect(r.status).toBe(404);
-  expect(r.text()).not.toContain('"id_prefix"');
+  for (const up of ['..%2F..%2F', '..%2F..%2F..%2F..%2F']) {
+    const r = await ui.get(`/api/b/acme/issues/${id}/attachments/${up}.backe%2Fbacklog.jsonc`);
+    expect(r.status).toBe(404);
+    expect(r.text()).not.toContain('"id_prefix"');
+  }
+  // Eine Datei, die im Anhangsverzeichnis liegt, aber nicht in der Anhangsliste steht.
+  const dir = join(backlog.root, attachmentsDir(id));
+  await writeFile(join(dir, 'stray.txt'), 'nicht gelistet');
+  const stray = await ui.get(`/api/b/acme/issues/${id}/attachments/stray.txt`);
+  expect(stray.status).toBe(404);
+  expect(stray.text()).not.toContain('nicht gelistet');
 });
 
 test('a link attachment is 404', async () => {
