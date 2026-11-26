@@ -33,10 +33,11 @@ function isErrorJson(v: unknown): v is ErrorJson {
 // Lazy: jsdom kennt kein `fetch` zum Zeitpunkt des Imports garantiert, Tests reichen ein eigenes herein.
 const defaultFetch: Fetch = (input, init) => globalThis.fetch(input, init);
 
-export async function getJson<T>(path: string, fetchFn: Fetch = defaultFetch): Promise<T> {
+/** Eine Anfrage und ihre Auswertung: keine Antwort heißt offline, nicht `ok` wird zum `ApiError`. */
+async function request<T>(path: string, init: RequestInit | undefined, fetchFn: Fetch): Promise<T> {
   let res: Response;
   try {
-    res = await fetchFn(path);
+    res = await (init === undefined ? fetchFn(path) : fetchFn(path, init));
   } catch (cause) {
     throw new ApiError(0, 'offline', cause instanceof Error ? cause.message : 'offline');
   }
@@ -47,4 +48,32 @@ export async function getJson<T>(path: string, fetchFn: Fetch = defaultFetch): P
     throw new ApiError(res.status, code, message, hint, details);
   }
   throw new ApiError(res.status, 'http', res.statusText);
+}
+
+export function getJson<T>(path: string, fetchFn: Fetch = defaultFetch): Promise<T> {
+  return request<T>(path, undefined, fetchFn);
+}
+
+export function postJson<T>(
+  path: string,
+  body: unknown,
+  fetchFn: Fetch = defaultFetch,
+): Promise<T> {
+  return request<T>(
+    path,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+    fetchFn,
+  );
+}
+
+export function putBytes<T>(path: string, bytes: Blob, fetchFn: Fetch = defaultFetch): Promise<T> {
+  return request<T>(
+    path,
+    { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes },
+    fetchFn,
+  );
 }

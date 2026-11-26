@@ -121,3 +121,74 @@ export type ServerEvent =
 export type ErrorJson = {
   error: { code: string; message: string; hint?: string; details?: unknown };
 };
+
+export type NoticeJson = { code?: string; message: string; ids?: string[] };
+/** `outcomeJson` eines Writes; `commit` ist `null`, wenn sich nichts änderte. */
+export type WriteResultJson = {
+  commit: string | null;
+  op?: string;
+  ops?: string[];
+  id: string;
+  notices?: NoticeJson[];
+  warnings?: string[];
+};
+/** `repoLocateJson`: der lokale Pfad eines Repos aus der User-Config. */
+export type RepoLocateJson = {
+  name: string;
+  url: string;
+  canonical: string;
+  default_ref?: string;
+  path: string;
+};
+
+/** Argumente der Tools, die das Frontend aufruft; jeder Key ist ein Parameter des Katalogs (`src/ui/tool-args.test.ts`). */
+export type ToolArgs = {
+  issue_create: {
+    title: string;
+    body?: string;
+    state?: string;
+    projects?: string[];
+    sprints?: string[];
+    repos?: string[];
+    assignee?: string;
+    depends_on?: string[];
+    parent?: string;
+    props?: Record<string, unknown>;
+  };
+  issue_update: {
+    id: string;
+    title?: string;
+    body?: string;
+    add_projects?: string[];
+    rm_projects?: string[];
+    add_sprints?: string[];
+    rm_sprints?: string[];
+    add_deps?: string[];
+    rm_deps?: string[];
+    parent?: string | null;
+    assignee?: string | null;
+    props?: Record<string, unknown>;
+  };
+  issue_move: { id: string; to: string; reason?: string; blocked_by?: string[]; force?: boolean };
+  issue_resume: { id: string; reason?: string };
+  issue_reopen: { id: string; to?: string; reason?: string };
+  issue_rank: {
+    id: string;
+    top?: boolean;
+    bottom?: boolean;
+    before?: string;
+    after?: string;
+    value?: number;
+  };
+  issue_claim: { id: string };
+  issue_delete: { id: string; force?: boolean; children?: 'orphan' | 'recursive' };
+  comment_add: { id: string; body: string };
+  comment_edit: { id: string; comment: string; body: string };
+  comment_delete: { id: string; comment: string };
+  attachment_rm: { id: string; name: string };
+  repo_locate: { name: string };
+};
+export type UiToolName = keyof ToolArgs;
+export type ToolResults = {
+  [K in UiToolName]: K extends 'repo_locate' ? RepoLocateJson : WriteResultJson;
+};
