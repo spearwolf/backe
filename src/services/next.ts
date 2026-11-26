@@ -5,10 +5,10 @@
 import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
 import type { Issue } from '../core/schemas.ts';
+import { hasOpenDeps } from '../ops/issue-query.ts';
 import { selectNext } from '../ops/next.ts';
 import type { Notice } from '../ops/notice.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
-import { hasOpenDeps } from './issue-list.ts';
 import { m } from './next.messages.ts';
 import { effectiveFilter, openSnapshot } from './read.ts';
 

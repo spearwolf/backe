@@ -268,3 +268,7 @@ test('problems carry only issue problems', async () => {
   const r = await listIssues(ctx, {});
   expect(r.problems).toEqual([]);
 });
+
+test('state all with mode ready still applies readiness', async () => {
+  expect(await ids({ states: ['all'], mode: 'ready' })).toEqual(names('C1', 'C2', 'X'));
+});

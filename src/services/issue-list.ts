@@ -3,15 +3,10 @@
  * Sortierung, Baumansicht und Limit. Liest nur; der Snapshot kommt aus der Arbeitskopie.
  */
 import type { ResolvedContext } from '../context/resolve.ts';
-import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
-import type { Issue } from '../core/schemas.ts';
-import { isSettled } from '../core/state.ts';
-import { isReady, isUnblockable } from '../ops/graph.ts';
-import { matchesContext } from '../ops/next.ts';
-import { compareIssues } from '../ops/order.ts';
-import { checkPropFilter, parsePropFilter, propMatches } from '../ops/props.ts';
-import type { BacklogSnapshot, Problem } from '../store/snapshot.ts';
+import { type SelectedIssue, selectIssues } from '../ops/issue-query.ts';
+import { checkPropFilter, parsePropFilter } from '../ops/props.ts';
+import type { Problem } from '../store/snapshot.ts';
 import { m } from './issue-list.messages.ts';
 import {
   effectiveFilter,
@@ -42,7 +37,7 @@ export type IssueListQuery = {
   limit?: number;
 };
 
-export type IssueListItem = { issue: Issue; depth?: number; openDeps: boolean };
+export type IssueListItem = SelectedIssue;
 
 export type IssueListResult = {
   header: Record<string, string>;
@@ -57,64 +52,6 @@ export function listSort(value: string | undefined): IssueListQuery['sort'] {
   throw new BackeError('validation', m.invalidSort(value), {
     hint: m.sortChoices,
   });
-}
-
-export function compareCreated(a: Issue, b: Issue): number {
-  return compareCodeUnits(a.created, b.created) || compareCodeUnits(a.id, b.id);
-}
-
-/** Wurzeln (Parent nicht in der Menge), darunter die Kinder rekursiv, je Ebene nach `compare`. */
-function treeOrder(
-  issues: readonly Issue[],
-  compare: (a: Issue, b: Issue) => number,
-): { issue: Issue; depth: number }[] {
-  const inSet = new Set(issues.map((i) => i.id));
-  const kids = new Map<string, Issue[]>();
-  const roots: Issue[] = [];
-  for (const issue of issues) {
-    if (issue.parent !== undefined && inSet.has(issue.parent)) {
-      const list = kids.get(issue.parent);
-      if (list) list.push(issue);
-      else kids.set(issue.parent, [issue]);
-    } else {
-      roots.push(issue);
-    }
-  }
-  const out: { issue: Issue; depth: number }[] = [];
-  const stack: { issue: Issue; depth: number }[] = roots
-    .sort(compare)
-    .reverse()
-    .map((issue) => ({ issue, depth: 0 }));
-  for (let top = stack.pop(); top !== undefined; top = stack.pop()) {
-    out.push(top);
-    const children = (kids.get(top.issue.id) ?? []).sort(compare).reverse();
-    for (const issue of children) stack.push({ issue, depth: top.depth + 1 });
-  }
-  return out;
-}
-
-export function hasOpenDeps(s: BacklogSnapshot, issue: Issue): boolean {
-  return (issue.depends_on ?? []).some((d) => {
-    const dep = s.issues.get(d);
-    return dep === undefined || !isSettled(dep.data.state);
-  });
-}
-
-/** Kontextfilter (Projekt rekursiv, Sprint, Repo): je Dimension genügt ein Treffer, Dimensionen verknüpft UND. */
-export function matchesFilter(
-  issue: Issue,
-  filter: { project?: string[]; sprint?: string[]; repo?: string[] },
-  exact: boolean,
-): boolean {
-  return (
-    (filter.project === undefined ||
-      filter.project.some((project) =>
-        matchesContext(issue, { project, ...(exact ? { projectExact: true } : {}) }),
-      )) &&
-    (filter.sprint === undefined ||
-      filter.sprint.some((sprint) => matchesContext(issue, { sprint }))) &&
-    (filter.repo === undefined || filter.repo.some((repo) => matchesContext(issue, { repo })))
-  );
 }
 
 export async function listIssues(
@@ -150,61 +87,26 @@ export async function listIssues(
     q.all === true,
   );
 
-  const inContext = (issue: Issue): boolean => matchesFilter(issue, filter, q.exact === true);
-
-  const keep = (issue: Issue): boolean => {
-    if (
-      states === undefined
-        ? isSettled(issue.state)
-        : states !== 'all' && !states.includes(issue.state)
-    ) {
-      return false;
-    }
-    if (!inContext(issue)) return false;
-    if (
-      assignee === 'none'
-        ? issue.assignee !== undefined
-        : assignee !== undefined && issue.assignee !== assignee
-    ) {
-      return false;
-    }
-    if (creator !== undefined && issue.creator !== creator) return false;
-    if (parent !== undefined && issue.parent !== parent) return false;
-    if (q.topLevel === true && issue.parent !== undefined) return false;
-    if (!propFilters.every((f) => propMatches(issue.props, f, s.config))) return false;
-    if (
-      !(q.hasProps ?? []).every((key) => propMatches(issue.props, { key, op: 'has' }, s.config))
-    ) {
-      return false;
-    }
-    if (q.mode === 'blocked' && issue.state !== 'blocked') return false;
-    if (q.mode === 'unblockable' && !isUnblockable(s, issue.id)) return false;
-    if (q.mode === 'ready' && !isReady(s, issue.id, { level: 'leaf' })) return false;
-    if (needle !== undefined) {
-      const body = s.issues.get(issue.id)?.body ?? '';
-      if (!issue.title.toLowerCase().includes(needle) && !body.toLowerCase().includes(needle)) {
-        return false;
-      }
-    }
-    return true;
-  };
-
-  const compare = q.sort === 'created' ? compareCreated : compareIssues;
-  const matched = [...s.issues.values()].map((e) => e.data).filter(keep);
-  const ordered: { issue: Issue; depth?: number }[] =
-    q.tree === true
-      ? treeOrder(matched, compare)
-      : matched.sort(compare).map((issue) => ({ issue }));
+  const ordered = selectIssues(s, {
+    ...(states === undefined ? {} : { states }),
+    filter,
+    exact: q.exact === true,
+    ...(assignee === undefined ? {} : { assignee }),
+    ...(creator === undefined ? {} : { creator }),
+    ...(parent === undefined ? {} : { parent }),
+    topLevel: q.topLevel === true,
+    props: propFilters,
+    ...(q.hasProps === undefined ? {} : { hasProps: q.hasProps }),
+    ...(q.mode === undefined ? {} : { mode: q.mode }),
+    ...(needle === undefined ? {} : { text: needle }),
+    tree: q.tree === true,
+    ...(q.sort === undefined ? {} : { sort: q.sort }),
+  });
 
   const cut = q.limit === undefined ? ordered : ordered.slice(0, q.limit);
-  const items: IssueListItem[] = cut.map((e) => ({
-    issue: e.issue,
-    ...(e.depth === undefined ? {} : { depth: e.depth }),
-    openDeps: hasOpenDeps(s, e.issue),
-  }));
   return {
     header: filter.header,
-    items,
+    items: cut,
     truncated: cut.length < ordered.length,
     problems: s.problems.filter((p) => p.kind === 'issue'),
   };
