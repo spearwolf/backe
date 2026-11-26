@@ -52,6 +52,7 @@
     "@spearwolf/eventize": "^6.3.0",
     "@spearwolf/signalize": "^1.0.0",
     "@tailwindcss/vite": "^4.3.5",
+    "@tanstack/react-virtual": "^3.14.28",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.13",
     "@types/node": "^26.6.6",

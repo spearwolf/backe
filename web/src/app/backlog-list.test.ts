@@ -285,3 +285,24 @@ describe('live marks', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+test('unchanged rows keep their identity across a patch', () => {
+  const { model, store } = setup();
+  const [one, two] = model.selected();
+  store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(2, { title: 'neu' })] } }));
+  const [oneAfter, twoAfter] = model.selected();
+  expect(oneAfter).toBe(one);
+  expect(twoAfter).not.toBe(two);
+  model.dispose();
+});
+
+test('a row whose progress changes is a new row', () => {
+  const { model, store } = setup([testIssue(1), testIssue(2, { parent: tid(1) })]);
+  const [parent] = model.selected();
+  store.applyPatch(
+    testPatch(2, { upsert: { issues: [testIssue(2, { parent: tid(1), state: 'done' })] } }),
+  );
+  expect(model.selected()[0]).not.toBe(parent);
+  expect(model.selected()[0]?.progress).toEqual({ settled: 1, total: 1 });
+  model.dispose();
+});

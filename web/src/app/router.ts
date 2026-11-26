@@ -5,7 +5,7 @@ import {
   SignalGroup,
   type SignalReader,
 } from '@spearwolf/signalize';
-import { createContext, useContext } from 'react';
+import { createContext, type MouseEvent, useContext } from 'react';
 import { parseRoute, type Route } from './routes.ts';
 
 type Loc = { pathname: string; search: string };
@@ -55,4 +55,17 @@ export function useRouter(): Router {
   const router = useContext(RouterContext);
   if (router === null) throw new Error('useRouter needs a <RouterContext.Provider>');
   return router;
+}
+
+/**
+ * Klick-Handler für einen Link, der im Router bleibt. Mittelklick und Modifier behalten das
+ * Browser-Verhalten (neuer Tab, neues Fenster).
+ */
+export function useLinkClick(): (href: string) => (e: MouseEvent) => void {
+  const router = useRouter();
+  return (href) => (e) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    router.navigate(href);
+  };
 }

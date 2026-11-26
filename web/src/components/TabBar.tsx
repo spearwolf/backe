@@ -1,7 +1,7 @@
 import { Settings, X } from 'lucide-react';
-import type { KeyboardEvent, MouseEvent } from 'react';
+import type { KeyboardEvent } from 'react';
 import { m } from '../app/app.messages.ts';
-import { useRouter } from '../app/router.ts';
+import { useLinkClick, useRouter } from '../app/router.ts';
 import { type Route, routeHref } from '../app/routes.ts';
 import type { TabModel } from '../app/tabs.ts';
 import { useStore } from '../data/store-context.tsx';
@@ -36,20 +36,10 @@ const TAB = 'flex h-9 shrink-0 items-center -mb-px rounded-t-md border border-b-
 const SELECTED = 'border-foreground/60 bg-background font-semibold';
 const IDLE = 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground';
 
-/** Ein Link, der im Router bleibt; Modifier und andere Tasten behalten das Browser-Verhalten. */
-function useNavigate(): (href: string) => (e: MouseEvent) => void {
-  const router = useRouter();
-  return (href) => (e) => {
-    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-    e.preventDefault();
-    router.navigate(href);
-  };
-}
-
 export function TabBar({ backlog, route, tabs, onClose }: Props) {
   const ids = useSignal(tabs.issues);
   const router = useRouter();
-  const go = useNavigate();
+  const go = useLinkClick();
   const backlogHref = routeHref({ kind: 'backlog', backlog });
   const boardHref = routeHref({ kind: 'board', backlog });
   const settingsHref = routeHref({ kind: 'settings', backlog, section: undefined });
@@ -171,7 +161,7 @@ function IssueTab({ id, href, selected, focusable, onClose }: IssueTabProps) {
   const store = useStore();
   const issue = useSignal(store.issues.get(id));
   const loaded = useSignal(store.loaded);
-  const go = useNavigate();
+  const go = useLinkClick();
   return (
     <div role="presentation" className={cn(TAB, 'max-w-72 pr-1', selected ? SELECTED : IDLE)}>
       <a

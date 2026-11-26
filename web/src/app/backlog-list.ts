@@ -119,6 +119,7 @@ export class BacklogListModel {
   readonly #fresh = new Map<string, unknown>();
   readonly #leaving = new Map<string, unknown>();
   #base: readonly ListRow[] = [];
+  #rowCache = new Map<string, ListRow>();
   readonly #hits: Signal<BodyHits | undefined>;
   readonly #timers: Timers;
   #seq = 0;
@@ -161,15 +162,32 @@ export class BacklogListModel {
           needle === undefined
             ? q.selector
             : { ...q.selector, bodyHits: hits?.q === needle ? hits.ids : NO_HITS };
-        return selectIssues(s, sel).map((r) => {
+        const cache = new Map<string, ListRow>();
+        const rows = selectIssues(s, sel).map((r) => {
           const progress = childProgress(s, r.issue.id);
-          return {
-            issue: r.issue,
-            depth: r.depth ?? 0,
-            openDeps: r.openDeps,
-            ...(progress === undefined ? {} : { progress }),
-          };
+          const depth = r.depth ?? 0;
+          const old = this.#rowCache.get(r.issue.id);
+          const row =
+            old !== undefined &&
+            old.issue === r.issue &&
+            old.depth === depth &&
+            old.openDeps === r.openDeps &&
+            old.progress?.settled === progress?.settled &&
+            old.progress?.total === progress?.total
+              ? old
+              : {
+                  issue: r.issue,
+                  depth,
+                  openDeps: r.openDeps,
+                  ...(progress === undefined ? {} : { progress }),
+                };
+          cache.set(row.issue.id, row);
+          return row;
         });
+        // Unveränderte Zeilen bleiben dieselben Objekte: Eine Zeile als `memo` rendert nur neu,
+        // was der Patch wirklich berührt (ui.md §3.6).
+        this.#rowCache = cache;
+        return rows;
       },
       { attach: this },
     );

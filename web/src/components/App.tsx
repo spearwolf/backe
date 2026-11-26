@@ -1,5 +1,5 @@
 import type { BacklogEntryJson } from '@backe/ui/api.ts';
-import { type ReactNode, useCallback, useEffect, useState } from 'react';
+import { type ReactNode, useCallback, useEffect } from 'react';
 import { m } from '../app/app.messages.ts';
 import { type Router, RouterContext } from '../app/router.ts';
 import { canonicalPath, type Route, routeHref } from '../app/routes.ts';
@@ -9,6 +9,7 @@ import type { ConnectionDeps } from '../data/connection.ts';
 import { openSession, type Session } from '../data/session.ts';
 import { StoreContext } from '../data/store-context.tsx';
 import { useSignal } from '../data/use-signal.ts';
+import { useOwned } from '../lib/use-owned.ts';
 import { BacklogView } from '../views/BacklogView.tsx';
 import { BoardView } from '../views/BoardView.tsx';
 import { IssueView } from '../views/IssueView.tsx';
@@ -24,35 +25,13 @@ type Props = {
   deps: Partial<ConnectionDeps>;
 };
 
-/**
- * Ein Objekt mit `dispose` je Schlüssel: entsteht, wenn der Schlüssel kommt, und geht, wenn er
- * wechselt oder die Komponente abbaut. Bis das neue steht, liefert der Hook `undefined`, nie das
- * alte eines anderen Schlüssels.
- */
-function useOwned<T extends { dispose(): void }>(
-  key: string | undefined,
-  create: (key: string) => T,
-): T | undefined {
-  const [owned, setOwned] = useState<{ key: string; value: T }>();
-  useEffect(() => {
-    if (key === undefined) return;
-    const value = create(key);
-    setOwned({ key, value });
-    return () => {
-      value.dispose();
-      setOwned((cur) => (cur?.value === value ? undefined : cur));
-    };
-  }, [key, create]);
-  return owned !== undefined && owned.key === key ? owned.value : undefined;
-}
-
 const createTabs = (backlog: string) => new TabModel(backlog);
 
 function backlogOf(route: Route): string | undefined {
   return route.kind === 'home' || route.kind === 'not-found' ? undefined : route.backlog;
 }
 
-function View({ route }: { route: Route }) {
+function View({ route, me }: { route: Route; me: string | null }) {
   switch (route.kind) {
     case 'board':
       return <BoardView />;
@@ -60,8 +39,10 @@ function View({ route }: { route: Route }) {
       return <IssueView id={route.id} />;
     case 'settings':
       return <SettingsView />;
+    case 'backlog':
+      return <BacklogView backlog={route.backlog} me={me} />;
     default:
-      return <BacklogView />;
+      return null;
   }
 }
 
@@ -69,17 +50,21 @@ function View({ route }: { route: Route }) {
  * Die Fläche unter den Tabs. Scheitert das Laden, steht dort der Fehler statt der Ansicht: Ohne
  * Arbeitskopie kommt nie ein Zustand, »Lädt …« bliebe für immer stehen.
  */
-function Panel({ session, route }: { session: Session; route: Route }) {
+function Panel(props: { session: Session; route: Route; me: string | null }) {
+  const { session, route, me } = props;
   const error = useSignal(session.error);
   const labelledBy = selectedTabId(route);
   // Eine eigene Fläche statt `role` am `<main>`: `main` darf seine Rolle nicht tauschen.
   return (
     <div
       id={PANEL_ID}
+      // Volle Höhe von `<main>`: Der Tab Backlog scrollt seine Liste selbst, sonst sähe der
+      // Virtualizer die ganze Liste als sichtbar.
+      className="h-full"
       {...(labelledBy === undefined ? {} : { role: 'tabpanel', 'aria-labelledby': labelledBy })}
     >
       {error === undefined ? (
-        <View route={route} />
+        <View route={route} me={me} />
       ) : (
         <div className="max-w-xl p-4">
           <ErrorAlert
@@ -146,7 +131,7 @@ export function App({ backlogs, router, theme, deps }: Props) {
       <StoreContext.Provider value={session.store}>
         <TabBar backlog={current.name} route={route} tabs={tabs} onClose={closeTab} />
         <main className="min-h-0 flex-1 overflow-auto">
-          <Panel session={session} route={route} />
+          <Panel session={session} route={route} me={current.user} />
         </main>
       </StoreContext.Provider>
     );
