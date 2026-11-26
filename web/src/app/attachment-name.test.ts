@@ -1,6 +1,6 @@
 import { ATTACHMENT_NAME_RE } from '@backe/core/names.ts';
 import { expect, test } from 'vitest';
-import { attachmentNameFor } from './attachment-name.ts';
+import { attachmentLink, attachmentNameFor, mentionsAttachment } from './attachment-name.ts';
 
 test.each([
   [
@@ -62,4 +62,24 @@ test('counting up stays within 64 characters', () => {
   expect(got).toHaveLength(64);
   expect(got.endsWith('-2.png')).toBe(true);
   expect(got).toMatch(ATTACHMENT_NAME_RE);
+});
+
+test('the editor link points at the attachment', () => {
+  expect(attachmentLink('shot.png')).toBe('![shot.png](attachments/shot.png)');
+  expect(mentionsAttachment(attachmentLink('shot.png'), 'shot.png')).toBe(true);
+});
+
+test.each([
+  ['![x](attachments/a.png "Titel")', true],
+  ['<img src="attachments/a.png" alt="">', true],
+  ['[a]: attachments/a.png', true],
+  ['![a](./attachments/a.png)', true],
+  ['![a](attachments/a.png.bak)', false],
+  ['![a](attachments/a-2.png)', false],
+  ['![a](attachments/xa.png)', false],
+  ['![a](myattachments/a.png)', false],
+  ['![a](attachments/aXpng)', false],
+  ['', false],
+])('mentions a.png: %s', (text, want) => {
+  expect(mentionsAttachment(text, 'a.png')).toBe(want);
 });

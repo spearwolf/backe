@@ -47,3 +47,21 @@ export function attachmentNameFor(
   for (let n = 2; taken.has(name); n++) name = build(`-${n}`);
   return name;
 }
+
+/** Der Link, den der Editor für ein eingefügtes Bild schreibt; relativ zum Issue (BK §2.8). */
+export function attachmentLink(name: string): string {
+  return `![${name}](attachments/${name})`;
+}
+
+/** Zeichen, die in einem Anhangsnamen stehen dürfen (`ATTACHMENT_NAME_RE`). */
+const NAME_CHAR = '[a-z0-9._-]';
+
+/**
+ * Ob der Text auf den Anhang verweist, gleich in welcher Form: Markdown-Link mit oder ohne Titel,
+ * `<img src>` oder Referenz-Definition. Gesucht wird `attachments/<name>` mit Grenzen, an denen
+ * kein Namenszeichen steht — `a.png` trifft so weder `a.png.bak` noch `xa.png`.
+ */
+export function mentionsAttachment(text: string, name: string): boolean {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<!${NAME_CHAR})attachments/${escaped}(?!${NAME_CHAR})`).test(text);
+}

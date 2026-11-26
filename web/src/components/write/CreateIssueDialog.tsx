@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { attachmentNameFor } from '../../app/attachment-name.ts';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { attachmentNameFor, mentionsAttachment } from '../../app/attachment-name.ts';
 import { type CreateDraft, createArgs } from '../../app/create-draft.ts';
 import { useRouter } from '../../app/router.ts';
 import { routeHref } from '../../app/routes.ts';
@@ -7,14 +7,7 @@ import { useWrites } from '../../data/write-context.tsx';
 import { m } from '../../views/issue.messages.ts';
 import { MarkdownEditor } from '../editor/MarkdownEditor.tsx';
 import { Button } from '../ui/button.tsx';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '../ui/dialog.tsx';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog.tsx';
 import { Input } from '../ui/input.tsx';
 import { ActionError } from './ActionError.tsx';
 import { CreateIssueFields, type DraftUpdate, Row } from './CreateIssueFields.tsx';
@@ -48,16 +41,32 @@ function useLocalImages() {
     setLocal((prev) => new Map(prev).set(name, url));
     return name;
   };
-  /** In Einfügereihenfolge; ein Bild, dessen Link der Text nicht mehr enthält, fällt weg. */
+  /** In Einfügereihenfolge; ein Bild, auf das der Text nicht mehr verweist, fällt weg. */
   const referenced = (body: string): LocalImage[] =>
-    images.current.filter((i) => body.includes(`(attachments/${i.name})`));
+    images.current.filter((i) => mentionsAttachment(body, i.name));
   return { local, onImage, referenced };
+}
+
+/** Property-Felder, deren Text gerade kein gültiger Wert ist; solange eines dabei ist, sperrt »Anlegen«. */
+function useInvalidProps() {
+  const [invalid, setInvalid] = useState<ReadonlySet<string>>(new Set());
+  const report = useCallback((name: string, valid: boolean) => {
+    setInvalid((prev) => {
+      if (prev.has(name) !== valid) return prev;
+      const next = new Set(prev);
+      if (valid) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }, []);
+  return { anyInvalid: invalid.size > 0, report };
 }
 
 /**
  * Dialog »Neues Issue« (ui.md §2.12). Ein Fehler beim Anlegen bleibt im Dialog, der Entwurf steht.
- * Scheitert danach ein Upload, gibt es das Issue schon: Der Dialog nennt dessen ID und den Fehler
- * und bietet nur noch Schließen an, damit kein zweites Issue entsteht.
+ * Scheitert danach ein Upload, gibt es das Issue schon: Die übrigen Bilder gehen trotzdem hoch, der
+ * Dialog nennt die ID, wie viele Bilder angekommen sind und den ersten Fehler, und bietet nur noch
+ * Schließen an, damit kein zweites Issue entsteht.
  */
 export function CreateIssueDialog({
   initial,
@@ -71,11 +80,13 @@ export function CreateIssueDialog({
   const [draft, setDraft] = useState(initial);
   const [openAfter, setOpenAfter] = useState(true);
   const [created, setCreated] = useState<string>();
+  const [uploads, setUploads] = useState<{ done: number; total: number }>();
   const { busy, error, run } = useAction();
   const { local, onImage, referenced } = useLocalImages();
+  const { anyInvalid, report } = useInvalidProps();
   const update: DraftUpdate = (change) => setDraft(change);
   const locked = busy || created !== undefined;
-  const blocked = draft.title.trim() === '';
+  const blocked = draft.title.trim() === '' || anyInvalid;
 
   const finish = (id: string): void => {
     onClose();
@@ -91,10 +102,27 @@ export function CreateIssueDialog({
     let id: string | undefined;
     void run(async () => {
       const result = await writes.run('issue_create', createArgs(draft));
-      id = result.id;
-      setCreated(id);
-      // Unter den Namen, die schon im Text stehen; die Reihenfolge ist die des Einfügens.
-      for (const image of referenced(draft.body)) await writes.upload(id, image.name, image.file);
+      const newId = result.id;
+      id = newId;
+      setCreated(newId);
+      // Unter den Namen, die schon im Text stehen; die Reihenfolge ist die des Einfügens. Ein
+      // Fehlschlag hält die übrigen nicht auf: Jedes Bild, das ankommt, ist ein Link weniger, der
+      // im neuen Issue ins Leere zeigt.
+      const images = referenced(draft.body);
+      let done = 0;
+      let failure: { cause: unknown } | undefined;
+      for (const image of images) {
+        try {
+          await writes.upload(newId, image.name, image.file);
+          done += 1;
+        } catch (cause) {
+          failure ??= { cause };
+        }
+      }
+      if (failure !== undefined) {
+        setUploads({ done, total: images.length });
+        throw failure.cause;
+      }
     }).then((ok) => {
       if (ok && id !== undefined) finish(id);
     });
@@ -102,9 +130,10 @@ export function CreateIssueDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && close()}>
+      {/* Der Titel sagt alles; eine Beschreibung, die ihn wiederholt, läse der Screenreader doppelt. */}
       <DialogContent
         showCloseButton={false}
-        closeLabel={w.dismiss}
+        aria-describedby={undefined}
         className="max-h-[90svh] overflow-y-auto sm:max-w-2xl"
       >
         <form
@@ -116,7 +145,6 @@ export function CreateIssueDialog({
         >
           <DialogHeader>
             <DialogTitle>{w.newIssue}</DialogTitle>
-            <DialogDescription className="sr-only">{w.newIssue}</DialogDescription>
           </DialogHeader>
           <Row label={m.titleLabel}>
             <Input
@@ -140,7 +168,12 @@ export function CreateIssueDialog({
             disabled={locked}
             onChange={(body) => update((d) => ({ ...d, body }))}
           />
-          <CreateIssueFields draft={draft} update={update} disabled={locked} />
+          <CreateIssueFields
+            draft={draft}
+            update={update}
+            disabled={locked}
+            onPropValidity={report}
+          />
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
@@ -151,8 +184,8 @@ export function CreateIssueDialog({
             />
             {w.openAfter}
           </label>
-          {created !== undefined && error !== undefined && (
-            <p className="text-sm">{w.createdUploadFailed(created)}</p>
+          {created !== undefined && uploads !== undefined && error !== undefined && (
+            <p className="text-sm">{w.createdUploadFailed(created, uploads.done, uploads.total)}</p>
           )}
           <ActionError error={error} />
           <DialogFooter>

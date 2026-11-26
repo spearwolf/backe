@@ -1,4 +1,5 @@
 import { type ClipboardEvent, type DragEvent, useLayoutEffect, useRef, useState } from 'react';
+import { attachmentLink } from '../../app/attachment-name.ts';
 import { Markdown, type MarkdownProps } from '../../markdown/index.tsx';
 import { Button } from '../ui/button.tsx';
 import { Textarea } from '../ui/textarea.tsx';
@@ -108,7 +109,7 @@ export function MarkdownEditor({
         if (!alive()) return;
         const name = await onImage(file);
         if (!alive()) return;
-        const link = `![${name}](attachments/${name})`;
+        const link = attachmentLink(name);
         // Jeder Link steht in einer eigenen Zeile, auch der erste eines eingereihten Stapels.
         let glue = !first;
         if (first && behind && tail.current !== undefined) {

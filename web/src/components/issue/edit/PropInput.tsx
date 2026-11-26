@@ -3,7 +3,7 @@
  * Schreiben: Wer sie einsetzt, entscheidet, wann daraus ein Aufruf wird.
  */
 import type { BacklogConfig } from '@backe/core/schemas.ts';
-import { type ComponentProps, useState } from 'react';
+import { type ComponentProps, useEffect, useState } from 'react';
 import { cn } from '../../../lib/utils.ts';
 import { Input } from '../../ui/input.tsx';
 
@@ -60,6 +60,12 @@ type Props = {
   label?: string;
   /** `id` des Hilfetexts (`description`), angesagt mit dem Feld. */
   describedBy?: string;
+  /**
+   * Meldet, ob der Text gerade ein gültiger Wert oder leer ist. `onChange` sagt für »ungültig« und
+   * »leer« gleichermaßen `undefined`; wer erst später absendet (Anlegen-Dialog), muss beides trennen.
+   * Auswahl und Checkbox sind immer gültig und melden nichts.
+   */
+  onValidity?: (valid: boolean) => void;
 };
 
 /**
@@ -111,6 +117,8 @@ function TextProp(props: Props & { kind: TextKind; label: string }) {
     if (!sameValue(parseProp(kind, text), value)) setText(formatProp(kind, value));
   }
   const invalid = text.trim() !== '' && parseProp(kind, text) === undefined;
+  const { onValidity } = props;
+  useEffect(() => onValidity?.(!invalid), [invalid, onValidity]);
   const numeric = kind === 'integer' || kind === 'number';
   return (
     <Input

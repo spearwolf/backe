@@ -1,9 +1,20 @@
-import type { BacklogEntryJson, StateJson } from '@backe/ui/api.ts';
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { mountApp } from '../../app/bootstrap.tsx';
-import { fakeEventSources } from '../../test/fake-event-source.ts';
-import { testConfig, testIssue, testState, tid } from '../../test/state.ts';
+import { screen, waitFor, within } from '@testing-library/react';
+import {
+  chips,
+  createButton,
+  dialog,
+  inDialog,
+  json,
+  NEW_ID,
+  PARENT,
+  queryDialog,
+  registerCreateHarness,
+  setup,
+  teardown,
+  titleBox,
+  writes,
+} from '../../test/create-issue.tsx';
+import { tid } from '../../test/state.ts';
 import { m as b } from '../../views/backlog.messages.ts';
 import { m } from '../../views/issue.messages.ts';
 import { m as w } from './write.messages.ts';
@@ -12,115 +23,10 @@ vi.mock('../../markdown/index.tsx', () => ({
   Markdown: ({ source }: { source: string }) => <div data-testid="markdown">{source}</div>,
 }));
 
-const NEW_ID = 'bk-new1';
-const PARENT = testIssue(1, { projects: ['api'], sprints: ['s2'], repos: ['core'] });
+registerCreateHarness();
 
-type Call = { method: string; url: string; body: unknown };
-type Answer = (call: Call) => Response | undefined;
-
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
-
-const entry = (over: Partial<BacklogEntryJson> = {}): BacklogEntryJson => ({
-  name: 'acme',
-  current: true,
-  can_write: true,
-  user: 'spw',
-  prefix: 'bk',
-  ...over,
-});
-
-function backlogState(): StateJson {
-  return testState([PARENT, testIssue(2)], {
-    config: testConfig({
-      props: { prio: { type: 'enum', description: 'Wie dringend', values: ['low', 'high'] } },
-    }),
-    projects: [
-      { path: 'web', title: 'Web' },
-      { path: 'api', title: 'API' },
-    ] as StateJson['projects'],
-    sprints: [
-      { slug: 's1', title: 'S1' },
-      { slug: 's2', title: 'S2' },
-    ] as StateJson['sprints'],
-    repos: [{ name: 'core' }] as StateJson['repos'],
-    users: [
-      { handle: 'spw', name: 'S', kind: 'human' },
-      { handle: 'anna', name: 'A', kind: 'human' },
-    ] as StateJson['users'],
-  });
-}
-
-let unmount: (() => void) | undefined;
-// jsdom kennt keine Blob-URLs; die Tests zählen, was angelegt und wieder freigegeben wird.
-const { createObjectURL, revokeObjectURL } = URL;
-const calls: Call[] = [];
-const writes = () => calls.filter((c) => c.method !== 'GET');
-
-afterEach(async () => {
-  await act(async () => unmount?.());
-  unmount = undefined;
-  calls.length = 0;
-  vi.unstubAllGlobals();
-  URL.createObjectURL = createObjectURL;
-  URL.revokeObjectURL = revokeObjectURL;
-  localStorage.clear();
-  document.body.innerHTML = '';
-});
-
-async function setup(
-  path: string,
-  opts: { entry?: Partial<BacklogEntryJson>; answer?: Answer } = {},
-) {
-  window.history.replaceState(null, '', path);
-  const sources = fakeEventSources();
-  const fetch = async (url: string, init: RequestInit = {}): Promise<Response> => {
-    const method = init.method ?? 'GET';
-    const body = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
-    const call = { method, url, body };
-    calls.push(call);
-    const answered = opts.answer?.(call);
-    if (answered !== undefined) return answered;
-    if (url === '/api/backlogs') return json({ backlogs: [entry(opts.entry)], lang: 'de' });
-    if (url === '/api/b/acme/state') return json(backlogState());
-    if (url.endsWith('/tools/issue_create')) return json({ commit: null, id: NEW_ID });
-    if (method === 'PUT') return json({ commit: null, id: NEW_ID });
-    return json({ error: { code: 'not_found', message: 'nope' } }, 404);
-  };
-  vi.stubGlobal('fetch', fetch);
-  const objectUrls: string[] = [];
-  const revoked: string[] = [];
-  URL.createObjectURL = () => {
-    const url = `blob:${objectUrls.length + 1}`;
-    objectUrls.push(url);
-    return url;
-  };
-  URL.revokeObjectURL = (u: string) => void revoked.push(u);
-  const root = document.createElement('div');
-  document.body.append(root);
-  await act(async () => {
-    unmount = await mountApp(root, { fetch, eventSource: sources.create, win: window });
-  });
-  const es = sources.all.filter((s) => !s.closed)[0];
-  await act(async () => {
-    es?.emitOpen();
-    es?.emitEvent('hello', { rev: 1, head: 'h1' });
-    for (let i = 0; i < 10; i++) await Promise.resolve();
-  });
-  return { user: userEvent.setup(), revoked };
-}
-
-const dialog = () => screen.getByRole('dialog', { name: w.newIssue });
-const queryDialog = () => screen.queryByRole('dialog');
-const inDialog = () => within(dialog());
-const titleBox = () => inDialog().getByRole('textbox', { name: m.titleLabel }) as HTMLInputElement;
-const bodyBox = () =>
-  inDialog().getByRole('textbox', { name: m.description }) as HTMLTextAreaElement;
-const createButton = () => inDialog().getByRole('button', { name: w.create }) as HTMLButtonElement;
-const chips = (label: string) =>
-  within(inDialog().getByRole('group', { name: label }))
-    .queryAllByRole('listitem')
-    .map((li) => li.textContent);
+const stateBox = () =>
+  inDialog().getByRole('combobox', { name: m.fieldState }) as HTMLSelectElement;
 
 test('c opens the dialog prefilled from the backlog filter', async () => {
   const { user } = await setup(
@@ -132,18 +38,18 @@ test('c opens the dialog prefilled from the backlog filter', async () => {
   expect(chips(m.fieldProjects)).toEqual(['web']);
   expect(chips(m.fieldSprints)).toEqual(['s1']);
   expect(chips(m.fieldRepos)).toEqual(['core']);
-  expect(
-    (inDialog().getByRole('combobox', { name: m.fieldState }) as HTMLSelectElement).value,
-  ).toBe('todo');
+  expect(stateBox().value).toBe('todo');
   expect(
     inDialog().getByRole('button', { name: m.choice(m.fieldAssignee, 'me (spw)') }),
   ).toBeTruthy();
   // Nur die Hauptlinie: Seitenzustände entstehen per Übergang, nicht beim Anlegen.
   expect(
-    within(inDialog().getByRole('combobox', { name: m.fieldState }))
+    within(stateBox())
       .getAllByRole('option')
       .map((o) => o.textContent),
   ).toEqual(['backlog', 'todo', 'in_progress', 'review', 'done']);
+  // Der Titel ist der Name des Dialogs; eine Beschreibung, die ihn wiederholt, gibt es nicht.
+  expect(dialog().hasAttribute('aria-describedby')).toBe(false);
   await user.keyboard('{Escape}');
   expect(queryDialog()).toBeNull();
 });
@@ -152,9 +58,7 @@ test('c outside the backlog tab starts empty', async () => {
   const { user } = await setup('/b/acme/board?project=web');
   await user.keyboard('c');
   expect(chips(m.fieldProjects)).toEqual([]);
-  expect(
-    (inDialog().getByRole('combobox', { name: m.fieldState }) as HTMLSelectElement).value,
-  ).toBe('backlog');
+  expect(stateBox().value).toBe('backlog');
   expect(inDialog().getByRole('button', { name: m.choice(m.fieldAssignee, 'none') })).toBeTruthy();
 });
 
@@ -165,15 +69,40 @@ test('c does nothing while typing or without write access', async () => {
   await user.keyboard('c');
   expect(queryDialog()).toBeNull();
   expect(search.value).toBe('c');
-  await user.click(document.body);
-  await user.keyboard('{Control>}c{/Control}{Meta>}c{/Meta}{Alt>}c{/Alt}');
+
+  // Ein Textfeld und eine editierbare Fläche außerhalb der App zählen genauso als Tippen.
+  const area = document.createElement('textarea');
+  const editable = document.createElement('div');
+  // jsdom kennt die Eigenschaft `contentEditable` nicht, nur das Attribut.
+  editable.setAttribute('contenteditable', 'true');
+  editable.tabIndex = 0;
+  document.body.append(area, editable);
+  await user.click(area);
+  await user.keyboard('c');
+  expect(area.value).toBe('c');
+  editable.focus();
+  await user.keyboard('c');
   expect(queryDialog()).toBeNull();
+
+  await user.click(document.body);
+  await user.keyboard('{Control>}c{/Control}{Meta>}c{/Meta}{Alt>}c{/Alt}{Shift>}c{/Shift}');
+  expect(queryDialog()).toBeNull();
+
+  // Im offenen Menü ist `c` die Typeahead-Suche.
+  await user.click(screen.getByRole('button', { name: /^Sprint/ }));
+  expect(screen.getByRole('menu')).toBeTruthy();
+  await user.keyboard('c');
+  expect(queryDialog()).toBeNull();
+  await user.keyboard('{Escape}');
+  expect(screen.queryByRole('menu')).toBeNull();
+
   // Bei offenem Dialog ist `c` ein Buchstabe im Titel, kein zweiter Dialog.
+  await user.click(document.body);
   await user.keyboard('c');
   await user.keyboard('c');
   expect(screen.getAllByRole('dialog')).toHaveLength(1);
   expect(titleBox().value).toBe('c');
-  await act(async () => unmount?.());
+  await teardown();
 
   const readOnly = await setup('/b/acme/backlog', { entry: { can_write: false } });
   await readOnly.user.keyboard('c');
@@ -218,6 +147,48 @@ test('creating posts issue_create and opens the new tab', async () => {
   expect(queryDialog()).toBeNull();
 });
 
+test('the same parent again keeps the edited lists', async () => {
+  const { user } = await setup('/b/acme/backlog');
+  await user.keyboard('c');
+  await user.type(titleBox(), 'Kind');
+  const parent = inDialog().getByRole('combobox', { name: m.parent });
+  await user.type(parent, PARENT.id);
+  await user.click(inDialog().getByRole('button', { name: m.remove('api') }));
+  // Leerzeichen und Rücktaste melden dieselbe ID noch einmal, wie es auch die Vorschlagsliste tut.
+  await user.type(parent, ' {Backspace}');
+  expect(chips(m.fieldProjects)).toEqual([]);
+  expect(chips(m.fieldSprints)).toEqual(['s2']);
+  await user.click(createButton());
+  expect(writes()[0]?.body).toMatchObject({ parent: PARENT.id, projects: [], sprints: ['s2'] });
+});
+
+test('an invalid property blocks creating', async () => {
+  const { user } = await setup('/b/acme/backlog');
+  await user.keyboard('c');
+  await user.type(titleBox(), 'Mit Punkten');
+  const size = inDialog().getByRole('spinbutton', { name: 'size' });
+  await user.type(size, '1.5');
+  expect(createButton().disabled).toBe(true);
+  await user.type(titleBox(), '{Enter}');
+  expect(writes()).toEqual([]);
+  await user.clear(size);
+  expect(createButton().disabled).toBe(false);
+  await user.type(size, '3');
+  await user.click(createButton());
+  expect(writes()[0]?.body).toMatchObject({ props: { size: 3 } });
+});
+
+test('a checkbox unchecked again leaves the property unset', async () => {
+  const { user } = await setup('/b/acme/backlog');
+  await user.keyboard('c');
+  await user.type(titleBox(), 'Ohne Haken');
+  const flag = inDialog().getByRole('checkbox', { name: 'flag' });
+  await user.click(flag);
+  await user.click(flag);
+  await user.click(createButton());
+  expect(writes()[0]?.body).not.toHaveProperty('props');
+});
+
 test('without »open after create« the view stays', async () => {
   const { user } = await setup('/b/acme/backlog');
   await user.keyboard('c');
@@ -230,49 +201,6 @@ test('without »open after create« the view stays', async () => {
   await waitFor(() => expect(queryDialog()).toBeNull());
   expect(writes()).toHaveLength(1);
   expect(window.location.pathname).toBe('/b/acme/backlog');
-});
-
-test('images upload after the issue exists', async () => {
-  const { user, revoked } = await setup('/b/acme/backlog');
-  await user.keyboard('c');
-  await user.type(titleBox(), 'Mit Bildern');
-  const png = (name: string) => new File(['x'], name, { type: 'image/png' });
-  fireEvent.paste(bodyBox(), { clipboardData: { files: [png('Shot.png'), png('shot.png')] } });
-  await waitFor(() => expect(bodyBox().value).toContain('shot-2.png'));
-  expect(bodyBox().value).toBe(
-    '![shot.png](attachments/shot.png)\n![shot-2.png](attachments/shot-2.png)',
-  );
-  // Vor dem Anlegen geht nichts zum Server.
-  expect(writes()).toEqual([]);
-  await user.click(inDialog().getByRole('button', { name: 'Vorschau' }));
-  await user.click(inDialog().getByRole('button', { name: 'Text' }));
-  await user.click(createButton());
-
-  await waitFor(() => expect(writes()).toHaveLength(3));
-  expect(writes().map((c) => `${c.method} ${c.url}`)).toEqual([
-    'POST /api/b/acme/tools/issue_create',
-    `PUT /api/b/acme/issues/${NEW_ID}/attachments/shot.png`,
-    `PUT /api/b/acme/issues/${NEW_ID}/attachments/shot-2.png`,
-  ]);
-  expect(writes()[0]?.body).toMatchObject({
-    body: expect.stringContaining('attachments/shot-2.png'),
-  });
-  await waitFor(() => expect(queryDialog()).toBeNull());
-  expect(revoked.sort()).toEqual(['blob:1', 'blob:2']);
-});
-
-test('an image removed from the text is not uploaded', async () => {
-  const { user } = await setup('/b/acme/backlog');
-  await user.keyboard('c');
-  await user.type(titleBox(), 'Ohne Bild');
-  fireEvent.paste(bodyBox(), {
-    clipboardData: { files: [new File(['x'], 'a.png', { type: 'image/png' })] },
-  });
-  await waitFor(() => expect(bodyBox().value).toContain('a.png'));
-  await user.clear(bodyBox());
-  await user.click(createButton());
-  await waitFor(() => expect(queryDialog()).toBeNull());
-  expect(writes().map((c) => c.method)).toEqual(['POST']);
 });
 
 test('a create error stays in the dialog with its hint', async () => {
@@ -295,31 +223,6 @@ test('a create error stays in the dialog with its hint', async () => {
   expect(alert.textContent).toContain('backe sprint list');
   expect(titleBox().value).toBe('Kaputt');
   expect(window.location.pathname).toBe('/b/acme/backlog');
-});
-
-test('a failed upload keeps the dialog and names the created issue', async () => {
-  const { user } = await setup('/b/acme/backlog', {
-    answer: (c) =>
-      c.method === 'PUT'
-        ? json({ error: { code: 'too_large', message: 'Zu groß' } }, 413)
-        : undefined,
-  });
-  await user.keyboard('c');
-  await user.type(titleBox(), 'Halb');
-  fireEvent.paste(bodyBox(), {
-    clipboardData: { files: [new File(['x'], 'a.png', { type: 'image/png' })] },
-  });
-  await waitFor(() => expect(bodyBox().value).toContain('a.png'));
-  await user.click(createButton());
-  const alert = await within(dialog()).findByRole('alert');
-  expect(alert.textContent).toContain('Zu groß');
-  expect(inDialog().getByText(w.createdUploadFailed(NEW_ID))).toBeTruthy();
-  // Das Issue gibt es schon: Ein zweites Anlegen darf es nicht mehr geben.
-  expect(inDialog().queryByRole('button', { name: w.create })).toBeNull();
-  await user.click(inDialog().getByRole('button', { name: w.dismiss }));
-  expect(queryDialog()).toBeNull();
-  expect(window.location.pathname).toBe(`/b/acme/issue/${NEW_ID}`);
-  expect(writes().filter((c) => c.method === 'POST')).toHaveLength(1);
 });
 
 test('the title is required', async () => {

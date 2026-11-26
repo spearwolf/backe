@@ -3,7 +3,7 @@
  * und schreibt nichts: Der Dialog schickt den Entwurf erst beim Anlegen.
  */
 import { MAIN_LINE, type State } from '@backe/core/state.ts';
-import { type ReactNode, useId, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useId, useState } from 'react';
 import { type CreateDraft, withParent } from '../../app/create-draft.ts';
 import { useStore } from '../../data/store-context.tsx';
 import { useSignal } from '../../data/use-signal.ts';
@@ -22,7 +22,13 @@ import { m as w } from './write.messages.ts';
 
 export type DraftUpdate = (change: (draft: CreateDraft) => CreateDraft) => void;
 
-type FieldsProps = { draft: CreateDraft; update: DraftUpdate; disabled: boolean };
+type FieldsProps = {
+  draft: CreateDraft;
+  update: DraftUpdate;
+  disabled: boolean;
+  /** Ob der Text eines Property-Felds gerade ein gültiger Wert oder leer ist. */
+  onPropValidity: (name: string, valid: boolean) => void;
+};
 
 /** Beschriftete Zeile; die Gruppe trägt den Namen des Felds für Screenreader und Tests. */
 export function Row({ label, children }: { label: string; children: ReactNode }) {
@@ -93,8 +99,16 @@ function DepsPick({ draft, update, disabled }: FieldsProps) {
 }
 
 function PropRow(props: FieldsProps & { name: string; decl: NonNullable<DeclaredProps>[string] }) {
-  const { draft, update, disabled, name, decl } = props;
+  const { draft, update, disabled, name, decl, onPropValidity } = props;
   const helpId = useId();
+  const onValidity = useCallback(
+    (valid: boolean) => onPropValidity(name, valid),
+    [onPropValidity, name],
+  );
+  // Verschwindet die Deklaration (neue Config), sperrt ihr letzter Zustand nichts mehr.
+  useEffect(() => () => onPropValidity(name, true), [onPropValidity, name]);
+  // Eine Checkbox kennt kein »nicht gesetzt«; leer ist sie in diesem Dialog, solange kein Haken sitzt.
+  const unset = (v: unknown): unknown => (decl.type === 'boolean' && v === false ? undefined : v);
   return (
     <Row label={name}>
       <div className="space-y-1">
@@ -104,7 +118,8 @@ function PropRow(props: FieldsProps & { name: string; decl: NonNullable<Declared
           value={draft.props[name]}
           disabled={disabled}
           describedBy={helpId}
-          onChange={(v) => update((d) => ({ ...d, props: { ...d.props, [name]: v } }))}
+          onValidity={onValidity}
+          onChange={(v) => update((d) => ({ ...d, props: { ...d.props, [name]: unset(v) } }))}
         />
         <p id={helpId} className="text-xs text-muted-foreground">
           {decl.description}
@@ -131,10 +146,16 @@ export function CreateIssueFields(props: FieldsProps) {
   ] as const;
 
   // Erst eine vollständige, bekannte ID ist eine Auswahl; dann gilt die Vorbelegung des Parents.
+  // Nur beim Wechsel: Meldet die Eingabe denselben Parent noch einmal, bleiben die Listen, wie der
+  // Nutzer sie seither geändert hat.
   const onParent = (value: string): void => {
     const id = value.trim();
     const parent = issueIds.includes(id) ? store.issues.get(id).value : undefined;
-    update((d) => (parent === undefined ? { ...d, parent: value } : withParent(d, parent)));
+    update((d) =>
+      parent === undefined || parent.id === d.parent.trim()
+        ? { ...d, parent: value }
+        : withParent(d, parent),
+    );
   };
 
   return (
