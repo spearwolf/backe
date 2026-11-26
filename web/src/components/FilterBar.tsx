@@ -1,4 +1,4 @@
-import { ALL_STATES } from '@backe/core/state.ts';
+import { ALL_STATES, normalizeStateInput } from '@backe/core/state.ts';
 import { ChevronDown, X } from 'lucide-react';
 import { type KeyboardEvent, type ReactNode, useState } from 'react';
 import { m as app } from '../app/app.messages.ts';
@@ -27,13 +27,40 @@ import { Input } from './ui/input.tsx';
 type Option = { value: string; label?: string; depth?: number };
 
 const keepOpen = (e: Event) => e.preventDefault();
+const errorId = (field: keyof ListFilter) => `backlog-filter-error-${field}`;
+const unique = (values: readonly string[]) => [...new Set(values)];
+
+/** State in CLI-Schreibweise (`in-progress`) als State; Unbekanntes bleibt, wie es ist. */
+function stateOf(value: string): string {
+  try {
+    return normalizeStateInput(value);
+  } catch {
+    return value;
+  }
+}
+
+/** Optionen plus Werte aus der URL, die keine Option sind: Auch sie lassen sich abwählen. */
+function withValues(options: readonly Option[], values: readonly string[]): Option[] {
+  const known = new Set(options.map((o) => o.value));
+  return [...options, ...values.filter((v) => !known.has(v)).map((value) => ({ value }))];
+}
 const toggle = (values: readonly string[], value: string, on: boolean) =>
   on ? [...values, value] : values.filter((v) => v !== value);
 
-function Trigger({ label, active, invalid }: { label: string; active?: string; invalid: boolean }) {
+/**
+ * Ein Feldfehler hängt als Beschreibung am Auslöser; `aria-invalid` kennt die Rolle `button`
+ * nicht. Sichtbar wird er über den Rand, nicht nur über Farbe: Der Text steht darunter.
+ */
+function Trigger(props: { label: string; active?: string; error?: string }) {
+  const { label, active, error } = props;
   return (
     <DropdownMenuTrigger asChild>
-      <Button variant="outline" size="sm" aria-invalid={invalid || undefined}>
+      <Button
+        variant="outline"
+        size="sm"
+        aria-describedby={error}
+        className={error === undefined ? undefined : 'border-destructive border-dashed'}
+      >
         {label}
         {active !== undefined && (
           <span className="font-normal text-muted-foreground">{active}</span>
@@ -49,20 +76,20 @@ function MultiFilter(props: {
   label: string;
   values: readonly string[];
   options: readonly Option[];
-  invalid: boolean;
+  error?: string;
   onChange: (values: string[]) => void;
   extra?: ReactNode;
 }) {
-  const { label, values, options, invalid, onChange, extra } = props;
+  const { label, values, options, error, onChange, extra } = props;
   return (
     <DropdownMenu>
       <Trigger
         label={label}
-        invalid={invalid}
+        {...(error === undefined ? {} : { error })}
         {...(values.length > 0 ? { active: values.join(', ') } : {})}
       />
       <DropdownMenuContent align="start" className="max-h-80 overflow-auto">
-        {options.map((o) => (
+        {withValues(options, values).map((o) => (
           <DropdownMenuCheckboxItem
             key={o.value}
             checked={values.includes(o.value)}
@@ -84,15 +111,19 @@ function SingleFilter(props: {
   label: string;
   value: string | undefined;
   options: readonly string[];
-  invalid: boolean;
+  error?: string;
   onChange: (value: string | undefined) => void;
 }) {
-  const { label, value, options, invalid, onChange } = props;
+  const { label, value, error, onChange } = props;
+  const options =
+    value === undefined || props.options.includes(value)
+      ? props.options
+      : [...props.options, value];
   return (
     <DropdownMenu>
       <Trigger
         label={label}
-        invalid={invalid}
+        {...(error === undefined ? {} : { error })}
         {...(value !== undefined ? { active: value } : {})}
       />
       <DropdownMenuContent align="start" className="max-h-80 overflow-auto">
@@ -118,9 +149,10 @@ function ExprFilter(props: {
   placeholder: string;
   values: readonly string[];
   invalid: readonly string[];
+  error?: string;
   onChange: (values: string[]) => void;
 }) {
-  const { label, placeholder, values, invalid, onChange } = props;
+  const { label, placeholder, values, invalid, error, onChange } = props;
   const [draft, setDraft] = useState('');
   const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
     const value = draft.trim();
@@ -150,6 +182,8 @@ function ExprFilter(props: {
       ))}
       <Input
         aria-label={label}
+        aria-invalid={invalid.length > 0 || undefined}
+        aria-describedby={error}
         placeholder={placeholder}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
@@ -192,9 +226,14 @@ export function FilterBar({ filter, errors, view, count, bodySearch, onFilter, o
   const repos = useSignal(store.repos.keys);
   const users = useSignal(store.users.keys);
   const bad = (field: keyof ListFilter) => errors.filter((e) => e.field === field);
+  const failed = [...new Set(errors.map((e) => e.field))];
+  /** `{error}` als Prop-Teil, wenn das Feld einen Fehler hat. */
+  const errorOf = (field: keyof ListFilter) =>
+    failed.includes(field) ? { error: errorId(field) } : {};
   const set = (patch: Partial<ListFilter>) => onFilter({ ...filter, ...patch });
 
-  const all = filter.states.includes('all');
+  const all = filter.states.length === 1 && filter.states[0] === 'all';
+  const states = all ? [] : unique(filter.states.map(stateOf));
   const stateExtra = (
     <>
       <DropdownMenuSeparator />
@@ -237,9 +276,9 @@ export function FilterBar({ filter, errors, view, count, bodySearch, onFilter, o
       >
         <MultiFilter
           label={m.filterState}
-          values={all ? [] : filter.states}
+          values={states}
           options={ALL_STATES.map((value) => ({ value }))}
-          invalid={bad('states').length > 0}
+          {...errorOf('states')}
           onChange={(states) => set({ states })}
           extra={stateExtra}
         />
@@ -247,7 +286,6 @@ export function FilterBar({ filter, errors, view, count, bodySearch, onFilter, o
           label={m.filterProject}
           values={filter.projects}
           options={sorted.map((value) => ({ value, depth: value.split('/').length - 1 }))}
-          invalid={false}
           onChange={(projects) => set({ projects })}
           extra={projectExtra}
         />
@@ -255,35 +293,33 @@ export function FilterBar({ filter, errors, view, count, bodySearch, onFilter, o
           label={m.filterSprint}
           values={filter.sprints}
           options={[...sprints].sort().map((value) => ({ value }))}
-          invalid={false}
           onChange={(sprints) => set({ sprints })}
         />
         <MultiFilter
           label={m.filterRepo}
           values={filter.repos}
           options={[...repos].sort().map((value) => ({ value }))}
-          invalid={false}
           onChange={(repos) => set({ repos })}
         />
         <SingleFilter
           label={m.filterAssignee}
           value={filter.assignee}
           options={['me', 'none', ...handles]}
-          invalid={bad('assignee').length > 0}
+          {...errorOf('assignee')}
           onChange={(assignee) => onFilter(without({ ...filter, assignee }, 'assignee'))}
         />
         <SingleFilter
           label={m.filterCreator}
           value={filter.creator}
           options={['me', ...handles]}
-          invalid={bad('creator').length > 0}
+          {...errorOf('creator')}
           onChange={(creator) => onFilter(without({ ...filter, creator }, 'creator'))}
         />
         <SingleFilter
           label={m.filterMode}
           value={filter.mode}
           options={LIST_MODES}
-          invalid={bad('mode').length > 0}
+          {...errorOf('mode')}
           onChange={(mode) => onFilter(without({ ...filter, mode }, 'mode'))}
         />
         <Input
@@ -304,6 +340,7 @@ export function FilterBar({ filter, errors, view, count, bodySearch, onFilter, o
           placeholder={m.propsPlaceholder}
           values={filter.props}
           invalid={bad('props').map((e) => e.value)}
+          {...errorOf('props')}
           onChange={(props) => set({ props })}
         />
         <ExprFilter
@@ -336,13 +373,16 @@ export function FilterBar({ filter, errors, view, count, bodySearch, onFilter, o
           </span>
         </span>
       </div>
-      {errors.length > 0 && (
-        <ul aria-live="polite" className="space-y-0.5 text-sm text-destructive">
-          {errors.map((e) => (
-            <li key={`${e.field}:${e.value}`}>{e.message}</li>
-          ))}
-        </ul>
-      )}
+      {/* Immer da: Eine Live-Region, die erst mit ihrem Inhalt entsteht, liest kaum ein Screenreader vor. */}
+      <div aria-live="polite" className="space-y-0.5 text-sm text-destructive empty:hidden">
+        {failed.map((field) => (
+          <p key={field} id={errorId(field)}>
+            {bad(field)
+              .map((e) => e.message)
+              .join(' · ')}
+          </p>
+        ))}
+      </div>
     </div>
   );
 }

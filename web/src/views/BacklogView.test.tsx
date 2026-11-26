@@ -239,3 +239,48 @@ test('the project menu keeps children under their parent', async () => {
     .filter((t) => t !== m.exact);
   expect(names).toEqual(['api', 'api/auth', 'api-gw']);
 });
+
+test('a url value without an option can still be removed', async () => {
+  const { router } = view([testIssue(1)], { search: '?project=gone' });
+  await userEvent.click(screen.getByRole('button', { name: new RegExp(m.filterProject) }));
+  const gone = screen.getByRole('menuitemcheckbox', { name: 'gone' });
+  expect(gone.getAttribute('aria-checked')).toBe('true');
+  await userEvent.click(gone);
+  expect(router.location.value.search).toBe('');
+});
+
+test('a state spelled like the cli shows as its state and toggles once', async () => {
+  const { router } = view([testIssue(1)], { search: '?state=in-progress' });
+  await userEvent.click(screen.getByRole('button', { name: new RegExp(m.filterState) }));
+  const item = screen.getByRole('menuitemcheckbox', { name: 'in_progress' });
+  expect(item.getAttribute('aria-checked')).toBe('true');
+  expect(screen.queryByRole('menuitemcheckbox', { name: 'in-progress' })).toBeNull();
+  await userEvent.click(item);
+  expect(router.location.value.search).toBe('');
+});
+
+/** Der Text, auf den `aria-describedby` eines Elements zeigt. */
+function description(el: HTMLElement): string {
+  return (el.getAttribute('aria-describedby') ?? '')
+    .split(' ')
+    .filter((id) => id !== '')
+    .map((id) => document.getElementById(id)?.textContent ?? '')
+    .join(' ');
+}
+
+test('field errors describe their field', () => {
+  view([testIssue(1)], { search: '?mode=fast&prop=x>=abc' });
+  const mode = screen.getByRole('button', { name: new RegExp(m.filterMode) });
+  expect(description(mode)).toContain(m.unknownMode('fast'));
+  expect(mode.hasAttribute('aria-invalid')).toBe(false);
+  const props = screen.getByRole('textbox', { name: m.filterProps });
+  expect(description(props)).not.toBe('');
+  expect(props.getAttribute('aria-invalid')).toBe('true');
+});
+
+test('the error region is there before the first error', () => {
+  const { container } = view([testIssue(1)]);
+  const region = container.querySelector('[aria-live="polite"]');
+  expect(region).not.toBeNull();
+  expect(region?.textContent).toBe('');
+});
