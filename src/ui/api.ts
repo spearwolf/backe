@@ -47,6 +47,42 @@ export type StateJson = {
   sync: Record<string, unknown> | null;
 };
 
+/**
+ * Änderung zwischen zwei Ständen (ui.md §2.4.2): Entitäten in derselben Form wie in `StateJson`,
+ * `remove` als Keys, `problems` als ganze Liste, wenn sie sich ändert.
+ */
+export type PatchJson = {
+  rev: number;
+  head: string;
+  upsert: {
+    issues?: IssueJson[];
+    projects?: ProjectJson[];
+    sprints?: SprintJson[];
+    repos?: RepoJson[];
+    users?: UserJson[];
+    config?: StateJson['config'];
+  };
+  remove: {
+    issues?: string[];
+    projects?: string[];
+    sprints?: string[];
+    repos?: string[];
+    users?: string[];
+  };
+  /** Issues mit geänderten Kommentaren oder Anhängen. */
+  touched?: string[];
+  problems?: ProblemJson[];
+};
+
+export type HelloJson = { rev: number; head: string };
+
+/** Ein Ereignis des Event-Streams (ui.md §2.4.3); `sync` trägt das JSON von `sync status`. */
+export type ServerEvent =
+  | { event: 'hello'; data: HelloJson }
+  | { event: 'patch'; data: PatchJson }
+  | { event: 'sync'; data: Record<string, unknown> }
+  | { event: 'reset'; data: Record<string, never> };
+
 /** Fehlerantwort, dieselbe Form wie `errorJson` der CLI. */
 export type ErrorJson = {
   error: { code: string; message: string; hint?: string; details?: unknown };

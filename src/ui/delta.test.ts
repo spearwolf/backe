@@ -1,0 +1,109 @@
+import { I, snap } from '../../test/helpers/snapshot.ts';
+import { diffTables, entityTable, needsFullReload, touchedIssues, watchedPath } from './delta.ts';
+
+test('an unchanged table is no patch', () => {
+  const s = snap({ issues: [{ id: I(1) }], projects: ['web'] });
+  expect(diffTables(entityTable(s), entityTable(s))).toBeUndefined();
+});
+
+test('changed and new entities are upserts, missing ones removes', () => {
+  const a = snap({ issues: [{ id: I(1) }, { id: I(2) }], sprints: ['2026-w47'] });
+  const b = snap({
+    issues: [{ id: I(1), title: 'Neu' }, { id: I(3) }],
+    sprints: [],
+  });
+  const patch = diffTables(entityTable(a), entityTable(b));
+  expect(patch?.upsert.issues?.map((i) => [i.id, i.title])).toEqual([
+    [I(1), 'Neu'],
+    [I(3), b.issues.get(I(3))?.data.title],
+  ]);
+  expect(patch?.remove).toEqual({ issues: [I(2)], sprints: ['2026-w47'] });
+  expect(patch).not.toHaveProperty('touched');
+  expect(patch).not.toHaveProperty('problems');
+  expect(patch?.upsert).not.toHaveProperty('config');
+});
+
+test('entities in a patch have the shape of state', () => {
+  const a = snap();
+  const b = snap({ projects: ['web'], repos: { webapp: 'git@example.com:a/w.git' } });
+  const patch = diffTables(entityTable(a), entityTable(b));
+  expect(patch?.upsert.projects?.[0]).toMatchObject({ path: 'web' });
+  expect(patch?.upsert.repos?.[0]).toMatchObject({ name: 'webapp' });
+});
+
+test('config changes upsert config and users with changed admin', () => {
+  const a = snap({ config: { admins: ['spw'] } });
+  const b = snap({ config: { admins: ['spw', 'alice'] } });
+  const patch = diffTables(entityTable(a), entityTable(b));
+  expect(patch?.upsert.config?.admins).toEqual(['spw', 'alice']);
+  expect(patch?.upsert.config).not.toHaveProperty('$schema');
+  expect(patch?.upsert.users?.map((u) => [u.handle, u.admin])).toEqual([['alice', true]]);
+});
+
+test('problems come as a whole list when they change', () => {
+  const a = snap();
+  const b = { ...snap(), problems: [{ path: 'issues/x/y/issue.md', message: 'kaputt' }] };
+  expect(diffTables(entityTable(a), entityTable(b))).toEqual({
+    upsert: {},
+    remove: {},
+    problems: [{ path: 'issues/x/y/issue.md', message: 'kaputt' }],
+  });
+  expect(diffTables(entityTable(b), entityTable(a))?.problems).toEqual([]);
+});
+
+test('touched alone makes a patch', () => {
+  const s = snap({ issues: [{ id: I(1) }] });
+  expect(diffTables(entityTable(s), entityTable(s), [I(1)])).toEqual({
+    upsert: {},
+    remove: {},
+    touched: [I(1)],
+  });
+});
+
+test('touchedIssues reads comment and attachment paths', () => {
+  expect(
+    touchedIssues([
+      'issues/t0/bk-t0002/attachments/logo.svg',
+      'issues/t0/bk-t0001/comments/20261118T100000Z-spw-abc.md',
+      'issues/t0/bk-t0001/attachments/a.txt',
+      'issues/t0/bk-t0003/issue.md',
+      'issues/t0/bk-t0004/comments',
+      'projects/web.md',
+    ]),
+  ).toEqual(['bk-t0001', 'bk-t0002']);
+});
+
+test('watchedPath filters to the backlog dirs', () => {
+  for (const p of [
+    'issues/t0/bk-t0001/issue.md',
+    'issues',
+    'projects/web/api.md',
+    'sprints/2026-w47.md',
+    'repos/webapp.md',
+    'users/spw.md',
+    '.backe/backlog.jsonc',
+  ]) {
+    expect([p, watchedPath(p)]).toEqual([p, true]);
+  }
+  for (const p of [
+    '.git/HEAD',
+    'README.md',
+    'issuesx/a.md',
+    'issues/t0/bk-t0001/.issue.md.swp',
+    'issues/t0/bk-t0001/issue.md~',
+  ]) {
+    expect([p, watchedPath(p)]).toEqual([p, false]);
+  }
+});
+
+test('needsFullReload for config, directories and non-md paths', () => {
+  expect(needsFullReload('.backe/backlog.jsonc')).toBe(true);
+  expect(needsFullReload('issues/t0/bk-t0001')).toBe(true);
+  expect(needsFullReload('issues')).toBe(true);
+  expect(needsFullReload('projects/web')).toBe(true);
+  expect(needsFullReload('issues/t0/bk-t0001/issue.md')).toBe(false);
+  expect(needsFullReload('projects/web/api.md')).toBe(false);
+  expect(needsFullReload('issues/t0/bk-t0001/attachments/a.png')).toBe(false);
+  expect(needsFullReload('issues/t0/bk-t0001/comments')).toBe(true);
+  expect(needsFullReload('.backe/quarantine.jsonc')).toBe(false);
+});

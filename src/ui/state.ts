@@ -1,8 +1,6 @@
 /** Gesamtzustand eines Backlogs für `GET /api/b/<b>/state` (ui.md §2.3.1). */
 import { join } from 'node:path';
 import type { ResolvedContext } from '../context/resolve.ts';
-import { sshFingerprint } from '../core/fingerprint.ts';
-import type { User } from '../core/schemas.ts';
 import { resolveCommit } from '../git/history.ts';
 import { syncStatus } from '../services/background.ts';
 import { contextInfo } from '../services/context-info.ts';
@@ -10,43 +8,30 @@ import { openSnapshot } from '../services/read.ts';
 import { contextJson, syncStatusJson } from '../services/views.ts';
 import { exists } from '../store/files.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
-import type { StateJson, UserJson } from './api.ts';
+import type { StateJson } from './api.ts';
+import { entityLists } from './delta.ts';
 
-/** Wie `user show --json` ohne `body`: Fingerprints statt Keys, leere Listen fehlen. */
-export function userJson(handle: string, user: User, admins: readonly string[]): UserJson {
-  const fingerprints = (user.keys ?? []).map(sshFingerprint);
-  const revoked = (user.revoked_keys ?? []).map((r) => ({
-    fingerprint: sshFingerprint(r.key),
-    revoked: r.revoked,
-  }));
-  return {
-    handle,
-    name: user.name,
-    kind: user.kind,
-    ...(user.operator === undefined ? {} : { operator: user.operator }),
-    admin: admins.includes(handle),
-    ...(fingerprints.length === 0 ? {} : { fingerprints }),
-    ...(revoked.length === 0 ? {} : { revoked }),
-  };
-}
+export { userJson } from './delta.ts';
 
-/** Metadaten aller Entitäten ohne Issue-Bodies; `rev` ist in U1 konstant 0. */
-export async function stateJson(ctx: ResolvedContext): Promise<StateJson> {
-  const { root, snapshot: s } = await openSnapshot(ctx);
-  const { $schema: _schema, ...config } = s.config;
+/** JSON von `sync status` der eigenen Arbeitskopie; ohne eine `null`. */
+export async function syncJson(ctx: ResolvedContext): Promise<Record<string, unknown> | null> {
   const wc = ctx.backlog.workingCopy;
   const ownCopy = wc !== undefined && (await exists(join(wc, BACKLOG_CONFIG)));
+  return ownCopy ? syncStatusJson(await syncStatus(ctx)) : null;
+}
+
+/**
+ * Metadaten aller Entitäten ohne Issue-Bodies. `rev` liest der Aufrufer, bevor der Zustand geladen
+ * wird: So ist der Zustand mindestens so neu wie `rev` (ui.md §2.4.3).
+ */
+export async function stateJson(ctx: ResolvedContext, rev = 0): Promise<StateJson> {
+  const { root, snapshot: s } = await openSnapshot(ctx);
   return {
-    rev: 0,
+    rev,
     head: await resolveCommit(root, 'HEAD'),
     context: contextJson(await contextInfo(ctx)),
-    config,
-    issues: [...s.issues.values()].map((e) => e.data),
-    projects: [...s.projects].map(([path, e]) => ({ path, ...e.data })),
-    sprints: [...s.sprints].map(([slug, e]) => ({ slug, ...e.data })),
-    repos: [...s.repos].map(([name, e]) => ({ name, ...e.data })),
-    users: [...s.users].map(([handle, e]) => userJson(handle, e.data, s.config.admins)),
+    ...entityLists(s),
     problems: s.problems,
-    sync: ownCopy ? syncStatusJson(await syncStatus(ctx)) : null,
+    sync: await syncJson(ctx),
   };
 }
