@@ -21,17 +21,25 @@ function parsePort(value: string | undefined): number {
   return port;
 }
 
-/** Übergibt die URL dem Browser-Starter der Plattform; scheitert das, bleibt es bei einem Hinweis. */
-function openBrowser(url: string, stderr: (s: string) => void): void {
-  const cmd =
-    process.platform === 'linux' ? 'xdg-open' : process.platform === 'darwin' ? 'open' : undefined;
+/**
+ * Übergibt die URL dem Browser-Starter der Plattform; scheitert das, bleibt es bei einem Hinweis.
+ * Ohne Starter (etwa win32) gibt es nur den Hinweis, ohne einen Befehl zu nennen.
+ */
+export function openBrowser(
+  url: string,
+  stderr: (s: string) => void,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  const cmd = platform === 'linux' ? 'xdg-open' : platform === 'darwin' ? 'open' : undefined;
   if (cmd === undefined) {
-    stderr(renderHints([m.openFailed('open')]));
+    stderr(renderHints([m.openUnsupported]));
     return;
   }
   const hint = () => stderr(renderHints([m.openFailed(cmd)]));
   const child = spawn(cmd, [url], { detached: true, stdio: 'ignore' });
   child.on('error', hint);
+  // Ein Ende durch Signal (`code === null`) zählt wie ein Exit-Code ungleich 0: Ob der Browser
+  // aufging, ist dann unbekannt, und der Hinweis schadet nicht.
   child.on('exit', (code) => {
     if (code !== 0) hint();
   });
@@ -72,10 +80,14 @@ export function uiCommand(program: Command, rt: Runtime): void {
           const start = await resolveStart(input);
           const server = createUiServer({ ...input, start, port });
           const { url } = await server.listen();
-          env.out(`backe ui: ${url}\n`);
-          if (opts.open === true) openBrowser(url, (s) => env.io.stderr(s));
-          await untilSignal();
-          await server.close();
+          try {
+            env.out(`backe ui: ${url}\n`);
+            if (opts.open === true) openBrowser(url, (s) => env.io.stderr(s));
+            await untilSignal();
+          } finally {
+            // Auch ein Fehler nach `listen` lässt den Server nicht offen.
+            await server.close();
+          }
         },
         { statusLine: () => false },
       )(opts, cmd);

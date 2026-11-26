@@ -1,6 +1,6 @@
 /** `backe ui` als echter Prozess (ui.md §2.1): Startzeile, Signale, Exit-Codes, --open, API-Parität. */
 import { type ChildProcess, spawn } from 'node:child_process';
-import { chmod, writeFile } from 'node:fs/promises';
+import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -45,16 +45,24 @@ async function spawnUi(args: string[], opts: { env: Env; cwd: string }): Promise
   });
   const exit = new Promise<number | null>((resolve) => child.on('close', (code) => resolve(code)));
   const line = await new Promise<string>((resolve, reject) => {
+    const early = (code: number | null) => {
+      reject(new Error(`exited with ${code} before start line: ${stderr}`));
+    };
+    child.once('close', early);
     child.stdout.setEncoding('utf8').on('data', (c: string) => {
       stdout += c;
       const nl = stdout.indexOf('\n');
-      if (nl >= 0) resolve(stdout.slice(0, nl));
+      if (nl >= 0) {
+        child.off('close', early);
+        resolve(stdout.slice(0, nl));
+      }
     });
-    exit.then((code) => reject(new Error(`exited with ${code} before start line: ${stderr}`)));
   });
-  const m = START.exec(line);
-  const port = Number(m?.[1]);
-  const token = m?.[2] ?? '';
+  const [, portText, token] = START.exec(line) ?? [];
+  if (portText === undefined || token === undefined) {
+    throw new Error(`start line does not match ${START}: ${line}`);
+  }
+  const port = Number(portText);
   return {
     line,
     port,
@@ -191,7 +199,6 @@ test.runIf(process.platform === 'linux')('--open hands the url to xdg-open', asy
     env: env(b, fake.env),
     cwd: b.root,
   });
-  const { readFile } = await import('node:fs/promises');
   await vi.waitFor(async () => {
     expect(await readFile(fake.out, 'utf8')).toBe(ui.line.slice('backe ui: '.length));
   });

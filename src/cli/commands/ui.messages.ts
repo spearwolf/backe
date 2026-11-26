@@ -9,6 +9,8 @@ export const m = catalog({
       `Invalid port: ${value}; expected a whole number from 0 to 65535`,
     openFailed: (cmd: string) =>
       `Could not open the browser with ${cmd}; open the URL above yourself`,
+    openUnsupported:
+      'Opening the browser is not supported on this platform; open the URL above yourself',
   },
   de: {
     description: 'lokale Web-Oberfläche starten',
@@ -18,5 +20,6 @@ export const m = catalog({
       `Ungültiger Port: ${value}; erwartet wird eine ganze Zahl von 0 bis 65535`,
     openFailed: (cmd: string) =>
       `Browser ließ sich mit ${cmd} nicht öffnen; die URL oben selbst öffnen`,
+    openUnsupported: 'Auf dieser Plattform öffnet backe keinen Browser; die URL oben selbst öffnen',
   },
 });
