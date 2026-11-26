@@ -9,6 +9,7 @@ import type { ConnectionDeps } from '../data/connection.ts';
 import { openSession, type Session } from '../data/session.ts';
 import { StoreContext } from '../data/store-context.tsx';
 import { useSignal } from '../data/use-signal.ts';
+import { WriteContext } from '../data/write-context.tsx';
 import { useOwned } from '../lib/use-owned.ts';
 import { BacklogView } from '../views/BacklogView.tsx';
 import { BoardView } from '../views/BoardView.tsx';
@@ -17,6 +18,7 @@ import { SettingsView } from '../views/SettingsView.tsx';
 import { ErrorAlert } from './ErrorPage.tsx';
 import { Header } from './Header.tsx';
 import { PANEL_ID, selectedTabId, TabBar } from './TabBar.tsx';
+import { WriteFailures } from './write/WriteFailures.tsx';
 
 type Props = {
   backlogs: readonly BacklogEntryJson[];
@@ -148,10 +150,20 @@ export function App({ backlogs, router, theme, deps }: Props) {
   if (current !== undefined) {
     body = session !== undefined && tabs !== undefined && (
       <StoreContext.Provider value={session.store}>
-        <TabBar backlog={current.name} route={route} tabs={tabs} onClose={closeTab} />
-        <main className="min-h-0 flex-1 overflow-auto">
-          <Panel session={session} route={route} me={current.user} onClose={closeTab} />
-        </main>
+        <WriteContext.Provider
+          value={{
+            backlog: current.name,
+            canWrite: current.can_write,
+            me: current.user,
+            writes: session.writes,
+          }}
+        >
+          <WriteFailures writes={session.writes} />
+          <TabBar backlog={current.name} route={route} tabs={tabs} onClose={closeTab} />
+          <main className="min-h-0 flex-1 overflow-auto">
+            <Panel session={session} route={route} me={current.user} onClose={closeTab} />
+          </main>
+        </WriteContext.Provider>
       </StoreContext.Provider>
     );
   } else if (route.kind === 'not-found') {
