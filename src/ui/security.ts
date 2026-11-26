@@ -45,9 +45,18 @@ export function cookiesOf(header: string | undefined, name: string): string[] {
 
 export type Gate = { port: number; token: string; origins: readonly string[] };
 
-/** Die beiden Schreibweisen des eigenen Origins. */
+/**
+ * Die erlaubten `Host`-Werte, kleingeschrieben: `127.0.0.1:<port>` und `localhost:<port>`. Auf
+ * Port 80 lassen Browser den Port weg, dann gilt auch die Form ohne Port.
+ */
+export function ownHosts(port: number): string[] {
+  const hosts = [`127.0.0.1:${port}`, `localhost:${port}`];
+  return port === 80 ? [...hosts, '127.0.0.1', 'localhost'] : hosts;
+}
+
+/** Die Schreibweisen des eigenen Origins, je erlaubtem `Host` eine. */
 export function ownOrigins(port: number): string[] {
-  return [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
+  return ownHosts(port).map((host) => `http://${host}`);
 }
 
 export type Verdict =
@@ -72,18 +81,17 @@ function unauthorized(message: string): Verdict {
 }
 
 /**
- * Prüft in dieser Reihenfolge: (1) `Host` gegen `127.0.0.1:<port>`/`localhost:<port>` gegen
- * DNS-Rebinding, (2) `Origin` gegen CSRF, schreibende Methoden nur mit `Origin`, (3) `?token=`
- * öffnet eine Sitzung, (4) sonst muss eines der Cookies `backe_ui_<port>` passen. `Referer` zählt nie.
+ * Prüft in dieser Reihenfolge: (1) `Host` gegen `ownHosts(port)` gegen DNS-Rebinding, ohne auf
+ * Groß- und Kleinschreibung zu achten, (2) `Origin` gegen CSRF, schreibende Methoden nur mit
+ * `Origin`, (3) `?token=` öffnet eine Sitzung, (4) sonst muss eines der Cookies `backe_ui_<port>`
+ * passen. `Referer` zählt nie.
  */
 export function checkRequest(
   req: { method: string; url: URL; headers: IncomingHttpHeaders },
   gate: Gate,
 ): Verdict {
   const host = req.headers.host ?? '';
-  if (host !== `127.0.0.1:${gate.port}` && host !== `localhost:${gate.port}`) {
-    return forbidden(m.foreignHost(host));
-  }
+  if (!ownHosts(gate.port).includes(host.toLowerCase())) return forbidden(m.foreignHost(host));
   const origin = req.headers.origin;
   if (origin !== undefined && !gate.origins.includes(origin)) {
     return forbidden(m.foreignOrigin(origin));

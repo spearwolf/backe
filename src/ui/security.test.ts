@@ -7,6 +7,7 @@ import {
   cookiesOf,
   type Gate,
   newToken,
+  ownHosts,
   ownOrigins,
   sameToken,
 } from './security.ts';
@@ -51,6 +52,20 @@ test('ownOrigins names both loopback spellings', () => {
   expect(ownOrigins(PORT)).toEqual([`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`]);
 });
 
+test('on port 80 host and origin may omit the port', () => {
+  expect(ownHosts(80)).toEqual(['127.0.0.1:80', 'localhost:80', '127.0.0.1', 'localhost']);
+  expect(ownOrigins(80)).toContain('http://127.0.0.1');
+  const gate: Gate = { port: 80, token: TOKEN, origins: ownOrigins(80) };
+  const at80 = (headers: IncomingHttpHeaders, method = 'GET') =>
+    checkRequest({ method, url: new URL('/', 'http://127.0.0.1'), headers }, gate);
+  const cookie = `backe_ui_80=${TOKEN}`;
+  expect(at80({ host: '127.0.0.1', cookie })).toEqual({ kind: 'pass' });
+  expect(at80({ host: 'localhost', origin: 'http://localhost', cookie }, 'POST')).toEqual({
+    kind: 'pass',
+  });
+  expect(at80({ host: 'evil.example', cookie })).toMatchObject({ kind: 'deny', status: 403 });
+});
+
 test('appHeaders carries csp, nosniff and no-referrer', () => {
   expect(appHeaders()).toEqual({
     'Content-Security-Policy': CSP,
@@ -62,6 +77,13 @@ test('appHeaders carries csp, nosniff and no-referrer', () => {
 test.each([
   ['a foreign host', '/', { host: `evil.example:${PORT}`, cookie: COOKIE_HEADER }, 'GET', 403],
   ['a foreign port', '/', { host: '127.0.0.1:1', cookie: COOKIE_HEADER }, 'GET', 403],
+  [
+    'a host without port off port 80',
+    '/',
+    { host: '127.0.0.1', cookie: COOKIE_HEADER },
+    'GET',
+    403,
+  ],
   ['no host', '/', { cookie: COOKIE_HEADER }, 'GET', 403],
   ['a foreign origin', '/', { host: HOST, origin: 'http://evil.example' }, 'GET', 403],
   ['a null origin', '/', { host: HOST, origin: 'null', cookie: COOKIE_HEADER }, 'GET', 403],
@@ -93,6 +115,7 @@ test.each([
 test.each([
   ['a cookie', '/', { host: HOST, cookie: `a=1; ${COOKIE_HEADER}` }, 'GET'],
   ['localhost as host', '/', { host: `localhost:${PORT}`, cookie: COOKIE_HEADER }, 'GET'],
+  ['a host in capitals', '/', { host: `LocalHost:${PORT}`, cookie: COOKIE_HEADER }, 'GET'],
   ['HEAD without origin', '/', { host: HOST, cookie: COOKIE_HEADER }, 'HEAD'],
   [
     'the session cookie after a planted one of the same name',

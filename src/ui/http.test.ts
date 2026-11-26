@@ -1,7 +1,7 @@
 import type { ServerResponse } from 'node:http';
 import { BackeError } from '../core/errors.ts';
 import { errorJson } from '../services/views.ts';
-import { httpStatus, JSON_TYPE, sendError, sendJson } from './http.ts';
+import { deniedJson, httpStatus, JSON_TYPE, sendError, sendJson } from './http.ts';
 
 /** Minimale Attrappe: merkt sich Status, Header und Body von `writeHead`/`end`. */
 function fakeResponse() {
@@ -34,6 +34,23 @@ test.each([
 
 test('httpStatus treats foreign errors as 500', () => {
   expect(httpStatus(new Error('x'))).toBe(500);
+});
+
+test('httpStatus treats an unmapped exit code as 500', () => {
+  const err = new BackeError('usage', 'x');
+  Object.defineProperty(err, 'exitCode', { value: 99 });
+  expect([err.exitCode, httpStatus(err)]).toEqual([99, 500]);
+});
+
+test('deniedJson has the shape of errorJson and omits a missing hint', () => {
+  expect(deniedJson('forbidden', 'nein')).toEqual({
+    error: { code: 'forbidden', message: 'nein' },
+  });
+  expect(Object.keys(deniedJson('forbidden', 'nein').error)).toEqual(['code', 'message']);
+  const err = new BackeError('not_found', 'weg', { hint: 'such' });
+  expect(JSON.stringify(deniedJson('not_found', 'weg', 'such'))).toBe(
+    JSON.stringify(errorJson(err)),
+  );
 });
 
 test('sendJson writes compact json with length and no-store', () => {

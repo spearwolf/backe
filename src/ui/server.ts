@@ -4,10 +4,11 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import type { Env } from '../core/env.ts';
 import { BackeError } from '../core/errors.ts';
-import { sendError, sendJson } from './http.ts';
+import { deniedJson, sendError, sendJson } from './http.ts';
 import { forbiddenPage, noSessionPage } from './pages.ts';
 import { watchPhase } from './phase.ts';
 import { handleRead } from './read-api.ts';
@@ -52,6 +53,33 @@ function sendHtml(res: ServerResponse, status: number, html: string): void {
   res.end(html);
 }
 
+/** Statuszeilen für Parse-Fehler, die Node selbst unterscheidet; alles andere ist 400. */
+const CLIENT_ERROR_STATUS: Readonly<Record<string, string>> = {
+  HPE_HEADER_OVERFLOW: '431 Request Header Fields Too Large',
+  HPE_CHUNK_EXTENSIONS_OVERFLOW: '413 Payload Too Large',
+  ERR_HTTP_REQUEST_TIMEOUT: '408 Request Timeout',
+};
+
+/**
+ * Antwort auf eine Anfrage, die Node schon beim Parsen verwirft (`clientError`), mit denselben
+ * Sicherheits-Headern wie jede andere Antwort; danach ist die Verbindung zu. Geantwortet wird nur,
+ * wenn der Socket noch beschreibbar ist und keine Antwort auf ihm schon Bytes geschickt hat (sonst
+ * stünde die Statuszeile mitten in deren Body); bei `ECONNRESET` ist der Client weg. Die Prüfung
+ * auf eine laufende Antwort liest wie Nodes eigene Behandlung `socket._httpMessage`.
+ */
+export function answerClientError(err: NodeJS.ErrnoException, socket: Duplex): void {
+  const inFlight = (socket as { _httpMessage?: ServerResponse | null })._httpMessage;
+  if (err.code !== 'ECONNRESET' && socket.writable && inFlight?.headersSent !== true) {
+    const status = CLIENT_ERROR_STATUS[String(err.code)] ?? '400 Bad Request';
+    const headers = Object.entries(appHeaders())
+      .filter(([, value]) => value !== undefined)
+      .map(([name, value]) => `${name}: ${String(value)}\r\n`)
+      .join('');
+    socket.write(`HTTP/1.1 ${status}\r\n${headers}Content-Length: 0\r\nConnection: close\r\n\r\n`);
+  }
+  socket.destroy();
+}
+
 export function createUiServer(opts: UiOptions): UiServer {
   const token = opts.token ?? newToken();
   /** Steht ab `listen`, vorher erreicht keine Anfrage den Handler. */
@@ -66,7 +94,11 @@ export function createUiServer(opts: UiOptions): UiServer {
     for (const [name, value] of Object.entries(appHeaders())) {
       if (value !== undefined) res.setHeader(name, value);
     }
-    const url = new URL(req.url ?? '/', `http://${HOST}`);
+    const url = URL.parse(req.url ?? '/', `http://${HOST}`);
+    if (url === null) {
+      sendError(res, new BackeError('usage', m.badRequestUrl));
+      return;
+    }
     const api = url.pathname === '/api' || url.pathname.startsWith('/api/');
     const verdict = checkRequest({ method: req.method ?? 'GET', url, headers: req.headers }, gate);
     if (verdict.kind === 'session') {
@@ -74,17 +106,18 @@ export function createUiServer(opts: UiOptions): UiServer {
       res.end();
     } else if (verdict.kind === 'deny') {
       if (api) {
-        const { code, message, hint } = verdict;
-        sendJson(res, verdict.status, { error: { code, message, hint } });
+        sendJson(res, verdict.status, deniedJson(verdict.code, verdict.message, verdict.hint));
       } else {
         const html = verdict.status === 401 ? noSessionPage() : forbiddenPage(verdict.message);
         sendHtml(res, verdict.status, html);
       }
     } else if (api) {
       const route = readRoute(req.method ?? 'GET', url);
-      if (route === undefined)
+      if (route === undefined) {
         sendError(res, new BackeError('not_found', m.noEndpoint(url.pathname)));
-      else await handleRead(route, { input, start: opts.start }, res);
+      } else {
+        await handleRead(route, { input, start: opts.start }, res);
+      }
     } else {
       await serveStatic(req, url, res, staticDir);
     }
@@ -109,6 +142,7 @@ export function createUiServer(opts: UiOptions): UiServer {
     watchPhase(res, done);
     void handle(req, res).finally(done);
   });
+  server.on('clientError', answerClientError);
 
   return {
     listen() {

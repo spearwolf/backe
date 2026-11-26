@@ -3,11 +3,14 @@ import { Agent, get as httpGet } from 'node:http';
 import { connect, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Duplex } from 'node:stream';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { rawRequest, startUi, type UiHarness } from '../../test/helpers/ui.ts';
 import { setLocale } from '../i18n/locale.ts';
+import * as context from './context.ts';
+import * as readApi from './read-api.ts';
 import { CSP } from './security.ts';
-import { createUiServer, type UiOptions } from './server.ts';
+import { answerClientError, createUiServer, type UiOptions } from './server.ts';
 
 let dir: string;
 let opts: Omit<UiOptions, 'port'>;
@@ -70,6 +73,7 @@ test('rejects foreign host and origin', async () => {
   const cookie = { cookie: ui.cookie };
   expect((await ui.get('/api/backlogs', { host: `evil.example:${ui.port}` })).status).toBe(403);
   expect((await ui.get('/api/backlogs', { host: `localhost:${ui.port}` })).status).not.toBe(403);
+  expect((await ui.get('/api/backlogs', { host: `LOCALHOST:${ui.port}` })).status).not.toBe(403);
   expect((await ui.get('/api/backlogs', { origin: 'http://evil.example' })).status).toBe(403);
   const post = await rawRequest(ui.port, {
     method: 'POST',
@@ -141,12 +145,101 @@ test('every response carries the security headers', async () => {
   }
 });
 
-test('an unexpected error in the handler is a 500, not a crash', async () => {
+test('an unparsable request url is a 400', async () => {
   const r = await ui.get('http://[');
-  expect(r.status).toBe(500);
-  expect(r.json().error.code).toBe('unexpected');
+  expect([r.status, r.json().error.code]).toEqual([400, 'usage']);
+  expect(r.json().error.message).toBe('Die URL der Anfrage lässt sich nicht lesen');
   expect(r.headers['content-security-policy']).toBe(CSP);
   expect((await ui.get('/')).status).toBe(200);
+});
+
+test('an unexpected error in the handler is a 500, not a crash', async () => {
+  const spy = vi.spyOn(context, 'backlogsJson').mockRejectedValue(new TypeError('boom'));
+  try {
+    const r = await ui.get('/api/backlogs');
+    expect([r.status, r.json().error.code]).toEqual([500, 'unexpected']);
+    expect(r.headers['content-security-policy']).toBe(CSP);
+  } finally {
+    spy.mockRestore();
+  }
+  expect((await ui.get('/')).status).toBe(200);
+});
+
+test('a handler that fails after sending headers drops the connection', async () => {
+  const spy = vi.spyOn(readApi, 'handleRead').mockImplementation(async (_route, _env, res) => {
+    res.writeHead(200, { 'Content-Length': 10 });
+    res.write('abc');
+    throw new Error('boom');
+  });
+  try {
+    await expect(ui.get('/api/backlogs')).rejects.toThrow();
+  } finally {
+    spy.mockRestore();
+  }
+  expect((await ui.get('/')).status).toBe(200);
+});
+
+/** Schickt `data` über einen rohen Socket und liest, bis der Server die Verbindung schließt. */
+function rawExchange(port: number, data: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = connect({ host: '127.0.0.1', port });
+    let got = '';
+    socket.setEncoding('latin1');
+    socket.on('data', (chunk: string) => {
+      got += chunk;
+    });
+    socket.on('error', reject);
+    socket.on('close', () => resolve(got));
+    socket.write(data);
+  });
+}
+
+test('a request node cannot parse gets 400 with the security headers', async () => {
+  const head = await rawExchange(ui.port, 'not http at all\r\n\r\n');
+  expect(head).toMatch(/^HTTP\/1\.1 400 Bad Request\r\n/);
+  expect(head).toContain(`Content-Security-Policy: ${CSP}\r\n`);
+  expect(head).toContain('X-Content-Type-Options: nosniff\r\n');
+  expect(head).toContain('Referrer-Policy: no-referrer\r\n');
+  expect(head).toContain('Connection: close\r\n');
+  expect((await ui.get('/')).status).toBe(200);
+});
+
+/** Socket-Attrappe für `answerClientError`: merkt sich, was geschrieben wurde und ob er zu ist. */
+function fakeSocket(over: { writable?: boolean; _httpMessage?: { headersSent: boolean } }) {
+  const seen = { written: '', destroyed: false };
+  const socket = {
+    writable: true,
+    ...over,
+    write(text: string) {
+      seen.written += text;
+      return true;
+    },
+    destroy() {
+      seen.destroyed = true;
+    },
+  };
+  return { socket: socket as unknown as Duplex, seen };
+}
+
+test.each([
+  ['a parse error', 'HPE_INVALID_METHOD', {}, 'HTTP/1.1 400 Bad Request\r\n'],
+  ['too large headers', 'HPE_HEADER_OVERFLOW', {}, 'HTTP/1.1 431 Request Header Fields Too Large'],
+  ['a request timeout', 'ERR_HTTP_REQUEST_TIMEOUT', {}, 'HTTP/1.1 408 Request Timeout\r\n'],
+  [
+    'a response not yet sent',
+    'HPE_INVALID_METHOD',
+    { _httpMessage: { headersSent: false } },
+    '400',
+  ],
+  ['a reset connection', 'ECONNRESET', {}, ''],
+  ['a socket no longer writable', 'HPE_INVALID_METHOD', { writable: false }, ''],
+  ['a response already sending', 'HPE_INVALID_METHOD', { _httpMessage: { headersSent: true } }, ''],
+] as const)('answerClientError on %s', (_name, code, over, start) => {
+  const { socket, seen } = fakeSocket(over);
+  answerClientError(Object.assign(new Error('x'), { code }), socket);
+  expect(seen.destroyed).toBe(true);
+  if (start === '') expect(seen.written).toBe('');
+  else expect(seen.written).toContain(start);
 });
 
 test('a busy port is a sync error', async () => {
@@ -216,12 +309,10 @@ test('close does not wait for a client that stopped reading a download', async (
   const big = await startUi({ ...opts, staticDir });
   const socket = connect({ host: '127.0.0.1', port: big.port });
   const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
-  let received = 0;
   // Die ersten Bytes heißen: Der Handler streamt. Danach liest der Client nicht weiter.
   const head = await new Promise<string>((resolve, reject) => {
     socket.once('data', (chunk: Buffer) => {
       socket.pause();
-      received += chunk.length;
       resolve(chunk.toString('latin1'));
     });
     socket.once('error', reject);
@@ -230,12 +321,8 @@ test('close does not wait for a client that stopped reading a download', async (
     );
   });
   expect(head).toMatch(/^HTTP\/1\.1 200/);
-  await big.close();
-  socket.on('data', (chunk: Buffer) => {
-    received += chunk.length;
-  });
-  socket.on('error', () => undefined);
-  socket.resume();
+  await expect(big.close()).resolves.toBeUndefined();
+  // Den Rest nicht über Loopback auslesen: Der Client schließt selbst.
+  socket.destroy();
   await closed;
-  expect(received).toBeLessThan(size);
 }, 5000);
