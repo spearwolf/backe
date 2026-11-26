@@ -2,8 +2,10 @@ import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { testBacklog } from '../../test/helpers/git.ts';
+import * as resolveModule from '../context/resolve.ts';
 import { updateUserConfig } from '../context/user-config.ts';
 import { git } from '../git/exec.ts';
+import { initBacklog } from '../services/init.ts';
 import { backlogsJson, resolveStart, type StartInput, uiContext } from './context.ts';
 
 async function freshEnv() {
@@ -61,9 +63,27 @@ test('another backlog is resolved by name with the start identity', async () => 
 
 test('a start backlog that resolves differently falls back to the name', async () => {
   const t = await testBacklog();
+  const { root: other } = await initBacklog({
+    homes: t.homes,
+    env: t.env,
+    name: 'other',
+    prefix: 'ot',
+    handle: 'spw',
+    key: t.key.priv,
+  });
+  // Gestartet mit `other` als aktuellem Backlog; inzwischen ist es wieder `acme`.
+  await updateUserConfig(t.homes.backeHome, () => [{ path: ['current'], value: 'acme' }]);
   const input: StartInput = { cwd: await tempDir(), env: t.env, flags: { as: 'spw' } };
-  const ctx = await uiContext(input, 'gone', 'gone').catch((e: unknown) => e);
-  expect((ctx as { code?: string }).code).toBe('not_found');
+  expect((await resolveModule.resolveContext(input)).backlog.value).toBe('acme');
+  const ctx = await uiContext(input, 'other', 'other');
+  expect([ctx.backlog.value, ctx.backlog.root, ctx.user.value]).toEqual(['other', other, 'spw']);
+});
+
+test('a start backlog that is gone by name stays not_found', async () => {
+  const t = await testBacklog();
+  const input: StartInput = { cwd: await tempDir(), env: t.env, flags: { as: 'spw' } };
+  const err = await catchErrAsync(() => uiContext(input, 'gone', 'gone'));
+  expect(err.code).toBe('not_found');
 });
 
 test('backlogs reports can_write per identity', async () => {
@@ -90,4 +110,24 @@ test('a start name that fails to resolve is listed without write access', async 
     ['acme', false, true, 'spw'],
     ['ghost', true, false, null],
   ]);
+});
+
+test('a programming error while listing backlogs is not swallowed', async () => {
+  const t = await testBacklog();
+  const input: StartInput = { cwd: await tempDir(), env: t.env, flags: { as: 'spw' } };
+  const writer = vi.spyOn(resolveModule, 'requireWriter').mockImplementation(() => {
+    throw new TypeError('boom');
+  });
+  try {
+    await expect(backlogsJson(input, 'acme')).rejects.toThrow(TypeError);
+  } finally {
+    writer.mockRestore();
+  }
+  const resolve = vi.spyOn(resolveModule, 'resolveContext').mockRejectedValue(new TypeError('x'));
+  try {
+    await expect(backlogsJson(input, 'acme')).rejects.toThrow(TypeError);
+  } finally {
+    resolve.mockRestore();
+  }
+  expect((await backlogsJson(input, 'acme')).backlogs).toHaveLength(1);
 });

@@ -5,9 +5,11 @@ import { writeOp } from '../../test/helpers/context.ts';
 import { revParse, testBacklog, testKey } from '../../test/helpers/git.ts';
 import { startUi } from '../../test/helpers/ui.ts';
 import { registerBacklog, setIdentity } from '../context/registry.ts';
+import { sshFingerprint } from '../core/fingerprint.ts';
+import type { User } from '../core/schemas.ts';
 import { listIssues } from '../services/issue-list.ts';
 import { executeWrite } from '../services/write.ts';
-import { BACKLOG_CONFIG } from '../store/layout.ts';
+import { BACKLOG_CONFIG, issueFile } from '../store/layout.ts';
 import { stateJson, userJson } from './state.ts';
 
 async function seeded() {
@@ -81,11 +83,32 @@ test('users carry fingerprints, never keys', async () => {
 });
 
 test('userJson omits empty lists and body', () => {
-  expect(userJson('x', { name: 'X', kind: 'human' } as never, ['y'])).toEqual({
+  const user: User = { name: 'X', kind: 'human' };
+  expect(userJson('x', user, ['y'])).toEqual({
     handle: 'x',
     name: 'X',
     kind: 'human',
     admin: false,
+  });
+});
+
+test('userJson lists revoked keys as fingerprint and date', async () => {
+  const key = await testKey('old');
+  const user: User = {
+    name: 'X',
+    kind: 'agent',
+    operator: 'spw',
+    revoked_keys: [{ key: key.line, revoked: '2026-11-01T10:00:00Z' }],
+  };
+  const fingerprint = sshFingerprint(key.line);
+  expect(fingerprint).toMatch(/^SHA256:/);
+  expect(userJson('x', user, ['x'])).toEqual({
+    handle: 'x',
+    name: 'X',
+    kind: 'agent',
+    operator: 'spw',
+    admin: true,
+    revoked: [{ fingerprint, revoked: '2026-11-01T10:00:00Z' }],
   });
 });
 
@@ -164,11 +187,7 @@ test('a broken backlog config is an error, the server keeps serving', async () =
 test('a broken hand edit shows up in problems', async () => {
   const { b, ctx } = await seeded();
   const id = await writeOp(ctx, { op: 'issue.create', title: 'Kaputt', state: 'todo' });
-  const { readdir } = await import('node:fs/promises');
-  const dir = join(b.root, 'issues');
-  const files = (await readdir(dir, { recursive: true })).filter((f) => f.includes(id));
-  const file = files.find((f) => f.endsWith('.md')) ?? files[0];
-  await writeFile(join(dir, file as string), '---\n: [\n---\n');
+  await writeFile(join(b.root, issueFile(id)), '---\n: [\n---\n');
   const s = await stateJson(ctx);
   expect(s.problems).toEqual(
     expect.arrayContaining([expect.objectContaining({ kind: 'issue', key: id })]),

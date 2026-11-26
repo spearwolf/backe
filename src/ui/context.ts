@@ -61,11 +61,13 @@ async function entry(
     let canWrite = true;
     try {
       requireWriter(ctx);
-    } catch {
+    } catch (err) {
+      if (!(err instanceof BackeError)) throw err;
       canWrite = false;
     }
     return { name, current, can_write: canWrite, user: ctx.user.value ?? null };
-  } catch {
+  } catch (err) {
+    if (!(err instanceof BackeError)) throw err;
     return { name, current, can_write: false, user: null };
   }
 }
@@ -73,7 +75,8 @@ async function entry(
 /**
  * Registrierte Backlogs plus `start`, nach Name sortiert. `current` = Start-Backlog; `can_write` =
  * `requireWriter` gelingt; `user` = aufgelöster Handle oder `null`. Scheitert der Kontext eines
- * Backlogs, steht er mit `can_write: false`, `user: null` in der Liste. `lang` = `locale()`.
+ * Backlogs mit einem `BackeError`, steht er mit `can_write: false`, `user: null` in der Liste;
+ * jeder andere Fehler ist ein Programmfehler und geht weiter (500). `lang` = `locale()`.
  */
 export async function backlogsJson(
   input: StartInput,
