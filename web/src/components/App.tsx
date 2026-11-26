@@ -108,6 +108,11 @@ export function App({ backlogs, router, theme, deps }: Props) {
     if (canonical !== undefined) router.navigate(canonical, { replace: true });
   }, [route, location, start, router]);
 
+  const backlogSearch = route.kind === 'backlog' ? location.search : undefined;
+  useEffect(() => {
+    if (backlogSearch !== undefined) tabs?.backlogSearch.set(backlogSearch);
+  }, [backlogSearch, tabs]);
+
   const issueId = route.kind === 'issue' ? route.id : undefined;
   useEffect(() => {
     if (issueId !== undefined) tabs?.open(issueId);

@@ -40,7 +40,7 @@ export function TabBar({ backlog, route, tabs, onClose }: Props) {
   const ids = useSignal(tabs.issues);
   const router = useRouter();
   const go = useLinkClick();
-  const backlogHref = routeHref({ kind: 'backlog', backlog });
+  const backlogHref = routeHref({ kind: 'backlog', backlog }) + useSignal(tabs.backlogSearch);
   const boardHref = routeHref({ kind: 'board', backlog });
   const settingsHref = routeHref({ kind: 'settings', backlog, section: undefined });
   // In der Tab-Folge steht der gewählte Tab; ohne ihn (Settings, Issue-Tab noch nicht offen) Backlog.

@@ -226,7 +226,7 @@ export function FilterBar({ filter, errors, view, count, bodySearch, onFilter, o
       </DropdownMenuCheckboxItem>
     </>
   );
-  const sorted = [...projects].sort();
+  const sorted = [...projects].sort(byPath);
   const handles = [...users].sort();
 
   return (
@@ -345,6 +345,18 @@ export function FilterBar({ filter, errors, view, count, bodySearch, onFilter, o
       )}
     </div>
   );
+}
+
+/** Nach Pfadsegmenten: Kinder stehen direkt unter ihrem Parent, `api/auth` vor `api-gw`. */
+function byPath(a: string, b: string): number {
+  const x = a.split('/');
+  const y = b.split('/');
+  for (let i = 0; i < Math.min(x.length, y.length); i++) {
+    const c =
+      (x[i] as string) < (y[i] as string) ? -1 : (x[i] as string) > (y[i] as string) ? 1 : 0;
+    if (c !== 0) return c;
+  }
+  return x.length - y.length;
 }
 
 /** Entfernt ein auf `undefined` gesetztes optionales Feld, damit die URL es weglässt. */

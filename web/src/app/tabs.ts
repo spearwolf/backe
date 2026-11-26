@@ -7,6 +7,8 @@ const isIds = (v: unknown): v is string[] =>
 /** Die offenen Issue-Tabs eines Backlogs, im `localStorage` über Neuladen hinweg erhalten. */
 export class TabModel {
   readonly issues: Signal<readonly string[]>;
+  /** Query des Tabs Backlog (seine Filter), damit der Rücksprung aus einem Issue sie behält. */
+  readonly backlogSearch: Signal<string>;
   readonly #key: string;
 
   constructor(backlog: string) {
@@ -14,6 +16,7 @@ export class TabModel {
     this.issues = createSignal<readonly string[]>(readJson(this.#key, [], isIds), {
       attach: this,
     });
+    this.backlogSearch = createSignal('', { attach: this });
   }
 
   open(id: string): void {

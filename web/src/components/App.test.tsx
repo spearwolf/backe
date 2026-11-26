@@ -548,3 +548,15 @@ test('menu items show a focus ring in every item kind', async () => {
     expect(item.className).toContain('focus:ring-ring');
   }
 });
+
+test('the backlog tab keeps its filter across an issue tab', async () => {
+  const { connect, user } = await setup({ path: '/b/main/backlog?state=all&q=x' });
+  await connect();
+  await act(async () => {
+    window.history.pushState(null, '', '/b/main/issue/bk-1');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  expect(tab('Backlog').getAttribute('href')).toBe('/b/main/backlog?state=all&q=x');
+  await user.click(tab('Backlog'));
+  expect(window.location.pathname + window.location.search).toBe('/b/main/backlog?state=all&q=x');
+});

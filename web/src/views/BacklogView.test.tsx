@@ -220,3 +220,22 @@ test('state menu switches between open and all', async () => {
   await userEvent.click(screen.getByRole('menuitemcheckbox', { name: m.stateOpen }));
   expect(router.location.value.search).toBe('');
 });
+
+test('the project menu keeps children under their parent', async () => {
+  const { store } = view([testIssue(1)]);
+  act(() => {
+    store.applyPatch(
+      testPatch(2, {
+        upsert: {
+          projects: ['api-gw', 'api/auth', 'api'].map((path) => ({ path, title: path })) as never,
+        },
+      }),
+    );
+  });
+  await userEvent.click(screen.getByRole('button', { name: new RegExp(m.filterProject) }));
+  const names = screen
+    .getAllByRole('menuitemcheckbox')
+    .map((item) => item.textContent)
+    .filter((t) => t !== m.exact);
+  expect(names).toEqual(['api', 'api/auth', 'api-gw']);
+});
