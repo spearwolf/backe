@@ -10,6 +10,8 @@ export type UrlContext = {
   prefix?: string;
   /** Ohne Issue-Kontext (Projekt, Sprint, Repo) gibt es keine Anhänge. */
   issue?: { id: string; attachments: readonly Attachment[] };
+  /** `file` → `blob:`-URL für Bilder, die der Editor noch nicht hochgeladen hat (Vorschau). */
+  local?: ReadonlyMap<string, string>;
 };
 
 const ATTACHMENT_PATH = /^(?:\.\/)?attachments\/([^/]+)$/;
@@ -38,8 +40,8 @@ export function issueUrlTransform(
 }
 
 function attachmentTarget(ctx: UrlContext, url: string): string | null {
-  const { issue } = ctx;
-  if (issue === undefined) return null;
+  const { issue, local } = ctx;
+  if (issue === undefined && local === undefined) return null;
   const match = ATTACHMENT_PATH.exec(url);
   if (match === null) return null;
   let file: string;
@@ -49,6 +51,10 @@ function attachmentTarget(ctx: UrlContext, url: string): string | null {
     return null;
   }
   if (/[/\\]/.test(file) || file === '.' || file === '..') return null;
+  // Lokale Vorschauen gehen vor und brauchen keinen Issue-Kontext (Anlegen-Dialog).
+  const preview = local?.get(file);
+  if (preview !== undefined) return preview;
+  if (issue === undefined) return null;
   const hit = issue.attachments.find((a) => 'file' in a && a.file === file);
   return hit === undefined ? null : attachmentUrl(ctx.backlog, issue.id, hit.name);
 }

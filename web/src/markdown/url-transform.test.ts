@@ -62,3 +62,19 @@ test('allows only internal issue routes of the same backlog', () => {
   expect(noIssue('/b/acme/issue/../../x', 'href')).toBeFalsy();
   expect(noIssue('/b/acme/issue/%2e%2e', 'href')).toBeFalsy();
 });
+
+test('local previews resolve to blob urls', () => {
+  const local = new Map([['shot.png', 'blob:x']]);
+  const t = issueUrlTransform({
+    backlog: 'acme',
+    issue: { id: 'bk-7f3k2', attachments: [] },
+    local,
+  });
+  expect(t('attachments/shot.png', 'src')).toBe('blob:x');
+  expect(t('attachments/other.png', 'src')).toBeFalsy();
+});
+
+test('local previews work without an issue context', () => {
+  const t = issueUrlTransform({ backlog: 'acme', local: new Map([['shot.png', 'blob:x']]) });
+  expect(t('attachments/shot.png', 'src')).toBe('blob:x');
+});

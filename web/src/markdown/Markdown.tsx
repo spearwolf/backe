@@ -28,6 +28,8 @@ export type MarkdownProps = {
   backlog: string;
   /** Kontext für relative Pfade; ohne ihn (Projekt, Sprint, Repo) fallen relative Pfade weg. */
   issue?: { id: string; attachments: readonly Attachment[] };
+  /** `file` → `blob:`-URL für noch nicht hochgeladene Bilder (Editor-Vorschau). */
+  local?: ReadonlyMap<string, string>;
   className?: string;
 };
 
@@ -85,7 +87,7 @@ const components: Components = { a: Anchor, code: Code, pre: Pre };
 
 const remarkPlugins = [remarkGfm, remarkGemoji];
 
-export default memo(function Markdown({ source, backlog, issue, className }: MarkdownProps) {
+export default memo(function Markdown({ source, backlog, issue, local, className }: MarkdownProps) {
   const store = useStore();
   const config = useSignal(store.config);
   const keys = useSignal(store.issues.keys);
@@ -122,8 +124,9 @@ export default memo(function Markdown({ source, backlog, issue, className }: Mar
           issueId === undefined || attachments === undefined
             ? undefined
             : { id: issueId, attachments },
+        local,
       }),
-    [backlog, prefix, issueId, attachments],
+    [backlog, prefix, issueId, attachments, local],
   );
 
   return (
