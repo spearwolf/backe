@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../data/api-client.ts';
 
-function asApiError(cause: unknown): ApiError {
+/** Jeder Wurf als `ApiError`: Server-Fehler bleiben, wie sie sind, alles andere wird `unexpected`. */
+export function asApiError(cause: unknown): ApiError {
   return cause instanceof ApiError
     ? cause
     : new ApiError(0, 'unexpected', cause instanceof Error ? cause.message : String(cause));

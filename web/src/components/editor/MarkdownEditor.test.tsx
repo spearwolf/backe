@@ -312,3 +312,28 @@ test('dragging files over the field allows the drop', () => {
   fireEvent(box(), text);
   expect(text.defaultPrevented).toBe(false);
 });
+
+test('a mixed drop hands the other files to onOtherFiles and does not bubble', async () => {
+  const onImage = vi.fn(async () => 'shot.png');
+  const onOtherFiles = vi.fn();
+  setup({ onImage, onOtherFiles });
+  const txt = new File(['t'], 'a.txt', { type: 'text/plain' });
+  const outer = vi.fn();
+  document.body.addEventListener('drop', outer);
+  const ev = createEvent.drop(box(), { dataTransfer: { files: [png(), txt] } });
+  fireEvent(box(), ev);
+  document.body.removeEventListener('drop', outer);
+  expect(ev.defaultPrevented).toBe(true);
+  expect(outer).not.toHaveBeenCalled();
+  expect(onOtherFiles).toHaveBeenCalledWith([txt]);
+  await waitFor(() => expect(box().value).toBe('![shot.png](attachments/shot.png)'));
+  expect(onImage).toHaveBeenCalledTimes(1);
+});
+
+test('without onOtherFiles a drop of plain files bubbles on', () => {
+  setup({ onImage: async () => 'x.png' });
+  const txt = new File(['t'], 'a.txt', { type: 'text/plain' });
+  const drop = createEvent.drop(box(), { dataTransfer: { files: [txt] } });
+  fireEvent(box(), drop);
+  expect(drop.defaultPrevented).toBe(false);
+});

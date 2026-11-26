@@ -1,5 +1,5 @@
 import type { Attachment } from '@backe/core/schemas.ts';
-import { type DragEvent, useCallback, useMemo, useRef, useState } from 'react';
+import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { m as app } from '../app/app.messages.ts';
 import { IssueDetailModel } from '../app/issue-detail.ts';
 import { ErrorAlert } from '../components/ErrorPage.tsx';
@@ -82,11 +82,19 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
     () => (deleted && access.canWrite ? { ...access, canWrite: false } : access),
     [access, deleted],
   );
-  // Ein Uploader je Tab: Er kennt die Namen, die der Tab schon vergeben hat (Patch steht noch aus).
-  const upload = useUploader(id);
-  const uploads = useAttachmentUpload(upload);
+  // Ein Uploader je Tab: Alle Uploads laufen nacheinander hindurch und bekommen eindeutige Namen.
+  const uploads = useAttachmentUpload(useUploader(id));
   const [dropping, setDropping] = useState(false);
   const droppable = fieldAccess.canWrite;
+  // Nach dem Löschen sind die Bedienelemente weg; stand der Fokus im Tab, geht er an »Tab schließen«.
+  const tab = useRef<HTMLElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!deleted) return;
+    const active = document.activeElement;
+    const lost = active === null || active === document.body;
+    if (lost || (tab.current?.contains(active) ?? false)) closeButton.current?.focus();
+  }, [deleted]);
 
   if (state.status === 'error') {
     return (
@@ -120,6 +128,7 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
 
   return (
     <section
+      ref={tab}
       className="relative space-y-4 p-4"
       aria-busy={state.status === 'loading'}
       {...dragHandlers}
@@ -133,7 +142,13 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
         <div role="status" className="flex items-center gap-3 rounded-md border p-3 text-sm">
           <span className="font-semibold">{app.deleted}</span>
           <span className="text-muted-foreground">{m.deletedNotice}</span>
-          <Button type="button" variant="outline" size="sm" onClick={() => onClose(id)}>
+          <Button
+            ref={closeButton}
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onClose(id)}
+          >
             {m.closeTab}
           </Button>
         </div>
@@ -174,7 +189,7 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
             body={detail === undefined ? undefined : (detail.body ?? '')}
             backlog={backlog}
             issue={markdownIssue}
-            upload={upload}
+            uploads={uploads}
           />
           <Attachments
             attachments={ready?.attachments ?? []}
@@ -190,7 +205,7 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
               comments={detail.comments ?? []}
               backlog={backlog}
               issue={markdownIssue}
-              upload={upload}
+              uploads={uploads}
             />
           )}
         </div>

@@ -3,7 +3,7 @@
  * `Writes`, dessen `call` ein Mock ist. Tests prüfen Tool-Namen und Argumente an `call`.
  */
 import type { AttachmentListJson, CommentJson, IssueDetailJson, IssueJson } from '@backe/ui/api.ts';
-import { act, cleanup, render } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import { expect, vi } from 'vitest';
 import { Router, RouterContext } from '../app/router.ts';
 import { Store } from '../data/store.ts';
@@ -100,4 +100,20 @@ export function deferred<T>() {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+/** Der Bereich mit dieser Überschrift (`section` mit `aria-labelledby`). */
+export const region = (name: string) => screen.getByRole('region', { name });
+
+export const button = (name: string, scope: HTMLElement = document.body) =>
+  within(scope).getByRole('button', { name }) as HTMLButtonElement;
+
+export function testComment(n: number, extra: Partial<CommentJson> = {}): CommentJson {
+  return {
+    file: `c${n}.md`,
+    author: 'spw',
+    created: '2026-11-20T10:00:00Z',
+    body: `Kommentar ${n}`,
+    ...extra,
+  };
 }

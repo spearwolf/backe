@@ -88,6 +88,7 @@ export function IssueActions({ issue }: { issue: IssueJson }) {
             size="sm"
             variant="outline"
             data-focus-return
+            aria-label={m.deleteNamed(issue.id)}
             onClick={() => setDeleting(true)}
           >
             {m.deleteIssue}

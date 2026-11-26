@@ -6,16 +6,21 @@ import { MarkdownEditor } from '../../editor/MarkdownEditor.tsx';
 import { Button } from '../../ui/button.tsx';
 import { ActionError } from '../../write/ActionError.tsx';
 import { useAction } from '../../write/use-action.ts';
-import { imageUpload, type Uploader } from './upload.ts';
+import { type AttachmentUpload, imageUpload } from './upload.ts';
 
-type Props = { id: string; backlog: string; issue: MarkdownProps['issue']; upload: Uploader };
+type Props = {
+  id: string;
+  backlog: string;
+  issue: MarkdownProps['issue'];
+  uploads: AttachmentUpload;
+};
 
 /**
  * Neuer Kommentar unter der Zeitleiste (ui.md §2.9.3): derselbe Editor wie die Beschreibung,
  * `comment_add` beim Absenden. Nach Erfolg ist das Feld leer und behält den Fokus; ein Fehler lässt
  * den Entwurf stehen.
  */
-export function CommentComposer({ id, backlog, issue, upload }: Props) {
+export function CommentComposer({ id, backlog, issue, uploads }: Props) {
   const { canWrite, writes } = useWrites();
   const [draft, setDraft] = useState('');
   const { busy, error, run } = useAction();
@@ -56,7 +61,8 @@ export function CommentComposer({ id, backlog, issue, upload }: Props) {
         label={m.newComment}
         backlog={backlog}
         issue={issue}
-        onImage={imageUpload(upload)}
+        onImage={imageUpload(uploads.upload)}
+        onOtherFiles={uploads.add}
         disabled={busy}
       />
       <ActionError error={error} />

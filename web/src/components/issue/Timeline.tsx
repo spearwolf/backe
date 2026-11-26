@@ -2,6 +2,7 @@ import type { CommentJson } from '@backe/ui/api.ts';
 import { ArrowRight } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useWrites } from '../../data/write-context.tsx';
+import { formatDate } from '../../lib/format.ts';
 import { Markdown } from '../../markdown/index.tsx';
 import { m } from '../../views/issue.messages.ts';
 import { MarkdownEditor } from '../editor/MarkdownEditor.tsx';
@@ -12,7 +13,7 @@ import { ConfirmDialog } from '../write/ConfirmDialog.tsx';
 import { useAction } from '../write/use-action.ts';
 import { m as w } from '../write/write.messages.ts';
 import { CommentComposer } from './edit/CommentComposer.tsx';
-import { imageUpload, type Uploader } from './edit/upload.ts';
+import { type AttachmentUpload, imageUpload } from './edit/upload.ts';
 import { useFocusRescue } from './edit/use-focus-return.ts';
 import { Author, Time } from './parts.tsx';
 
@@ -27,9 +28,9 @@ export function Timeline(props: {
   comments: readonly CommentJson[];
   backlog: string;
   issue: MarkdownIssue;
-  upload: Uploader;
+  uploads: AttachmentUpload;
 }) {
-  const { id, comments, backlog, issue, upload } = props;
+  const { id, comments, backlog, issue, uploads } = props;
   const { canWrite, me } = useWrites();
   // Ein gelöschter Kommentar nimmt seinen Knopf mit; der Fokus bleibt dann in der Zeitleiste.
   const rescue = useFocusRescue<HTMLElement>();
@@ -49,12 +50,12 @@ export function Timeline(props: {
               own={canWrite && me !== null && c.author === me && c.kind !== 'transition'}
               backlog={backlog}
               issue={issue}
-              upload={upload}
+              uploads={uploads}
             />
           ))}
         </ol>
       )}
-      <CommentComposer id={id} backlog={backlog} issue={issue} upload={upload} />
+      <CommentComposer id={id} backlog={backlog} issue={issue} uploads={uploads} />
     </section>
   );
 }
@@ -65,9 +66,9 @@ function TimelineItem(props: {
   own: boolean;
   backlog: string;
   issue: MarkdownIssue;
-  upload: Uploader;
+  uploads: AttachmentUpload;
 }) {
-  const { id, item: c, own, backlog, issue, upload } = props;
+  const { id, item: c, own, backlog, issue, uploads } = props;
   const { writes } = useWrites();
   const [draft, setDraft] = useState<string>();
   const [confirming, setConfirming] = useState(false);
@@ -75,7 +76,9 @@ function TimelineItem(props: {
   const remove = useAction();
   const editButton = useRef<HTMLButtonElement>(null);
   const backToButton = useRef(false);
-  const editing = draft !== undefined;
+  // Verliert der Tab das Schreibrecht (Issue gelöscht), verschwindet auch ein offener Editor.
+  const editing = own && draft !== undefined;
+  const named = m.commentBy(c.author, formatDate(c.created));
   useEffect(() => {
     if (!editing && backToButton.current) editButton.current?.focus();
     backToButton.current = false;
@@ -116,6 +119,7 @@ function TimelineItem(props: {
               type="button"
               variant="ghost"
               size="xs"
+              aria-label={m.editNamed(named)}
               onClick={() => {
                 edit.reset();
                 setDraft(c.body);
@@ -127,6 +131,7 @@ function TimelineItem(props: {
               type="button"
               variant="ghost"
               size="xs"
+              aria-label={m.deleteNamed(named)}
               onClick={() => {
                 remove.reset();
                 setConfirming(true);
@@ -137,7 +142,7 @@ function TimelineItem(props: {
           </span>
         )}
       </div>
-      {draft === undefined ? (
+      {!editing || draft === undefined ? (
         c.body !== '' && <Markdown source={c.body} backlog={backlog} issue={issue} />
       ) : (
         <div className="space-y-2">
@@ -147,7 +152,8 @@ function TimelineItem(props: {
             label={m.comment}
             backlog={backlog}
             issue={issue}
-            onImage={imageUpload(upload)}
+            onImage={imageUpload(uploads.upload)}
+            onOtherFiles={uploads.add}
             disabled={edit.busy}
             autoFocus
           />
