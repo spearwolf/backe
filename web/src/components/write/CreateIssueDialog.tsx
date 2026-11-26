@@ -84,9 +84,11 @@ export function CreateIssueDialog({
   const { busy, error, run } = useAction();
   const { local, onImage, referenced } = useLocalImages();
   const { anyInvalid, report } = useInvalidProps();
+  // Solange ein eingefügtes Bild noch keinen Link im Text hat, ginge es beim Anlegen verloren.
+  const [linking, setLinking] = useState(false);
   const update: DraftUpdate = (change) => setDraft(change);
   const locked = busy || created !== undefined;
-  const blocked = draft.title.trim() === '' || anyInvalid;
+  const blocked = draft.title.trim() === '' || anyInvalid || linking;
 
   const finish = (id: string): void => {
     onClose();
@@ -165,6 +167,7 @@ export function CreateIssueDialog({
             value={draft.body}
             local={local}
             onImage={onImage}
+            onBusyChange={setLinking}
             disabled={locked}
             onChange={(body) => update((d) => ({ ...d, body }))}
           />

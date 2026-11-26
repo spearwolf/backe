@@ -76,6 +76,8 @@ function TimelineItem(props: {
   const [confirming, setConfirming] = useState(false);
   const edit = useAction();
   const remove = useAction();
+  // Während ein Bild hochlädt, fehlt sein Link noch im Entwurf: Speichern wartet darauf.
+  const [uploading, setUploading] = useState(false);
   const editButton = useRef<HTMLButtonElement>(null);
   const backToButton = useRef(false);
   // Verliert der Tab das Schreibrecht (Issue gelöscht), verschwindet auch ein offener Editor.
@@ -163,6 +165,7 @@ function TimelineItem(props: {
             issue={issue}
             onImage={imageUpload(uploads.upload)}
             onOtherFiles={uploads.add}
+            onBusyChange={setUploading}
             disabled={edit.busy}
             autoFocus
           />
@@ -171,7 +174,7 @@ function TimelineItem(props: {
             <Button
               type="button"
               size="sm"
-              disabled={edit.busy || draft.trim() === ''}
+              disabled={edit.busy || uploading || draft.trim() === ''}
               onClick={() => void save(draft)}
             >
               {m.saveChanges}

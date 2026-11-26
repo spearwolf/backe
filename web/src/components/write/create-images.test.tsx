@@ -117,3 +117,15 @@ test.each([
   expect(revoked).toEqual(['blob:1']);
   expect(writes()).toEqual([]);
 });
+
+test('creating waits until a pasted image is linked', async () => {
+  const { user } = await setup('/b/acme/backlog');
+  await user.keyboard('c');
+  await user.type(titleBox(), 'Mit Bild');
+  // Der Stapel läuft erst in einer späteren Mikroaufgabe; bis dahin ist »Anlegen« gesperrt.
+  fireEvent.paste(bodyBox(), { clipboardData: { files: [png('a.png')] } });
+  expect(createButton().disabled).toBe(true);
+  // Der Link steht vor dem Ende des Stapels im Text; frei wird »Anlegen« erst danach.
+  await waitFor(() => expect(createButton().disabled).toBe(false));
+  expect(bodyBox().value).toBe('![a.png](attachments/a.png)');
+});

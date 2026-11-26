@@ -36,6 +36,8 @@ export function DescriptionEditor({ id, body: loaded, backlog, issue, uploads }:
   const [draft, setDraft] = useState<Draft>();
   const [saved, setSaved] = useState<Saved>();
   const { busy, error, run, reset } = useAction();
+  // Während ein Bild hochlädt, fehlt sein Link noch im Entwurf: Speichern wartet darauf.
+  const [uploading, setUploading] = useState(false);
   const editButton = useRef<HTMLButtonElement>(null);
   // Nach Speichern, Abbrechen oder Verwerfen ist der Editor weg; der Fokus geht an »Bearbeiten«.
   const backToButton = useRef(false);
@@ -96,7 +98,12 @@ export function DescriptionEditor({ id, body: loaded, backlog, issue, uploads }:
               className="flex flex-wrap items-center gap-2 rounded-md border p-2 text-sm"
             >
               <span className="flex-1">{m.bodyChanged}</span>
-              <Button type="button" size="sm" disabled={busy} onClick={() => void save(draft.text)}>
+              <Button
+                type="button"
+                size="sm"
+                disabled={busy || uploading}
+                onClick={() => void save(draft.text)}
+              >
                 {m.keepMine}
               </Button>
               <Button type="button" size="sm" variant="outline" disabled={busy} onClick={close}>
@@ -112,6 +119,7 @@ export function DescriptionEditor({ id, body: loaded, backlog, issue, uploads }:
             issue={issue}
             onImage={imageUpload(uploads.upload)}
             onOtherFiles={uploads.add}
+            onBusyChange={setUploading}
             disabled={busy}
             autoFocus
           />
@@ -120,7 +128,7 @@ export function DescriptionEditor({ id, body: loaded, backlog, issue, uploads }:
             <Button
               type="button"
               size="sm"
-              disabled={busy || changed}
+              disabled={busy || uploading || changed}
               onClick={() => void save(draft.text)}
             >
               {m.saveChanges}

@@ -24,6 +24,8 @@ export function CommentComposer({ id, backlog, issue, uploads }: Props) {
   const { canWrite, writes } = useWrites();
   const [draft, setDraft] = useState('');
   const { busy, error, run } = useAction();
+  // Während ein Bild hochlädt, fehlt sein Link noch im Entwurf: Absenden wartet darauf.
+  const [uploading, setUploading] = useState(false);
   const form = useRef<HTMLFormElement>(null);
   // Während des Laufs ist das Feld gesperrt und verliert den Fokus; danach bekommt es ihn zurück.
   const refocus = useRef(false);
@@ -41,7 +43,7 @@ export function CommentComposer({ id, backlog, issue, uploads }: Props) {
 
   if (!canWrite) return null;
   const submit = async (): Promise<void> => {
-    if (draft.trim() === '') return;
+    if (draft.trim() === '' || uploading) return;
     refocus.current = true;
     if (await run(() => writes.run('comment_add', { id, body: draft }))) setDraft('');
   };
@@ -63,10 +65,11 @@ export function CommentComposer({ id, backlog, issue, uploads }: Props) {
         issue={issue}
         onImage={imageUpload(uploads.upload)}
         onOtherFiles={uploads.add}
+        onBusyChange={setUploading}
         disabled={busy}
       />
       <ActionError error={error} />
-      <Button type="submit" size="sm" disabled={busy || draft.trim() === ''}>
+      <Button type="submit" size="sm" disabled={busy || uploading || draft.trim() === ''}>
         {m.addComment}
       </Button>
     </form>

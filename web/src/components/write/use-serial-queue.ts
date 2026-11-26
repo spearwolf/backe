@@ -8,8 +8,10 @@ export type SerialJob = (alive: () => boolean) => Promise<void>;
 /**
  * Aufträge nacheinander statt parallel: Was während eines laufenden Auftrags kommt (ein zweites
  * Einfügen, ein Ablegen), reiht sich hinten an, statt verloren zu gehen. `busy` gilt, solange
- * etwas läuft oder wartet. Der Wurf eines Auftrags landet als `ApiError` in `error`; jeder neue
- * Auftrag löscht beim Start den Fehler seines Vorgängers. Nach dem Abbau startet keiner mehr.
+ * etwas läuft oder wartet. Der Wurf eines Auftrags landet als `ApiError` in `error` und bleibt
+ * stehen, bis die Schlange leer war und ein neuer Auftrag kommt: Ein Auftrag, der schon wartete,
+ * löscht ihn nicht, sonst erführe niemand, dass dem Vorgänger etwas fehlt. Nach dem Abbau startet
+ * keiner mehr.
  */
 export function useSerialQueue() {
   const chain = useRef<Promise<void>>(Promise.resolve());
@@ -36,7 +38,6 @@ export function useSerialQueue() {
       chain.current = chain.current.then(async () => {
         try {
           if (!mounted.current) return;
-          setError(undefined);
           await job(alive);
         } catch (cause) {
           if (mounted.current) setError(asApiError(cause));

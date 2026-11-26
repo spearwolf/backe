@@ -1,54 +1,10 @@
-import { cleanup, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, createEvent, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useState } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
-import { Router, RouterContext } from '../../app/router.ts';
 import { ApiError } from '../../data/api-client.ts';
-import { Store } from '../../data/store.ts';
-import { StoreContext } from '../../data/store-context.tsx';
-import { testState } from '../../test/state.ts';
-import { MarkdownEditor, type MarkdownEditorProps } from './MarkdownEditor.tsx';
+import { box, png, setup } from '../../test/markdown-editor.tsx';
 
 afterEach(cleanup);
-
-type HarnessProps = Partial<MarkdownEditorProps> & {
-  initial?: string;
-  spy?: (v: string) => void;
-};
-
-function Harness(props: HarnessProps) {
-  const [value, setValue] = useState(props.initial ?? '');
-  const { initial: _i, spy, ...rest } = props;
-  return (
-    <MarkdownEditor
-      label="Body"
-      backlog="acme"
-      value={value}
-      onChange={(v) => {
-        spy?.(v);
-        setValue(v);
-      }}
-      {...rest}
-    />
-  );
-}
-
-function setup(props: HarnessProps = {}) {
-  window.history.replaceState(null, '', '/b/acme/issue/bk-t0001');
-  const router = new Router(window);
-  const store = new Store();
-  store.load(testState([]));
-  return render(
-    <RouterContext.Provider value={router}>
-      <StoreContext.Provider value={store}>
-        <Harness {...props} />
-      </StoreContext.Provider>
-    </RouterContext.Provider>,
-  );
-}
-
-const png = () => new File(['x'], 'Shot.PNG', { type: 'image/png' });
-const box = () => screen.getByRole('textbox', { name: 'Body' }) as HTMLTextAreaElement;
 
 test('typing changes the value', async () => {
   const spy = vi.fn();
@@ -116,15 +72,6 @@ test('a dropped image uploads too and the drop does not bubble', async () => {
   expect(outer).not.toHaveBeenCalled();
 });
 
-test('a status line shows during the upload', async () => {
-  let done: (n: string) => void = () => {};
-  setup({ onImage: () => new Promise<string>((r) => (done = r)) });
-  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
-  expect((await screen.findByRole('status')).textContent).not.toBe('');
-  done('shot.png');
-  await waitFor(() => expect(screen.queryByRole('status')?.textContent ?? '').toBe(''));
-});
-
 test('a failed upload shows the error and keeps the text', async () => {
   const onImage = vi.fn(async (): Promise<string> => {
     throw new ApiError(400, 'bad', 'Zu groß', 'Nimm ein kleineres Bild.');
@@ -164,131 +111,6 @@ test('other files are ignored without preventDefault', () => {
   fireEvent(box(), paste);
   expect(paste.defaultPrevented).toBe(false);
   expect(onImage).not.toHaveBeenCalled();
-});
-
-test('a second paste during a running upload is queued, not lost', async () => {
-  const gates: Array<(n: string) => void> = [];
-  const onImage = vi.fn((_f: File) => new Promise<string>((r) => gates.push(r)));
-  setup({ onImage });
-  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
-  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
-  await waitFor(() => expect(gates).toHaveLength(1));
-  expect(onImage).toHaveBeenCalledTimes(1);
-  gates[0]?.('one.png');
-  await waitFor(() => expect(gates).toHaveLength(2));
-  // Die Statuszeile bleibt, bis die Warteschlange leer ist.
-  expect(screen.getByRole('status').textContent).toBe('Bild wird hochgeladen…');
-  gates[1]?.('two.png');
-  await waitFor(() => expect(screen.getByRole('status').textContent).toBe(''));
-  expect(box().value).toBe('![one.png](attachments/one.png)\n![two.png](attachments/two.png)');
-});
-
-test('the status line names the upload while it runs', async () => {
-  let done: (n: string) => void = () => {};
-  setup({ onImage: () => new Promise<string>((r) => (done = r)) });
-  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
-  expect((await screen.findByRole('status')).textContent).toBe('Bild wird hochgeladen…');
-  done('shot.png');
-  await waitFor(() => expect(screen.getByRole('status').textContent).toBe(''));
-});
-
-test('the caret stays where the user put it meanwhile', async () => {
-  let done: (n: string) => void = () => {};
-  const started = vi.fn();
-  setup({
-    initial: 'abcdef',
-    onImage: () =>
-      new Promise<string>((r) => {
-        started();
-        done = r;
-      }),
-  });
-  box().setSelectionRange(1, 1);
-  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
-  await waitFor(() => expect(started).toHaveBeenCalled());
-  box().setSelectionRange(5, 5);
-  done('s.png');
-  await waitFor(() => expect(box().value).toBe('a![s.png](attachments/s.png)bcdef'));
-  // Die Stelle des Nutzers (5) rückt um die Länge des eingefügten Links nach.
-  const shifted = 5 + '![s.png](attachments/s.png)'.length;
-  expect(box().selectionStart).toBe(shifted);
-  expect(box().selectionEnd).toBe(shifted);
-});
-
-test('a pending caret does not jump after a detour through the preview', async () => {
-  let done: (n: string) => void = () => {};
-  const started = vi.fn();
-  setup({
-    initial: 'ab',
-    onImage: () =>
-      new Promise<string>((r) => {
-        started();
-        done = r;
-      }),
-  });
-  box().setSelectionRange(1, 1);
-  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
-  await waitFor(() => expect(started).toHaveBeenCalled());
-  await userEvent.click(screen.getByRole('button', { name: 'Vorschau' }));
-  done('s.png');
-  await waitFor(() => expect(screen.getByRole('status').textContent).toBe(''));
-  await userEvent.click(screen.getByRole('button', { name: 'Text' }));
-  box().setSelectionRange(0, 0);
-  await userEvent.type(box(), 'x', { initialSelectionStart: 0, initialSelectionEnd: 0 });
-  expect(box().selectionStart).toBe(1);
-});
-
-test('nothing is inserted after unmount mid-batch', async () => {
-  const gates: Array<(n: string) => void> = [];
-  const spy = vi.fn();
-  const view = setup({ spy, onImage: () => new Promise<string>((r) => gates.push(r)) });
-  const a = new File(['1'], 'a.png', { type: 'image/png' });
-  const b = new File(['2'], 'b.png', { type: 'image/png' });
-  fireEvent.paste(box(), { clipboardData: { files: [a, b] } });
-  await waitFor(() => expect(gates).toHaveLength(1));
-  gates[0]?.('a.png');
-  await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
-  await waitFor(() => expect(gates).toHaveLength(2));
-  view.unmount();
-  gates[1]?.('b.png');
-  await Promise.resolve();
-  await Promise.resolve();
-  expect(spy).toHaveBeenCalledTimes(1);
-});
-
-test('queued batches do not upload after unmount', async () => {
-  const gates: Array<(n: string) => void> = [];
-  const onImage = vi.fn((_f: File) => new Promise<string>((r) => gates.push(r)));
-  const view = setup({ onImage });
-  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
-  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
-  await waitFor(() => expect(gates).toHaveLength(1));
-  view.unmount();
-  gates[0]?.('a.png');
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  expect(onImage).toHaveBeenCalledTimes(1);
-});
-
-test('a later queued batch clears the error of the one before', async () => {
-  const gates: Array<{ ok: (n: string) => void; fail: (e: Error) => void }> = [];
-  const onImage = vi.fn(
-    (_f: File) =>
-      new Promise<string>((ok, fail) => {
-        gates.push({ ok, fail });
-      }),
-  );
-  setup({ onImage });
-  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
-  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
-  await waitFor(() => expect(gates).toHaveLength(1));
-  gates[0]?.fail(new Error('erster kaputt'));
-  await waitFor(() => expect(gates).toHaveLength(2));
-  expect(screen.queryByText('erster kaputt')).toBeNull();
-  gates[1]?.ok('two.png');
-  await waitFor(() => expect(box().value).toBe('![two.png](attachments/two.png)'));
-  expect(screen.queryByRole('alert')).toBeNull();
 });
 
 test('local previews and the issue context reach the preview', async () => {

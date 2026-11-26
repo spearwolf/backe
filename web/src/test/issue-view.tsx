@@ -10,7 +10,9 @@ import { Store } from '../data/store.ts';
 import { StoreContext } from '../data/store-context.tsx';
 import { WriteContext } from '../data/write-context.tsx';
 import { Writes } from '../data/writes.ts';
+import { formatDate } from '../lib/format.ts';
 import { IssueView } from '../views/IssueView.tsx';
+import { m } from '../views/issue.messages.ts';
 import { testIssue, testState, tid } from './state.ts';
 
 export const ID = tid(1);
@@ -117,3 +119,14 @@ export function testComment(n: number, extra: Partial<CommentJson> = {}): Commen
     ...extra,
   };
 }
+
+/** Beschreibung, Composer und Kommentare im Tab, wie die Editor-Tests sie ansprechen. */
+export const description = () => region(m.description);
+export const editDescription = () => button(m.editNamed(m.description), description());
+export const descriptionBox = () =>
+  within(description()).getByRole('textbox', { name: m.description }) as HTMLTextAreaElement;
+export const composer = () =>
+  screen.getByRole('textbox', { name: m.newComment }) as HTMLTextAreaElement;
+export const commentName = (author = 'spw', created = testComment(0).created) =>
+  m.commentBy(author, formatDate(created));
+export const png = (name = 'image.png') => new File([name], name, { type: 'image/png' });

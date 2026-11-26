@@ -1,4 +1,11 @@
-import { type ClipboardEvent, type DragEvent, useLayoutEffect, useRef, useState } from 'react';
+import {
+  type ClipboardEvent,
+  type DragEvent,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { attachmentLink } from '../../app/attachment-name.ts';
 import { Markdown, type MarkdownProps } from '../../markdown/index.tsx';
 import { Button } from '../ui/button.tsx';
@@ -21,6 +28,11 @@ export type MarkdownEditorProps = {
    * es, bleiben sie liegen; ohne Bilder im Stapel steigt das Ablegen dann zum Umfeld auf.
    */
   onOtherFiles?: (files: File[]) => void;
+  /**
+   * Meldet, ob gerade Bilder hochgeladen werden oder warten. Solange das gilt, fehlen ihre Links
+   * noch im Text; wer ihn speichert, sperrt dafür seinen Knopf.
+   */
+  onBusyChange?: (busy: boolean) => void;
   disabled?: boolean;
   autoFocus?: boolean;
 };
@@ -46,6 +58,7 @@ export function MarkdownEditor({
   local,
   onImage,
   onOtherFiles,
+  onBusyChange,
   disabled,
   autoFocus,
 }: MarkdownEditorProps) {
@@ -59,6 +72,11 @@ export function MarkdownEditor({
   // Stapel laufen nacheinander durch die Warteschlange; `tail` ist das Ende des zuletzt eingefügten Links.
   const queue = useSerialQueue();
   const tail = useRef<number | undefined>(undefined);
+  const reportBusy = useRef(onBusyChange);
+  reportBusy.current = onBusyChange;
+  useEffect(() => {
+    reportBusy.current?.(queue.busy);
+  }, [queue.busy]);
 
   // Der Cursor springt erst nach dem Render hinter den Link, wenn der Wert beim Feld angekommen ist.
   // Ohne Textfeld (Vorschau) verfällt er, damit er nicht später ins Leere greift.
