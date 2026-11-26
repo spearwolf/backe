@@ -3,7 +3,7 @@ import type { Command } from 'commander';
 import { checkRepoResult, type RepoCheck, repoCheckExit } from '../../services/repo-check.ts';
 import { locateRepo, type ScanEntry, scanRepos } from '../../services/repo-local.ts';
 import { addRepo, listRepos, removeRepo } from '../../services/repos.ts';
-import { nonEmpty, repoLocateJson } from '../../services/views.ts';
+import { repoCheckJson, repoLocateJson } from '../../services/views.ts';
 import {
   absPath,
   action,
@@ -86,7 +86,7 @@ export function repoCommands(program: Command, rt: Runtime): void {
           ...(opts.remote === true ? { remote: true } : {}),
           ...(opts.fresh === true ? { fresh: true } : {}),
         });
-        emit(env, { repos: checks.map(checkJson), notices: nonEmpty(notices) }, () =>
+        emit(env, repoCheckJson({ repos: checks, notices }), () =>
           lines(checks.flatMap(checkLines)),
         );
         emitNotices(env, notices);
@@ -131,17 +131,6 @@ function scanLine(e: ScanEntry): string {
   const status =
     e.status === 'differs' ? `${m.scanStatus('differs')} (${e.previous})` : m.scanStatus(e.status);
   return `${e.name}  ${e.path}  ${status}`;
-}
-
-function checkJson(c: RepoCheck): Record<string, unknown> {
-  return {
-    name: c.name,
-    url: c.url,
-    canonical: c.canonical,
-    findings: c.findings,
-    github: c.github,
-    cached: c.cached,
-  };
 }
 
 function checkLines(c: RepoCheck): string[] {

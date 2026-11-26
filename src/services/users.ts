@@ -4,7 +4,7 @@ import { compareCodeUnits } from '../core/compare.ts';
 import { BackeError } from '../core/errors.ts';
 import { sshFingerprint } from '../core/fingerprint.ts';
 import type { User } from '../core/schemas.ts';
-import { readPublicKey } from '../git/ssh.ts';
+import { parseSshPublicKey } from '../core/ssh.ts';
 import type { OpOf } from '../ops/operation.ts';
 import { type WriteOutcome, writeOp } from './outcome.ts';
 import { openSnapshot, resolveHandle } from './read.ts';
@@ -14,16 +14,18 @@ import type { WriteDeps } from './write.ts';
 const MIN_FINGERPRINT_PREFIX = 8;
 const FINGERPRINT_SCHEME = 'SHA256:';
 
+/** Legt einen User an; `key` ist die Public-Key-Zeile (`ssh-ed25519 AAAA… [kommentar]`), kein Pfad. */
 export async function addUser(
   ctx: ResolvedContext,
-  input: { handle: string; keyFile: string; name?: string; agent?: boolean; operator?: string },
+  input: { handle: string; key: string; name?: string; agent?: boolean; operator?: string },
   deps?: WriteDeps,
 ): Promise<WriteOutcome> {
   if (input.operator !== undefined && input.agent !== true) {
     throw new BackeError('usage', m.operatorNeedsAgent);
   }
   const handle = resolveHandle(ctx, input.handle);
-  const key = await readPublicKey(input.keyFile);
+  const { key } = input;
+  parseSshPublicKey(key);
   return writeOp(
     ctx,
     (_s, actor) => {

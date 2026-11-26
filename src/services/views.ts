@@ -13,6 +13,7 @@ import type { IssueListItem, IssueListResult } from './issue-list.ts';
 import type { IssueDetail } from './issue-show.ts';
 import type { NextOutcome } from './next.ts';
 import type { WriteOpsOutcome, WriteOutcome } from './outcome.ts';
+import type { RepoCheck } from './repo-check.ts';
 import type { locateRepo } from './repo-local.ts';
 import type { showSprint } from './sprints.ts';
 import type { SyncOutcome } from './sync.ts';
@@ -306,4 +307,22 @@ export function attachmentJson(
 ): Record<string, unknown> {
   if ('url' in a) return { name: a.name, url: a.url };
   return { name: a.name, file: a.file, size: a.size, path: path ?? a.path };
+}
+
+/** `repo check --format json`: je Repo Name, URL, Befunde und GitHub-Stand; `notices` nur, wenn es welche gibt. */
+export function repoCheckJson(r: {
+  repos: readonly RepoCheck[];
+  notices: readonly Notice[];
+}): Record<string, unknown> {
+  return {
+    repos: r.repos.map((c) => ({
+      name: c.name,
+      url: c.url,
+      canonical: c.canonical,
+      findings: c.findings,
+      github: c.github,
+      cached: c.cached,
+    })),
+    notices: nonEmpty(r.notices),
+  };
 }

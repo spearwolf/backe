@@ -50,7 +50,7 @@ async function setup(): Promise<Setup> {
   await createSprint(ctx, { slug: '2026-w47', title: 'KW 47' }, deps);
   await addRepo(ctx, { url: 'https://example.com/acme/webapp.git', name: 'webapp' }, deps);
   const agentKey = await testKey('claude-1');
-  await addUser(ctx, { handle: 'claude-1', keyFile: agentKey.pub, agent: true }, deps);
+  await addUser(ctx, { handle: 'claude-1', key: agentKey.line, agent: true }, deps);
   const r = await executeWrite(
     ctx,
     {

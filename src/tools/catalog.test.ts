@@ -26,6 +26,13 @@ test('ui surface lists the spec tools plus the admin tools', () => {
     'project_rm',
     'sprint_create',
     'sprint_close',
+    'repo_add',
+    'repo_rm',
+    'repo_check',
+    'user_add',
+    'user_create_agent',
+    'user_revoke_key',
+    'user_rm',
   ];
   expect(names(toolsFor('ui', { allowDelete: true }))).toEqual(
     [...SPEC_TOOLS, 'issue_delete', ...admin].sort(),

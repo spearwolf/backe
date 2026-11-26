@@ -1,5 +1,6 @@
 /** `backe user add | create-agent | list | show | revoke-key | rm` (backe.md §2.12, §2.17). */
 import type { Command } from 'commander';
+import { readPublicKey } from '../../git/ssh.ts';
 import { createAgent } from '../../services/agent.ts';
 import { addUser, listUsers, removeUser, revokeKey, showUser } from '../../services/users.ts';
 import {
@@ -36,7 +37,7 @@ export function userCommands(program: Command, rt: Runtime): void {
         async (env, handle: string, opts: AddOpts) => {
           const r = await addUser(await env.context(), {
             handle,
-            keyFile: absPath(opts.key, env.io),
+            key: await readPublicKey(absPath(opts.key, env.io)),
             ...(opts.name === undefined ? {} : { name: opts.name }),
             ...(opts.agent === true ? { agent: true } : {}),
             ...(opts.operator === undefined ? {} : { operator: opts.operator }),

@@ -14,20 +14,20 @@ beforeEach(async () => {
 });
 
 describe('users', () => {
-  test('user add reads the key file and defaults name to the handle', async () => {
+  test('user add takes the key line and defaults name to the handle', async () => {
     const k = await testKey('anna');
-    await addUser(ctx, { handle: 'anna', keyFile: k.priv });
+    await addUser(ctx, { handle: 'anna', key: k.line });
     const shown = await showUser(ctx, 'anna');
     expect(shown.user).toMatchObject({ name: 'anna', kind: 'human', keys: [k.line] });
     expect(shown.admin).toBe(false);
-    await addUser(ctx, { handle: 'bert', keyFile: (await testKey('bert')).pub, name: 'Bert B.' });
+    await addUser(ctx, { handle: 'bert', key: (await testKey('bert')).line, name: 'Bert B.' });
     expect((await showUser(ctx, 'bert')).user.name).toBe('Bert B.');
   });
 
   test('an agent without operator gets the actor as operator', async () => {
     await addUser(ctx, {
       handle: 'bot',
-      keyFile: (await testKey('bot')).priv,
+      key: (await testKey('bot')).line,
       agent: true,
     });
     expect((await showUser(ctx, 'bot')).user).toMatchObject({ kind: 'agent', operator: 'spw' });
@@ -37,7 +37,7 @@ describe('users', () => {
     const err = await catchErrAsync(async () =>
       addUser(ctx, {
         handle: 'anna',
-        keyFile: (await testKey('anna')).priv,
+        key: (await testKey('anna')).line,
         operator: 'spw',
       }),
     );
@@ -45,7 +45,7 @@ describe('users', () => {
   });
 
   test('list shows kind, operator and admin', async () => {
-    await addUser(ctx, { handle: 'bot', keyFile: (await testKey('bot')).priv, agent: true });
+    await addUser(ctx, { handle: 'bot', key: (await testKey('bot')).line, agent: true });
     expect(await listUsers(ctx)).toEqual([
       { handle: 'bot', name: 'bot', kind: 'agent', operator: 'spw', admin: false },
       { handle: 'spw', name: expect.any(String), kind: 'human', admin: true },
@@ -105,7 +105,7 @@ describe('users', () => {
 
   test('revoking the only key leaves a user without active keys', async () => {
     const k = await testKey('anna');
-    await addUser(ctx, { handle: 'anna', keyFile: k.priv });
+    await addUser(ctx, { handle: 'anna', key: k.line });
     await revokeKey(ctx, 'anna', sshFingerprint(k.line));
     const shown = await showUser(ctx, 'anna');
     expect(shown.fingerprints).toEqual([]);
@@ -123,7 +123,7 @@ describe('users', () => {
   });
 
   test('user rm removes a user, an admin cannot be removed', async () => {
-    await addUser(ctx, { handle: 'anna', keyFile: (await testKey('anna')).priv });
+    await addUser(ctx, { handle: 'anna', key: (await testKey('anna')).line });
     await removeUser(ctx, 'anna');
     expect((await listUsers(ctx)).map((u) => u.handle)).toEqual(['spw']);
     expect(await catchErrAsync(() => removeUser(ctx, 'spw'))).toBeDefined();
