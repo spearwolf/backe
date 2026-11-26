@@ -3,7 +3,7 @@
  * jede Anfrage mit `checkRequest` und setzt die Sicherheits-Header vor dem Dispatch.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import type { AddressInfo, Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import type { Env } from '../core/env.ts';
@@ -64,11 +64,16 @@ const CLIENT_ERROR_STATUS: Readonly<Record<string, string>> = {
  * Antwort auf eine Anfrage, die Node schon beim Parsen verwirft (`clientError`), mit denselben
  * Sicherheits-Headern wie jede andere Antwort; danach ist die Verbindung zu. Geantwortet wird nur,
  * wenn der Socket noch beschreibbar ist und keine Antwort auf ihm schon Bytes geschickt hat (sonst
- * stünde die Statuszeile mitten in deren Body); bei `ECONNRESET` ist der Client weg. Die Prüfung
- * auf eine laufende Antwort liest wie Nodes eigene Behandlung `socket._httpMessage`.
+ * stünde die Statuszeile mitten in deren Body); bei `ECONNRESET` ist der Client weg. Welche Antwort
+ * gerade auf dem Socket läuft, steht in `responses` (der Server trägt sie dort ein und ab), nicht
+ * in Nodes undokumentiertem `socket._httpMessage`.
  */
-export function answerClientError(err: NodeJS.ErrnoException, socket: Duplex): void {
-  const inFlight = (socket as { _httpMessage?: ServerResponse | null })._httpMessage;
+export function answerClientError(
+  err: NodeJS.ErrnoException,
+  socket: Duplex,
+  responses: ReadonlyMap<Duplex, ServerResponse> | WeakMap<Duplex, ServerResponse>,
+): void {
+  const inFlight = responses.get(socket);
   if (err.code !== 'ECONNRESET' && socket.writable && inFlight?.headersSent !== true) {
     const status = CLIENT_ERROR_STATUS[String(err.code)] ?? '400 Bad Request';
     const headers = Object.entries(appHeaders())
@@ -132,7 +137,17 @@ export function createUiServer(opts: UiOptions): UiServer {
     }
   }
 
+  /** Die Antwort, die gerade auf einem Socket läuft; fällt mit `finish`/`close` der Antwort weg. */
+  const responses = new WeakMap<Socket, ServerResponse>();
+
   const server = createServer((req, res) => {
+    const { socket } = req;
+    responses.set(socket, res);
+    const forget = () => {
+      if (responses.get(socket) === res) responses.delete(socket);
+    };
+    res.once('finish', forget);
+    res.once('close', forget);
     let done!: () => void;
     const work = new Promise<void>((resolve) => {
       done = resolve;
@@ -142,7 +157,7 @@ export function createUiServer(opts: UiOptions): UiServer {
     watchPhase(res, done);
     void handle(req, res).finally(done);
   });
-  server.on('clientError', answerClientError);
+  server.on('clientError', (err, socket) => answerClientError(err, socket, responses));
 
   return {
     listen() {

@@ -21,16 +21,19 @@ function parsePort(value: string | undefined): number {
   return port;
 }
 
+/** Der Browser-Starter der Plattform; `undefined`, wo backe keinen kennt. */
+export function browserCommand(platform: NodeJS.Platform): string | undefined {
+  if (platform === 'linux') return 'xdg-open';
+  if (platform === 'darwin') return 'open';
+  return undefined;
+}
+
 /**
  * Übergibt die URL dem Browser-Starter der Plattform; scheitert das, bleibt es bei einem Hinweis.
  * Ohne Starter (etwa win32) gibt es nur den Hinweis, ohne einen Befehl zu nennen.
  */
-export function openBrowser(
-  url: string,
-  stderr: (s: string) => void,
-  platform: NodeJS.Platform = process.platform,
-): void {
-  const cmd = platform === 'linux' ? 'xdg-open' : platform === 'darwin' ? 'open' : undefined;
+export function openBrowser(url: string, stderr: (s: string) => void): void {
+  const cmd = browserCommand(process.platform);
   if (cmd === undefined) {
     stderr(renderHints([m.openUnsupported]));
     return;
@@ -84,10 +87,17 @@ export function uiCommand(program: Command, rt: Runtime): void {
             env.out(`backe ui: ${url}\n`);
             if (opts.open === true) openBrowser(url, (s) => env.io.stderr(s));
             await untilSignal();
-          } finally {
-            // Auch ein Fehler nach `listen` lässt den Server nicht offen.
-            await server.close();
+          } catch (err) {
+            // Auch ein Fehler nach `listen` lässt den Server nicht offen; scheitert dabei `close`,
+            // bleibt der ursprüngliche Fehler der, der ankommt.
+            await server.close().catch((closeErr: unknown) => {
+              env.io.stderr(
+                `backe ui: ${closeErr instanceof Error ? closeErr.message : String(closeErr)}\n`,
+              );
+            });
+            throw err;
           }
+          await server.close();
         },
         { statusLine: () => false },
       )(opts, cmd);

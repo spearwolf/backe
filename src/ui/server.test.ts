@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, open, rm } from 'node:fs/promises';
-import { Agent, get as httpGet } from 'node:http';
+import { Agent, get as httpGet, type ServerResponse } from 'node:http';
 import { connect, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -204,8 +204,47 @@ test('a request node cannot parse gets 400 with the security headers', async () 
   expect((await ui.get('/')).status).toBe(200);
 });
 
+test('garbage on a socket whose response is still running is not answered into that response', async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const spy = vi.spyOn(readApi, 'handleRead').mockImplementation(async (_route, _env, res) => {
+    res.writeHead(200, { 'Content-Length': 5 });
+    res.write('abc');
+    await held;
+    res.end('de');
+  });
+  try {
+    const got = await new Promise<string>((resolve, reject) => {
+      const socket = connect({ host: '127.0.0.1', port: ui.port });
+      let data = '';
+      let sent = false;
+      socket.setEncoding('latin1');
+      socket.on('data', (chunk: string) => {
+        data += chunk;
+        // Erst wenn die laufende Antwort Bytes geschickt hat, folgt der Müll auf demselben Socket.
+        if (!sent && data.includes('abc')) {
+          sent = true;
+          socket.write('not http at all\r\n\r\n');
+        }
+      });
+      socket.on('error', reject);
+      socket.on('close', () => resolve(data));
+      socket.write(
+        `GET /api/backlogs HTTP/1.1\r\nHost: 127.0.0.1:${ui.port}\r\nCookie: ${ui.cookie}\r\n\r\n`,
+      );
+    });
+    expect(got).toMatch(/^HTTP\/1\.1 200 /);
+    expect(got).not.toContain('400 Bad Request');
+  } finally {
+    release();
+    spy.mockRestore();
+  }
+});
+
 /** Socket-Attrappe für `answerClientError`: merkt sich, was geschrieben wurde und ob er zu ist. */
-function fakeSocket(over: { writable?: boolean; _httpMessage?: { headersSent: boolean } }) {
+function fakeSocket(over: { writable?: boolean }) {
   const seen = { written: '', destroyed: false };
   const socket = {
     writable: true,
@@ -225,18 +264,16 @@ test.each([
   ['a parse error', 'HPE_INVALID_METHOD', {}, 'HTTP/1.1 400 Bad Request\r\n'],
   ['too large headers', 'HPE_HEADER_OVERFLOW', {}, 'HTTP/1.1 431 Request Header Fields Too Large'],
   ['a request timeout', 'ERR_HTTP_REQUEST_TIMEOUT', {}, 'HTTP/1.1 408 Request Timeout\r\n'],
-  [
-    'a response not yet sent',
-    'HPE_INVALID_METHOD',
-    { _httpMessage: { headersSent: false } },
-    '400',
-  ],
+  ['a response not yet sent', 'HPE_INVALID_METHOD', { running: { headersSent: false } }, '400'],
   ['a reset connection', 'ECONNRESET', {}, ''],
   ['a socket no longer writable', 'HPE_INVALID_METHOD', { writable: false }, ''],
-  ['a response already sending', 'HPE_INVALID_METHOD', { _httpMessage: { headersSent: true } }, ''],
+  ['a response already sending', 'HPE_INVALID_METHOD', { running: { headersSent: true } }, ''],
 ] as const)('answerClientError on %s', (_name, code, over, start) => {
-  const { socket, seen } = fakeSocket(over);
-  answerClientError(Object.assign(new Error('x'), { code }), socket);
+  const { running, ...socketOver } = { running: undefined, ...over };
+  const { socket, seen } = fakeSocket(socketOver);
+  const responses = new WeakMap<Duplex, ServerResponse>();
+  if (running !== undefined) responses.set(socket, running as unknown as ServerResponse);
+  answerClientError(Object.assign(new Error('x'), { code }), socket, responses);
   expect(seen.destroyed).toBe(true);
   if (start === '') expect(seen.written).toBe('');
   else expect(seen.written).toContain(start);

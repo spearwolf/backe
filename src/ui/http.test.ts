@@ -48,8 +48,9 @@ test('deniedJson has the shape of errorJson and omits a missing hint', () => {
   });
   expect(Object.keys(deniedJson('forbidden', 'nein').error)).toEqual(['code', 'message']);
   const err = new BackeError('not_found', 'weg', { hint: 'such' });
-  expect(JSON.stringify(deniedJson('not_found', 'weg', 'such'))).toBe(
-    JSON.stringify(errorJson(err)),
+  // Dieselbe Form und Schlüsselreihenfolge wie `errorJson`, nur mit dem Code der Ablehnung.
+  expect(JSON.stringify(deniedJson('forbidden', 'weg', 'such'))).toBe(
+    JSON.stringify(errorJson(err)).replace('not_found', 'forbidden'),
   );
 });
 

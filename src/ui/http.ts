@@ -3,6 +3,7 @@ import type { OutgoingHttpHeaders, ServerResponse } from 'node:http';
 import { BackeError } from '../core/errors.ts';
 import { errorJson } from '../services/views.ts';
 import type { ErrorJson } from './api.ts';
+import type { Verdict } from './security.ts';
 
 export const JSON_TYPE = 'application/json; charset=utf-8';
 
@@ -44,7 +45,11 @@ export function sendJson(
  * Fehler-JSON einer Ablehnung der Zugangsprüfung, in der Form von `errorJson`; `hint` steht nur
  * drin, wenn es einen gibt.
  */
-export function deniedJson(code: string, message: string, hint?: string): ErrorJson {
+export function deniedJson(
+  code: Extract<Verdict, { kind: 'deny' }>['code'],
+  message: string,
+  hint?: string,
+): ErrorJson {
   return { error: { code, message, ...(hint === undefined ? {} : { hint }) } };
 }
 
