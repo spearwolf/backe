@@ -49,17 +49,25 @@ export function openBrowser(url: string, stderr: (s: string) => void): void {
   child.unref();
 }
 
-/** Wartet auf das erste SIGINT oder SIGTERM und räumt beide Listener wieder ab. */
-function untilSignal(): Promise<void> {
-  return new Promise((resolve) => {
+/**
+ * Registriert sofort je einen Listener für SIGINT und SIGTERM; `signalled` erfüllt sich beim
+ * ersten der beiden. `dispose` entfernt beide wieder (idempotent), auch ohne Signal.
+ */
+function signalWaiter(): { signalled: Promise<void>; dispose(): void } {
+  let dispose!: () => void;
+  const signalled = new Promise<void>((resolve) => {
     const done = () => {
+      dispose();
+      resolve();
+    };
+    dispose = () => {
       process.removeListener('SIGINT', done);
       process.removeListener('SIGTERM', done);
-      resolve();
     };
     process.once('SIGINT', done);
     process.once('SIGTERM', done);
   });
+  return { signalled, dispose };
 }
 
 export function uiCommand(program: Command, rt: Runtime): void {
@@ -83,10 +91,13 @@ export function uiCommand(program: Command, rt: Runtime): void {
           const start = await resolveStart(input);
           const server = createUiServer({ ...input, start, port });
           const { url } = await server.listen();
+          // Die Listener stehen vor der Startzeile: Wer auf sie hin sofort SIGTERM schickt, trifft
+          // nie auf Nodes Default, der den Prozess ohne Exit-Code beendet.
+          const signal = signalWaiter();
           try {
             env.out(`backe ui: ${url}\n`);
             if (opts.open === true) openBrowser(url, (s) => env.io.stderr(s));
-            await untilSignal();
+            await signal.signalled;
           } catch (err) {
             // Auch ein Fehler nach `listen` lässt den Server nicht offen; scheitert dabei `close`,
             // bleibt der ursprüngliche Fehler der, der ankommt.
@@ -96,6 +107,8 @@ export function uiCommand(program: Command, rt: Runtime): void {
               );
             });
             throw err;
+          } finally {
+            signal.dispose();
           }
           await server.close();
         },
