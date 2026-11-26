@@ -1,16 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ApiError } from '../../data/api-client.ts';
-
-/** Jeder Wurf als `ApiError`: Server-Fehler bleiben, wie sie sind, alles andere wird `unexpected`. */
-export function asApiError(cause: unknown): ApiError {
-  return cause instanceof ApiError
-    ? cause
-    : new ApiError(0, 'unexpected', cause instanceof Error ? cause.message : String(cause));
-}
+import { type ApiError, asApiError } from '../../data/api-client.ts';
 
 /**
  * Zustand einer Aktion mit eigener Fehlerfläche (Dialog, Formular). `run` liefert `true` bei
  * Erfolg; ein Wurf landet als `ApiError` in `error`, ein neuer Lauf löscht den alten Fehler.
+ * `false` kommt auch, wenn schon ein Lauf läuft: Dann startet nichts, und `error` bleibt, wie es ist.
  */
 export function useAction(): {
   busy: boolean;

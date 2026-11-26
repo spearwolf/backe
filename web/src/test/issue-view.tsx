@@ -26,16 +26,21 @@ export const served: {
   attachments: AttachmentListJson;
 } = { body: undefined, comments: [], attachments: [] };
 
+/** Das `Writes` des zuletzt gerenderten Tabs; der Abbau nach jedem Test beendet seine Timer. */
+let current: Writes | undefined;
+
 /**
- * Registriert die Hooks: `call` und `upload` antworten ohne Commit, `fetch` liefert das Detail des
- * Issues samt `served`.
+ * Registriert die Hooks: `call` antwortet ohne Commit, `upload` wie der Server mit einem eigenen
+ * Commit je Upload (ohne Patch dazu wartet der Write, und sein Name bleibt reserviert), `fetch`
+ * liefert das Detail des Issues samt `served`.
  */
 export function registerIssueViewHarness(): void {
   beforeEach(() => {
     call.mockReset();
     call.mockImplementation(async () => ({ commit: null, id: ID }));
     upload.mockReset();
-    upload.mockImplementation(async () => ({ commit: null, id: ID }));
+    let uploads = 0;
+    upload.mockImplementation(async () => ({ commit: `u${++uploads}`, id: ID }));
     served.body = undefined;
     served.comments = [];
     served.attachments = [];
@@ -55,6 +60,8 @@ export function registerIssueViewHarness(): void {
   });
   afterEach(() => {
     cleanup();
+    current?.dispose();
+    current = undefined;
     vi.unstubAllGlobals();
   });
 }
@@ -73,6 +80,7 @@ export function view(
     upload: upload as never,
     refresh: async () => {},
   });
+  current = writes;
   render(
     <RouterContext.Provider value={router}>
       <StoreContext.Provider value={store}>

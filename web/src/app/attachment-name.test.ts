@@ -79,6 +79,10 @@ test.each([
   ['![a](attachments/xa.png)', false],
   ['![a](myattachments/a.png)', false],
   ['![a](attachments/aXpng)', false],
+  ['Siehe attachments/a.png.', true],
+  ['Siehe attachments/a.png...', true],
+  ['attachments/a.png.bak.', false],
+  ['attachments/a.png..x', false],
   ['', false],
 ])('mentions a.png: %s', (text, want) => {
   expect(mentionsAttachment(text, 'a.png')).toBe(want);

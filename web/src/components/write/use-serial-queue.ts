@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ApiError } from '../../data/api-client.ts';
-import { asApiError } from './use-action.ts';
+import { type ApiError, asApiError } from '../../data/api-client.ts';
 
 /** Ein Auftrag der Warteschlange; `alive()` ist falsch, sobald die Komponente abgebaut ist. */
 export type SerialJob = (alive: () => boolean) => Promise<void>;

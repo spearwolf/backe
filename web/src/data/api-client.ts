@@ -19,6 +19,17 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Jeder Wurf als `ApiError`: Server-Fehler bleiben, wie sie sind, alles andere wird `unexpected`.
+ * Nicht `offline`: Einen ausgebliebenen Server meldet `request` selbst; was sonst wirft (etwa
+ * `res.json()` auf einer Antwort ohne JSON), kam womöglich an.
+ */
+export function asApiError(cause: unknown): ApiError {
+  return cause instanceof ApiError
+    ? cause
+    : new ApiError(0, 'unexpected', cause instanceof Error ? cause.message : String(cause));
+}
+
 function isErrorJson(v: unknown): v is ErrorJson {
   if (typeof v !== 'object' || v === null || !('error' in v)) return false;
   const e = (v as { error: unknown }).error;
@@ -37,7 +48,7 @@ const defaultFetch: Fetch = (input, init) => globalThis.fetch(input, init);
 async function request<T>(path: string, init: RequestInit | undefined, fetchFn: Fetch): Promise<T> {
   let res: Response;
   try {
-    res = await (init === undefined ? fetchFn(path) : fetchFn(path, init));
+    res = await fetchFn(path, init);
   } catch (cause) {
     throw new ApiError(0, 'offline', cause instanceof Error ? cause.message : 'offline');
   }

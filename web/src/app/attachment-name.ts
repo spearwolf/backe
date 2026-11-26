@@ -59,9 +59,10 @@ const NAME_CHAR = '[a-z0-9._-]';
 /**
  * Ob der Text auf den Anhang verweist, gleich in welcher Form: Markdown-Link mit oder ohne Titel,
  * `<img src>` oder Referenz-Definition. Gesucht wird `attachments/<name>` mit Grenzen, an denen
- * kein Namenszeichen steht — `a.png` trifft so weder `a.png.bak` noch `xa.png`.
+ * kein Namenszeichen steht — `a.png` trifft so weder `a.png.bak` noch `xa.png`. Punkte dahinter
+ * zählen erst, wenn ein weiteres Namenszeichen folgt: `attachments/a.png.` am Satzende verweist.
  */
 export function mentionsAttachment(text: string, name: string): boolean {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?<!${NAME_CHAR})attachments/${escaped}(?!${NAME_CHAR})`).test(text);
+  return new RegExp(`(?<!${NAME_CHAR})attachments/${escaped}(?!\\.*[a-z0-9_-])`).test(text);
 }

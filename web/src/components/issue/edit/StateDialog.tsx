@@ -49,12 +49,24 @@ function OpenStateDialog(props: StateDialogProps & { action: StateAction }) {
   const reasonId = useId();
   const [reason, setReason] = useState('');
   const [blockers, setBlockers] = useState<Blocker[]>([{ key: 0, value: '' }]);
-  // Der zuletzt gemeldete Fehler bleibt stehen, bis der nächste Lauf fertig ist: Liste der
-  // Sub-Issues und »Trotzdem abschließen« flackern während des Laufs nicht weg.
+  // Der zuletzt gemeldete Fehler bleibt stehen, bis der nächste Lauf fertig ist oder der Nutzer
+  // Begründung oder Blocker ändert. Getrennt davon die Ablehnung wegen offener Sub-Issues: Liste
+  // und »Trotzdem abschließen« bleiben, auch wenn die Meldung weg ist oder ein Lauf läuft.
   const [shown, setShown] = useState(rejected);
+  const [refusal, setRefusal] = useState(
+    openChildrenOf(rejected) === undefined ? undefined : rejected,
+  );
   const { busy, run } = useAction();
 
-  const children = openChildrenOf(shown);
+  const children = openChildrenOf(refusal);
+  const edit =
+    <T,>(set: (v: T) => void) =>
+    (v: T) => {
+      set(v);
+      setShown(undefined);
+    };
+  const editReason = edit(setReason);
+  const editBlockers = edit(setBlockers);
   const blockedBy = blockers.map((b) => b.value.trim()).filter((b) => b !== '');
   const missing = action.needsBlockedBy && blockedBy.length === 0;
 
@@ -69,6 +81,7 @@ function OpenStateDialog(props: StateDialogProps & { action: StateAction }) {
     const ok = await run(() =>
       runState(writes, call, overlay).catch((cause: ApiError) => {
         setShown(cause);
+        if (openChildrenOf(cause) !== undefined) setRefusal(cause);
         throw cause;
       }),
     );
@@ -76,7 +89,7 @@ function OpenStateDialog(props: StateDialogProps & { action: StateAction }) {
   };
 
   const addBlocker = () =>
-    setBlockers([...blockers, { key: Math.max(...blockers.map((b) => b.key)) + 1, value: '' }]);
+    editBlockers([...blockers, { key: Math.max(...blockers.map((b) => b.key)) + 1, value: '' }]);
 
   return (
     <ConfirmDialog
@@ -101,7 +114,7 @@ function OpenStateDialog(props: StateDialogProps & { action: StateAction }) {
                 exclude={[issue.id]}
                 disabled={busy}
                 onChange={(v) =>
-                  setBlockers(blockers.map((b) => (b.key === key ? { key, value: v } : b)))
+                  editBlockers(blockers.map((b) => (b.key === key ? { key, value: v } : b)))
                 }
               />
               {i > 0 && (
@@ -111,7 +124,7 @@ function OpenStateDialog(props: StateDialogProps & { action: StateAction }) {
                   size="icon"
                   className="size-7"
                   aria-label={m.remove(value === '' ? `${m.blockedBy} (${i + 1})` : value)}
-                  onClick={() => setBlockers(blockers.filter((b) => b.key !== key))}
+                  onClick={() => editBlockers(blockers.filter((b) => b.key !== key))}
                 >
                   <X className="size-3.5" aria-hidden="true" />
                 </Button>
@@ -132,7 +145,7 @@ function OpenStateDialog(props: StateDialogProps & { action: StateAction }) {
           id={reasonId}
           value={reason}
           disabled={busy}
-          onChange={(e) => setReason(e.target.value)}
+          onChange={(e) => editReason(e.target.value)}
         />
       </div>
       {children !== undefined && (

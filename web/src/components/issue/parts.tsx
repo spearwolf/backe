@@ -1,5 +1,5 @@
 import { Check, Copy } from 'lucide-react';
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, type Ref, useEffect, useState } from 'react';
 import { useStore } from '../../data/store-context.tsx';
 import { useSignal } from '../../data/use-signal.ts';
 import { formatDate } from '../../lib/format.ts';
@@ -55,15 +55,19 @@ export function CopyValue({ value, label }: { value: string; label: string }) {
   );
 }
 
-/** Eine Gruppe der rechten Spalte (`blocked_by`, `depends_on`, …); `footer` steht unter der Liste. */
+/**
+ * Eine Gruppe der rechten Spalte (`blocked_by`, `depends_on`, …); `footer` steht unter der Liste.
+ * `ref` reicht an die `section` durch, etwa als Fokusbereich eines Editors.
+ */
 export function RelationGroup(props: {
   title: string;
   note?: string;
   children: ReactNode;
   footer?: ReactNode;
+  ref?: Ref<HTMLElement>;
 }) {
   return (
-    <section aria-label={props.title} className="space-y-1">
+    <section ref={props.ref} aria-label={props.title} className="space-y-1">
       <h2 className="flex items-baseline gap-2 text-sm font-semibold">
         {props.title}
         {props.note !== undefined && (

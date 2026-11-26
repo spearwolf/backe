@@ -159,3 +159,37 @@ test('done in the dialog learns about open sub-issues and forces', async () => {
   await flush();
   expect(screen.queryByRole('dialog')).toBeNull();
 });
+
+test('editing clears the shown message, the open sub-issues and force stay', async () => {
+  call.mockRejectedValueOnce(openChildren());
+  view([testIssue(1, { state: 'review' }), testIssue(2, { title: 'Kind', parent: ID })]);
+  await flush();
+  await withReason('done');
+  const dialog = screen.getByRole('dialog');
+  await userEvent.click(within(dialog).getByRole('button', { name: m.confirmState }));
+  call.mockClear();
+  expect(await within(dialog).findByText('mit --force abschließen')).toBeTruthy();
+  await userEvent.type(within(dialog).getByRole('textbox', { name: m.reason }), 'x');
+  expect(within(dialog).queryByText('mit --force abschließen')).toBeNull();
+  expect(within(dialog).queryByRole('alert')).toBeNull();
+  expect(within(dialog).getByRole('link', { name: /Kind/ })).toBeTruthy();
+  await userEvent.click(within(dialog).getByRole('button', { name: m.forceDone }));
+  expectOneCall('issue_move', { id: ID, to: 'done', reason: 'x', force: true });
+});
+
+test('a blocker edit clears an old refusal message', async () => {
+  call.mockRejectedValueOnce(
+    new ApiError(404, 'not_found', 'Kein solches Issue', 'backe issue list'),
+  );
+  view([testIssue(1), testIssue(2)]);
+  await flush();
+  await openStateMenu();
+  await userEvent.click(screen.getByRole('menuitem', { name: /blocked/ }));
+  const dialog = screen.getByRole('dialog');
+  const blocker = within(dialog).getByRole('combobox', { name: m.blockedBy });
+  await userEvent.type(blocker, 'bk-gone');
+  await userEvent.click(within(dialog).getByRole('button', { name: m.confirmState }));
+  expect(await within(dialog).findByText('Kein solches Issue')).toBeTruthy();
+  await userEvent.clear(blocker);
+  expect(within(dialog).queryByText('Kein solches Issue')).toBeNull();
+});

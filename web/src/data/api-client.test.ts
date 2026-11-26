@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ApiError, getJson, postJson, putBytes } from './api-client.ts';
+import { ApiError, asApiError, getJson, postJson, putBytes } from './api-client.ts';
 
 const json = (status: number, body: unknown, statusText = '') =>
   new Response(JSON.stringify(body), { status, statusText });
@@ -8,6 +8,16 @@ describe('getJson', () => {
   it('returns the parsed body', async () => {
     const f = async () => json(200, { a: 1 });
     expect(await getJson<{ a: number }>('/api/x', f)).toEqual({ a: 1 });
+  });
+
+  it('hands fetch the path and no init', async () => {
+    const calls: unknown[][] = [];
+    const f = async (...args: unknown[]) => {
+      calls.push(args);
+      return json(200, {});
+    };
+    await getJson('/api/x', f);
+    expect(calls).toEqual([['/api/x', undefined]]);
   });
 
   it('turns error json into an ApiError', async () => {
@@ -85,5 +95,18 @@ describe('putBytes', () => {
       headers: { 'Content-Type': 'application/octet-stream' },
     });
     expect(calls[0]?.[1]?.body).toBe(blob);
+  });
+});
+
+describe('asApiError', () => {
+  it('keeps an ApiError and makes everything else unexpected', () => {
+    const api = new ApiError(400, 'invalid', 'x');
+    expect(asApiError(api)).toBe(api);
+    expect(asApiError(new Error('kaputt'))).toMatchObject({
+      status: 0,
+      code: 'unexpected',
+      message: 'kaputt',
+    });
+    expect(asApiError('down')).toMatchObject({ code: 'unexpected', message: 'down' });
   });
 });

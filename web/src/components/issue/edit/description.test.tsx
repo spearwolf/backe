@@ -165,7 +165,7 @@ test('overlapping image uploads from two editors get distinct names', async () =
   await flush();
   // Der zweite Upload wartet auf den ersten, statt denselben Namen zu nehmen.
   expect(upload.mock.calls).toEqual([[ID, 'image.png', a]]);
-  await act(async () => first.resolve({ commit: null, id: ID }));
+  await act(async () => first.resolve({ commit: 'u1', id: ID }));
   await waitFor(() => expect(composer().value).toBe('![image-2.png](attachments/image-2.png)'));
   expect(upload.mock.calls).toEqual([
     [ID, 'image.png', a],

@@ -6,7 +6,7 @@ import type {
   WriteResultJson,
 } from '@backe/ui/api.ts';
 import { createEffect, createSignal, type Signal, SignalGroup } from '@spearwolf/signalize';
-import { ApiError } from './api-client.ts';
+import { ApiError, asApiError } from './api-client.ts';
 import { hasFields, type Store } from './store.ts';
 
 /** So lange wartet ein erfolgreicher Write auf seinen Patch, dann lädt der Client `/state` (ui.md §2.5). */
@@ -23,18 +23,13 @@ export type WriteDeps = {
 
 type Pending = {
   readonly optimistic: ReadonlyMap<string, Partial<IssueJson>> | undefined;
+  readonly onSettle: (() => void) | undefined;
   /** Jeder `head`, den der Store seit dem Start trug; der Patch kann vor der Antwort kommen. */
   readonly seen: Set<string>;
   /** Gesetzt, sobald die Antwort einen `commit` brachte. */
   commit?: string;
   timer?: ReturnType<typeof setTimeout>;
 };
-
-function toApiError(cause: unknown): ApiError {
-  return cause instanceof ApiError
-    ? cause
-    : new ApiError(0, 'offline', cause instanceof Error ? cause.message : String(cause));
-}
 
 function commitOf(result: unknown): string | undefined {
   const commit = (result as { commit?: unknown } | null)?.commit;
@@ -80,13 +75,23 @@ export class Writes {
     return this.#track(opts.optimistic, () => this.#deps.call(name, args));
   }
 
-  upload(id: string, name: string, bytes: Blob): Promise<WriteResultJson> {
-    return this.#track(undefined, () => this.#deps.upload(id, name, bytes));
+  /**
+   * Lädt einen Anhang hoch. `onSettle` läuft genau einmal, sobald der Write endet: mit dem Patch
+   * seines Commits (oder dem Neuladen danach), sofort ohne Commit, bei einem Fehler oder beim Ende
+   * von `Writes`. Wer einen Namen reserviert hat, gibt ihn dort spätestens frei.
+   */
+  upload(
+    id: string,
+    name: string,
+    bytes: Blob,
+    opts: { onSettle?: () => void } = {},
+  ): Promise<WriteResultJson> {
+    return this.#track(undefined, () => this.#deps.upload(id, name, bytes), opts.onSettle);
   }
 
   /** Für Aktionen ohne eigene Fehlerfläche (Kontextmenü, Drag): `writes.run(…).catch(writes.report)`. */
   readonly report = (error: unknown): void => {
-    const failure = { id: this.#nextFailure++, error: toApiError(error) };
+    const failure = { id: this.#nextFailure++, error: asApiError(error) };
     this.failures.set([...this.failures.value, failure]);
   };
 
@@ -105,11 +110,12 @@ export class Writes {
   async #track<R>(
     optimistic: ReadonlyMap<string, Partial<IssueJson>> | undefined,
     call: () => Promise<R>,
+    onSettle?: () => void,
   ): Promise<R> {
     // Nach dem Ende gehört der Store niemandem mehr: kein Aufruf, keine Überlagerung.
     if (this.#disposed) throw new ApiError(0, 'disposed', 'writes are disposed');
     const token = this.#nextToken++;
-    this.#pending.set(token, { optimistic, seen: new Set() });
+    this.#pending.set(token, { optimistic, onSettle, seen: new Set() });
     // Vor dem `fetch`: Die Anzeige wechselt im selben Frame wie die Geste.
     if (optimistic !== undefined && optimistic.size > 0) this.#store.setOverlay(token, optimistic);
     let result: R;
@@ -117,7 +123,7 @@ export class Writes {
       result = await call();
     } catch (cause) {
       this.#settle(token);
-      throw toApiError(cause);
+      throw asApiError(cause);
     }
     const pending = this.#pending.get(token);
     if (pending === undefined) return result;
@@ -157,5 +163,6 @@ export class Writes {
     this.#pending.delete(token);
     if (pending.timer !== undefined) clearTimeout(pending.timer);
     this.#store.clearOverlay(token);
+    pending.onSettle?.();
   }
 }

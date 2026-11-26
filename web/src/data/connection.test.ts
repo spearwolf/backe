@@ -136,6 +136,6 @@ describe('Connection', () => {
   it('state fetches the state url', async () => {
     const { conn, fetch } = setup();
     expect(await conn.state()).toEqual({ rev: 1 });
-    expect(fetch).toHaveBeenCalledWith('/api/b/main/state');
+    expect(fetch).toHaveBeenCalledWith('/api/b/main/state', undefined);
   });
 });

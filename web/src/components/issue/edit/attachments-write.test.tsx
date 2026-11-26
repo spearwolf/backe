@@ -8,6 +8,7 @@ import {
   expectOneCall,
   flush,
   ID,
+  png,
   region,
   registerIssueViewHarness,
   served,
@@ -67,7 +68,7 @@ test('a drop during a running upload is queued, not lost', async () => {
   });
   await flush();
   expect(upload).toHaveBeenCalledTimes(1);
-  await act(async () => first.resolve({ commit: null, id: ID }));
+  await act(async () => first.resolve({ commit: 'u1', id: ID }));
   expect(upload.mock.calls).toEqual([
     [ID, 'a.txt', a],
     [ID, 'a-2.txt', b],
@@ -147,4 +148,42 @@ test('a removed name is free again once the store has caught up', async () => {
   await userEvent.upload(screen.getByLabelText(m.uploadFiles), [third]);
   await flush();
   expect(upload.mock.calls.map(([, name]) => name)).toEqual(['foo.png', 'foo-2.png', 'foo.png']);
+});
+
+test('a reserved name is free once the store listed it, even if it is removed before the next upload', async () => {
+  upload.mockImplementationOnce(async () => ({ commit: 'h2', id: ID }));
+  const { store } = view([testIssue(1)]);
+  await flush();
+  await userEvent.upload(screen.getByLabelText(m.uploadFiles), [png('foo.png')]);
+  await flush();
+  act(() => {
+    store.applyPatch(
+      testPatch(2, {
+        upsert: { issues: [testIssue(1, { attachments: [{ name: 'foo.png', file: 'foo.png' }] })] },
+      }),
+    );
+  });
+  act(() => {
+    store.applyPatch(testPatch(3, { upsert: { issues: [testIssue(1)] } }));
+  });
+  await flush();
+  await userEvent.upload(screen.getByLabelText(m.uploadFiles), [png('foo.png')]);
+  await flush();
+  expect(upload.mock.calls.map(([, name]) => name)).toEqual(['foo.png', 'foo.png']);
+});
+
+test('a reserved name is free at the latest when its write settles', async () => {
+  upload.mockImplementationOnce(async () => ({ commit: 'h2', id: ID }));
+  const { store } = view([testIssue(1)]);
+  await flush();
+  await userEvent.upload(screen.getByLabelText(m.uploadFiles), [png('foo.png')]);
+  await flush();
+  // Der Patch mit dem Commit kommt, nennt den Anhang aber nicht (inzwischen wieder entfernt).
+  act(() => {
+    store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(1)] } }));
+  });
+  await flush();
+  await userEvent.upload(screen.getByLabelText(m.uploadFiles), [png('foo.png')]);
+  await flush();
+  expect(upload.mock.calls.map(([, name]) => name)).toEqual(['foo.png', 'foo.png']);
 });
