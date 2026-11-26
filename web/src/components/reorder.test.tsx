@@ -11,7 +11,7 @@ import {
   scroller,
   view,
 } from '../test/backlog-view.tsx';
-import { testIssue, testPatch, tid } from '../test/state.ts';
+import { testIssue, tid } from '../test/state.ts';
 import { m } from '../views/backlog.messages.ts';
 import { DRAG_TYPE } from './row-drag.ts';
 import { m as w } from './write/write.messages.ts';
@@ -163,19 +163,64 @@ test('alt+arrow scrolls the moved row into view', async () => {
   expect(document.activeElement).toBe(linkOf(tid(17)));
 });
 
-test('a move without preview leaves the focus alone later', async () => {
+/** 1 mit Rang, dann 2 bis 4 ohne: so liegen frisch angelegte Issues im Backlog. */
+const unranked = () =>
+  view([
+    testIssue(1),
+    testIssue(2, { rank: undefined }),
+    testIssue(3, { rank: undefined }),
+    testIssue(4, { rank: undefined }),
+  ]);
+
+test('alt+arrow past an unranked anchor ranks the issues up to it in one batch', async () => {
   answerNever();
-  // Ein Anker ohne `rank`: Die Vorschau lehnt ab, der Server entscheidet allein.
-  const { store } = view([testIssue(1), testIssue(2, { rank: undefined })]);
-  expect(rowIds()).toEqual([tid(1), tid(2)]);
+  const { store } = unranked();
   linkOf(tid(1)).focus();
   await alt('ArrowDown');
-  expect(call).toHaveBeenCalledExactlyOnceWith('issue_rank', { id: tid(1), after: tid(2) });
-  linkOf(tid(1)).blur();
-  act(() => {
-    store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(1, { title: 'neu' })] } }));
+  expect(call).toHaveBeenCalledExactlyOnceWith('batch', {
+    ops: [
+      { op: 'issue.rank', id: tid(2), from: null, bottom: true },
+      { op: 'issue.rank', id: tid(1), from: 1000, after: tid(2) },
+    ],
   });
-  expect(document.activeElement).toBe(document.body);
+  expect(rowIds()).toEqual([tid(2), tid(1), tid(3), tid(4)]);
+  expect(document.activeElement).toBe(linkOf(tid(1)));
+  call.mockClear();
+  // Noch überlagert: `from` ist trotzdem der Rang des Servers, nicht der angezeigte.
+  expect(store.issues.get(tid(1)).value?.rank).not.toBe(1000);
+  await alt('ArrowDown');
+  expect(call).toHaveBeenCalledExactlyOnceWith('batch', {
+    ops: [
+      { op: 'issue.rank', id: tid(3), from: null, bottom: true },
+      { op: 'issue.rank', id: tid(1), from: 1000, after: tid(3) },
+    ],
+  });
+});
+
+test('a drop on an unranked row sends the same batch', () => {
+  answerNever();
+  unranked();
+  expect(dragOnto(tid(4), tid(3), 5)).toEqual([[tid(3), 'before']]);
+  expect(call).toHaveBeenCalledExactlyOnceWith('batch', {
+    ops: [
+      { op: 'issue.rank', id: tid(2), from: null, bottom: true },
+      { op: 'issue.rank', id: tid(3), from: null, bottom: true },
+      { op: 'issue.rank', id: tid(4), from: null, before: tid(3) },
+    ],
+  });
+  expect(rowIds()).toEqual([tid(1), tid(2), tid(4), tid(3)]);
+});
+
+test('a batch the server refuses shows its message verbatim', async () => {
+  let reject!: (e: unknown) => void;
+  call.mockImplementation(() => new Promise((_, rej) => (reject = rej)));
+  unranked();
+  linkOf(tid(1)).focus();
+  await alt('ArrowDown');
+  await act(async () => reject(new ApiError(400, 'usage', 'Zu viele Operationen', 'kleiner')));
+  expect(rowIds()).toEqual([tid(1), tid(2), tid(3), tid(4)]);
+  const failures = screen.getByRole('region', { name: w.failures });
+  expect(within(failures).getByText('Zu viele Operationen')).toBeTruthy();
 });
 
 test('no drag when sorted by created', async () => {

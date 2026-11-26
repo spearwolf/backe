@@ -55,11 +55,31 @@ export function stateOverlay(
 }
 
 /**
- * `rank` aller Issues, die `rankPlacement` umnummeriert (inklusive `id`). Wirft `BackeError` bei
- * ungültigem Anker, wie `rankPlacement`.
+ * `rank` aller Issues, die `rankPlacement` umnummeriert (inklusive `id`). Mit `unranked` wie der
+ * Batch aus `rankBatchOps`: erst jedes dieser Issues ans Ende, Schritt für Schritt auf einer Kopie
+ * des Snapshots, dann `id` an `pos`. Wirft `BackeError` bei ungültigem Anker, wie `rankPlacement`.
  */
-export function rankOverlay(s: BacklogSnapshot, id: string, pos: RankPosition): Overlay {
-  return new Map([...rankPlacement(s, id, pos)].map(([key, rank]) => [key, { rank }]));
+export function rankOverlay(
+  s: BacklogSnapshot,
+  id: string,
+  pos: RankPosition,
+  unranked: readonly string[] = [],
+): Overlay {
+  const issues = new Map(s.issues);
+  const draft: BacklogSnapshot = { ...s, issues };
+  const place = (key: string, at: RankPosition) => {
+    for (const [k, rank] of rankPlacement(draft, key, at)) {
+      const entry = issues.get(k);
+      if (entry !== undefined) issues.set(k, { ...entry, data: { ...entry.data, rank } });
+    }
+  };
+  for (const key of unranked) place(key, { bottom: true });
+  place(id, pos);
+  const out: Overlay = new Map();
+  for (const [key, entry] of issues) {
+    if (entry.data.rank !== s.issues.get(key)?.data.rank) out.set(key, { rank: entry.data.rank });
+  }
+  return out;
 }
 
 /** Wie `editList` in BK: erst entfernen, dann hinten anhängen, was fehlt; leer entfällt. */

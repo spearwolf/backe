@@ -56,7 +56,7 @@ test('rank overlay equals rankPlacement', () => {
   const o = rankOverlay(s, tid(3), { before: tid(2) });
   const expected = rankPlacement(s, tid(3), { before: tid(2) });
   expect(expected.size).toBeGreaterThan(1);
-  expect([...o].map(([k, v]) => [k, v.rank])).toEqual([...expected]);
+  expect(new Map([...o].map(([k, v]) => [k, v.rank]))).toEqual(expected);
 });
 
 test('update overlay adds, removes and unsets', () => {

@@ -70,6 +70,19 @@ test('rank top and bottom from the menu', async () => {
   expect(call).toHaveBeenCalledExactlyOnceWith('issue_rank', { id: tid(3), bottom: true });
 });
 
+test('bottom from the menu lands in the last row, past unranked issues', async () => {
+  answerNever();
+  view([testIssue(1), testIssue(2), testIssue(3, { rank: undefined })]);
+  await pick(tid(1), m.menuRank, m.rankBottom);
+  expect(call).toHaveBeenCalledExactlyOnceWith('batch', {
+    ops: [
+      { op: 'issue.rank', id: tid(3), from: null, bottom: true },
+      { op: 'issue.rank', id: tid(1), from: 1000, after: tid(3) },
+    ],
+  });
+  expect(rowIds()).toEqual([tid(2), tid(3), tid(1)]);
+});
+
 test('a rejected rank restores the order and shows in the failures', async () => {
   const answer = deferred<unknown>();
   call.mockImplementation(() => answer.promise);

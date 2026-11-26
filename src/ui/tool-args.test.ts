@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
+import { batchJson } from '../services/views.ts';
 import { toolsFor } from '../tools/catalog.ts';
-import type { ToolArgs, UiToolName } from './api.ts';
+import type { BatchResultJson, ToolArgs, UiToolName } from './api.ts';
 
 /** Jeder Key des Client-Typs mit einem Wert: `Required` lässt vergessene Keys nicht durch. */
 const FULL: { [K in UiToolName]: Required<ToolArgs[K]> } = {
@@ -41,11 +42,34 @@ const FULL: { [K in UiToolName]: Required<ToolArgs[K]> } = {
   comment_delete: { id: 'bk-1', comment: '1' },
   attachment_rm: { id: 'bk-1', name: 'a.png' },
   repo_locate: { name: 'acme' },
+  batch: { ops: [{ op: 'issue.rank', id: 'bk-1', from: null, bottom: true }] },
 };
 
 describe('client tool args', () => {
   test.each(Object.keys(FULL))('%s args fit the catalog schema', (name) => {
     const def = toolsFor('ui', { allowDelete: true }).find((t) => t.name === name);
+    expect(def, `${name} is a ui tool`).toBeDefined();
     expect(def?.input.safeParse(FULL[name as UiToolName]).success).toBe(true);
+  });
+});
+
+describe('client tool results', () => {
+  test('BatchResultJson has the keys and types of batchJson', () => {
+    const full: Required<BatchResultJson> = {
+      commit: 'c1',
+      refs: { $a: 'bk-1' },
+      ops: 2,
+      notices: [{ code: 'settled_dependency', message: 'n' }],
+      warnings: ['w'],
+    };
+    const json = batchJson({
+      commit: 'c1',
+      refs: { $a: 'bk-1' },
+      ops: [{}, {}] as never,
+      notices: [{ code: 'settled_dependency', message: 'n' }] as never,
+      warnings: ['w'],
+    });
+    expect(Object.keys(json).sort()).toEqual(Object.keys(full).sort());
+    expect(json).toEqual(full);
   });
 });

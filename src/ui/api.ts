@@ -132,6 +132,14 @@ export type WriteResultJson = {
   notices?: NoticeJson[];
   warnings?: string[];
 };
+/** `batchJson`: ein Commit für alle Operationen; `ops` zählt sie, `refs` löst Platzhalter auf. */
+export type BatchResultJson = {
+  commit: string | null;
+  refs: Record<string, string>;
+  ops: number;
+  notices?: NoticeJson[];
+  warnings?: string[];
+};
 /** `repoLocateJson`: der lokale Pfad eines Repos aus der User-Config. */
 export type RepoLocateJson = {
   name: string;
@@ -187,8 +195,14 @@ export type ToolArgs = {
   comment_delete: { id: string; comment: string };
   attachment_rm: { id: string; name: string };
   repo_locate: { name: string };
+  /** Operationen im Format von backe.md §2.16.6, etwa `{ op: 'issue.rank', id, from, bottom: true }`. */
+  batch: { ops: Record<string, unknown>[] };
 };
 export type UiToolName = keyof ToolArgs;
 export type ToolResults = {
-  [K in UiToolName]: K extends 'repo_locate' ? RepoLocateJson : WriteResultJson;
+  [K in UiToolName]: K extends 'repo_locate'
+    ? RepoLocateJson
+    : K extends 'batch'
+      ? BatchResultJson
+      : WriteResultJson;
 };
