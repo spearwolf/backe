@@ -57,8 +57,9 @@ async function seed(b: TestBacklog): Promise<string> {
 function normalized(value: unknown, ids: readonly string[]): unknown {
   let text = JSON.stringify(value);
   for (const id of ids) text = text.replaceAll(id, '<id>');
-  // Kommentar-Dateinamen tragen ein zufälliges Suffix: `<zeit>-<handle>-<zufall>.md`.
-  text = text.replace(/(\d{8}T\d{6}Z-[a-z]+)-[a-z0-9]+\.md/g, '$1-<x>.md');
+  // Kommentar-Dateinamen tragen Zeit und Zufall: `<zeit>-<handle>-<zufall>.md`; die Zwillinge
+  // schreiben in verschiedenen Sekunden, also bleibt nur der Handle stehen.
+  text = text.replace(/\d{8}T\d{6}Z-([a-z]+)-[a-z0-9]+\.md/g, '<zeit>-$1-<x>.md');
   const { commit: _commit, ...rest } = JSON.parse(text) as Record<string, unknown>;
   return rest;
 }
