@@ -1,4 +1,4 @@
-/** `backe ui [--port <n>] [--open]`: lokaler Webserver (ui.md §2.1), läuft bis SIGINT/SIGTERM. */
+/** `backe ui [-p | --port <n>] [--open]`: lokaler Webserver (ui.md §2.1), läuft bis SIGINT/SIGTERM. */
 import { spawn } from 'node:child_process';
 import type { Command } from 'commander';
 import { BackeError } from '../../core/errors.ts';
@@ -53,7 +53,7 @@ function untilSignal(): Promise<void> {
 
 export function uiCommand(program: Command, rt: Runtime): void {
   subcommand(program, 'ui', m.description)
-    .option('--port <n>', m.portOption)
+    .option('-p, --port <n>', m.portOption)
     .option('--open', m.openOption)
     .action((opts: Opts, cmd: Command) => {
       const { backlog, as } = globalOpts(cmd);

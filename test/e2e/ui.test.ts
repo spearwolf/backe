@@ -101,6 +101,14 @@ test('prints exactly one start line and serves the api', async () => {
   expect(ui.stdout()).toBe(`${ui.line}\n`);
 });
 
+test('-p is the short form of --port', async () => {
+  const b = await testBacklog();
+  const ui = await spawnUi(['ui', '-p', '0'], { env: env(b), cwd: b.root });
+  expect(ui.line).toMatch(START);
+  expect(ui.port).toBeGreaterThan(0);
+  expect(await ui.stop('SIGTERM')).toBe(0);
+});
+
 test('SIGINT ends with exit code 0', async () => {
   const b = await testBacklog();
   const ui = await spawnUi(['ui', '--port', '0'], { env: env(b), cwd: b.root });
