@@ -3,12 +3,12 @@
  * aktiver Inhalt im Ursprung der App, sondern mit `sandbox`-CSP, `nosniff` und, wo ein Browser
  * sie ausführen könnte (HTML), als Download.
  */
-import { open } from 'node:fs/promises';
 import type { ServerResponse } from 'node:http';
 import { extname } from 'node:path';
-import { Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { BackeError } from '../core/errors.ts';
+import { m } from '../services/attachments.messages.ts';
 import { ATTACHMENT_TEXT_LIMIT } from '../tools/read.ts';
+import { sendFile } from './stream-file.ts';
 
 export type Delivery = { type: string; disposition: 'inline' | 'attachment' };
 
@@ -61,66 +61,31 @@ export function contentDisposition(d: Delivery['disposition'], name: string): st
 }
 
 /**
- * Schickt einen Anhang. Die Datei wird genau einmal geöffnet; Länge und Inhalt stammen beide
- * vom `fstat` dieses Handles, so kann eine zwischenzeitlich geänderte Datei weder zu viele noch
- * zu wenige Bytes hinter `Content-Length` schieben. Kleine Dateien (bis `ATTACHMENT_TEXT_LIMIT`)
- * werden ganz gelesen, damit die Inhaltsprüfung und die ausgelieferten Bytes dieselben sind;
- * größere gehen als Stream. `path` stammt aus dem Anhangsverzeichnis des Issues, nie aus der
- * URL. `head`: nur die Header.
+ * Schickt einen Anhang über `sendFile`: Länge und Inhalt stammen vom `fstat` des einmal geöffneten
+ * Handles. Kleine Dateien (bis `ATTACHMENT_TEXT_LIMIT`) werden ganz gelesen, damit die
+ * Inhaltsprüfung und die ausgelieferten Bytes dieselben sind; größere gehen als Stream. `path`
+ * stammt aus dem Anhangsverzeichnis des Issues, nie aus der URL. Ist die Datei inzwischen weg,
+ * ist das `not_found` wie in `getAttachment`. `head`: nur die Header.
  */
 export async function sendAttachment(
   res: ServerResponse,
   a: { name: string; path: string },
   head: boolean,
 ): Promise<void> {
-  const fh = await open(a.path, 'r');
-  let handed = false;
-  try {
-    const size = (await fh.stat()).size;
-    let bytes: Uint8Array | undefined;
-    if (size <= ATTACHMENT_TEXT_LIMIT) {
-      const buf = Buffer.alloc(size);
-      let got = 0;
-      while (got < size) {
-        const { bytesRead } = await fh.read(buf, got, size - got, got);
-        if (bytesRead === 0) break;
-        got += bytesRead;
-      }
-      bytes = buf.subarray(0, got);
-    }
-    const length = bytes?.length ?? size;
-    const delivery = attachmentDelivery(a.name, bytes);
-    res.writeHead(200, {
-      'Content-Type': delivery.type,
-      'Content-Disposition': contentDisposition(delivery.disposition, a.name),
-      'Content-Length': length,
-      'X-Content-Type-Options': 'nosniff',
-      'Content-Security-Policy': 'sandbox',
-      'Referrer-Policy': 'no-referrer',
-      'Cache-Control': 'no-store',
-    });
-    if (head) {
-      res.end();
-    } else if (bytes !== undefined) {
-      res.end(bytes);
-    } else {
-      const stream = fh.createReadStream({ start: 0, end: size - 1 });
-      handed = true;
-      // Zählt mit und scheitert im flush, wenn die Datei kürzer geworden ist, als `Content-Length`
-      // versprach: Der Fehler kommt vor `res.end()`, solange der Socket noch hängt.
-      let sent = 0;
-      const guard = new Transform({
-        transform(chunk: Buffer, _enc, cb) {
-          sent += chunk.length;
-          cb(null, chunk);
-        },
-        flush(cb) {
-          cb(sent < size ? new Error('attachment shrank while streaming') : null);
-        },
-      });
-      await pipeline(stream, guard, res).catch(() => res.destroy());
-    }
-  } finally {
-    if (!handed) await fh.close();
-  }
+  const sent = await sendFile(res, a.path, {
+    head,
+    readLimit: ATTACHMENT_TEXT_LIMIT,
+    headers: ({ bytes }) => {
+      const delivery = attachmentDelivery(a.name, bytes);
+      return {
+        'Content-Type': delivery.type,
+        'Content-Disposition': contentDisposition(delivery.disposition, a.name),
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': 'sandbox',
+        'Referrer-Policy': 'no-referrer',
+        'Cache-Control': 'no-store',
+      };
+    },
+  });
+  if (!sent) throw new BackeError('not_found', m.pathMissing(a.path));
 }

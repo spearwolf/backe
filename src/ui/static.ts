@@ -3,12 +3,12 @@
  * hier sicherheitsrelevant: jedes Segment wird einzeln dekodiert, und der `realpath` des Ziels muss
  * unter dem `realpath` des Wurzelverzeichnisses liegen (fängt Symlinks, die hinausführen).
  */
-import { createReadStream } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, join, sep } from 'node:path';
-import { pipeline } from 'node:stream/promises';
 import { placeholderPage } from './pages.ts';
+import { m } from './static.messages.ts';
+import { sendFile } from './stream-file.ts';
 
 const TYPES: Readonly<Record<string, string>> = {
   '.html': 'text/html; charset=utf-8',
@@ -27,12 +27,13 @@ const IMMUTABLE = 'public, max-age=31536000, immutable';
 const TEXT_TYPE = 'text/plain; charset=utf-8';
 
 function notFound(res: ServerResponse): void {
+  const text = m.notFound;
   res.writeHead(404, {
     'Content-Type': TEXT_TYPE,
-    'Content-Length': 9,
+    'Content-Length': Buffer.byteLength(text),
     'Cache-Control': 'no-store',
   });
-  res.end('not found');
+  res.end(text);
 }
 
 /** Dekodierte Segmente des Pfads; `undefined` bei ungültiger Kodierung, NUL, `..` oder Trenner im Segment. */
@@ -62,35 +63,36 @@ async function resolve(path: string): Promise<string | undefined> {
   }
 }
 
-type Found = { file: string; size: number } | 'outside' | undefined;
+type Found = string | 'outside' | undefined;
 
-/** Reguläre Datei unter `root` (bereits `realpath`); `'outside'`, wenn das Ziel die Wurzel verlässt. */
+/**
+ * `realpath` einer regulären Datei unter `root` (bereits `realpath`); `'outside'`, wenn das Ziel
+ * die Wurzel verlässt.
+ */
 async function locate(root: string, target: string): Promise<Found> {
   const real = await resolve(target);
   if (real === undefined) return undefined;
   if (real !== root && !real.startsWith(root.endsWith(sep) ? root : root + sep)) return 'outside';
   const info = await stat(real);
-  return info.isFile() ? { file: real, size: info.size } : undefined;
+  return info.isFile() ? real : undefined;
 }
 
-function sendFile(
+/**
+ * Schickt `file` über `sendFile`; `false`, wenn die Datei seit `locate` verschwunden ist. Dann
+ * ist nichts gesendet, und der Aufrufer behandelt sie wie eine fehlende Datei.
+ */
+function sendStatic(
   req: IncomingMessage,
   res: ServerResponse,
-  file: { file: string; size: number },
+  file: string,
   cache: string,
-): Promise<void> {
-  res.writeHead(200, {
-    'Content-Type': TYPES[extname(file.file).toLowerCase()] ?? 'application/octet-stream',
-    'Content-Length': file.size,
-    'Cache-Control': cache,
-  });
-  if (req.method === 'HEAD') {
-    res.end();
-    return Promise.resolve();
-  }
-  // `pipeline` räumt auch auf, wenn der Client vor dem Anhängen schon getrennt hat.
-  return pipeline(createReadStream(file.file), res).catch(() => {
-    res.destroy();
+): Promise<boolean> {
+  return sendFile(res, file, {
+    head: req.method === 'HEAD',
+    headers: () => ({
+      'Content-Type': TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream',
+      'Cache-Control': cache,
+    }),
   });
 }
 
@@ -120,12 +122,14 @@ export async function serveStatic(
   if (found === 'outside') return notFound(res);
   if (found !== undefined) {
     const immutable = segments[0] === 'assets' && segments.length > 1;
-    return sendFile(req, res, found, immutable ? IMMUTABLE : 'no-cache');
+    if (await sendStatic(req, res, found, immutable ? IMMUTABLE : 'no-cache')) return;
   }
 
   const last = segments[segments.length - 1] ?? '';
   if (last.includes('.')) return notFound(res);
   const index = root === undefined ? undefined : await locate(root, join(root, 'index.html'));
-  if (typeof index === 'object') return sendFile(req, res, index, 'no-cache');
+  if (index !== undefined && index !== 'outside') {
+    if (await sendStatic(req, res, index, 'no-cache')) return;
+  }
   sendPlaceholder(req, res);
 }

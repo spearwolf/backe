@@ -1,10 +1,32 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { rawRequest, startUi, type UiHarness } from '../../test/helpers/ui.ts';
 import { serveStatic } from './static.ts';
+
+/**
+ * Eingriff gleich nach dem nächsten `stat` auf `path`, also zwischen `locate` und dem Öffnen:
+ * Die Datei verschwindet (`rm`) oder schrumpft auf 1000 Bytes (`shrink`).
+ */
+const afterStat = vi.hoisted(() => ({
+  path: undefined as string | undefined,
+  action: 'rm' as 'rm' | 'shrink',
+}));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  const stat = async (path: string) => {
+    const info = await fs.stat(path);
+    if (path === afterStat.path) {
+      afterStat.path = undefined;
+      if (afterStat.action === 'rm') await fs.rm(path);
+      else await fs.truncate(path, 1000);
+    }
+    return info;
+  };
+  return { ...fs, stat };
+});
 
 const INDEX = '<!doctype html><title>app</title><div id=root></div>';
 const SECRET = 'top-secret-value';
@@ -70,6 +92,39 @@ test('app routes fall back to index.html', async () => {
 test('missing files with an extension are 404', async () => {
   const r = await ui.get('/nope.js');
   expect([r.status, r.headers['content-type']]).toEqual([404, 'text/plain; charset=utf-8']);
+  expect([r.text(), r.headers['content-length']]).toEqual(['nicht gefunden', '14']);
+});
+
+test('a file that vanishes before it is opened is 404 like a missing one', async () => {
+  const path = join(dist, 'gone.js');
+  await writeFile(path, 'console.log(2);');
+  Object.assign(afterStat, { path: await realpath(path), action: 'rm' });
+  const r = await ui.get('/gone.js');
+  expect([r.status, r.text()]).toEqual([404, 'nicht gefunden']);
+  expect(afterStat.path).toBeUndefined();
+});
+
+test('a file that shrinks before it is opened is sent with the length of the opened file', async () => {
+  const path = join(dist, 'assets', 'shrink-1a2b.js');
+  await writeFile(path, Buffer.alloc(300_000, 0x61));
+  Object.assign(afterStat, { path: await realpath(path), action: 'shrink' });
+  const r = await ui.get('/assets/shrink-1a2b.js', { connection: 'keep-alive' });
+  expect([r.status, r.headers['content-length'], r.body.length]).toEqual([200, '1000', 1000]);
+}, 3000);
+
+test('an index.html that vanishes before it is opened leaves the placeholder', async () => {
+  const own = join(base, 'vanishing');
+  await mkdir(own);
+  await writeFile(join(own, 'index.html'), INDEX);
+  const u = await start(own);
+  try {
+    Object.assign(afterStat, { path: await realpath(join(own, 'index.html')), action: 'rm' });
+    const r = await u.get('/b/acme');
+    expect([r.status, r.text()]).toEqual([200, expect.stringContaining('pnpm build')]);
+    expect(afterStat.path).toBeUndefined();
+  } finally {
+    await u.close();
+  }
 });
 
 test('static paths never leave the root', async () => {
