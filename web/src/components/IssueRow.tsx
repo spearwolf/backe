@@ -3,6 +3,7 @@ import { type DragEventHandler, type KeyboardEventHandler, memo } from 'react';
 import type { ListRow } from '../app/backlog-list.ts';
 import { useLinkClick } from '../app/router.ts';
 import { routeHref } from '../app/routes.ts';
+import { useWrites } from '../data/write-context.tsx';
 import { cn } from '../lib/utils.ts';
 import { m } from '../views/backlog.messages.ts';
 import { RowMenu } from './RowMenu.tsx';
@@ -64,6 +65,12 @@ export function IssueRow(props: {
   );
 }
 
+/** Tastenkürzel der Zeile: das Kontextmenü mit Schreibrecht, das Umsortieren nur mit `reorder`. */
+function shortcuts(canWrite: boolean, reorder: boolean): string | undefined {
+  const keys = [canWrite && 'Shift+F10', reorder && 'Alt+ArrowUp Alt+ArrowDown'].filter(Boolean);
+  return keys.length === 0 ? undefined : keys.join(' ');
+}
+
 /**
  * Inhalt einer Zeile (ui.md §2.7). `memo`: Das Listenmodell hält unveränderte Zeilen als dieselben
  * Objekte, ein Patch rendert so nur die Zeilen neu, die er berührt.
@@ -77,6 +84,7 @@ const RowContent = memo(function RowContent(props: {
   const { issue, depth, openDeps, progress } = row;
   const href = routeHref({ kind: 'issue', backlog, id: issue.id });
   const go = useLinkClick();
+  const { canWrite } = useWrites();
   // Projekt und Sprint dürfen gleich heißen; der Key trägt darum die Art.
   const chips = [
     ...(issue.projects ?? []).map((name) => ({ key: `p:${name}`, name })),
@@ -87,7 +95,7 @@ const RowContent = memo(function RowContent(props: {
       <a
         href={href}
         onClick={go(href)}
-        aria-keyshortcuts={reorder ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
+        aria-keyshortcuts={shortcuts(canWrite, reorder)}
         className="flex h-full min-w-0 flex-1 items-center gap-3 px-3 text-sm outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         style={{ paddingLeft: `calc(0.75rem + ${depth}rem)` }}
       >

@@ -63,8 +63,7 @@ test('in a tree the keyboard moves among siblings and skips subtrees', () => {
 });
 
 test('a drop target must be a sibling', () => {
-  // Wurzel auf Kind und Kind auf Wurzel: keine Markierung, kein Write.
-  expect(dropTarget(tree, tid(6), tid(2), 5, 36)).toBeUndefined();
+  // Kind auf Wurzel und Kind auf ein fremdes Kind: keine Markierung, kein Write.
   expect(dropTarget(tree, tid(4), tid(5), 5, 36)).toBeUndefined();
   expect(dropTarget(tree, tid(3), tid(4), 5, 36)).toBeUndefined();
   expect(dropTarget(tree, tid(4), tid(2), 5, 36)).toEqual({
@@ -78,6 +77,24 @@ test('dropping after a row with a subtree marks the end of the subtree', () => {
     pos: { after: tid(1) },
     marker: { id: tid(4), side: 'after' },
   });
+});
+
+test('a drop on a child row means its sibling ancestor, after its subtree', () => {
+  // Wurzel 6 über Kind 2 oder Enkel 3: gemeint ist die Wurzel 1, abgelegt hinter ihrem Teilbaum.
+  for (const target of [tid(2), tid(3)]) {
+    for (const offset of [5, 30]) {
+      expect(dropTarget(tree, tid(6), target, offset, 36)).toEqual({
+        pos: { after: tid(1) },
+        marker: { id: tid(4), side: 'after' },
+      });
+    }
+  }
+  // 5 steht schon hinter 1, 4 schon hinter 2: Die Reihenfolge bliebe.
+  expect(dropTarget(tree, tid(5), tid(3), 5, 36)).toBeUndefined();
+  expect(dropTarget(tree, tid(4), tid(3), 5, 36)).toBeUndefined();
+  // Über den eigenen Kindern gibt es kein Ziel.
+  expect(dropTarget(tree, tid(1), tid(3), 30, 36)).toBeUndefined();
+  expect(dropTarget(tree, tid(2), tid(3), 30, 36)).toBeUndefined();
 });
 
 test('a drop that keeps the order is no move', () => {

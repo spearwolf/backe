@@ -104,10 +104,18 @@ describe('in the tree', () => {
   test('a drop outside the sibling group marks nothing and writes nothing', () => {
     tree();
     expect(rowIds()).toEqual([tid(1), tid(2), tid(3), tid(4)]);
-    // Wurzel auf ein Kind und Kind auf eine Wurzel.
-    expect(dragOnto(tid(4), tid(2), 5)).toEqual([]);
+    // Ein Kind auf eine Wurzel.
     expect(dragOnto(tid(2), tid(3), 30)).toEqual([]);
+    expect(dragOnto(tid(2), tid(4), 5)).toEqual([]);
     expect(call).not.toHaveBeenCalled();
+  });
+
+  test('a drop on a child row lands behind its parent subtree', () => {
+    answerNever();
+    tree();
+    expect(dragOnto(tid(4), tid(2), 5)).toEqual([[tid(2), 'after']]);
+    expect(call).toHaveBeenCalledExactlyOnceWith('issue_rank', { id: tid(4), after: tid(1) });
+    expect(rowIds()).toEqual([tid(1), tid(2), tid(4), tid(3)]);
   });
 
   test('a drop after a parent marks and lands behind its subtree', () => {
@@ -149,7 +157,9 @@ test('alt+arrow reranks with the keyboard', async () => {
   expect(rowIds()).toEqual([tid(1), tid(2), tid(3)]);
   expect(call).toHaveBeenCalledExactlyOnceWith('issue_rank', { id: tid(2), after: tid(1) });
   expect(document.activeElement).toBe(linkOf(tid(2)));
-  expect(linkOf(tid(2)).getAttribute('aria-keyshortcuts')).toBe('Alt+ArrowUp Alt+ArrowDown');
+  expect(linkOf(tid(2)).getAttribute('aria-keyshortcuts')).toBe(
+    'Shift+F10 Alt+ArrowUp Alt+ArrowDown',
+  );
 });
 
 test('alt+arrow scrolls the moved row into view', async () => {
@@ -228,7 +238,7 @@ test('no drag when sorted by created', async () => {
   expect(rowOf(tid(1)).getAttribute('draggable')).toBe('true');
   await userEvent.click(screen.getByRole('button', { name: m.sortCreated }));
   expect(rowOf(tid(1)).hasAttribute('draggable')).toBe(false);
-  expect(linkOf(tid(1)).hasAttribute('aria-keyshortcuts')).toBe(false);
+  expect(linkOf(tid(1)).getAttribute('aria-keyshortcuts')).toBe('Shift+F10');
   linkOf(tid(2)).focus();
   await alt('ArrowUp');
   expect(call).not.toHaveBeenCalled();

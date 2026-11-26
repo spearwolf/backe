@@ -1,5 +1,13 @@
 import type { IssueJson } from '@backe/ui/api.ts';
-import { createContext, type ReactNode, useContext, useMemo, useRef, useState } from 'react';
+import {
+  createContext,
+  type KeyboardEvent,
+  type ReactNode,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { updateOverlay } from '../app/optimistic.ts';
 import { openChildrenOf, type StateAction, stateActions, stateCall } from '../app/state-actions.ts';
 import type { ApiError } from '../data/api-client.ts';
@@ -93,10 +101,38 @@ function StateHost(props: {
   );
 }
 
+/** Kontextmenü-Taste oder Umschalt+F10, ohne weitere Modifier. */
+const isMenuKey = (e: KeyboardEvent): boolean =>
+  !e.altKey &&
+  !e.ctrlKey &&
+  !e.metaKey &&
+  (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey));
+
+/**
+ * Öffnet das Menü über die Tastatur: Ob der Browser aus der Taste ein `contextmenu` macht, ist
+ * nicht verlässlich (manche nie, manche erst beim Loslassen). Darum geht ein eigenes `contextmenu`
+ * an die Zeile, unten links an ihr; `preventDefault` hält das Menü des Browsers fern. Kommt das
+ * native Ereignis trotzdem, öffnet Radix dasselbe Menü noch einmal, kein zweites.
+ */
+function openByKey(e: KeyboardEvent<HTMLElement>): void {
+  if (!isMenuKey(e)) return;
+  e.preventDefault();
+  const el = e.currentTarget;
+  const box = el.getBoundingClientRect();
+  el.dispatchEvent(
+    new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: box.left,
+      clientY: box.bottom,
+    }),
+  );
+}
+
 /**
  * Kontextmenü einer Zeile (ui.md §2.7): Rechtsklick, Kontextmenü-Taste oder Umschalt+F10 an der
- * fokussierten Zeile. Ohne Schreibrecht gibt es keins. Der Inhalt entsteht erst beim Öffnen: Nur
- * dann liest die Zeile Config und Users.
+ * fokussierten Zeile (`openByKey`, unabhängig von der Sortierung). Ohne Schreibrecht gibt es keins.
+ * Der Inhalt entsteht erst beim Öffnen: Nur dann liest die Zeile Config und Users.
  */
 export function RowMenu({ issue, children }: { issue: IssueJson; children: ReactNode }) {
   const { canWrite } = useWrites();
@@ -104,7 +140,9 @@ export function RowMenu({ issue, children }: { issue: IssueJson; children: React
   if (!canWrite) return children;
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuTrigger asChild onKeyDown={openByKey}>
+        {children}
+      </ContextMenuTrigger>
       <ContextMenuContent
         onCloseAutoFocus={(e) => {
           // Öffnet ein Eintrag einen Dialog, gehört ihm der Fokus, nicht der Zeile.

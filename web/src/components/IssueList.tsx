@@ -1,5 +1,13 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { type DragEvent, useCallback, useLayoutEffect, useRef, useState } from 'react';
+import {
+  type DragEvent,
+  type FocusEvent,
+  type MouseEvent,
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import type { ListRow } from '../app/backlog-list.ts';
 import { useStore } from '../data/store-context.tsx';
 import { useWrites } from '../data/write-context.tsx';
@@ -14,6 +22,16 @@ type Follow = { id: string; rows: readonly ListRow[]; scrolled: boolean; waited:
 
 const linkIn = (scope: HTMLElement | null, id: string) =>
   scope?.querySelector<HTMLElement>(`li[data-id="${id}"] a`) ?? null;
+
+const gone = (row: ListRow | undefined) => row === undefined || row.live === 'leaving';
+
+/** Die Zeile ab `index`, sonst die davor, die nicht `id` ist und nicht ausblendet. */
+function neighbour(rows: readonly ListRow[], index: number, id: string): ListRow | undefined {
+  const usable = (r: ListRow | undefined) => r !== undefined && r.issue.id !== id && !gone(r);
+  for (let j = index; j < rows.length; j++) if (usable(rows[j])) return rows[j];
+  for (let j = Math.min(index, rows.length) - 1; j >= 0; j--) if (usable(rows[j])) return rows[j];
+  return undefined;
+}
 
 /**
  * Die Liste des Tabs Backlog, virtualisiert: gerendert werden nur sichtbare Zeilen (ui.md §2.7).
@@ -42,6 +60,7 @@ export function IssueList(props: { backlog: string; rows: readonly ListRow[]; re
   // ihn zurück. Liegt sie erst nach dem Scrollen im Bereich, wartet das auf genau einen Render.
   useLayoutEffect(() => {
     current.current = rows;
+    rescue(rows);
     const f = follow.current;
     if (f === undefined || rows === f.rows) return;
     const index = rows.findIndex((r) => r.issue.id === f.id);
@@ -63,7 +82,50 @@ export function IssueList(props: { backlog: string; rows: readonly ListRow[]; re
     if (link !== null && (active === null || active === document.body)) link.focus();
   });
 
-  const focusRow = useCallback((id: string) => linkIn(scroller.current, id)?.focus(), []);
+  // Die Zeile, der der Fokus gehört (zuletzt fokussiert oder per Rechtsklick gewählt), samt ihrer
+  // Stelle: Blendet sie aus oder fehlt sie, geht der Fokus an die Nachbarzeile, nicht an `body`.
+  const owner = useRef<{ id: string; index: number } | undefined>(undefined);
+  const toNeighbour = useCallback((id: string, index: number) => {
+    const next = neighbour(current.current, index, id);
+    if (next !== undefined) linkIn(scroller.current, next.issue.id)?.focus();
+  }, []);
+  const rescue = (list: readonly ListRow[]) => {
+    const o = owner.current;
+    if (o === undefined) return;
+    const index = list.findIndex((r) => r.issue.id === o.id);
+    if (index >= 0) o.index = index;
+    if (!gone(list[index])) return;
+    const active = document.activeElement;
+    const held =
+      active === null || active === document.body || linkIn(scroller.current, o.id) === active;
+    if (held) toNeighbour(o.id, o.index);
+  };
+  const own = (e: FocusEvent<HTMLElement> | MouseEvent<HTMLElement>) => {
+    // Ereignisse aus Menü und Dialogen kommen über das Portal hier an; sie meinen keine Zeile.
+    if (!e.currentTarget.contains(e.target as Node)) return;
+    const id = (e.target as HTMLElement).closest<HTMLElement>('li[data-id]')?.dataset.id;
+    if (id === undefined) return;
+    const index = current.current.findIndex((r) => r.issue.id === id);
+    owner.current = { id, index };
+    if (e.type === 'focus' && gone(current.current[index])) toNeighbour(id, index);
+  };
+  const release = (e: FocusEvent<HTMLElement>) => {
+    // Wer den Fokus aus der Liste nimmt (Klick ins Leere), dem holt ihn später keine Zeile zurück.
+    // Menü und Dialog nehmen ihn mit einem Ziel (`relatedTarget`); eine entfernte Zeile ist weg.
+    const from = e.target as Node;
+    if (e.relatedTarget === null && e.currentTarget.contains(from) && from.isConnected) {
+      owner.current = undefined;
+    }
+  };
+  const focusRow = useCallback(
+    (id: string) => {
+      const index = current.current.findIndex((r) => r.issue.id === id);
+      if (!gone(current.current[index])) linkIn(scroller.current, id)?.focus();
+      else if (index >= 0) toNeighbour(id, index);
+      else if (owner.current?.id === id) toNeighbour(id, owner.current.index);
+    },
+    [toNeighbour],
+  );
   /** Umsortieren, dem die Ansicht folgt; ohne Vorschau ändert sich nichts, dem zu folgen wäre. */
   const move = useCallback(
     (id: string, pos: RankMove) => {
@@ -141,6 +203,9 @@ export function IssueList(props: { backlog: string; rows: readonly ListRow[]; re
         <div ref={scroller} className="min-h-0 flex-1 overflow-auto">
           <ul
             aria-label={m.issues}
+            onFocus={own}
+            onBlur={release}
+            onContextMenu={own}
             className="relative m-0 w-full list-none p-0"
             style={{ height: virtualizer.getTotalSize() }}
           >

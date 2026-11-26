@@ -83,13 +83,14 @@ export function MultiPick(props: {
   );
 }
 
-/** Wert des Radio-Eintrags für `none`; Handles sind nie leer. */
+/** Wert des Radio-Eintrags für »niemand«; Handles sind nie leer. */
 export const NO_ASSIGNEE = '';
 
 /**
- * Die Wahlen für den Assignee, in jedem Menü gleich: `none`, `me (<handle>)`, dann die übrigen
- * Users. Ein Handle, das der Store nicht (mehr) kennt, bleibt wählbar, statt still auf `none` zu
- * springen.
+ * Die Wahlen für den Assignee, in jedem Menü gleich: niemand, ich (`<handle>`), dann die übrigen
+ * Users. Die Beschriftung folgt der Sprache, die Werte bleiben roh (`NO_ASSIGNEE` oder ein
+ * Handle); die FilterBar zeigt dagegen `me`/`none` als Filter-Syntax. Ein Handle, das der Store
+ * nicht (mehr) kennt, bleibt wählbar, statt still auf niemand zu springen.
  */
 export function assigneeChoices(
   value: string | null,
@@ -99,13 +100,13 @@ export function assigneeChoices(
   const others = users.filter((u) => u !== me);
   if (value !== null && value !== me && !others.includes(value)) others.push(value);
   return [
-    { value: NO_ASSIGNEE, label: 'none' },
-    ...(me === null ? [] : [{ value: me, label: `me (${me})` }]),
+    { value: NO_ASSIGNEE, label: m.assigneeNone },
+    ...(me === null ? [] : [{ value: me, label: m.assigneeMe(me) }]),
     ...others.map((u) => ({ value: u, label: u })),
   ];
 }
 
-/** `none` heißt `null`; `me` steht für die eigene Identität, gemeldet wird ihr Handle. */
+/** Niemand heißt `null`; »ich« steht für die eigene Identität, gemeldet wird ihr Handle. */
 export function AssigneeSelect(props: {
   value: string | null;
   me: string | null;
@@ -115,7 +116,7 @@ export function AssigneeSelect(props: {
 }) {
   const { value, me, users, onChange, disabled } = props;
   const choices = assigneeChoices(value, me, users);
-  const shown = choices.find((c) => c.value === (value ?? NO_ASSIGNEE))?.label ?? 'none';
+  const shown = choices.find((c) => c.value === (value ?? NO_ASSIGNEE))?.label ?? m.assigneeNone;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>

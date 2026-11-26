@@ -40,7 +40,7 @@ test('c opens the dialog prefilled from the backlog filter', async () => {
   expect(chips(m.fieldRepos)).toEqual(['core']);
   expect(stateBox().value).toBe('todo');
   expect(
-    inDialog().getByRole('button', { name: m.choice(m.fieldAssignee, 'me (spw)') }),
+    inDialog().getByRole('button', { name: m.choice(m.fieldAssignee, m.assigneeMe('spw')) }),
   ).toBeTruthy();
   // Nur die Hauptlinie: Seitenzustände entstehen per Übergang, nicht beim Anlegen.
   expect(
@@ -59,7 +59,9 @@ test('c outside the backlog tab starts empty', async () => {
   await user.keyboard('c');
   expect(chips(m.fieldProjects)).toEqual([]);
   expect(stateBox().value).toBe('backlog');
-  expect(inDialog().getByRole('button', { name: m.choice(m.fieldAssignee, 'none') })).toBeTruthy();
+  expect(
+    inDialog().getByRole('button', { name: m.choice(m.fieldAssignee, m.assigneeNone) }),
+  ).toBeTruthy();
 });
 
 test('c does nothing while typing or without write access', async () => {

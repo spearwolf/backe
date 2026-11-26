@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, createEvent, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ApiError } from '../data/api-client.ts';
 import {
@@ -11,7 +11,7 @@ import {
   scroller,
   view,
 } from '../test/backlog-view.tsx';
-import { testIssue, tid } from '../test/state.ts';
+import { testIssue, testPatch, tid } from '../test/state.ts';
 import { m } from '../views/backlog.messages.ts';
 import { m as im } from '../views/issue.messages.ts';
 import { m as w } from './write/write.messages.ts';
@@ -112,11 +112,11 @@ test('assignee from the menu', async () => {
   view([testIssue(1, { assignee: 'ada' })], {
     over: { users: [{ handle: 'ada', name: 'Ada', kind: 'human', admin: false }] },
   });
-  await pick(tid(1), m.menuAssignee, 'me (spw)', 'menuitemradio');
+  await pick(tid(1), m.menuAssignee, im.assigneeMe('spw'), 'menuitemradio');
   expect(call).toHaveBeenCalledExactlyOnceWith('issue_update', { id: tid(1), assignee: 'spw' });
   expect(within(rowOf(tid(1))).getByText('spw')).toBeTruthy();
   call.mockClear();
-  await pick(tid(1), m.menuAssignee, 'none', 'menuitemradio');
+  await pick(tid(1), m.menuAssignee, im.assigneeNone, 'menuitemradio');
   expect(call).toHaveBeenCalledExactlyOnceWith('issue_update', { id: tid(1), assignee: null });
 });
 
@@ -127,6 +127,47 @@ test('delete from the menu opens the dialog', async () => {
   const dialog = screen.getByRole('dialog', { name: im.deleteTitle(tid(1)) });
   await userEvent.click(within(dialog).getByRole('button', { name: im.deleteAction }));
   expect(call).toHaveBeenCalledExactlyOnceWith('issue_delete', { id: tid(1) });
+});
+
+test('after a delete from the menu the focus goes to the neighbour row', async () => {
+  const answer = deferred<unknown>();
+  call.mockImplementation(() => answer.promise);
+  const { store } = view([testIssue(1), testIssue(2), testIssue(3)]);
+  linkOf(tid(2)).focus();
+  fireEvent.contextMenu(linkOf(tid(2)));
+  await userEvent.click(screen.getByRole('menuitem', { name: m.deleteIssue }));
+  const dialog = screen.getByRole('dialog', { name: im.deleteTitle(tid(2)) });
+  await userEvent.click(within(dialog).getByRole('button', { name: im.deleteAction }));
+  // Der Patch kommt vor der Antwort: Die Zeile blendet aus, während der Dialog noch offen ist.
+  act(() => {
+    store.applyPatch(testPatch(2, { remove: { issues: [tid(2)] } }));
+  });
+  await act(async () => answer.resolve({ commit: 'h2' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(document.activeElement).toBe(linkOf(tid(3)));
+});
+
+test('a focused row that disappears hands the focus to the next, else the previous', () => {
+  const { store } = view([testIssue(1), testIssue(2), testIssue(3)]);
+  linkOf(tid(2)).focus();
+  act(() => {
+    store.applyPatch(testPatch(2, { remove: { issues: [tid(2)] } }));
+  });
+  expect(document.activeElement).toBe(linkOf(tid(3)));
+  act(() => {
+    store.applyPatch(testPatch(3, { remove: { issues: [tid(3)] } }));
+  });
+  expect(document.activeElement).toBe(linkOf(tid(1)));
+});
+
+test('a row the user left does not pull the focus back when it disappears', () => {
+  const { store } = view([testIssue(1), testIssue(2), testIssue(3)]);
+  linkOf(tid(2)).focus();
+  linkOf(tid(2)).blur();
+  act(() => {
+    store.applyPatch(testPatch(2, { remove: { issues: [tid(2)] } }));
+  });
+  expect(document.activeElement).toBe(document.body);
 });
 
 test('a rejected menu action shows in the failures', async () => {
@@ -144,4 +185,41 @@ test('without write access a row has no context menu', () => {
   view([testIssue(1)], { canWrite: false });
   fireEvent.contextMenu(linkOf(tid(1)));
   expect(screen.queryByRole('menu')).toBeNull();
+  const keyed = createEvent.keyDown(linkOf(tid(1)), { key: 'F10', shiftKey: true });
+  fireEvent(linkOf(tid(1)), keyed);
+  expect(keyed.defaultPrevented).toBe(false);
+  expect(screen.queryByRole('menu')).toBeNull();
+  expect(linkOf(tid(1)).hasAttribute('aria-keyshortcuts')).toBe(false);
+});
+
+test.each([
+  ['Shift+F10', { key: 'F10', shiftKey: true }],
+  ['the context menu key', { key: 'ContextMenu' }],
+])('%s opens exactly one menu at the focused row', async (_name, key) => {
+  view([testIssue(1), testIssue(2)]);
+  linkOf(tid(2)).focus();
+  const keyed = createEvent.keyDown(linkOf(tid(2)), key);
+  fireEvent(linkOf(tid(2)), keyed);
+  // Ohne `preventDefault` öffnete der Browser sein eigenes Menü darüber.
+  expect(keyed.defaultPrevented).toBe(true);
+  await waitFor(() => expect(screen.getAllByRole('menu')).toHaveLength(1));
+  expect(screen.getByRole('menuitem', { name: m.menuState })).toBeTruthy();
+  // Ein Druck auf F10 allein oder mit Strg ist kein Menüwunsch.
+  await userEvent.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+  for (const other of [{ key: 'F10' }, { key: 'F10', shiftKey: true, ctrlKey: true }]) {
+    const plain = createEvent.keyDown(linkOf(tid(2)), other);
+    fireEvent(linkOf(tid(2)), plain);
+    expect(plain.defaultPrevented).toBe(false);
+  }
+  expect(screen.queryByRole('menu')).toBeNull();
+});
+
+test('the keyboard opens the menu when sorted by created too', async () => {
+  view([testIssue(1), testIssue(2)]);
+  await userEvent.click(screen.getByRole('button', { name: m.sortCreated }));
+  expect(linkOf(tid(1)).getAttribute('aria-keyshortcuts')).toBe('Shift+F10');
+  linkOf(tid(1)).focus();
+  await userEvent.keyboard('{Shift>}{F10}{/Shift}');
+  await waitFor(() => expect(screen.getAllByRole('menu')).toHaveLength(1));
 });

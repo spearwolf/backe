@@ -61,7 +61,9 @@ export function dropPosition(
  * einer Zeile mit Teilbaum landet das Issue hinter dem ganzen Teilbaum; dort steht die Markierung.
  * `{ after: target }` reicht dafür: `rankPlacement` setzt das Issue global direkt hinter `target`,
  * und die Geschwister sind eine Teilfolge der globalen Ordnung. Unter ihnen folgt es also auf
- * `target`, gleich ob global Kinder oder ausgefilterte Issues dazwischen liegen.
+ * `target`, gleich ob global Kinder oder ausgefilterte Issues dazwischen liegen. Eine Zeile im
+ * Teilbaum eines Geschwisters meint dieses Geschwister, abgelegt dahinter: Zwischen dessen Kinder
+ * kann `id` nicht, und so hat jede Zeile unter dem Zeiger ein Ziel.
  */
 export function dropTarget(
   rows: readonly ListRow[],
@@ -74,17 +76,36 @@ export function dropTarget(
   if (pos === undefined) return undefined;
   const list = present(rows);
   const i = list.findIndex((r) => r.issue.id === id);
-  const t = list.findIndex((r) => r.issue.id === target);
+  let t = list.findIndex((r) => r.issue.id === target);
   if (i < 0 || t < 0) return undefined;
-  if ((list[i] as ListRow).depth !== (list[t] as ListRow).depth) return undefined;
+  const depth = (list[i] as ListRow).depth;
+  if ((list[t] as ListRow).depth > depth) {
+    while (t >= 0 && (list[t] as ListRow).depth > depth) t = parentIndex(list, t);
+    if (t < 0 || t === i) return undefined;
+    return after(list, i, t);
+  }
+  if ((list[t] as ListRow).depth !== depth) return undefined;
   if (parentIndex(list, i) !== parentIndex(list, t)) return undefined;
   if ('before' in pos) {
     if (sibling(list, i, 1) === t) return undefined;
     return { pos, marker: { id: target, side: 'before' } };
   }
+  return after(list, i, t);
+}
+
+/** Hinter das Geschwister `t` samt Teilbaum; undefined, wenn `i` schon direkt dahinter steht. */
+function after(
+  list: readonly ListRow[],
+  i: number,
+  t: number,
+): { pos: DropPosition; marker: DropMarker } | undefined {
+  if (parentIndex(list, i) !== parentIndex(list, t)) return undefined;
   if (sibling(list, i, -1) === t) return undefined;
   const end = list[subtreeEnd(list, t)] as ListRow;
-  return { pos, marker: { id: end.issue.id, side: 'after' } };
+  return {
+    pos: { after: (list[t] as ListRow).issue.id },
+    marker: { id: end.issue.id, side: 'after' },
+  };
 }
 
 /** Alt+↑/↓: vor das vorige bzw. hinter das nächste Geschwister; am Rand der Gruppe undefined. */

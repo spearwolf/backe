@@ -76,17 +76,17 @@ test('assignee, projects, sprints and parent send issue_update', async () => {
     ],
   });
   await flush();
-  expect(assigneeButton().textContent).toBe('none');
+  expect(assigneeButton().textContent).toBe(m.assigneeNone);
   await userEvent.click(assigneeButton());
-  expect(menuTexts('menuitemradio')).toEqual(['none', 'me (spw)', 'ada']);
+  expect(menuTexts('menuitemradio')).toEqual([m.assigneeNone, m.assigneeMe('spw'), 'ada']);
   await userEvent.click(screen.getByRole('menuitemradio', { name: 'ada' }));
   expectOneCall('issue_update', { id: ID, assignee: 'ada' });
   await flush();
   await userEvent.click(assigneeButton());
-  await userEvent.click(screen.getByRole('menuitemradio', { name: 'none' }));
+  await userEvent.click(screen.getByRole('menuitemradio', { name: m.assigneeNone }));
   expect(call).not.toHaveBeenCalled();
   await userEvent.click(assigneeButton());
-  await userEvent.click(screen.getByRole('menuitemradio', { name: 'me (spw)' }));
+  await userEvent.click(screen.getByRole('menuitemradio', { name: m.assigneeMe('spw') }));
   expectOneCall('issue_update', { id: ID, assignee: 'spw' });
 
   await userEvent.click(screen.getByRole('button', { name: m.remove('web') }));
@@ -127,7 +127,7 @@ test('keyboard navigation in a choice sends nothing until enter', async () => {
 
   assigneeButton().focus();
   await userEvent.keyboard('{ArrowDown}');
-  await waitFor(() => expect(document.activeElement?.textContent).toBe('none'));
+  await waitFor(() => expect(document.activeElement?.textContent).toBe(m.assigneeNone));
   await userEvent.keyboard('{ArrowDown}{ArrowDown}');
   expect(document.activeElement?.textContent).toBe('ada');
   expect(call).not.toHaveBeenCalled();
