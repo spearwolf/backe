@@ -4,12 +4,14 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { fileURLToPath } from 'node:url';
 import type { Env } from '../core/env.ts';
 import { BackeError } from '../core/errors.ts';
 import { sendError, sendJson } from './http.ts';
-import { forbiddenPage, noSessionPage, placeholderPage } from './pages.ts';
+import { forbiddenPage, noSessionPage } from './pages.ts';
 import { appHeaders, checkRequest, type Gate, newToken, ownOrigins } from './security.ts';
 import { m } from './server.messages.ts';
+import { serveStatic } from './static.ts';
 
 export type UiOptions = {
   cwd: string;
@@ -48,6 +50,7 @@ export function createUiServer(opts: UiOptions): UiServer {
   const token = opts.token ?? newToken();
   /** Steht ab `listen`, vorher erreicht keine Anfrage den Handler. */
   let gate: Gate = { port: opts.port, token, origins: ownOrigins(opts.port) };
+  const staticDir = opts.staticDir ?? fileURLToPath(new URL('./ui/', import.meta.url));
   const running = new Set<Promise<void>>();
   let closing: Promise<void> | undefined;
 
@@ -72,7 +75,7 @@ export function createUiServer(opts: UiOptions): UiServer {
     } else if (api) {
       sendError(res, new BackeError('not_found', m.noEndpoint(url.pathname)));
     } else {
-      sendHtml(res, 200, placeholderPage());
+      await serveStatic(req, url, res, staticDir);
     }
   }
 

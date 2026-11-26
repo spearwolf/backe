@@ -1,0 +1,131 @@
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { rawRequest, startUi, type UiHarness } from '../../test/helpers/ui.ts';
+
+const INDEX = '<!doctype html><title>app</title><div id=root></div>';
+const SECRET = 'top-secret-value';
+
+let base: string;
+let dist: string;
+let ui: UiHarness;
+
+async function start(staticDir: string): Promise<UiHarness> {
+  return startUi({
+    cwd: base,
+    env: { BACKE_HOME: join(base, 'home') },
+    flags: {},
+    start: undefined,
+    staticDir,
+  });
+}
+
+beforeAll(async () => {
+  base = await mkdtemp(join(tmpdir(), 'backe-ui-static-'));
+  dist = join(base, 'dist');
+  await mkdir(join(dist, 'assets'), { recursive: true });
+  await writeFile(join(dist, 'index.html'), INDEX);
+  await writeFile(join(dist, 'assets', 'app-3f9a1c.js'), 'console.log(1);');
+  await writeFile(join(dist, 'favicon.ico'), 'ico');
+  await writeFile(join(base, 'secret.txt'), SECRET);
+  await symlink(dirname(dist), join(dist, 'assets', 'out'));
+});
+afterAll(() => rm(base, { recursive: true, force: true }));
+
+beforeEach(async () => {
+  ui = await start(dist);
+});
+afterEach(() => ui.close());
+
+test('serves hashed assets as immutable', async () => {
+  const r = await ui.get('/assets/app-3f9a1c.js');
+  expect([r.status, r.headers['content-type'], r.headers['cache-control']]).toEqual([
+    200,
+    'text/javascript; charset=utf-8',
+    'public, max-age=31536000, immutable',
+  ]);
+  expect(r.headers['content-length']).toBe('15');
+  expect(r.headers['x-content-type-options']).toBe('nosniff');
+});
+
+test('serves other files with no-cache and their type', async () => {
+  const r = await ui.get('/favicon.ico');
+  expect([r.status, r.headers['content-type'], r.headers['cache-control']]).toEqual([
+    200,
+    'image/x-icon',
+    'no-cache',
+  ]);
+});
+
+test('app routes fall back to index.html', async () => {
+  for (const p of ['/b/acme/issues/bk-1', '/']) {
+    const r = await ui.get(p);
+    expect([r.status, r.text(), r.headers['cache-control']], p).toEqual([200, INDEX, 'no-cache']);
+  }
+});
+
+test('missing files with an extension are 404', async () => {
+  const r = await ui.get('/nope.js');
+  expect([r.status, r.headers['content-type']]).toEqual([404, 'text/plain; charset=utf-8']);
+});
+
+test('static paths never leave the root', async () => {
+  for (const p of [
+    '/%2e%2e/secret.txt',
+    '/..%2fsecret.txt',
+    '/assets/%00x',
+    '/assets/out/secret.txt',
+    '/%E0%A4%A',
+    '/assets/..%5c..%5csecret.txt',
+  ]) {
+    const r = await ui.get(p);
+    expect(r.status, p).toBe(404);
+    expect(r.text(), p).not.toContain(SECRET);
+  }
+});
+
+test('methods other than GET and HEAD are 404', async () => {
+  const r = await rawRequest(ui.port, {
+    method: 'POST',
+    path: '/favicon.ico',
+    headers: { cookie: ui.cookie, origin: `http://127.0.0.1:${ui.port}` },
+    body: 'x',
+  });
+  expect(r.status).toBe(404);
+});
+
+test('head answers with headers only', async () => {
+  const r = await rawRequest(ui.port, {
+    method: 'HEAD',
+    path: '/assets/app-3f9a1c.js',
+    headers: { cookie: ui.cookie },
+  });
+  expect([r.status, r.headers['content-length'], r.body.length]).toEqual([200, '15', 0]);
+});
+
+describe('without a build', () => {
+  test('the placeholder answers app routes for an empty directory', async () => {
+    const empty = join(base, 'empty');
+    await mkdir(empty);
+    const u = await start(empty);
+    try {
+      const r = await u.get('/b/acme');
+      expect(r.status).toBe(200);
+      expect(r.headers['content-type']).toBe('text/html; charset=utf-8');
+      expect(r.text()).toContain('backe ui');
+    } finally {
+      await u.close();
+    }
+  });
+
+  test('the placeholder answers when the directory does not exist', async () => {
+    const u = await start(join(base, 'missing'));
+    try {
+      const r = await u.get('/');
+      expect([r.status, r.text()]).toEqual([200, expect.stringContaining('backe ui')]);
+      expect((await u.get('/x.js')).status).toBe(404);
+    } finally {
+      await u.close();
+    }
+  });
+});
