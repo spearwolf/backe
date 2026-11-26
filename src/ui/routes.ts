@@ -4,6 +4,7 @@ import { BACKLOG_NAME_RE } from '../core/names.ts';
 export type ReadRoute =
   | { kind: 'backlogs' }
   | { kind: 'state'; backlog: string }
+  | { kind: 'events'; backlog: string }
   | { kind: 'issue'; backlog: string; id: string }
   | { kind: 'attachment'; backlog: string; id: string; name: string }
   | { kind: 'search'; backlog: string; q: string | undefined };
@@ -33,6 +34,7 @@ export function readRoute(method: string, url: URL): ReadRoute | undefined {
   if (backlog === undefined || !BACKLOG_NAME_RE.test(backlog)) return undefined;
   const [, , area, rawId, sub, rawName] = rest;
   if (rest.length === 3 && area === 'state') return { kind: 'state', backlog };
+  if (rest.length === 3 && area === 'events') return { kind: 'events', backlog };
   if (rest.length === 3 && area === 'search') {
     return { kind: 'search', backlog, q: url.searchParams.get('q') ?? undefined };
   }

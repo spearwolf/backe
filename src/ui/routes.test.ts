@@ -5,6 +5,7 @@ const url = (path: string) => new URL(path, 'http://127.0.0.1');
 test.each([
   ['/api/backlogs', { kind: 'backlogs' }],
   ['/api/b/acme/state', { kind: 'state', backlog: 'acme' }],
+  ['/api/b/acme/events', { kind: 'events', backlog: 'acme' }],
   ['/api/b/acme/issues/bk-12', { kind: 'issue', backlog: 'acme', id: 'bk-12' }],
   [
     '/api/b/acme/issues/bk-12/attachments/a%20b.png',
@@ -20,7 +21,7 @@ test.each([
 test.each([
   ['POST', '/api/backlogs'],
   ['GET', '/api/b/ACME/state'],
-  ['GET', '/api/b/acme/events'],
+  ['GET', '/api/b/acme/events/x'],
   ['GET', '/api/b/acme/issues/bk-1/attachments/%E0'],
   ['GET', '/api/b/acme/state/x'],
   ['GET', '/api/backlogs/'],

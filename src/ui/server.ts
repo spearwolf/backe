@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import type { Env } from '../core/env.ts';
 import { BackeError } from '../core/errors.ts';
 import { deniedJson, sendError, sendJson } from './http.ts';
+import { type LiveDeps, LiveHub } from './live.ts';
 import { forbiddenPage, noSessionPage } from './pages.ts';
 import { watchPhase } from './phase.ts';
 import { handleRead } from './read-api.ts';
@@ -28,14 +29,17 @@ export type UiOptions = {
   staticDir?: string;
   /** Default `newToken()`; Tests setzen es fest. */
   token?: string;
+  /** Watcher und periodischer Sync der Live-Updates; Tests ersetzen `fs.watch` und den Spawn. */
+  live?: LiveDeps;
 };
 
 export type UiServer = {
   /** Bindet `127.0.0.1`; `EADDRINUSE` → `BackeError('sync', …)`, Hint `backe ui --port <n>`. */
   listen(): Promise<{ port: number; url: string }>;
   /**
-   * Nimmt nichts Neues an, wartet die Arbeitsphase laufender Handler ab (`phase.ts`), schließt dann
-   * alle Verbindungen; das beendet auch Antworten, die noch Bytes streamen. Idempotent.
+   * Nimmt nichts Neues an, wartet die Arbeitsphase laufender Handler ab (`phase.ts`), beendet die
+   * Watcher der Live-Updates und schließt dann alle Verbindungen; das beendet auch Antworten, die
+   * noch Bytes streamen, und offene Event-Streams. Idempotent.
    */
   close(): Promise<void>;
 };
@@ -93,6 +97,7 @@ export function createUiServer(opts: UiOptions): UiServer {
   const input = { cwd: opts.cwd, env: opts.env, flags: opts.flags };
   /** Arbeitsphasen laufender Handler; eine endet mit dem Handler oder mit `streaming(res)`. */
   const working = new Set<Promise<void>>();
+  const hub = new LiveHub(opts.live === undefined ? {} : { deps: opts.live });
   let closing: Promise<void> | undefined;
 
   async function dispatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -121,7 +126,7 @@ export function createUiServer(opts: UiOptions): UiServer {
       if (route === undefined) {
         sendError(res, new BackeError('not_found', m.noEndpoint(url.pathname)));
       } else {
-        await handleRead(route, { input, start: opts.start }, res);
+        await handleRead(route, { input, start: opts.start, hub }, res);
       }
     } else {
       await serveStatic(req, url, res, staticDir);
@@ -184,6 +189,7 @@ export function createUiServer(opts: UiOptions): UiServer {
         // Ein Handler kann über eine noch offene Keep-Alive-Verbindung weitere nach sich ziehen.
         // Wer streamt, zählt nicht mehr: Ein Client, der nicht weiterliest, hielte sonst das Ende auf.
         while (working.size > 0) await Promise.all(working);
+        await hub.close();
         server.closeAllConnections();
         await closed;
       })();

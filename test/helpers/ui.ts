@@ -57,12 +57,85 @@ export function rawRequest(
   });
 }
 
+/** Ein Block des Event-Streams: Ereignis mit `id`/`event`/`data` oder ein Kommentar. */
+export type SseFrame = { id?: string; event?: string; data?: unknown; comment?: string };
+
+export type SseStream = {
+  status: number;
+  headers: IncomingHttpHeaders;
+  frames: SseFrame[];
+  /** Nur die Ereignisse, ohne Kommentare. */
+  events(): SseFrame[];
+  /** Erfüllt, sobald der Server den Stream beendet. */
+  ended: Promise<void>;
+  close(): void;
+};
+
+function parseFrame(block: string): SseFrame {
+  const frame: SseFrame = {};
+  for (const line of block.split('\n')) {
+    if (line.startsWith(':')) frame.comment = line.slice(1).trim();
+    else if (line.startsWith('id: ')) frame.id = line.slice(4);
+    else if (line.startsWith('event: ')) frame.event = line.slice(7);
+    else if (line.startsWith('data: ')) frame.data = JSON.parse(line.slice(6));
+  }
+  return frame;
+}
+
+/** Öffnet einen Event-Stream und sammelt seine Blöcke, bis `close` oder das Ende des Servers. */
+export function openEvents(
+  port: number,
+  path: string,
+  headers: OutgoingHttpHeaders = {},
+): Promise<SseStream> {
+  return new Promise((resolve, reject) => {
+    const r = httpRequest(
+      {
+        host: '127.0.0.1',
+        port,
+        path,
+        headers: { host: `127.0.0.1:${port}`, ...headers },
+        agent: false,
+      },
+      (res) => {
+        const frames: SseFrame[] = [];
+        let buffer = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => {
+          buffer += chunk;
+          let at = buffer.indexOf('\n\n');
+          while (at >= 0) {
+            frames.push(parseFrame(buffer.slice(0, at)));
+            buffer = buffer.slice(at + 2);
+            at = buffer.indexOf('\n\n');
+          }
+        });
+        const ended = new Promise<void>((done) => {
+          res.on('close', () => done());
+          res.on('error', () => done());
+        });
+        resolve({
+          status: res.statusCode ?? 0,
+          headers: res.headers,
+          frames,
+          events: () => frames.filter((f) => f.comment === undefined),
+          ended,
+          close: () => r.destroy(),
+        });
+      },
+    );
+    r.on('error', reject);
+    r.end();
+  });
+}
+
 export type UiHarness = {
   port: number;
   token: string;
   /** `backe_ui_<port>=<token>`, fertig für den `Cookie`-Header. */
   cookie: string;
   get(path: string, headers?: OutgoingHttpHeaders): Promise<Res>;
+  events(path: string, headers?: OutgoingHttpHeaders): Promise<SseStream>;
   close(): Promise<void>;
 };
 
@@ -83,6 +156,7 @@ export async function startUi(opts: Omit<UiOptions, 'port'>): Promise<UiHarness>
     token,
     cookie,
     get: (path, headers = {}) => rawRequest(port, { path, headers: { cookie, ...headers } }),
+    events: (path, headers = {}) => openEvents(port, path, { cookie, ...headers }),
     close: () => server.close(),
   };
 }

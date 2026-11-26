@@ -8,12 +8,14 @@ import { issueListResultJson, issueShowJson } from '../services/views.ts';
 import { m as attachmentMessages } from './attachment.messages.ts';
 import { sendAttachment } from './attachment.ts';
 import { backlogsJson, type StartInput, uiContext } from './context.ts';
+import { serveEvents } from './events.ts';
 import { sendError, sendJson } from './http.ts';
+import type { LiveHub } from './live.ts';
 import { m } from './read-api.messages.ts';
 import type { ReadRoute } from './routes.ts';
 import { stateJson } from './state.ts';
 
-export type ReadEnv = { input: StartInput; start: string | undefined };
+export type ReadEnv = { input: StartInput; start: string | undefined; hub: LiveHub };
 
 /** Bedient eine Leseroute; jeder Fehler geht als Fehler-JSON hinaus. */
 export async function handleRead(
@@ -26,9 +28,18 @@ export async function handleRead(
     return;
   }
   try {
+    if (route.kind === 'events') {
+      const live = await env.hub.acquire(route.backlog, () =>
+        uiContext(env.input, env.start, route.backlog),
+      );
+      serveEvents(res, live);
+      return;
+    }
     const ctx = await uiContext(env.input, env.start, route.backlog);
     if (route.kind === 'state') {
-      sendJson(res, 200, await stateJson(ctx));
+      // `rev` vor dem Laden: Der Zustand ist dann mindestens so neu wie `rev` (ui.md §2.4.3).
+      const rev = env.hub.revOf(route.backlog);
+      sendJson(res, 200, await stateJson(ctx, rev));
     } else if (route.kind === 'issue') {
       sendJson(res, 200, issueShowJson(await showIssue(ctx, route.id, { comments: 'all' })));
     } else if (route.kind === 'attachment') {
