@@ -2,7 +2,13 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join, posix, relative, sep } from 'node:path';
 import { CATALOG_TEXTS } from '../src/i18n/catalog.ts';
 import { findGermanLiterals, germanVocabulary } from './helpers/german-literals.ts';
-import { runtimeImports, WEB_ENTRIES, webClosure, webOffenses } from './helpers/web-closure.ts';
+import {
+  allImports,
+  runtimeImports,
+  WEB_ENTRIES,
+  webClosure,
+  webOffenses,
+} from './helpers/web-closure.ts';
 
 const SRC = join(import.meta.dirname, '..', 'src');
 /**
@@ -247,15 +253,14 @@ test('the web closure imports nothing from node', async () => {
   expect([...files].flatMap(([rel, f]) => webOffenses(rel, f))).toEqual([]);
 });
 
-/** Jeder Import und jedes `export … from`, auch `import type` und mehrzeilig; nackte Pakete bleiben. */
-const ANY_IMPORT_RE =
-  /^\s*(?:import|export)\s+(?:type\s+)?(?:[^'";]*?\s+from\s+)?['"]([^'"]+)['"]/gm;
-
-/** Relative Importe einer Quelldatei, aufgelöst zu Pfaden relativ zu `src` (mit `/`). */
+/**
+ * Relative Importe einer Quelldatei, auch `import type`, aufgelöst zu Pfaden relativ zu `src` (mit
+ * `/`). Grenze: Statische `import`/`export … from` erkennt sie, ein dynamisches `import(…)` und
+ * `require(…)` nicht; ein solcher Import an einer Schichtgrenze bliebe ungeprüft.
+ */
 function resolvedImports(rel: string, text: string): string[] {
   const dir = posix.dirname(rel);
-  return [...text.matchAll(ANY_IMPORT_RE)]
-    .map((m) => m[1] ?? '')
+  return allImports(text)
     .filter((spec) => spec.startsWith('.'))
     .map((spec) => posix.normalize(posix.join(dir, spec)));
 }
@@ -302,6 +307,10 @@ test('the adapter layer check catches every form it names', () => {
   expect(flagged('mcp/a.ts', "export { T } from '../ui/t.ts';")).toHaveLength(1);
   expect(flagged('cli/commands/x.ts', "import { T } from '../../ui/t.ts';")).toHaveLength(1);
   expect(flagged('cli/commands/ui.ts', "import { T } from '../../ui/t.ts';")).toEqual([]);
+  // Die Schicht ist ein ganzes Pfadsegment: `cliff/` ist nicht `cli/`, `uix/` nicht `ui/`.
+  expect(resolvedImports('ui/a.ts', "import { x } from '../cliff/x.ts';")).toEqual(['cliff/x.ts']);
+  expect(flagged('ui/a.ts', "import { x } from '../cliff/x.ts';")).toEqual([]);
+  expect(flagged('mcp/a.ts', "import { x } from '../uix/x.ts';")).toEqual([]);
 });
 
 test('adapters import each other only through the ui command', async () => {

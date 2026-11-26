@@ -23,9 +23,20 @@ const ALLOWED_PACKAGES = new Set(['zod']);
 
 export type ClosureFile = { imports: string[]; text: string };
 
-/** `import`/`export … from` und `import '…'`, auch mehrzeilig; ohne `import type`/`export type`. */
+/**
+ * `import`/`export … from` und `import '…'`, auch mehrzeilig. Gruppe 1 ist `type ` bei
+ * `import type`/`export type`, Gruppe 2 der Modulname. Eine Quelle für beide Prüfungen, die
+ * Importe lesen: die Reinheit der Web-Hülle hier und die Adapter-Schichten in
+ * `test/conventions.test.ts`.
+ */
 const IMPORT_RE = /^\s*(?:import|export)\s+(type\s+)?(?:[^'";]*?\s+from\s+)?['"]([^'"]+)['"]/gm;
 
+/** Modulnamen aller Importe, Typ-Importe eingeschlossen. */
+export function allImports(text: string): string[] {
+  return [...text.matchAll(IMPORT_RE)].flatMap((m) => (m[2] === undefined ? [] : [m[2]]));
+}
+
+/** Modulnamen der Laufzeit-Importe, ohne `import type`/`export type`. */
 export function runtimeImports(text: string): string[] {
   const found: string[] = [];
   for (const m of text.matchAll(IMPORT_RE)) {
