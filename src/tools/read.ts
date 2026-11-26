@@ -29,7 +29,7 @@ import {
 import { ALL_SURFACES, type ToolDef, tool } from './define.ts';
 
 /** Größte Datei, deren Inhalt `attachment_get` als `text` mitliefert. */
-const TEXT_LIMIT = 262_144;
+export const ATTACHMENT_TEXT_LIMIT = 262_144;
 
 const strings = z.array(z.string());
 const sortSchema = z.enum(['rank', 'created']);
@@ -83,7 +83,7 @@ function fieldsCheck(allowed: readonly string[]) {
 
 /** Der Inhalt einer Datei als Text, wenn sie klein und gültiges UTF-8 ist; sonst `undefined`. */
 async function textOf(path: string, size: number): Promise<string | undefined> {
-  if (size > TEXT_LIMIT) return undefined;
+  if (size > ATTACHMENT_TEXT_LIMIT) return undefined;
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(await readFile(path));
   } catch {

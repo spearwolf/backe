@@ -2,9 +2,9 @@ import { catalog } from '../i18n/catalog.ts';
 
 export const m = catalog({
   en: {
-    noEndpoint: (what: string) => `No endpoint '${what}'`,
+    searchNeedsQuery: 'Search needs a query',
   },
   de: {
-    noEndpoint: (what: string) => `Kein Endpunkt »${what}«`,
+    searchNeedsQuery: 'Die Suche braucht einen Suchtext',
   },
 });

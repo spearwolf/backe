@@ -1,6 +1,12 @@
 /** Handler der lesenden API von `backe ui` (ui.md §2.3); Fehler gehen über `sendError`. */
 import type { ServerResponse } from 'node:http';
 import { BackeError } from '../core/errors.ts';
+import { getAttachment } from '../services/attachments.ts';
+import { listIssues } from '../services/issue-list.ts';
+import { showIssue } from '../services/issue-show.ts';
+import { issueListResultJson, issueShowJson } from '../services/views.ts';
+import { m as attachmentMessages } from './attachment.messages.ts';
+import { sendAttachment } from './attachment.ts';
 import { backlogsJson, type StartInput, uiContext } from './context.ts';
 import { sendError, sendJson } from './http.ts';
 import { m } from './read-api.messages.ts';
@@ -9,7 +15,7 @@ import { stateJson } from './state.ts';
 
 export type ReadEnv = { input: StartInput; start: string | undefined };
 
-/** Bedient eine Leseroute. Bis die übrigen Arten folgen, antworten sie mit 404 `not_found`. */
+/** Bedient eine Leseroute; jeder Fehler geht als Fehler-JSON hinaus. */
 export async function handleRead(
   route: ReadRoute,
   env: ReadEnv,
@@ -19,13 +25,32 @@ export async function handleRead(
     sendJson(res, 200, await backlogsJson(env.input, env.start));
     return;
   }
-  if (route.kind === 'state') {
-    try {
-      sendJson(res, 200, await stateJson(await uiContext(env.input, env.start, route.backlog)));
-    } catch (err) {
-      sendError(res, err);
+  try {
+    const ctx = await uiContext(env.input, env.start, route.backlog);
+    if (route.kind === 'state') {
+      sendJson(res, 200, await stateJson(ctx));
+    } else if (route.kind === 'issue') {
+      sendJson(res, 200, issueShowJson(await showIssue(ctx, route.id, { comments: 'all' })));
+    } else if (route.kind === 'attachment') {
+      // Der Name aus der URL ist nur ein Schlüssel für die Anhangsliste des Issues; der Pfad
+      // entsteht in `getAttachment` aus der gespeicherten Datei, nie aus der URL.
+      const a = await getAttachment(ctx, route.id, route.name);
+      if ('url' in a) {
+        throw new BackeError('not_found', attachmentMessages.linkAttachment(route.id, route.name));
+      }
+      await sendAttachment(res, a, res.req.method === 'HEAD');
+    } else {
+      if (route.q === undefined || route.q === '') {
+        throw new BackeError('usage', m.searchNeedsQuery, { hint: '?q=<text>' });
+      }
+      sendJson(
+        res,
+        200,
+        issueListResultJson(await listIssues(ctx, { text: route.q, states: ['all'] })),
+      );
     }
-    return;
+  } catch (err) {
+    if (res.headersSent) res.destroy();
+    else sendError(res, err);
   }
-  sendError(res, new BackeError('not_found', m.noEndpoint(route.kind)));
 }
