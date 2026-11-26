@@ -7,6 +7,7 @@ import { createReadStream } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, join, sep } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { placeholderPage } from './pages.ts';
 
 const TYPES: Readonly<Record<string, string>> = {
@@ -87,17 +88,9 @@ function sendFile(
     res.end();
     return Promise.resolve();
   }
-  return new Promise((done) => {
-    const stream = createReadStream(file.file);
-    stream.on('error', () => {
-      res.destroy();
-      done();
-    });
-    res.on('close', () => {
-      stream.destroy();
-      done();
-    });
-    stream.pipe(res);
+  // `pipeline` räumt auch auf, wenn der Client vor dem Anhängen schon getrennt hat.
+  return pipeline(createReadStream(file.file), res).catch(() => {
+    res.destroy();
   });
 }
 

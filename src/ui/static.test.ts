@@ -1,7 +1,10 @@
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { rawRequest, startUi, type UiHarness } from '../../test/helpers/ui.ts';
+import { serveStatic } from './static.ts';
 
 const INDEX = '<!doctype html><title>app</title><div id=root></div>';
 const SECRET = 'top-secret-value';
@@ -128,4 +131,21 @@ describe('without a build', () => {
       await u.close();
     }
   });
+});
+
+test('a client gone before the file is sent does not leave the response pending', async () => {
+  const done = new Promise<void>((resolve, reject) => {
+    const server = createServer((req, res) => {
+      // Die Verbindung ist weg, bevor `serveStatic` die Datei anfasst.
+      req.socket.destroy();
+      serveStatic(req, new URL('/assets/app-3f9a1c.js', 'http://127.0.0.1'), res, dist).then(
+        () => server.close(() => resolve()),
+        reject,
+      );
+    });
+    server.listen(0, '127.0.0.1', () => {
+      rawRequest((server.address() as AddressInfo).port, { path: '/' }).catch(() => undefined);
+    });
+  });
+  await done;
 });
