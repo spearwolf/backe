@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, rm } from 'node:fs/promises';
 import { Agent, get as httpGet } from 'node:http';
 import { connect, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -204,3 +204,38 @@ test('close ends open connections', async () => {
     agent.destroy();
   }
 });
+
+test('close does not wait for a client that stopped reading a download', async () => {
+  // Dünn besetzt: 256 MiB ohne Schreiblast, mehr als Socket-Puffer beider Seiten fassen.
+  const size = 256 * 1024 * 1024;
+  const staticDir = join(dir, 'big');
+  await mkdir(staticDir, { recursive: true });
+  const fh = await open(join(staticDir, 'big.bin'), 'w');
+  await fh.truncate(size);
+  await fh.close();
+  const big = await startUi({ ...opts, staticDir });
+  const socket = connect({ host: '127.0.0.1', port: big.port });
+  const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+  let received = 0;
+  // Die ersten Bytes heißen: Der Handler streamt. Danach liest der Client nicht weiter.
+  const head = await new Promise<string>((resolve, reject) => {
+    socket.once('data', (chunk: Buffer) => {
+      socket.pause();
+      received += chunk.length;
+      resolve(chunk.toString('latin1'));
+    });
+    socket.once('error', reject);
+    socket.write(
+      `GET /big.bin HTTP/1.1\r\nHost: 127.0.0.1:${big.port}\r\nCookie: ${big.cookie}\r\n\r\n`,
+    );
+  });
+  expect(head).toMatch(/^HTTP\/1\.1 200/);
+  await big.close();
+  socket.on('data', (chunk: Buffer) => {
+    received += chunk.length;
+  });
+  socket.on('error', () => undefined);
+  socket.resume();
+  await closed;
+  expect(received).toBeLessThan(size);
+}, 5000);

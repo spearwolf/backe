@@ -9,6 +9,7 @@ import type { Env } from '../core/env.ts';
 import { BackeError } from '../core/errors.ts';
 import { sendError, sendJson } from './http.ts';
 import { forbiddenPage, noSessionPage } from './pages.ts';
+import { watchPhase } from './phase.ts';
 import { handleRead } from './read-api.ts';
 import { readRoute } from './routes.ts';
 import { appHeaders, checkRequest, type Gate, newToken, ownOrigins } from './security.ts';
@@ -31,7 +32,10 @@ export type UiOptions = {
 export type UiServer = {
   /** Bindet `127.0.0.1`; `EADDRINUSE` → `BackeError('sync', …)`, Hint `backe ui --port <n>`. */
   listen(): Promise<{ port: number; url: string }>;
-  /** Nimmt nichts Neues an, wartet laufende Handler ab, schließt dann alle Verbindungen. Idempotent. */
+  /**
+   * Nimmt nichts Neues an, wartet die Arbeitsphase laufender Handler ab (`phase.ts`), schließt dann
+   * alle Verbindungen; das beendet auch Antworten, die noch Bytes streamen. Idempotent.
+   */
   close(): Promise<void>;
 };
 
@@ -54,7 +58,8 @@ export function createUiServer(opts: UiOptions): UiServer {
   let gate: Gate = { port: opts.port, token, origins: ownOrigins(opts.port) };
   const staticDir = opts.staticDir ?? fileURLToPath(new URL('./ui/', import.meta.url));
   const input = { cwd: opts.cwd, env: opts.env, flags: opts.flags };
-  const running = new Set<Promise<void>>();
+  /** Arbeitsphasen laufender Handler; eine endet mit dem Handler oder mit `streaming(res)`. */
+  const working = new Set<Promise<void>>();
   let closing: Promise<void> | undefined;
 
   async function dispatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -95,9 +100,14 @@ export function createUiServer(opts: UiOptions): UiServer {
   }
 
   const server = createServer((req, res) => {
-    const p = handle(req, res);
-    running.add(p);
-    void p.finally(() => running.delete(p));
+    let done!: () => void;
+    const work = new Promise<void>((resolve) => {
+      done = resolve;
+    });
+    working.add(work);
+    void work.then(() => working.delete(work));
+    watchPhase(res, done);
+    void handle(req, res).finally(done);
   });
 
   return {
@@ -123,7 +133,8 @@ export function createUiServer(opts: UiOptions): UiServer {
       closing ??= (async () => {
         const closed = new Promise<void>((resolve) => server.close(() => resolve()));
         // Ein Handler kann über eine noch offene Keep-Alive-Verbindung weitere nach sich ziehen.
-        while (running.size > 0) await Promise.all(running);
+        // Wer streamt, zählt nicht mehr: Ein Client, der nicht weiterliest, hielte sonst das Ende auf.
+        while (working.size > 0) await Promise.all(working);
         server.closeAllConnections();
         await closed;
       })();
