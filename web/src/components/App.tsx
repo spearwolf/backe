@@ -6,15 +6,16 @@ import { canonicalPath, type Route, routeHref } from '../app/routes.ts';
 import { TabModel } from '../app/tabs.ts';
 import type { Theme } from '../app/theme.ts';
 import type { ConnectionDeps } from '../data/connection.ts';
-import { openSession } from '../data/session.ts';
+import { openSession, type Session } from '../data/session.ts';
 import { StoreContext } from '../data/store-context.tsx';
 import { useSignal } from '../data/use-signal.ts';
 import { BacklogView } from '../views/BacklogView.tsx';
 import { BoardView } from '../views/BoardView.tsx';
 import { IssueView } from '../views/IssueView.tsx';
 import { SettingsView } from '../views/SettingsView.tsx';
+import { ErrorAlert } from './ErrorPage.tsx';
 import { Header } from './Header.tsx';
-import { TabBar } from './TabBar.tsx';
+import { PANEL_ID, selectedTabId, TabBar } from './TabBar.tsx';
 
 type Props = {
   backlogs: readonly BacklogEntryJson[];
@@ -62,6 +63,35 @@ function View({ route }: { route: Route }) {
     default:
       return <BacklogView />;
   }
+}
+
+/**
+ * Die Fläche unter den Tabs. Scheitert das Laden, steht dort der Fehler statt der Ansicht: Ohne
+ * Arbeitskopie kommt nie ein Zustand, »Lädt …« bliebe für immer stehen.
+ */
+function Panel({ session, route }: { session: Session; route: Route }) {
+  const error = useSignal(session.error);
+  const labelledBy = selectedTabId(route);
+  // Eine eigene Fläche statt `role` am `<main>`: `main` darf seine Rolle nicht tauschen.
+  return (
+    <div
+      id={PANEL_ID}
+      {...(labelledBy === undefined ? {} : { role: 'tabpanel', 'aria-labelledby': labelledBy })}
+    >
+      {error === undefined ? (
+        <View route={route} />
+      ) : (
+        <div className="max-w-xl p-4">
+          <ErrorAlert
+            title={m.loadFailed}
+            // Ohne Antwort gibt es keinen Text des Servers, nur den des Browsers.
+            message={error.status === 0 ? m.unreachable : error.message}
+            hint={error.hint}
+          />
+        </div>
+      )}
+    </div>
+  );
 }
 
 function Notice({ children }: { children: ReactNode }) {
@@ -116,7 +146,7 @@ export function App({ backlogs, router, theme, deps }: Props) {
       <StoreContext.Provider value={session.store}>
         <TabBar backlog={current.name} route={route} tabs={tabs} onClose={closeTab} />
         <main className="min-h-0 flex-1 overflow-auto">
-          <View route={route} />
+          <Panel session={session} route={route} />
         </main>
       </StoreContext.Provider>
     );

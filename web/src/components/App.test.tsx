@@ -70,6 +70,8 @@ type Setup = {
   backlogs?: BacklogEntryJson[];
   lang?: 'en' | 'de';
   states?: Record<string, StateJson>;
+  /** Antwort von `/state` je Backlog statt eines Zustands; wirft sie, kam keine Antwort. */
+  failures?: Record<string, () => Response>;
   list?: () => Response;
 };
 
@@ -91,7 +93,10 @@ async function setup(opts: Setup) {
     if (url === '/api/backlogs')
       return opts.list?.() ?? json({ backlogs, lang: opts.lang ?? 'en' });
     const match = /^\/api\/b\/([^/]+)\/state$/.exec(url);
-    const s = match === null ? undefined : states[decodeURIComponent(match[1] as string)];
+    const name = match === null ? '' : decodeURIComponent(match[1] as string);
+    const failure = opts.failures?.[name];
+    if (failure !== undefined) return failure();
+    const s = states[name];
     return s === undefined ? json({ error: { code: 'not_found', message: 'nope' } }, 404) : json(s);
   };
   const root = document.createElement('div');
@@ -122,10 +127,19 @@ async function setup(opts: Setup) {
       await flush();
     });
   };
-  return { sources, live, connect, emit, user: userEvent.setup() };
+  /** Der Stream scheitert, ohne je offen gewesen zu sein (CLOSED, wie nach einem 404). */
+  const failStream = async () => {
+    const es = live();
+    await act(async () => {
+      es.emitError(true);
+      await flush();
+    });
+  };
+  return { sources, live, connect, emit, failStream, user: userEvent.setup() };
 }
 
 const path = () => window.location.pathname;
+const focused = () => document.activeElement?.textContent;
 const tab = (name: string | RegExp) => screen.getByRole('tab', { name });
 
 test('the root redirects to the start backlog', async () => {
@@ -261,11 +275,11 @@ test('closing the active tab goes to its neighbour', async () => {
     states: { main: state([issue(1), issue(2), issue(3)]) },
   });
   await connect();
-  await user.click(screen.getByRole('button', { name: 'Close bk-2' }));
+  await user.click(screen.getByTitle('Close bk-2'));
   expect(path()).toBe('/b/main/issue/bk-3');
-  await user.click(screen.getByRole('button', { name: 'Close bk-3' }));
+  await user.click(screen.getByTitle('Close bk-3'));
   expect(path()).toBe('/b/main/issue/bk-1');
-  await user.click(screen.getByRole('button', { name: 'Close bk-1' }));
+  await user.click(screen.getByTitle('Close bk-1'));
   expect(path()).toBe('/b/main/backlog');
   expect(screen.queryAllByRole('tab')).toHaveLength(2);
 });
@@ -273,7 +287,7 @@ test('closing the active tab goes to its neighbour', async () => {
 test('closing an inactive tab stays on the route', async () => {
   localStorage.setItem('backe-ui:main:tabs', JSON.stringify(['bk-1']));
   const { user } = await setup({ path: '/b/main/board' });
-  await user.click(screen.getByRole('button', { name: 'Close bk-1' }));
+  await user.click(screen.getByTitle('Close bk-1'));
   expect(path()).toBe('/b/main/board');
   expect(screen.queryByRole('tab', { name: /bk-1/ })).toBeNull();
 });
@@ -369,4 +383,143 @@ test('a failing backlog list shows the error with its hint', async () => {
   expect(screen.getByRole('alert').textContent).toContain('no session');
   expect(screen.getByText('open the URL from the console')).toBeTruthy();
   expect(screen.queryByRole('tablist')).toBeNull();
+});
+
+test('a backlog without a working copy shows its error and hint', async () => {
+  const { failStream } = await setup({
+    path: '/b/ghost/backlog',
+    backlogs: [entry('ghost', { current: true, prefix: null })],
+    failures: {
+      ghost: () =>
+        json(
+          {
+            error: {
+              code: 'not_found',
+              message: 'Backlog »ghost« has no working copy',
+              hint: 'backe backlog clone ghost',
+            },
+          },
+          404,
+        ),
+    },
+  });
+  expect(screen.getByText('Loading …')).toBeTruthy();
+  await failStream();
+  const alert = screen.getByRole('alert');
+  expect(within(alert).getByRole('heading').textContent).toBe('Could not load the backlog');
+  expect(within(alert).getByText('Backlog »ghost« has no working copy')).toBeTruthy();
+  expect(within(alert).getByText('backe backlog clone ghost')).toBeTruthy();
+  expect(screen.queryByText('Loading …')).toBeNull();
+  // Die Tabs bleiben, der Fehler steht in ihrer Fläche.
+  expect(screen.getByRole('tabpanel').contains(alert)).toBe(true);
+  expect(screen.getByRole('status').textContent).toBe('offline');
+});
+
+test('an unreachable server is named as such', async () => {
+  const { failStream } = await setup({
+    path: '/b/main/backlog',
+    lang: 'de',
+    failures: {
+      main: () => {
+        throw new TypeError('Failed to fetch');
+      },
+    },
+  });
+  await failStream();
+  expect(screen.getByRole('alert').textContent).toContain(
+    'Der Server von backe ui ist nicht erreichbar.',
+  );
+});
+
+test('the tablist owns only tabs', async () => {
+  localStorage.setItem('backe-ui:main:tabs', JSON.stringify(['bk-1', 'bk-2']));
+  await setup({ path: '/b/main/backlog' });
+  const list = screen.getByRole('tablist');
+  // Die ×-Knöpfe sind nur für die Maus da und stehen weder im Baum noch in der Tab-Folge.
+  expect(within(list).queryAllByRole('button')).toEqual([]);
+  expect(within(list).getAllByRole('tab')).toHaveLength(4);
+  const close = screen.getByTitle('Close bk-1');
+  expect(close.getAttribute('aria-hidden')).toBe('true');
+  expect(close.tabIndex).toBe(-1);
+  for (const t of within(list).getAllByRole('tab')) {
+    let owner = t.parentElement;
+    while (owner !== list && owner?.getAttribute('role') === 'presentation') {
+      owner = owner.parentElement;
+    }
+    expect(owner).toBe(list);
+  }
+  expect(tab(/bk-1/).getAttribute('aria-keyshortcuts')).toBe('Delete Backspace');
+});
+
+test('the tabpanel is labelled by the selected tab', async () => {
+  localStorage.setItem('backe-ui:main:tabs', JSON.stringify(['bk-1']));
+  const { user } = await setup({ path: '/b/main/board' });
+  const panel = screen.getByRole('tabpanel');
+  expect(panel.getAttribute('aria-labelledby')).toBe(tab('Board').id);
+  expect(screen.getByRole('tabpanel', { name: 'Board' })).toBe(panel);
+  for (const t of screen.getAllByRole('tab')) {
+    expect(t.getAttribute('aria-controls')).toBe(panel.id);
+  }
+  await user.click(tab(/bk-1/));
+  expect(screen.getByRole('tabpanel', { name: /bk-1/ })).toBeTruthy();
+  // Settings hängt an keinem Tab: Die Fläche ist dann kein Tabpanel.
+  await user.click(screen.getByRole('link', { name: 'Settings' }));
+  expect(screen.queryByRole('tabpanel')).toBeNull();
+  expect(tab('Backlog').tabIndex).toBe(0);
+});
+
+test('arrow keys, Home and End move the focus across tabs', async () => {
+  localStorage.setItem('backe-ui:main:tabs', JSON.stringify(['bk-1', 'bk-2']));
+  const { user } = await setup({ path: '/b/main/board' });
+  // Roving Tabindex: Nur der gewählte Tab steht in der Tab-Folge.
+  expect(screen.getAllByRole('tab').map((t) => t.tabIndex)).toEqual([-1, 0, -1, -1]);
+  act(() => tab('Board').focus());
+  await user.tab();
+  expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Settings' }));
+  await user.tab({ shift: true });
+  expect(focused()).toBe('Board');
+  await user.keyboard('{ArrowRight}');
+  expect(focused()).toBe('bk-1');
+  await user.keyboard('{End}');
+  expect(focused()).toBe('bk-2');
+  await user.keyboard('{ArrowRight}');
+  expect(focused()).toBe('Backlog');
+  await user.keyboard('{ArrowLeft}');
+  expect(focused()).toBe('bk-2');
+  await user.keyboard('{Home}');
+  expect(focused()).toBe('Backlog');
+  // Pfeile wählen nicht aus, erst Enter oder Leertaste.
+  expect(path()).toBe('/b/main/board');
+  await user.keyboard('{Enter}');
+  expect(path()).toBe('/b/main/backlog');
+  await user.keyboard('{ArrowRight}{ArrowRight} ');
+  expect(path()).toBe('/b/main/issue/bk-1');
+  expect(tab(/bk-1/).tabIndex).toBe(0);
+  // Andere Tasten bleiben beim Browser.
+  await user.keyboard('a');
+  expect(path()).toBe('/b/main/issue/bk-1');
+});
+
+test('Delete closes the focused issue tab and focus lands on the neighbour', async () => {
+  localStorage.setItem('backe-ui:main:tabs', JSON.stringify(['bk-1', 'bk-2', 'bk-3']));
+  const { connect, user } = await setup({
+    path: '/b/main/issue/bk-2',
+    states: { main: state([issue(1), issue(2), issue(3)]) },
+  });
+  await connect();
+  act(() => tab(/bk-2/).focus());
+  expect(focused()).toBe('bk-2 Issue 2');
+  await user.keyboard('{Delete}');
+  expect(screen.queryByRole('tab', { name: /bk-2/ })).toBeNull();
+  expect(path()).toBe('/b/main/issue/bk-3');
+  expect(focused()).toBe('bk-3 Issue 3');
+  await user.keyboard('{Backspace}');
+  expect(focused()).toBe('bk-1 Issue 1');
+  expect(path()).toBe('/b/main/issue/bk-1');
+  await user.keyboard('{Delete}');
+  expect(focused()).toBe('Backlog');
+  expect(path()).toBe('/b/main/backlog');
+  // Backlog und Board schließt keine Taste.
+  await user.keyboard('{Delete}');
+  expect(screen.getAllByRole('tab')).toHaveLength(2);
 });

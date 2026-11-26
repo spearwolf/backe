@@ -9,7 +9,10 @@ export type Session = {
   readonly connection: Connection;
   readonly store: Store;
   readonly status: Signal<ConnectionStatus>;
-  /** Letzter Fehler beim Laden von /state; undefined nach jedem erfolgreichen Laden. */
+  /**
+   * Letzter Fehler beim Laden von /state, auch nach einem gescheiterten Stream; undefined nach
+   * jedem erfolgreichen Laden.
+   */
   readonly error: Signal<ApiError | undefined>;
   dispose(): void;
 };
@@ -24,7 +27,7 @@ function hasRev(data: unknown): data is { rev: number } {
 /**
  * Sitzung je Backlog nach dem Client-Protokoll des Event-Streams (ui.md §2.4.3): das erste
  * `hello` lädt `/state`, Patches davor oder währenddessen warten im Puffer, `gap` und `reset`
- * laden neu. Vor dem ersten `store.load` fasst nichts den Store per `applyPatch` an.
+ * laden neu. Scheitert der Stream, fragt die Sitzung `/state` nach dem Grund. Vor dem ersten `store.load` fasst nichts den Store per `applyPatch` an.
  */
 export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {}): Session {
   const connection = new Connection(backlog, deps);
@@ -36,8 +39,9 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
   let disposed = false;
   let loading = false;
   let reloadPending = false;
-  // Nach einem gescheiterten Laden ist der Store womöglich veraltet; das nächste hello lädt neu.
-  let failed = false;
+  // Der Store ist womöglich veraltet (Laden gescheitert oder ohne laufenden Stream geladen);
+  // das nächste hello lädt neu.
+  let stale = false;
   const buffer: PatchJson[] = [];
 
   const drain = (): void => {
@@ -51,13 +55,14 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
     }
   };
 
-  const load = (): void => {
+  /** `probe`: Der Stream steht nicht; geladen wird, um den Zustand oder den Fehler zu kennen. */
+  const load = (probe = false): void => {
     loading = true;
     connection.state().then(
       (state) => {
         if (disposed) return;
         loading = false;
-        failed = false;
+        stale = probe;
         store.load(state);
         error.set(undefined);
         if (reloadPending) {
@@ -70,9 +75,15 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
       (cause: unknown) => {
         if (disposed) return;
         loading = false;
-        failed = true;
-        reloadPending = false;
+        stale = true;
+        // Alles im Puffer kam vor der nächsten Anfrage und steckt in deren `state.rev`.
+        buffer.length = 0;
         error.set(cause instanceof ApiError ? cause : new ApiError(0, 'offline', String(cause)));
+        // Ein Reset während des Ladens geht nicht verloren: ein zweiter Versuch, nicht mehr.
+        if (reloadPending) {
+          reloadPending = false;
+          load();
+        }
       },
     );
   };
@@ -86,7 +97,7 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
     connection.on('status', (s) => status.set(s)),
     connection.on('hello', (h) => {
       if (!hasRev(h)) reload();
-      else if (!loading && (!store.loaded.value || failed)) load();
+      else if (!loading && (!store.loaded.value || stale)) load();
     }),
     connection.on('patch', (p) => {
       if (!hasRev(p)) {
@@ -107,6 +118,11 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
       store.sync.set(s);
     }),
     connection.on('reset', reload),
+    // Ohne Stream kommt kein hello; den Grund (404 ohne Arbeitskopie, 401 nach einem Neustart)
+    // kennt nur `/state`.
+    connection.on('failed', () => {
+      if (!loading) load(true);
+    }),
   ];
 
   connection.open();

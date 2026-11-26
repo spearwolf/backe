@@ -83,6 +83,34 @@ describe('Connection', () => {
     expect(sources.all).toHaveLength(1);
   });
 
+  it('an error before the first open reports failed', () => {
+    const { sources, conn } = setup();
+    let failed = 0;
+    conn.on('failed', () => failed++);
+    conn.open();
+    const es = sources.last();
+    es?.emitError();
+    expect(conn.status).toBe('offline');
+    expect(failed).toBe(1);
+    // Der Browser versucht es weiter; jeder Fehler bis zum ersten `open` zählt.
+    es?.emitError();
+    expect(failed).toBe(2);
+  });
+
+  it('a stream that ends closed reports failed, a reconnecting one does not', () => {
+    const { sources, conn } = setup();
+    let failed = 0;
+    conn.on('failed', () => failed++);
+    conn.open();
+    const es = sources.last();
+    es?.emitOpen();
+    es?.emitError();
+    expect(failed).toBe(0);
+    es?.emitError(true);
+    expect(failed).toBe(1);
+    expect(es?.closed).toBe(true);
+  });
+
   it('close stops all events', () => {
     const { sources, conn } = setup();
     const got: unknown[] = [];

@@ -26,6 +26,8 @@ export const m = catalog({
     loading: 'Loading …',
     issueCount: (count: number) => `${count} ${count === 1 ? 'issue' : 'issues'}`,
     errorTitle: 'backe ui could not start',
+    loadFailed: 'Could not load the backlog',
+    unreachable: 'The backe ui server is not reachable.',
   },
   de: {
     tagline: 'Backlogs für Menschen',
@@ -52,5 +54,7 @@ export const m = catalog({
     loading: 'Lädt …',
     issueCount: (count: number) => `${count} ${count === 1 ? 'Issue' : 'Issues'}`,
     errorTitle: 'backe ui konnte nicht starten',
+    loadFailed: 'Backlog konnte nicht geladen werden',
+    unreachable: 'Der Server von backe ui ist nicht erreichbar.',
   },
 });

@@ -10,6 +10,8 @@ export type ConnectionEvents = {
   sync: [Record<string, unknown>];
   reset: [];
   status: [ConnectionStatus];
+  /** Der Stream kam nicht zustande (Fehler vor dem ersten `open`) oder ist endgültig zu. */
+  failed: [];
 };
 
 export type EventSourceLike = {
@@ -26,8 +28,9 @@ const CLOSED = 2; // EventSource.CLOSED; jsdom hat die Konstante nicht
 
 /**
  * Verbindung zu einem Backlog von `backe ui`: Event-Stream plus `GET /state`. Wiederverbinden
- * und `Last-Event-ID` erledigt der Browser; steht der Stream danach auf CLOSED (401/503),
- * gibt die Verbindung auf.
+ * und `Last-Event-ID` erledigt der Browser; steht der Stream danach auf CLOSED (401/404/503),
+ * gibt die Verbindung auf. Den Grund verrät ein `EventSource` nie, darum meldet `failed` nur,
+ * dass es ihn gibt: Wer ihn wissen will, fragt `state()`.
  */
 export class Connection extends Eventize<ConnectionEvents> {
   readonly backlog: string;
@@ -54,20 +57,25 @@ export class Connection extends Eventize<ConnectionEvents> {
     this.#source = es;
     // Nach close() oder endgültigem Abbruch ist `#source` ein anderer; alte Callbacks bleiben stumm.
     let gaveUp = false;
+    let opened = false;
     const live = () => this.#source === es && !gaveUp;
 
     es.onopen = () => {
-      if (live()) this.#setStatus('open');
+      if (!live()) return;
+      opened = true;
+      this.#setStatus('open');
     };
     es.onerror = () => {
       if (!live()) return;
-      this.#setStatus('offline');
-      if (es.readyState === CLOSED) {
+      const closed = es.readyState === CLOSED;
+      if (closed) {
         gaveUp = true;
         es.onopen = null;
         es.onerror = null;
         es.close();
       }
+      this.#setStatus('offline');
+      if (closed || !opened) this.emit('failed');
     };
 
     for (const type of ['hello', 'patch', 'sync', 'reset'] as const) {

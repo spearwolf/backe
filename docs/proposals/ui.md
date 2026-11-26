@@ -172,7 +172,7 @@ Abgeleitete Werte (`dependents`, `children`, offene Abhängigkeiten, Bereitschaf
 
 ### 2.5 Client-Zustand und Reactivity
 
-- **Transport:** Eine Verbindung je Backlog kapselt `EventSource` und `fetch`. Sie ist ein `@spearwolf/eventize`-Emitter mit den Ereignissen `hello`, `patch`, `sync`, `reset` und `status` (`connecting`, `open`, `offline`).
+- **Transport:** Eine Verbindung je Backlog kapselt `EventSource` und `fetch`. Sie ist ein `@spearwolf/eventize`-Emitter mit den Ereignissen `hello`, `patch`, `sync`, `reset`, `status` (`connecting`, `open`, `offline`) und `failed`: Der Stream kam nicht zustande oder ist endgültig zu. Den Grund verrät ein `EventSource` nicht; die Sitzung lädt dann `/state` und zeigt dessen Fehler samt `hint` statt der Ansicht, etwa für einen Backlog ohne Arbeitskopie oder ein 401 nach einem Neustart des Servers.
 - **Store:** `@spearwolf/signalize` hält den Zustand feingranular — ein Signal je Entität (Issue, Projekt, Sprint, Repo, User), je Entitätsart ein Signal für die Menge der Keys, dazu Signale für Kontext, Config und Sync-Status. Abgeleitetes sind Memos: Graph (über `src/ops/graph.ts`), gefilterte und sortierte Listen je Ansicht, Board-Spalten, Suchindex.
 - **Patch anwenden:** alle Änderungen eines Patches in einem Batch, damit jede Ansicht genau einmal neu rechnet. Ein Patch, der ein Issue betrifft, rendert nur die Zeilen, Karten und Tabs neu, die dieses Issue oder davon abgeleitete Werte zeigen (§3.6).
 - **React-Anbindung:** ein Hook über `useSyncExternalStore`, der ein Signal oder Memo abonniert. Komponenten lesen nur über diesen Hook aus dem Store; React-State bleibt für lokalen UI-Zustand (offene Dialoge, Eingaben).
