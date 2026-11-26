@@ -29,13 +29,18 @@ export function sameToken(given: string | undefined, token: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** Wert des ersten Cookies `name` aus einem `Cookie`-Header. */
-export function cookieOf(header: string | undefined, name: string): string | undefined {
+/**
+ * Werte aller Cookies `name` aus einem `Cookie`-Header, in Header-Reihenfolge. Es können mehrere
+ * sein: Eine Seite auf einem anderen lokalen Port darf ein gleichnamiges Cookie mit längerem
+ * `Path` setzen, das der Browser vor unserem schickt.
+ */
+export function cookiesOf(header: string | undefined, name: string): string[] {
+  const out: string[] = [];
   for (const part of header?.split(';') ?? []) {
     const eq = part.indexOf('=');
-    if (eq >= 0 && part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
+    if (eq >= 0 && part.slice(0, eq).trim() === name) out.push(part.slice(eq + 1).trim());
   }
-  return undefined;
+  return out;
 }
 
 export type Gate = { port: number; token: string; origins: readonly string[] };
@@ -69,7 +74,7 @@ function unauthorized(message: string): Verdict {
 /**
  * Prüft in dieser Reihenfolge: (1) `Host` gegen `127.0.0.1:<port>`/`localhost:<port>` gegen
  * DNS-Rebinding, (2) `Origin` gegen CSRF, schreibende Methoden nur mit `Origin`, (3) `?token=`
- * öffnet eine Sitzung, (4) sonst muss das Cookie passen. `Referer` zählt nie.
+ * öffnet eine Sitzung, (4) sonst muss eines der Cookies `backe_ui_<port>` passen. `Referer` zählt nie.
  */
 export function checkRequest(
   req: { method: string; url: URL; headers: IncomingHttpHeaders },
@@ -99,9 +104,13 @@ export function checkRequest(
       cookie: `${cookieName(gate.port)}=${gate.token}; HttpOnly; SameSite=Strict; Path=/`,
     };
   }
-  if (!sameToken(cookieOf(req.headers.cookie, cookieName(gate.port)), gate.token)) {
-    return unauthorized(m.noSession);
+  // Jeder gleichnamige Wert wird verglichen, ohne Abbruch beim ersten Treffer; ein untergeschobenes
+  // Cookie sperrt so niemanden aus.
+  let session = false;
+  for (const value of cookiesOf(req.headers.cookie, cookieName(gate.port))) {
+    session = sameToken(value, gate.token) || session;
   }
+  if (!session) return unauthorized(m.noSession);
   return { kind: 'pass' };
 }
 

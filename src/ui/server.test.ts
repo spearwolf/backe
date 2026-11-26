@@ -101,6 +101,13 @@ test('a session cookie only opens its own server', async () => {
   }
 });
 
+test('a planted cookie of the same name does not lock the session out', async () => {
+  const planted = `backe_ui_${ui.port}=${'0'.repeat(64)}`;
+  expect((await ui.get('/', { cookie: `${planted}; ${ui.cookie}` })).status).toBe(200);
+  expect((await ui.get('/api/nope', { cookie: `${planted}; ${ui.cookie}` })).status).toBe(404);
+  expect((await ui.get('/', { cookie: planted })).status).toBe(401);
+});
+
 test('a token in the referer opens no session', async () => {
   const r = await rawRequest(ui.port, {
     path: '/api/backlogs',

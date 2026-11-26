@@ -4,7 +4,7 @@ import {
   CSP,
   checkRequest,
   cookieName,
-  cookieOf,
+  cookiesOf,
   type Gate,
   newToken,
   ownOrigins,
@@ -35,11 +35,12 @@ test('sameToken compares in constant time and rejects missing or short values', 
   expect(sameToken(TOKEN, TOKEN)).toBe(true);
 });
 
-test('cookieOf finds a cookie by name', () => {
-  expect(cookieOf('a=1; backe_ui=x; b=2', 'backe_ui')).toBe('x');
-  expect(cookieOf('backe_ui=x=y', 'backe_ui')).toBe('x=y');
-  expect(cookieOf('a=1', 'backe_ui')).toBeUndefined();
-  expect(cookieOf(undefined, 'backe_ui')).toBeUndefined();
+test('cookiesOf finds every cookie of a name', () => {
+  expect(cookiesOf('a=1; backe_ui=x; b=2', 'backe_ui')).toEqual(['x']);
+  expect(cookiesOf('backe_ui=x=y', 'backe_ui')).toEqual(['x=y']);
+  expect(cookiesOf('backe_ui=x; a=1; backe_ui=y', 'backe_ui')).toEqual(['x', 'y']);
+  expect(cookiesOf('a=1', 'backe_ui')).toEqual([]);
+  expect(cookiesOf(undefined, 'backe_ui')).toEqual([]);
 });
 
 test('cookieName carries the port', () => {
@@ -93,6 +94,18 @@ test.each([
   ['a cookie', '/', { host: HOST, cookie: `a=1; ${COOKIE_HEADER}` }, 'GET'],
   ['localhost as host', '/', { host: `localhost:${PORT}`, cookie: COOKIE_HEADER }, 'GET'],
   ['HEAD without origin', '/', { host: HOST, cookie: COOKIE_HEADER }, 'HEAD'],
+  [
+    'the session cookie after a planted one of the same name',
+    '/',
+    { host: HOST, cookie: `backe_ui_${PORT}=planted; ${COOKIE_HEADER}` },
+    'GET',
+  ],
+  [
+    'the session cookie before a planted one of the same name',
+    '/',
+    { host: HOST, cookie: `${COOKIE_HEADER}; backe_ui_${PORT}=planted` },
+    'GET',
+  ],
   [
     'a write with its own origin',
     '/api/x',
