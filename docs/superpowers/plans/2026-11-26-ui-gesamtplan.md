@@ -147,7 +147,7 @@ Stellen, die Spec offen lässt und die dieser Plan für alle Meilensteine festle
 | `batch` in der UI | Dieselbe Op-Liste wie MCP (BK §2.19) plus `issue.delete`; mehr braucht das Board nicht. |
 | `attachment_add` in der UI | Parameter identisch zu MCP, auch `path` mit denselben Grenzen; das Frontend lädt aber nur per `PUT …/attachments/<name>` hoch. |
 | Kontext je Backlog | `resolveContext({cwd, env, flags: {backlog: <b>, as?}})` je Anfrage, `as` aus dem Start gilt für alle Backlogs. `can_write` = `requireWriter(ctx)` gelingt. |
-| `GET /api/backlogs` | `{"backlogs":[{name,current,can_write,user}],"lang":"en"\|"de"}`; `user` ist der Handle oder `null`. |
+| `GET /api/backlogs` | `{"backlogs":[{name,current,can_write,user,prefix}],"lang":"en"\|"de"}`; `user` ist der Handle oder `null`, `prefix` der ID-Präfix oder `null`. |
 | Event-ID | `id: <boot>:<rev>`; `boot` = 8 Hex-Zeichen Zufall je Serverprozess, `rev` beginnt je Backlog bei 0. `rev` in den JSON-Daten bleibt eine Zahl. `Last-Event-ID` mit anderem `boot` oder `rev` außerhalb des Puffers → `reset`. |
 | Theme ohne Aufblitzen | `index.html` lädt `/theme.js` synchron im `<head>` vor allen Styles; es liest `localStorage` (try/catch) und `prefers-color-scheme` und setzt `data-theme` auf `<html>`. Kein Inline-Skript, CSP bleibt wörtlich. |
 | Sprache | Der Server bestimmt die Locale nach BK §2.18 (`initLocale`), nicht fest Englisch wie MCP; `lang` in `/api/backlogs`. Das Frontend setzt seine Locale per `setLocale(lang)` vor dem ersten Rendern. |

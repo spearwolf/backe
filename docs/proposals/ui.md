@@ -1,6 +1,6 @@
 # backe ui — lokale Web-Oberfläche für ein Backlog
 
-> **Status: in Umsetzung.** Gebaut: Befehl `backe ui`, Sitzung und Sicherheits-Header, lesende und schreibende API samt Uploads, statische Auslieferung, Live-Updates ohne Nachbarn (§2.1, §2.3, §2.4 ohne §2.4.1 Punkt 3, §2.15, §2.16 »Server«). Offen: §2.4.1 Punkt 3 und alles ab §2.5. Die Empfehlungen in §4.1 gelten, solange keine Zeile dort anders entschieden ist. Wünsche an BK in §4.2.
+> **Status: in Umsetzung.** Gebaut: Befehl `backe ui`, Sitzung und Sicherheits-Header, lesende und schreibende API samt Uploads, statische Auslieferung, Live-Updates ohne Nachbarn (§2.1, §2.3, §2.4 ohne §2.4.1 Punkt 3, §2.15, §2.16 »Server«), Frontend-Gerüst (§2.2 `web/`, §2.5 Transport, Store, Patch und React-Anbindung, §2.6 ohne Suche und Tastaturkürzel, §2.13, §2.14 Default-Sprache, §2.16 »Build«, »Lint und Typen« und »Paket« ohne Größenmessung). Offen: der Rest ab §2.7, §2.4.1 Punkt 3, Sprachwahl in den Settings, Suche, `c` und `⌘K`. Die Empfehlungen in §4.1 gelten, solange keine Zeile dort anders entschieden ist. Wünsche an BK in §4.2.
 > Bezug: Adapter über den Service-Layer von BK (`backe.md`), vor allem BK §2.14 (Kontext), §2.16 (Schreibpfad und Sync), §2.18 (Ausgabe), §2.19 (MCP als Vorbild des Adapters), §2.22–§2.24 (Abhängigkeiten, Sub-Issues, Properties).
 > Skizzen: [`layout-tabs.png`](../assets/layout-tabs.png), [`backlog.png`](../assets/backlog.png), [`board.png`](../assets/board.png), [`issue-details.png`](../assets/issue-details.png), [`settings.png`](../assets/settings.png).
 
@@ -327,7 +327,7 @@ Die UI kann signierte Commits im Namen des Nutzers erzeugen. Jede Webseite im se
 - **Code-Splitting:** Mermaid, Graph und Highlighting-Sprachen sind eigene Chunks und laden erst bei Bedarf. Budget für den initialen Chunk: 300 KB gzip.
 - **Build:** `pnpm build` baut CLI (tsdown) und Frontend (`vite build` → `dist/ui/`). Entwicklung: `pnpm dev:ui` startet den Vite-Dev-Server mit Proxy `/api` auf ein laufendes `backe ui`. Das Proxy-Ziel ist `BACKE_UI_PORT` (Default 8002). Dessen `Origin`-Prüfung erlaubt zusätzlich den Ursprung aus `BACKE_UI_DEV_ORIGIN`, sofern gesetzt. Cookies trennen keine Ports: Im Dev-Betrieb wird erst die Konsolen-URL von `backe ui` geöffnet (sie setzt das Sitzungs-Cookie), danach `http://127.0.0.1:5173/`.
 - **Lint und Typen:** Biome und `tsc` decken `web/` mit ab (eigene `tsconfig` mit DOM-Typen).
-- **Paket:** Der Tarball enthält zusätzlich `dist/ui/**` (BK §2.21 ist anzupassen, §4.2). Der Pack-Smoke-Test startet `backe ui --port 0`, ruft die Start-URL samt Token und `/api/backlogs` ab und beendet den Server per SIGTERM.
+- **Paket:** Der Tarball enthält zusätzlich `dist/ui/**`. Der Pack-Smoke-Test startet `backe ui --port 0`, ruft die Start-URL samt Token und `/api/backlogs` ab und beendet den Server per SIGTERM.
 - **Browser:** aktuelle Versionen von Chromium, Firefox und Safari.
 
 ### 2.17 Performance-Ziele
@@ -409,7 +409,6 @@ Vite, React und alle Frontend-Bibliotheken sind Werkzeuge zur Build-Zeit. Ausgel
 Verbindlich erst, wenn BK sie aufnimmt:
 
 - BK §2.17: `backe ui` in die Befehlsübersicht, sobald gebaut.
-- BK §2.20/§2.21: `dist/ui/**` im Tarball, Pack-Smoke-Test um den UI-Start erweitert.
 - Eine Operation zum Ändern von `.backe/backlog.jsonc` (heute nur Hand-Edit und `backe commit` als `manual`-Commit, BK §2.13), falls die UI die Backlog-Config bearbeiten soll (§4.1).
 
 ### 4.3 Späterer Ausbau

@@ -16,7 +16,7 @@ Umsetzung nach UI §6, Status im Kopf von `docs/proposals/ui.md`.
 - [x] Server-Gerüst (UI §6 Schritt 1)
 - [x] Live-Kern (UI §6 Schritt 2)
 - [x] Server-Writes (UI §2.3.2, §6 Schritt 6)
-- [ ] Frontend-Gerüst (UI §6 Schritt 3)
+- [x] Frontend-Gerüst (UI §6 Schritt 3)
 - [ ] Tab Backlog (UI §6 Schritt 4)
 - [ ] Tab Issue lesend (UI §6 Schritt 5)
 - [ ] Writes im Frontend (UI §6 Schritt 6)
