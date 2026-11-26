@@ -3,13 +3,19 @@
  * die Auswahl je Tür und die gemeinsame Ausführung. Die Fehlergrenze liegt beim Adapter.
  */
 import type { z } from 'zod';
+import { ADMIN_TOOLS } from './admin.ts';
 import type { ToolDef, ToolSurface } from './define.ts';
 import { READ_TOOLS } from './read.ts';
 import { runTool, type ToolEnv } from './run.ts';
 import { SYNC_TOOLS } from './sync.ts';
 import { WRITE_TOOLS } from './write.ts';
 
-export const TOOLS: readonly ToolDef[] = [...READ_TOOLS, ...WRITE_TOOLS, ...SYNC_TOOLS];
+export const TOOLS: readonly ToolDef[] = [
+  ...READ_TOOLS,
+  ...WRITE_TOOLS,
+  ...SYNC_TOOLS,
+  ...ADMIN_TOOLS,
+];
 
 /** Die Tools einer Tür; `allowDelete` öffnet in MCP die Tools mit `gate: 'allowDelete'`. */
 export function toolsFor(surface: ToolSurface, opts: { allowDelete: boolean }): ToolDef[] {
