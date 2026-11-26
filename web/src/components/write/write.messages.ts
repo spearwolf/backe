@@ -5,14 +5,12 @@ export const m = catalog({
     cancel: 'Cancel',
     dismiss: 'Dismiss',
     pending: 'pending',
-    actionFailed: 'Action failed',
     failures: 'Failed actions',
   },
   de: {
     cancel: 'Abbrechen',
     dismiss: 'Schließen',
     pending: 'ausstehend',
-    actionFailed: 'Aktion fehlgeschlagen',
     failures: 'Fehlgeschlagene Aktionen',
   },
 });

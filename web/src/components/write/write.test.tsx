@@ -17,6 +17,8 @@ import { PendingMark } from './PendingMark.tsx';
 import { useAction } from './use-action.ts';
 import { WriteFailures } from './WriteFailures.tsx';
 
+// Die echten Ansichten lesen den Schreibkontext noch nicht (erst die späteren Schreib-Bausteine tun
+// das); darum ersetzt eine Probe die Backlog-Ansicht und liest den Kontext, den die App stellt.
 // Der Probe-Ersatz für die Backlog-Ansicht liest den Schreibkontext, den die App je Sitzung stellt.
 vi.mock('../../views/BacklogView.tsx', async () => {
   const { useWrites: use } = await import('../../data/write-context.tsx');
@@ -326,4 +328,48 @@ test('pending mark follows pendingCount', () => {
   expect(screen.queryByText('ausstehend')).toBeNull();
   writes.dispose();
   store.dispose();
+});
+
+test('write failures form a labelled region', () => {
+  const { store, writes } = makeWrites();
+  render(<WriteFailures writes={writes} />);
+  expect(screen.queryByRole('region')).toBeNull();
+  act(() => writes.report(failure()));
+  expect(screen.getByRole('region', { name: 'Fehlgeschlagene Aktionen' })).toBeTruthy();
+  writes.dispose();
+  store.dispose();
+});
+
+test('a non-ApiError throw is reported as unexpected, not offline', async () => {
+  const { result } = renderHook(() => useAction());
+  await act(async () => {
+    await result.current.run(() => Promise.reject(new Error('boom')));
+  });
+  expect(result.current.error?.code).toBe('unexpected');
+  expect(result.current.error?.message).toBe('boom');
+});
+
+test('a second run while busy returns false without calling the function', async () => {
+  const { result } = renderHook(() => useAction());
+  let finish: () => void = () => {};
+  const first = vi.fn(
+    () =>
+      new Promise<void>((r) => {
+        finish = r;
+      }),
+  );
+  const second = vi.fn(() => Promise.resolve());
+  let a: Promise<boolean> | undefined;
+  let b: boolean | undefined;
+  await act(async () => {
+    a = result.current.run(first);
+    b = await result.current.run(second);
+  });
+  expect(b).toBe(false);
+  expect(second).not.toHaveBeenCalled();
+  await act(async () => {
+    finish();
+    expect(await a).toBe(true);
+  });
+  expect(await act(() => result.current.run(second))).toBe(true);
 });

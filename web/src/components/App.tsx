@@ -1,5 +1,5 @@
 import type { BacklogEntryJson } from '@backe/ui/api.ts';
-import { type ReactNode, useCallback, useEffect } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo } from 'react';
 import { m } from '../app/app.messages.ts';
 import { type Router, RouterContext } from '../app/router.ts';
 import { canonicalPath, type Route, routeHref } from '../app/routes.ts';
@@ -9,7 +9,7 @@ import type { ConnectionDeps } from '../data/connection.ts';
 import { openSession, type Session } from '../data/session.ts';
 import { StoreContext } from '../data/store-context.tsx';
 import { useSignal } from '../data/use-signal.ts';
-import { WriteContext } from '../data/write-context.tsx';
+import { type WriteAccess, WriteContext } from '../data/write-context.tsx';
 import { useOwned } from '../lib/use-owned.ts';
 import { BacklogView } from '../views/BacklogView.tsx';
 import { BoardView } from '../views/BoardView.tsx';
@@ -146,18 +146,26 @@ export function App({ backlogs, router, theme, deps }: Props) {
     );
   };
 
+  const backlogName = current?.name;
+  const canWrite = current?.can_write;
+  const user = current?.user;
+  const writes = session?.writes;
+  const access = useMemo<WriteAccess | undefined>(
+    () =>
+      backlogName === undefined ||
+      canWrite === undefined ||
+      user === undefined ||
+      writes === undefined
+        ? undefined
+        : { backlog: backlogName, canWrite, me: user, writes },
+    [backlogName, canWrite, user, writes],
+  );
+
   let body: ReactNode = null;
   if (current !== undefined) {
-    body = session !== undefined && tabs !== undefined && (
+    body = session !== undefined && tabs !== undefined && access !== undefined && (
       <StoreContext.Provider value={session.store}>
-        <WriteContext.Provider
-          value={{
-            backlog: current.name,
-            canWrite: current.can_write,
-            me: current.user,
-            writes: session.writes,
-          }}
-        >
+        <WriteContext.Provider value={access}>
           <WriteFailures writes={session.writes} />
           <TabBar backlog={current.name} route={route} tabs={tabs} onClose={closeTab} />
           <main className="min-h-0 flex-1 overflow-auto">

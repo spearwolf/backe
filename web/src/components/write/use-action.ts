@@ -4,7 +4,7 @@ import { ApiError } from '../../data/api-client.ts';
 function asApiError(cause: unknown): ApiError {
   return cause instanceof ApiError
     ? cause
-    : new ApiError(0, 'offline', cause instanceof Error ? cause.message : String(cause));
+    : new ApiError(0, 'unexpected', cause instanceof Error ? cause.message : String(cause));
 }
 
 /**
@@ -18,6 +18,8 @@ export function useAction(): {
   reset(): void;
 } {
   const [busy, setBusy] = useState(false);
+  // Synchron lesbar, anders als `busy`: Ein Doppelklick vor dem nächsten Render startet nichts zweimal.
+  const running = useRef(false);
   const [error, setError] = useState<ApiError>();
   // Nach dem Abbau (Dialog zu, Ansicht weg) setzt ein spätes Ergebnis keinen State mehr.
   const mounted = useRef(true);
@@ -29,6 +31,8 @@ export function useAction(): {
   }, []);
 
   const run = useCallback(async (fn: () => Promise<unknown>): Promise<boolean> => {
+    if (running.current) return false;
+    running.current = true;
     setBusy(true);
     setError(undefined);
     try {
@@ -38,6 +42,7 @@ export function useAction(): {
       if (mounted.current) setError(asApiError(cause));
       return false;
     } finally {
+      running.current = false;
       if (mounted.current) setBusy(false);
     }
   }, []);
