@@ -9,6 +9,8 @@ import type { Env } from '../core/env.ts';
 import { BackeError } from '../core/errors.ts';
 import { sendError, sendJson } from './http.ts';
 import { forbiddenPage, noSessionPage } from './pages.ts';
+import { handleRead } from './read-api.ts';
+import { readRoute } from './routes.ts';
 import { appHeaders, checkRequest, type Gate, newToken, ownOrigins } from './security.ts';
 import { m } from './server.messages.ts';
 import { serveStatic } from './static.ts';
@@ -51,6 +53,7 @@ export function createUiServer(opts: UiOptions): UiServer {
   /** Steht ab `listen`, vorher erreicht keine Anfrage den Handler. */
   let gate: Gate = { port: opts.port, token, origins: ownOrigins(opts.port) };
   const staticDir = opts.staticDir ?? fileURLToPath(new URL('./ui/', import.meta.url));
+  const input = { cwd: opts.cwd, env: opts.env, flags: opts.flags };
   const running = new Set<Promise<void>>();
   let closing: Promise<void> | undefined;
 
@@ -73,7 +76,10 @@ export function createUiServer(opts: UiOptions): UiServer {
         sendHtml(res, verdict.status, html);
       }
     } else if (api) {
-      sendError(res, new BackeError('not_found', m.noEndpoint(url.pathname)));
+      const route = readRoute(req.method ?? 'GET', url);
+      if (route === undefined)
+        sendError(res, new BackeError('not_found', m.noEndpoint(url.pathname)));
+      else await handleRead(route, { input, start: opts.start }, res);
     } else {
       await serveStatic(req, url, res, staticDir);
     }
