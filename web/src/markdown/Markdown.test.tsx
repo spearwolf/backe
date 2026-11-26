@@ -161,3 +161,10 @@ test('raw html code and links keep their text and gain no issue link', () => {
   expect(anchors.map((a) => a.getAttribute('href'))).toEqual(['https://x.test']);
   expect(anchors[0]?.textContent).toBe(ID);
 });
+
+test('mermaid fences become diagrams', () => {
+  const { container } = setup('```mermaid\ngraph TD; A-->B\n```\n\n```ts\nconst x = 1;\n```');
+  expect(container.querySelectorAll('pre')).toHaveLength(2);
+  expect(container.querySelector('.markdown-mermaid')).not.toBeNull();
+  expect(container.querySelector('code.language-typescript')).not.toBeNull();
+});

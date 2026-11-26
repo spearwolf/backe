@@ -1,5 +1,5 @@
 import type { Attachment } from '@backe/core/schemas.ts';
-import { type ComponentProps, useMemo } from 'react';
+import { Children, type ComponentProps, isValidElement, type ReactNode, useMemo } from 'react';
 import ReactMarkdown, { type Components, type Options } from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
@@ -9,7 +9,9 @@ import { useLinkClick } from '../app/router.ts';
 import { routeHref } from '../app/routes.ts';
 import { useStore } from '../data/store-context.tsx';
 import { useSignal } from '../data/use-signal.ts';
+import { CodeBlock } from './CodeBlock.tsx';
 import { rehypeIssueLinks } from './issue-links.ts';
+import { MermaidBlock } from './MermaidBlock.tsx';
 import { rehypeStripSrcset } from './strip-srcset.ts';
 import { issueUrlTransform } from './url-transform.ts';
 import './markdown.css';
@@ -50,13 +52,29 @@ function Anchor({
   );
 }
 
-// Einzige Stelle für Code: Task-Listen bleiben lesend (`disabled` setzt remark-gfm), und hier
-// tauscht der Codeblock-Renderer später `language-*` gegen Highlighting und Diagramme.
+// Task-Listen bleiben lesend (`disabled` setzt remark-gfm); Codeblöcke mit `language-*` tauscht
+// `Pre` gegen Highlighting (`CodeBlock`) oder Diagramm (`MermaidBlock`).
 function Code({ node: _node, ...rest }: ComponentProps<'code'> & { node?: unknown }) {
   return <code {...rest} />;
 }
 
-const components: Components = { a: Anchor, code: Code };
+function Pre({ node: _node, children, ...rest }: ComponentProps<'pre'> & { node?: unknown }) {
+  const child = Children.toArray(children)[0];
+  if (isValidElement<{ className?: string; children?: ReactNode }>(child)) {
+    const language = /(?:^|\s)language-(\S+)/.exec(child.props.className ?? '')?.[1];
+    if (language !== undefined) {
+      const code = String(child.props.children ?? '').replace(/\n$/, '');
+      return language === 'mermaid' ? (
+        <MermaidBlock source={code} />
+      ) : (
+        <CodeBlock code={code} language={language} />
+      );
+    }
+  }
+  return <pre {...rest}>{children}</pre>;
+}
+
+const components: Components = { a: Anchor, code: Code, pre: Pre };
 
 const remarkPlugins = [remarkGfm, remarkGemoji];
 

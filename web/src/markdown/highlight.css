@@ -1,0 +1,56 @@
+/* Syntax-Highlighting ohne Farbe (ui.md §2.13): Tokens unterscheiden sich nur über Gewicht,
+   Kursiv und die Töne foreground und muted-foreground. */
+.markdown-code {
+  overflow-x: auto;
+  padding: 0.75rem 1rem;
+  border-radius: 0.375rem;
+  background: var(--muted);
+  color: var(--foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.875em;
+}
+.hljs-keyword,
+.hljs-built_in,
+.hljs-selector-tag,
+.hljs-section,
+.hljs-title,
+.hljs-name,
+.hljs-strong {
+  font-weight: 700;
+  color: var(--foreground);
+}
+.hljs-string,
+.hljs-number,
+.hljs-literal,
+.hljs-attr,
+.hljs-attribute,
+.hljs-symbol,
+.hljs-regexp,
+.hljs-type,
+.hljs-variable,
+.hljs-template-variable {
+  color: var(--foreground);
+}
+.hljs-comment,
+.hljs-quote,
+.hljs-meta,
+.hljs-doctag,
+.hljs-punctuation {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+.hljs-meta,
+.hljs-punctuation {
+  font-style: normal;
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-addition {
+  font-weight: 700;
+}
+.hljs-deletion {
+  font-style: italic;
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+}
