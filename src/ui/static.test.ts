@@ -4,25 +4,28 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { rawRequest, startUi, type UiHarness } from '../../test/helpers/ui.ts';
-import { serveStatic } from './static.ts';
+import { contentTypeOf, segmentsOf, serveStatic } from './static.ts';
 
 /**
- * Eingriff gleich nach dem nächsten `stat` auf `path`, also zwischen `locate` und dem Öffnen:
- * Die Datei verschwindet (`rm`) oder schrumpft auf 1000 Bytes (`shrink`).
+ * Eingriff beim nächsten `stat` auf `path` in `locate`: Die Datei verschwindet davor (`vanish`,
+ * also zwischen `realpath` und `stat`), danach (`rm`, also zwischen `locate` und dem Öffnen) oder
+ * schrumpft danach auf 1000 Bytes (`shrink`); `fail` lässt `stat` mit `EIO` scheitern.
  */
-const afterStat = vi.hoisted(() => ({
+const onStat = vi.hoisted(() => ({
   path: undefined as string | undefined,
-  action: 'rm' as 'rm' | 'shrink',
+  action: 'rm' as 'vanish' | 'rm' | 'shrink' | 'fail',
 }));
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>();
-  const stat = async (path: string) => {
-    const info = await fs.stat(path);
-    if (path === afterStat.path) {
-      afterStat.path = undefined;
-      if (afterStat.action === 'rm') await fs.rm(path);
-      else await fs.truncate(path, 1000);
-    }
+  const stat = async (...args: Parameters<typeof fs.stat>) => {
+    const [path] = args;
+    const hit = path === onStat.path;
+    if (hit) onStat.path = undefined;
+    if (hit && onStat.action === 'vanish') await fs.rm(path);
+    if (hit && onStat.action === 'fail') throw Object.assign(new Error('EIO'), { code: 'EIO' });
+    const info = await fs.stat(...args);
+    if (hit && onStat.action === 'rm') await fs.rm(path);
+    if (hit && onStat.action === 'shrink') await fs.truncate(path, 1000);
     return info;
   };
   return { ...fs, stat };
@@ -60,7 +63,11 @@ afterAll(() => rm(base, { recursive: true, force: true }));
 beforeEach(async () => {
   ui = await start(dist);
 });
-afterEach(() => ui.close());
+afterEach(async () => {
+  // Ein fehlgeschlagener Test darf den Eingriff nicht an den nächsten weiterreichen.
+  onStat.path = undefined;
+  await ui.close();
+});
 
 test('serves hashed assets as immutable', async () => {
   const r = await ui.get('/assets/app-3f9a1c.js');
@@ -98,16 +105,44 @@ test('missing files with an extension are 404', async () => {
 test('a file that vanishes before it is opened is 404 like a missing one', async () => {
   const path = join(dist, 'gone.js');
   await writeFile(path, 'console.log(2);');
-  Object.assign(afterStat, { path: await realpath(path), action: 'rm' });
+  Object.assign(onStat, { path: await realpath(path), action: 'rm' });
   const r = await ui.get('/gone.js');
   expect([r.status, r.text()]).toEqual([404, 'nicht gefunden']);
-  expect(afterStat.path).toBeUndefined();
+  expect(onStat.path).toBeUndefined();
+});
+
+test('a file that vanishes between realpath and stat is 404 like a missing one', async () => {
+  const path = join(dist, 'flicker.js');
+  await writeFile(path, 'console.log(3);');
+  Object.assign(onStat, { path: await realpath(path), action: 'vanish' });
+  const r = await ui.get('/flicker.js');
+  expect([r.status, r.text()]).toEqual([404, 'nicht gefunden']);
+  expect(onStat.path).toBeUndefined();
+});
+
+test('any other stat error is a 500, not a 404', async () => {
+  const path = join(dist, 'broken.js');
+  await writeFile(path, 'console.log(5);');
+  Object.assign(onStat, { path: await realpath(path), action: 'fail' });
+  const r = await ui.get('/broken.js');
+  expect([r.status, r.json().error.code]).toEqual([500, 'unexpected']);
+});
+
+test('the content type follows the requested name, not the symlink target', async () => {
+  await writeFile(join(dist, 'plain'), 'console.log(4);');
+  await symlink('plain', join(dist, 'linked.js'));
+  const r = await ui.get('/linked.js');
+  expect([r.status, r.headers['content-type'], r.text()]).toEqual([
+    200,
+    'text/javascript; charset=utf-8',
+    'console.log(4);',
+  ]);
 });
 
 test('a file that shrinks before it is opened is sent with the length of the opened file', async () => {
   const path = join(dist, 'assets', 'shrink-1a2b.js');
   await writeFile(path, Buffer.alloc(300_000, 0x61));
-  Object.assign(afterStat, { path: await realpath(path), action: 'shrink' });
+  Object.assign(onStat, { path: await realpath(path), action: 'shrink' });
   const r = await ui.get('/assets/shrink-1a2b.js', { connection: 'keep-alive' });
   expect([r.status, r.headers['content-length'], r.body.length]).toEqual([200, '1000', 1000]);
 }, 3000);
@@ -118,10 +153,10 @@ test('an index.html that vanishes before it is opened leaves the placeholder', a
   await writeFile(join(own, 'index.html'), INDEX);
   const u = await start(own);
   try {
-    Object.assign(afterStat, { path: await realpath(join(own, 'index.html')), action: 'rm' });
+    Object.assign(onStat, { path: await realpath(join(own, 'index.html')), action: 'rm' });
     const r = await u.get('/b/acme');
     expect([r.status, r.text()]).toEqual([200, expect.stringContaining('pnpm build')]);
-    expect(afterStat.path).toBeUndefined();
+    expect(onStat.path).toBeUndefined();
   } finally {
     await u.close();
   }
@@ -129,6 +164,8 @@ test('an index.html that vanishes before it is opened leaves the placeholder', a
 
 test('static paths never leave the root', async () => {
   for (const p of [
+    // Kommt als `/secret.txt` an: `URL` löst `%2e%2e` schon beim Parsen auf, `segmentsOf` sieht
+    // es nie; 404, weil `dist/secret.txt` nicht existiert. Die Segmentprüfung testet der Test unten.
     '/%2e%2e/secret.txt',
     '/..%2fsecret.txt',
     '/assets/%00x',
@@ -140,6 +177,48 @@ test('static paths never leave the root', async () => {
     expect(r.status, p).toBe(404);
     expect(r.text(), p).not.toContain(SECRET);
   }
+});
+
+test('segmentsOf rejects dot-dot, NUL, separators and broken encoding', () => {
+  expect(segmentsOf('/a/./b//c%20d/')).toEqual(['a', 'b', 'c d']);
+  expect(segmentsOf('/')).toEqual([]);
+  for (const path of [
+    '/..',
+    '/a/../b',
+    '/%2e%2e/secret.txt',
+    '/%2E%2E',
+    '/a/%00x',
+    '/a%2Fb',
+    '/a%5Cb',
+    '/%E0%A4%A',
+    '/%',
+  ]) {
+    expect(segmentsOf(path), path).toBeUndefined();
+  }
+});
+
+test.each([
+  ['index.html', 'text/html; charset=utf-8'],
+  ['app.js', 'text/javascript; charset=utf-8'],
+  ['chunk.MJS', 'text/javascript; charset=utf-8'],
+  ['app.css', 'text/css; charset=utf-8'],
+  ['app.js.map', 'application/json'],
+  ['logo.svg', 'image/svg+xml'],
+  ['a.png', 'image/png'],
+  ['a.jpg', 'image/jpeg'],
+  ['a.jpeg', 'image/jpeg'],
+  ['a.gif', 'image/gif'],
+  ['a.webp', 'image/webp'],
+  ['a.avif', 'image/avif'],
+  ['favicon.ico', 'image/x-icon'],
+  ['f.woff', 'font/woff'],
+  ['f.woff2', 'font/woff2'],
+  ['m.wasm', 'application/wasm'],
+  ['robots.txt', 'text/plain; charset=utf-8'],
+  ['blob.bin', 'application/octet-stream'],
+  ['noext', 'application/octet-stream'],
+] as const)('contentTypeOf(%s)', (name, type) => {
+  expect(contentTypeOf(name)).toBe(type);
 });
 
 test('methods other than GET and HEAD are 404', async () => {

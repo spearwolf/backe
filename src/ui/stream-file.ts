@@ -29,10 +29,10 @@ export type SendFileOptions = {
   headers(body: FileBody): OutgoingHttpHeaders;
 };
 
-/** Fehlercodes von `open`, die heißen: Unter diesem Pfad gibt es (jetzt) keine Datei. */
+/** Fehlercodes von `open` und `stat`, die heißen: Unter diesem Pfad gibt es (jetzt) keine Datei. */
 const MISSING: ReadonlySet<string> = new Set(['ENOENT', 'ENOTDIR']);
 
-function isMissing(err: unknown): boolean {
+export function isMissing(err: unknown): boolean {
   return MISSING.has((err as NodeJS.ErrnoException | undefined)?.code ?? '');
 }
 
