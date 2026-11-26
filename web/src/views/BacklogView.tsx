@@ -1,7 +1,9 @@
 import { createMemo, SignalGroup, type SignalReader } from '@spearwolf/signalize';
+import { Plus } from 'lucide-react';
 import { useCallback } from 'react';
 import { m as app } from '../app/app.messages.ts';
 import { BacklogListModel, ViewPrefs } from '../app/backlog-list.ts';
+import { draftFromFilter } from '../app/create-draft.ts';
 import {
   type ListFilter,
   type ListView,
@@ -11,6 +13,9 @@ import {
 import { type Router, useRouter } from '../app/router.ts';
 import { FilterBar } from '../components/FilterBar.tsx';
 import { IssueList } from '../components/IssueList.tsx';
+import { Button } from '../components/ui/button.tsx';
+import { useCreateIssue } from '../components/write/create-context.tsx';
+import { m as w } from '../components/write/write.messages.ts';
 import { searchIds } from '../data/search.ts';
 import type { Store } from '../data/store.ts';
 import { useStore } from '../data/store-context.tsx';
@@ -56,11 +61,17 @@ export function BacklogView({ backlog, me }: { backlog: string; me: string | nul
   if (state === undefined || !loaded) {
     return <p className="p-4 text-sm text-muted-foreground">{app.loading}</p>;
   }
-  return <Loaded state={state} router={router} backlog={backlog} />;
+  return <Loaded state={state} router={router} backlog={backlog} me={me} />;
 }
 
-function Loaded(props: { state: BacklogViewState; router: Router; backlog: string }) {
-  const { state, router, backlog } = props;
+function Loaded(props: {
+  state: BacklogViewState;
+  router: Router;
+  backlog: string;
+  me: string | null;
+}) {
+  const { state, router, backlog, me } = props;
+  const create = useCreateIssue();
   const filter = useSignal(state.filter);
   const view = useSignal(state.prefs.view);
   const rows = useSignal(state.model.rows);
@@ -74,15 +85,27 @@ function Loaded(props: { state: BacklogViewState; router: Router; backlog: strin
   const onView = (next: ListView) => state.prefs.set(next);
   return (
     <section className="flex h-full min-h-0 flex-col">
-      <FilterBar
-        filter={filter}
-        errors={errors}
-        view={view}
-        count={selected.length}
-        bodySearch={bodySearch}
-        onFilter={onFilter}
-        onView={onView}
-      />
+      <div className="flex items-stretch">
+        <div className="min-w-0 flex-1">
+          <FilterBar
+            filter={filter}
+            errors={errors}
+            view={view}
+            count={selected.length}
+            bodySearch={bodySearch}
+            onFilter={onFilter}
+            onView={onView}
+          />
+        </div>
+        {create !== undefined && (
+          <div className="border-b p-3">
+            <Button size="sm" onClick={() => create.open(draftFromFilter(filter, me))}>
+              <Plus aria-hidden="true" />
+              {w.newIssue}
+            </Button>
+          </div>
+        )}
+      </div>
       <IssueList backlog={backlog} rows={rows} />
     </section>
   );
