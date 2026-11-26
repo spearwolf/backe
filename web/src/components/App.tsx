@@ -31,12 +31,20 @@ function backlogOf(route: Route): string | undefined {
   return route.kind === 'home' || route.kind === 'not-found' ? undefined : route.backlog;
 }
 
-function View({ route, me }: { route: Route; me: string | null }) {
+function View({
+  route,
+  me,
+  onClose,
+}: {
+  route: Route;
+  me: string | null;
+  onClose: (id: string) => void;
+}) {
   switch (route.kind) {
     case 'board':
       return <BoardView />;
     case 'issue':
-      return <IssueView id={route.id} />;
+      return <IssueView backlog={route.backlog} id={route.id} onClose={onClose} />;
     case 'settings':
       return <SettingsView />;
     case 'backlog':
@@ -50,8 +58,13 @@ function View({ route, me }: { route: Route; me: string | null }) {
  * Die Fläche unter den Tabs. Scheitert das Laden, steht dort der Fehler statt der Ansicht: Ohne
  * Arbeitskopie kommt nie ein Zustand, »Lädt …« bliebe für immer stehen.
  */
-function Panel(props: { session: Session; route: Route; me: string | null }) {
-  const { session, route, me } = props;
+function Panel(props: {
+  session: Session;
+  route: Route;
+  me: string | null;
+  onClose: (id: string) => void;
+}) {
+  const { session, route, me, onClose } = props;
   const error = useSignal(session.error);
   const labelledBy = selectedTabId(route);
   // Eine eigene Fläche statt `role` am `<main>`: `main` darf seine Rolle nicht tauschen.
@@ -64,7 +77,7 @@ function Panel(props: { session: Session; route: Route; me: string | null }) {
       {...(labelledBy === undefined ? {} : { role: 'tabpanel', 'aria-labelledby': labelledBy })}
     >
       {error === undefined ? (
-        <View route={route} me={me} />
+        <View route={route} me={me} onClose={onClose} />
       ) : (
         <div className="max-w-xl p-4">
           <ErrorAlert
@@ -137,7 +150,7 @@ export function App({ backlogs, router, theme, deps }: Props) {
       <StoreContext.Provider value={session.store}>
         <TabBar backlog={current.name} route={route} tabs={tabs} onClose={closeTab} />
         <main className="min-h-0 flex-1 overflow-auto">
-          <Panel session={session} route={route} me={current.user} />
+          <Panel session={session} route={route} me={current.user} onClose={closeTab} />
         </main>
       </StoreContext.Provider>
     );

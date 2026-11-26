@@ -78,6 +78,7 @@ type Setup = {
 let unmount: (() => void) | undefined;
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   unmount?.();
   unmount = undefined;
   localStorage.clear();
@@ -90,6 +91,15 @@ async function setup(opts: Setup) {
   const states = opts.states ?? { main: state([issue(1)]) };
   const sources = fakeEventSources();
   const fetch = async (url: string): Promise<Response> => {
+    // Die Issue-Ansicht lädt über das globale `fetch`, nicht über die eingespritzte Funktion.
+    if (/\/issues\/[^/]+\/attachments$/.test(url)) return json([]);
+    const detail = /\/issues\/([^/]+)$/.exec(url);
+    if (detail !== null) {
+      const found = states.main?.issues.find((i) => i.id === detail[1]);
+      return found === undefined
+        ? json({ error: { code: 'not_found', message: 'nope' } }, 404)
+        : json({ ...found, comments_count: 0 });
+    }
     if (url === '/api/backlogs')
       return opts.list?.() ?? json({ backlogs, lang: opts.lang ?? 'en' });
     const match = /^\/api\/b\/([^/]+)\/state$/.exec(url);
@@ -99,6 +109,7 @@ async function setup(opts: Setup) {
     const s = states[name];
     return s === undefined ? json({ error: { code: 'not_found', message: 'nope' } }, 404) : json(s);
   };
+  vi.stubGlobal('fetch', fetch);
   const root = document.createElement('div');
   document.body.append(root);
   await act(async () => {
@@ -264,7 +275,7 @@ test('an issue route opens its tab', async () => {
   expect(tab('bk-1').getAttribute('aria-selected')).toBe('true');
   await connect();
   expect(tab('bk-1 Issue 1').getAttribute('aria-selected')).toBe('true');
-  expect(screen.getByRole('heading', { name: /bk-1/ })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Issue 1' })).toBeTruthy();
   expect(JSON.parse(localStorage.getItem('backe-ui:main:tabs') ?? '[]')).toEqual(['bk-1']);
 });
 
@@ -308,7 +319,7 @@ test('middle click closes an issue tab', async () => {
 test('a deleted issue keeps its tab', async () => {
   localStorage.setItem('backe-ui:main:tabs', JSON.stringify(['bk-1', 'bk-9']));
   const { connect, emit } = await setup({ path: '/b/main/issue/bk-9' });
-  expect(screen.queryByText('deleted')).toBeNull();
+  expect(within(screen.getByRole('tablist')).queryByText('deleted')).toBeNull();
   await connect();
   expect(tab('bk-9 deleted').getAttribute('aria-selected')).toBe('true');
 
