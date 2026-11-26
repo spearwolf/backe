@@ -19,7 +19,7 @@ Umsetzung nach UI §6, Status im Kopf von `docs/proposals/ui.md`.
 - [x] Frontend-Gerüst (UI §6 Schritt 3)
 - [x] Tab Backlog (UI §6 Schritt 4)
 - [x] Tab Issue lesend (UI §6 Schritt 5)
-- [ ] Writes im Frontend (UI §6 Schritt 6)
+- [x] Writes im Frontend (UI §6 Schritt 6)
 - [ ] Tab Board (UI §6 Schritt 7)
 - [ ] Abhängigkeitsgraph (UI §6 Schritt 8)
 - [ ] Settings und Suche (UI §6 Schritt 9)
