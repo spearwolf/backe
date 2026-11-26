@@ -3,7 +3,8 @@
  * Remote. Hintergrund-Syncs starten nie wirklich: `tools.sync.spawn` zeichnet nur auf.
  */
 import { readdir, stat } from 'node:fs/promises';
-import { request as httpRequest } from 'node:http';
+import { request as httpRequest, ServerResponse } from 'node:http';
+import { connect } from 'node:net';
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import {
@@ -182,7 +183,7 @@ test('an unknown tool is 404', async () => {
   expect(r.json().error.message).toContain('nope');
   // Ein unbekanntes Tool löst keinen Kontext auf.
   expect(tools).not.toHaveBeenCalled();
-  // Ein MCP-Tool, das die UI nicht anbietet, ist ebenso unbekannt wie ein erfundenes.
+  // Ein Schlüssel des Objekt-Prototyps ist kein Tool: Der Katalog ist eine Map, kein Objekt-Lookup.
   expect((await u.post('/api/b/acme/tools/constructor', {})).status).toBe(404);
 });
 
@@ -640,4 +641,90 @@ test('close removes the upload temp dir', async () => {
   ui = undefined;
   expect(await uploadDirs()).toEqual([]);
   await expect(stat(dir as string)).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+test('a chunked json body over the limit is 400 and closes the connection', async () => {
+  const u = await start();
+  const before = await count();
+  const mib = new Uint8Array(1024 * 1024).fill(0x20);
+  const chunks = [
+    ...Array.from({ length: TOOL_BODY_LIMIT / mib.length }, () => mib),
+    new Uint8Array([0x20]),
+  ];
+  // Der Body bleibt offen: Der Server hat dann alles Gesendete gelesen, wenn er antwortet.
+  const r = await streamRequest(u.port, {
+    method: 'POST',
+    path: tool('issue_create'),
+    headers: {
+      cookie: u.cookie,
+      origin: `http://127.0.0.1:${u.port}`,
+      'content-type': 'application/json',
+    },
+    chunks,
+    end: false,
+  });
+  expect([r.status, r.json().error.code]).toEqual([400, 'validation']);
+  expect(r.headers.connection).toBe('close');
+  expect(await count()).toBe(before);
+});
+
+/** Eine Anfrage als rohe Bytes für eine eigene Keep-Alive-Verbindung. */
+function rawPost(u: UiHarness, path: string, body: string): string {
+  return [
+    `POST ${path} HTTP/1.1`,
+    `Host: 127.0.0.1:${u.port}`,
+    `Cookie: ${u.cookie}`,
+    `Origin: http://127.0.0.1:${u.port}`,
+    'Content-Type: application/json',
+    `Content-Length: ${Buffer.byteLength(body)}`,
+    '',
+    body,
+  ].join('\r\n');
+}
+
+test('a request on a kept-alive connection after close started neither writes nor hangs', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered = 0;
+  const u = await start({
+    tools: {
+      ...syncDeps(),
+      write: {
+        hooks: {
+          beforeLock: async () => {
+            entered += 1;
+            await gate;
+          },
+        },
+      },
+    },
+  });
+  const before = await count();
+  const socket = connect(u.port, '127.0.0.1');
+  const received: Buffer[] = [];
+  socket.on('data', (chunk: Buffer) => received.push(chunk));
+  const ended = new Promise<void>((resolve) => socket.on('close', () => resolve()));
+  socket.write(rawPost(u, tool('issue_create'), '{"title":"Vorher"}'));
+  await vi.waitFor(() => expect(entered).toBe(1), WAIT);
+  const writeHead = vi.spyOn(ServerResponse.prototype, 'writeHead');
+  const closing = u.close();
+  ui = undefined;
+  // Dieselbe Verbindung, nach dem Beginn des Endes: Die Antwort steht fest, bevor der erste
+  // Write fertig ist.
+  socket.write(rawPost(u, tool('issue_create'), '{"title":"Danach"}'));
+  try {
+    await vi.waitFor(() => expect(writeHead).toHaveBeenCalledWith(503, expect.anything()), WAIT);
+  } finally {
+    release();
+  }
+  await closing;
+  await ended;
+  const raw = Buffer.concat(received).toString('utf8');
+  expect([...raw.matchAll(/HTTP\/1\.1 (\d{3})/g)].map((s) => s[1])).toEqual(['200', '503']);
+  expect(raw).toContain('{"error":{"code":"unavailable","message":"backe ui wird beendet"}}');
+  expect(raw).toMatch(/Connection: close/i);
+  expect(entered).toBe(1);
+  expect(await count()).toBe(before + 1);
 });

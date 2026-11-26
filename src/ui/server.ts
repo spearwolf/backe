@@ -47,7 +47,8 @@ export type UiServer = {
    * Write-Warteschlangen samt ihren Hintergrund-Starts und laufende Sync-Tools (ui.md §2.1,
    * »Lebensdauer«), entfernt das Upload-Verzeichnis, beendet die Watcher der Live-Updates und
    * schließt zuletzt alle Verbindungen; das beendet auch Antworten, die noch Bytes streamen, und
-   * offene Event-Streams. Idempotent.
+   * offene Event-Streams. Anfragen, die nach dem Beginn noch über eine offene Verbindung kommen,
+   * bekommen 503. Idempotent.
    */
   close(): Promise<void>;
 };
@@ -113,6 +114,16 @@ export function createUiServer(opts: UiOptions): UiServer {
   async function dispatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
     for (const [name, value] of Object.entries(appHeaders())) {
       if (value !== undefined) res.setHeader(name, value);
+    }
+    // Hat das Ende begonnen, bedient der Server nichts mehr, auch nicht über eine Keep-Alive-
+    // Verbindung, die `server.close()` nicht schließt, weil auf ihr noch eine Antwort läuft. Nur
+    // diese Ablehnung macht das Ende dicht: `Connection: close` auf jeder Antwort hielte eine
+    // Anfrage nicht auf, die der Client schon vorher hinterhergeschickt hat (Pipelining). Damit
+    // gehört jeder Handler, der noch etwas in eine Warteschlange stellen kann, zu `working`.
+    if (closing !== undefined) {
+      const body = { error: { code: 'unavailable', message: m.shuttingDown } };
+      sendJson(res, 503, body, { Connection: 'close' });
+      return;
     }
     const url = URL.parse(req.url ?? '/', `http://${HOST}`);
     if (url === null) {
@@ -200,15 +211,11 @@ export function createUiServer(opts: UiOptions): UiServer {
     close() {
       closing ??= (async () => {
         const closed = new Promise<void>((resolve) => server.close(() => resolve()));
-        // Ein Handler kann über eine noch offene Keep-Alive-Verbindung weitere nach sich ziehen.
-        // Wer streamt, zählt nicht mehr: Ein Client, der nicht weiterliest, hielte sonst das Ende auf.
-        // Während die Warteschlangen leerlaufen, kann über eine solche Verbindung noch ein Write
-        // ankommen; erst wenn danach kein Handler mehr arbeitet, ist alles abgewartet. Ein Upload,
-        // der noch Bytes liest, arbeitet.
-        do {
-          while (working.size > 0) await Promise.all(working);
-          await tools.settled();
-        } while (working.size > 0);
+        // Wer streamt, zählt nicht mehr: Ein Client, der nicht weiterliest, hielte sonst das Ende
+        // auf. Neue Handler lehnt `dispatch` ab, ohne etwas einzureihen; nach `working` kommt in
+        // die Warteschlangen also nichts mehr dazu. Ein Upload, der noch Bytes liest, arbeitet.
+        while (working.size > 0) await Promise.all(working);
+        await tools.settled();
         await uploads.remove();
         await hub.close();
         server.closeAllConnections();
