@@ -21,7 +21,7 @@ test('GET /api/backlogs lists the backlogs', async () => {
 });
 
 test('a known route kind without a handler yet answers not_found', async () => {
-  const res = await ui.get('/api/b/acme/state');
+  const res = await ui.get('/api/b/acme/search');
   expect([res.status, res.json().error.code]).toEqual([404, 'not_found']);
 });
 

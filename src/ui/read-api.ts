@@ -1,10 +1,11 @@
 /** Handler der lesenden API von `backe ui` (ui.md §2.3); Fehler gehen über `sendError`. */
 import type { ServerResponse } from 'node:http';
 import { BackeError } from '../core/errors.ts';
-import { backlogsJson, type StartInput } from './context.ts';
+import { backlogsJson, type StartInput, uiContext } from './context.ts';
 import { sendError, sendJson } from './http.ts';
 import { m } from './read-api.messages.ts';
 import type { ReadRoute } from './routes.ts';
+import { stateJson } from './state.ts';
 
 export type ReadEnv = { input: StartInput; start: string | undefined };
 
@@ -16,6 +17,14 @@ export async function handleRead(
 ): Promise<void> {
   if (route.kind === 'backlogs') {
     sendJson(res, 200, await backlogsJson(env.input, env.start));
+    return;
+  }
+  if (route.kind === 'state') {
+    try {
+      sendJson(res, 200, await stateJson(await uiContext(env.input, env.start, route.backlog)));
+    } catch (err) {
+      sendError(res, err);
+    }
     return;
   }
   sendError(res, new BackeError('not_found', m.noEndpoint(route.kind)));
