@@ -20,6 +20,7 @@ Alle Global Constraints des Gesamtplans. Dazu für U1:
 - Tests schicken HTTP über `node:http` (`test/helpers/ui.ts`), nicht über `fetch`: `fetch` folgt Redirects, verwaltet keine Cookies wie ein Browser und lässt `Host` nicht frei setzen.
 - Bestehende Golden-Files (`test/mcp/golden/`, `test/e2e/golden/`) bleiben byte-gleich.
 - `rev` in `/state` ist in U1 konstant `0`; U2 ersetzt ihn durch den Zähler von `LiveBacklog`.
+- Das Sitzungs-Cookie heißt `backe_ui_<port>` (`cookieName(port)` in `src/ui/security.ts`), etwa `backe_ui_8002`, nie `backe_ui`: Cookies trennen keine Ports, und ein fester Name ließe zwei Instanzen sich die Sitzung verdrängen (ui.md §2.15).
 
 ## Review Focus
 
@@ -138,12 +139,14 @@ git commit -m "feat: Schicht src/ui mit API-Typen und Fehler-Mapping"
 ```ts
 export const CSP =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
-export const COOKIE = 'backe_ui';
+/** Name des Sitzungs-Cookies: `backe_ui_<port>`, z. B. `backe_ui_8002`. */
+export function cookieName(port: number): string;
 /** 32 Bytes aus `randomBytes`, hex (64 Zeichen). */
 export function newToken(): string;
 /** `timingSafeEqual`; ungleiche Länge oder `undefined` → false. */
 export function sameToken(given: string | undefined, token: string): boolean;
-export function cookieOf(header: string | undefined, name: string): string | undefined;
+/** Werte aller Cookies `name` in Header-Reihenfolge; ein untergeschobenes gleichnamiges kann davor stehen. */
+export function cookiesOf(header: string | undefined, name: string): string[];
 export type Gate = { port: number; token: string; origins: readonly string[] };
 export function ownOrigins(port: number): string[]; // http://127.0.0.1:<port>, http://localhost:<port>
 export type Verdict =
@@ -155,7 +158,7 @@ export function checkRequest(req: { method: string; url: URL; headers: IncomingH
 export function appHeaders(): OutgoingHttpHeaders;
 ```
 
-`checkRequest` prüft in dieser Reihenfolge: (1) `Host` ist `127.0.0.1:<port>` oder `localhost:<port>`, sonst 403; (2) ein vorhandener `Origin` steht in `gate.origins`, sonst 403; jede Methode außer GET/HEAD ohne `Origin` → 403; (3) Query-Parameter `token`: passt er, `session` mit `location` = Pfad plus übrige Query (ohne `token`) und `cookie` = `backe_ui=<token>; HttpOnly; SameSite=Strict; Path=/`; passt er nicht, 401; (4) Cookie `backe_ui` passt, sonst 401 mit Hinweis auf die Konsolen-URL. `Referer` spielt keine Rolle.
+`checkRequest` prüft in dieser Reihenfolge: (1) `Host` ist `127.0.0.1:<port>` oder `localhost:<port>`, sonst 403; (2) ein vorhandener `Origin` steht in `gate.origins`, sonst 403; jede Methode außer GET/HEAD ohne `Origin` → 403; (3) Query-Parameter `token`: passt er, `session` mit `location` = Pfad plus übrige Query (ohne `token`) und `cookie` = `${cookieName(port)}=<token>; HttpOnly; SameSite=Strict; Path=/`; passt er nicht, 401; (4) eines der Cookies `backe_ui_<port>` passt, sonst 401 mit Hinweis auf die Konsolen-URL. `Referer` spielt keine Rolle.
 
 - Produces (`src/ui/server.ts`):
 
@@ -198,7 +201,7 @@ export function startUi(opts: Omit<UiOptions, 'port'>): Promise<UiHarness>;
 
 - [ ] **Step 1: Failing tests**
 
-`src/ui/security.test.ts`: `newToken` liefert 64 Hex-Zeichen und zweimal verschiedene Werte; `sameToken` mit `undefined`, kürzerem und gleichem Wert; `cookieOf('a=1; backe_ui=x; b=2', 'backe_ui') === 'x'`, `cookieOf(undefined, …) === undefined`; `checkRequest`-Tabelle über die vier Stufen.
+`src/ui/security.test.ts`: `newToken` liefert 64 Hex-Zeichen und zweimal verschiedene Werte; `sameToken` mit `undefined`, kürzerem und gleichem Wert; `cookieName(8002) === 'backe_ui_8002'`; `cookiesOf('a=1; backe_ui_8002=x; b=2', 'backe_ui_8002')` ist `['x']`, `cookiesOf(undefined, …)` ist `[]`; `checkRequest`-Tabelle über die vier Stufen.
 
 `src/ui/server.test.ts` (gegen `startUi` bzw. `rawRequest`):
 
@@ -207,7 +210,7 @@ test('the token sets the session cookie and redirects without it', async () => {
   const r = await rawRequest(ui.port, { path: `/b/acme?token=${ui.token}&x=1` });
   expect(r.status).toBe(303);
   expect(r.headers.location).toBe('/b/acme?x=1');
-  expect(r.headers['set-cookie']).toEqual([`backe_ui=${ui.token}; HttpOnly; SameSite=Strict; Path=/`]);
+  expect(r.headers['set-cookie']).toEqual([`backe_ui_${ui.port}=${ui.token}; HttpOnly; SameSite=Strict; Path=/`]);
 });
 test('requests without the cookie get 401', async () => {
   const api = await rawRequest(ui.port, { path: '/api/backlogs' });
@@ -501,7 +504,8 @@ export type Delivery = { type: string; disposition: 'inline' | 'attachment' };
 export function attachmentDelivery(name: string, bytes: Uint8Array | undefined): Delivery;
 /** `inline|attachment; filename*=UTF-8''<encodeURIComponent(name)>` */
 export function contentDisposition(d: Delivery['disposition'], name: string): string;
-export function sendAttachment(res: ServerResponse, a: { name: string; path: string; size: number }, head: boolean): Promise<void>;
+/** Länge und Inhalt aus dem `fstat` des einmal geöffneten Handles (`sendFile`), nie aus einer vorab ermittelten Größe. */
+export function sendAttachment(res: ServerResponse, a: { name: string; path: string }, head: boolean): Promise<void>;
 ```
 
 Festlegungen (ui.md §2.9.4, §2.15): Endung kleingeschrieben. `png` `image/png`, `jpg`/`jpeg` `image/jpeg`, `gif` `image/gif`, `webp` `image/webp`, `avif` `image/avif`, `svg` `image/svg+xml` → inline. `html`, `htm`, `xhtml`, `xht` → `application/octet-stream`, attachment. Sonst: `bytes` vorhanden und gültiges UTF-8 (`TextDecoder('utf-8', {fatal: true})`) → `text/plain; charset=utf-8`, inline; sonst `application/octet-stream`, attachment. Header jedes Anhangs: `Content-Type`, `Content-Disposition`, `Content-Length`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox` (statt der App-CSP), `Referrer-Policy: no-referrer`, `Cache-Control: no-store`. Ein URL-Anhang → 404 `not_found` (`m.linkAttachment(id, name)`). Routen: `issue` → `issueShowJson(await showIssue(ctx, id, { comments: 'all' }))`; `search` ohne oder mit leerem `q` → `BackeError('usage', m.searchNeedsQuery, { hint: '?q=<text>' })`, sonst `issueListResultJson(await listIssues(ctx, { text: q, states: ['all'] }))`.
@@ -564,7 +568,7 @@ test('search without q is 400', async () => {
 
 - [ ] **Step 3: `attachment.ts` implementieren, Routen `issue`, `attachment`, `search` in `read-api.ts`, Konstante in `src/tools/read.ts` exportieren**
 
-Für `attachmentDelivery` liest `sendAttachment` die Datei nur, wenn `size ≤ ATTACHMENT_TEXT_LIMIT`, und schickt dann genau diese Bytes; größere Dateien gehen per `createReadStream`.
+Für `attachmentDelivery` liest `sendAttachment` die Datei nur, wenn ihre Größe laut `fstat` des geöffneten Handles `≤ ATTACHMENT_TEXT_LIMIT` ist, und schickt dann genau diese Bytes; bei HEAD liest sie sie ebenso, weil der Typ vom Inhalt abhängen kann. Größere Dateien gehen als Stream desselben Handles.
 
 - [ ] **Step 4: Tests laufen lassen** — Run: `pnpm vitest run src/ui src/tools test/mcp` — Expected: PASS; `git status --short test/mcp/golden` leer.
 
