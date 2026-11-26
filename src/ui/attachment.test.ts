@@ -1,3 +1,4 @@
+import { truncateSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
@@ -74,3 +75,27 @@ test('a streamed file that is larger than the limit keeps its fstat length', asy
     await new Promise((r) => server.close(r));
   }
 });
+
+test('a file that shrinks after the fstat aborts the response instead of hanging', async () => {
+  const dir = await tempDir();
+  const path = join(dir, 'big.log');
+  await writeFile(path, Buffer.alloc(300_000, 0x61));
+  const server = createServer((_req, res) => {
+    // Deterministisch: die Datei schrumpft genau zwischen fstat und Stream.
+    const writeHead = res.writeHead.bind(res) as (...a: unknown[]) => typeof res;
+    res.writeHead = ((...a: unknown[]) => {
+      truncateSync(path, 1000);
+      return writeHead(...a);
+    }) as typeof res.writeHead;
+    sendAttachment(res, { name: 'big.log', path }, false).catch(() => res.destroy());
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const { port } = server.address() as { port: number };
+    await expect(
+      rawRequest(port, { path: '/', headers: { connection: 'keep-alive' } }),
+    ).rejects.toThrow();
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}, 3000);

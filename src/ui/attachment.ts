@@ -6,6 +6,7 @@
 import { open } from 'node:fs/promises';
 import type { ServerResponse } from 'node:http';
 import { extname } from 'node:path';
+import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { ATTACHMENT_TEXT_LIMIT } from '../tools/read.ts';
 
@@ -103,18 +104,21 @@ export async function sendAttachment(
     } else if (bytes !== undefined) {
       res.end(bytes);
     } else {
-      handed = true;
-      let sent = 0;
       const stream = fh.createReadStream({ start: 0, end: size - 1 });
-      stream.on('data', (c) => {
-        sent += (c as Buffer).length;
+      handed = true;
+      // Zählt mit und scheitert im flush, wenn die Datei kürzer geworden ist, als `Content-Length`
+      // versprach: Der Fehler kommt vor `res.end()`, solange der Socket noch hängt.
+      let sent = 0;
+      const guard = new Transform({
+        transform(chunk: Buffer, _enc, cb) {
+          sent += chunk.length;
+          cb(null, chunk);
+        },
+        flush(cb) {
+          cb(sent < size ? new Error('attachment shrank while streaming') : null);
+        },
       });
-      await pipeline(stream, res)
-        .then(() => {
-          // Geschrumpfte Datei: weniger Bytes als versprochen, die Verbindung nicht offen lassen.
-          if (sent < size) res.destroy();
-        })
-        .catch(() => res.destroy());
+      await pipeline(stream, guard, res).catch(() => res.destroy());
     }
   } finally {
     if (!handed) await fh.close();
