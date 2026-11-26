@@ -1,6 +1,7 @@
-import { Settings, X } from 'lucide-react';
+import { Settings, TriangleAlert, X } from 'lucide-react';
 import type { KeyboardEvent } from 'react';
 import { m } from '../app/app.messages.ts';
+import { issueProblem } from '../app/issue-problem.ts';
 import { useLinkClick, useRouter } from '../app/router.ts';
 import { type Route, routeHref } from '../app/routes.ts';
 import type { TabModel } from '../app/tabs.ts';
@@ -161,6 +162,8 @@ function IssueTab({ id, href, selected, focusable, onClose }: IssueTabProps) {
   const store = useStore();
   const issue = useSignal(store.issues.get(id));
   const loaded = useSignal(store.loaded);
+  const problems = useSignal(store.problems);
+  const broken = issueProblem(problems, id) !== undefined;
   const go = useLinkClick();
   return (
     <div role="presentation" className={cn(TAB, 'max-w-72 pr-1', selected ? SELECTED : IDLE)}>
@@ -196,7 +199,14 @@ function IssueTab({ id, href, selected, focusable, onClose }: IssueTabProps) {
         {loaded && issue === undefined && (
           <>
             {' '}
-            <span className="shrink-0 italic">{m.deleted}</span>
+            {broken ? (
+              <span className="inline-flex shrink-0 items-center gap-1 italic">
+                <TriangleAlert className="size-3.5" aria-hidden="true" />
+                {m.broken}
+              </span>
+            ) : (
+              <span className="shrink-0 italic">{m.deleted}</span>
+            )}
           </>
         )}
       </a>

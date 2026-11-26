@@ -329,6 +329,18 @@ test('a deleted issue keeps its tab', async () => {
   expect(screen.getAllByRole('tab')).toHaveLength(4);
 });
 
+test('a broken issue shows a problem marker instead of deleted on its tab', async () => {
+  localStorage.setItem('backe-ui:main:tabs', JSON.stringify(['bk-1', 'bk-9']));
+  const broken: StateJson = {
+    ...state([issue(1)]),
+    problems: [{ path: 'issues/bk-9.md', message: 'kaputt', kind: 'issue', key: 'bk-9' }],
+  };
+  const { connect } = await setup({ path: '/b/main/backlog', states: { main: broken } });
+  await connect();
+  expect(tab('bk-9 broken')).toBeTruthy();
+  expect(within(screen.getByRole('tablist')).queryByText('deleted')).toBeNull();
+});
+
 test('a patch updates the issue count without reload', async () => {
   const { connect, emit, sources } = await setup({ path: '/b/main/backlog' });
   await connect();

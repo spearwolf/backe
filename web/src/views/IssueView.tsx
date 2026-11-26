@@ -1,4 +1,5 @@
-import { useCallback, useRef } from 'react';
+import type { Attachment } from '@backe/core/schemas.ts';
+import { useCallback, useMemo, useRef } from 'react';
 import { m as app } from '../app/app.messages.ts';
 import { IssueDetailModel } from '../app/issue-detail.ts';
 import { ErrorAlert } from '../components/ErrorPage.tsx';
@@ -14,6 +15,8 @@ import { useOwned } from '../lib/use-owned.ts';
 import { cn } from '../lib/utils.ts';
 import { Markdown } from '../markdown/index.tsx';
 import { m } from './issue.messages.ts';
+
+const NO_ATTACHMENTS: readonly Attachment[] = [];
 
 /** Behält den letzten definierten Wert: Nach dem Löschen stehen die letzten Daten weiter da. */
 function useLast<T>(value: T | undefined): T | undefined {
@@ -59,6 +62,10 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
   const relations = useLast(current);
   const ready = useLast(state.status === 'ready' ? state : undefined);
 
+  const attachments = issue?.attachments ?? NO_ATTACHMENTS;
+  // Stabil, solange sich Anhänge nicht ändern: Sonst parst jedes Patch das ganze Markdown neu.
+  const markdownIssue = useMemo(() => ({ id, attachments }), [id, attachments]);
+
   if (state.status === 'error') {
     return (
       <section className="max-w-xl p-4">
@@ -67,7 +74,6 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
     );
   }
   const deleted = state.status === 'deleted';
-  const markdownIssue = { id, attachments: issue?.attachments ?? [] };
   const detail = ready?.detail;
 
   return (
@@ -93,7 +99,8 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
               backlog={backlog}
               parents={relations?.parents ?? []}
               declared={config?.props}
-              reason={detail?.last_reason?.body}
+              // `last_reason` kommt vom Server und kann nach einem Wechsel im Store schon überholt sein.
+              reason={detail?.last_reason?.to === issue.state ? detail.last_reason.body : undefined}
               markdownIssue={markdownIssue}
             />
             {relations !== undefined && <IssueRelations relations={relations} backlog={backlog} />}

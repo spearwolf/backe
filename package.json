@@ -68,7 +68,6 @@
     "jsdom": "^31.0.1",
     "lowlight": "^3.3.0",
     "lucide-react": "^1.79.0",
-    "mdast-util-find-and-replace": "^3.0.5",
     "mermaid": "^12.3.0",
     "radix-ui": "^1.8.1",
     "react": "^19.3.1",

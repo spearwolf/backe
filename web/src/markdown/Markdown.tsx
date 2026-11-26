@@ -1,5 +1,12 @@
 import type { Attachment } from '@backe/core/schemas.ts';
-import { Children, type ComponentProps, isValidElement, type ReactNode, useMemo } from 'react';
+import {
+  Children,
+  type ComponentProps,
+  isValidElement,
+  memo,
+  type ReactNode,
+  useMemo,
+} from 'react';
 import ReactMarkdown, { type Components, type Options } from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
@@ -78,7 +85,7 @@ const components: Components = { a: Anchor, code: Code, pre: Pre };
 
 const remarkPlugins = [remarkGfm, remarkGemoji];
 
-export default function Markdown({ source, backlog, issue, className }: MarkdownProps) {
+export default memo(function Markdown({ source, backlog, issue, className }: MarkdownProps) {
   const store = useStore();
   const config = useSignal(store.config);
   const keys = useSignal(store.issues.keys);
@@ -110,12 +117,13 @@ export default function Markdown({ source, backlog, issue, className }: Markdown
     () =>
       issueUrlTransform({
         backlog,
+        prefix,
         issue:
           issueId === undefined || attachments === undefined
             ? undefined
             : { id: issueId, attachments },
       }),
-    [backlog, issueId, attachments],
+    [backlog, prefix, issueId, attachments],
   );
 
   return (
@@ -130,4 +138,4 @@ export default function Markdown({ source, backlog, issue, className }: Markdown
       </ReactMarkdown>
     </div>
   );
-}
+});

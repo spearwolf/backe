@@ -11,9 +11,17 @@ import { IssueView } from './IssueView.tsx';
 import { m } from './issue.messages.ts';
 
 // Das Markdown-Chunk testet die Markdown-Komponente selbst; hier zählt, was die Ansicht übergibt.
-vi.mock('../markdown/index.tsx', () => ({
-  Markdown: ({ source }: { source: string }) => <div data-testid="markdown">{source}</div>,
-}));
+// Wie die echte Komponente per `memo` verpackt; `renders` zählt, wie oft ein Text neu gerendert wird.
+const markdownRenders = vi.hoisted(() => ({ count: 0 }));
+vi.mock('../markdown/index.tsx', async () => {
+  const { memo } = await import('react');
+  return {
+    Markdown: memo(({ source }: { source: string }) => {
+      markdownRenders.count++;
+      return <div data-testid="markdown">{source}</div>;
+    }),
+  };
+});
 
 let comments: CommentJson[] = [];
 let body: string | undefined;
@@ -111,6 +119,45 @@ test('shows the reason of the last transition and the body', async () => {
   const texts = screen.getAllByTestId('markdown').map((e) => e.textContent);
   expect(texts).toContain('wartet auf Freigabe');
   expect(texts).toContain('Langer Text');
+});
+
+test('hides a last reason that no longer matches the live state', async () => {
+  lastReason = {
+    file: 'c.md',
+    author: 'spw',
+    created: '2026-11-18T10:00:00Z',
+    kind: 'transition',
+    from: 'todo',
+    to: 'blocked',
+    body: 'wartet auf Freigabe',
+  };
+  const { store } = view([testIssue(1, { state: 'blocked', blocked_by: [tid(2)] }), testIssue(2)]);
+  await flush();
+  expect(screen.getAllByTestId('markdown').map((e) => e.textContent)).toContain(
+    'wartet auf Freigabe',
+  );
+  act(() => {
+    store.applyPatch(
+      testPatch(2, { upsert: { issues: [testIssue(1, { state: 'in_progress' })] } }),
+    );
+  });
+  await flush();
+  expect(screen.queryAllByTestId('markdown').map((e) => e.textContent)).not.toContain(
+    'wartet auf Freigabe',
+  );
+});
+
+test('a patch to an unrelated issue does not render the description again', async () => {
+  body = 'Langer Text';
+  const { store } = view([testIssue(1), testIssue(2)]);
+  await flush();
+  expect(screen.getByText('Langer Text')).toBeTruthy();
+  markdownRenders.count = 0;
+  act(() => {
+    store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(2, { title: 'Anderes' })] } }));
+  });
+  await flush();
+  expect(markdownRenders.count).toBe(0);
 });
 
 test('shows relations with states', async () => {
@@ -215,7 +262,7 @@ test('a deleted issue keeps its tab', async () => {
 
 test('a broken issue shows its problem', async () => {
   const { store } = view([], {
-    problems: [{ path: 'issues/x.md', message: 'kaputt im Frontmatter', key: ID }],
+    problems: [{ path: 'issues/x.md', message: 'kaputt im Frontmatter', kind: 'issue', key: ID }],
   });
   await flush();
   expect(screen.getByRole('alert').textContent).toContain('kaputt im Frontmatter');
@@ -227,6 +274,18 @@ test('a broken issue shows its problem', async () => {
   });
   await flush();
   expect(screen.getByRole('heading', { level: 1, name: 'Repariert' })).toBeTruthy();
+});
+
+test('a failed copy is announced in the live region', async () => {
+  const writeText = vi.fn(async () => {
+    throw new Error('denied');
+  });
+  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+  view([testIssue(1)]);
+  await flush();
+  await userEvent.click(screen.getByRole('button', { name: m.copyId }));
+  await flush();
+  expect(screen.getByRole('status').textContent).toBe(m.copyFailed);
 });
 
 test('copy puts the id on the clipboard', async () => {

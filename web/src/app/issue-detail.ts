@@ -1,5 +1,5 @@
 /**
- * Das Detailmodell des Tabs Issue (ui.md §2.8): Body, Kommentare und Anhänge kommen vom Server,
+ * Das Detailmodell des Tabs Issue (ui.md §2.9): Body, Kommentare und Anhänge kommen vom Server,
  * Felder und Beziehungen aus dem Store. Eine Berührung des Issues (`touchCount`) lädt neu; nur die
  * Antwort der jüngsten Ladung zählt.
  */
@@ -13,6 +13,7 @@ import {
 } from '@spearwolf/signalize';
 import { ApiError } from '../data/api-client.ts';
 import type { Store } from '../data/store.ts';
+import { issueProblem } from './issue-problem.ts';
 import { type IssueRelations, issueRelations } from './issue-relations.ts';
 
 export type DetailState =
@@ -50,7 +51,7 @@ export class IssueDetailModel {
 
     this.state = createMemo(
       (): DetailState => {
-        const problem = store.problems.get().find((p) => p.key === id);
+        const problem = issueProblem(store.problems.get(), id);
         if (problem !== undefined) {
           return { status: 'error', error: new ApiError(0, 'problem', problem.message) };
         }

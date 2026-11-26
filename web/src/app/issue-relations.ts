@@ -1,5 +1,5 @@
 /**
- * Beziehungen eines Issues aus dem Store (ui.md §2.8): dieselben Listen wie `issue show`
+ * Beziehungen eines Issues aus dem Store (ui.md §2.9): dieselben Listen wie `issue show`
  * (`showIssue`), gerechnet auf dem Snapshot, damit ein Patch sie ohne Neuladen ändert.
  */
 import { ancestors, childProgress, graphOf } from '@backe/ops/graph.ts';

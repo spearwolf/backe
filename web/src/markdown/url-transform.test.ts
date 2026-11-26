@@ -60,4 +60,5 @@ test('allows only internal issue routes of the same backlog', () => {
   expect(noIssue('/b/acme/issue/bk-7f3k2', 'href')).toBe('/b/acme/issue/bk-7f3k2');
   expect(noIssue('/b/other/issue/bk-7f3k2', 'href')).toBeFalsy();
   expect(noIssue('/b/acme/issue/../../x', 'href')).toBeFalsy();
+  expect(noIssue('/b/acme/issue/%2e%2e', 'href')).toBeFalsy();
 });

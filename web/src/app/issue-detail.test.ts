@@ -108,10 +108,18 @@ test('a missing issue in a loaded store is deleted', () => {
 
 test('a broken issue is an error with the problem message', () => {
   const { model } = setup([testIssue(2)], {
-    problems: [{ path: 'issues/x.md', message: 'kaputt', key: ID }],
+    problems: [{ path: 'issues/x.md', message: 'kaputt', kind: 'issue', key: ID }],
   });
   const s = model.state();
   expect(s.status === 'error' && s.error.message).toBe('kaputt');
+  model.dispose();
+});
+
+test('a problem of another entity kind with the same key is no broken issue', () => {
+  const { model } = setup([testIssue(2)], {
+    problems: [{ path: 'projects/x.yml', message: 'kaputt', kind: 'project', key: ID }],
+  });
+  expect(model.state()).toEqual({ status: 'deleted' });
   model.dispose();
 });
 

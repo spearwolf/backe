@@ -1,3 +1,4 @@
+import { isIssueId } from '@backe/core/ids.ts';
 import type { Attachment } from '@backe/core/schemas.ts';
 import { defaultUrlTransform } from 'react-markdown';
 import { routeHref } from '../app/routes.ts';
@@ -5,6 +6,8 @@ import { attachmentUrl } from '../data/issue-api.ts';
 
 export type UrlContext = {
   backlog: string;
+  /** ID-Präfix des Backlogs; ohne ihn genügt jede wohlgeformte Issue-ID. */
+  prefix?: string;
   /** Ohne Issue-Kontext (Projekt, Sprint, Repo) gibt es keine Anhänge. */
   issue?: { id: string; attachments: readonly Attachment[] };
 };
@@ -27,7 +30,9 @@ export function issueUrlTransform(
     if (SCHEME.test(safe)) return safe;
     // Nur Issue-Routen des eigenen Backlogs, in der Form, die der Issue-Link-Plugin erzeugt.
     const own = routeHref({ kind: 'issue', backlog: ctx.backlog, id: '' });
-    if (safe.startsWith(own)) return /^[^/?#.]+$/.test(safe.slice(own.length)) ? safe : null;
+    if (safe.startsWith(own)) {
+      return isIssueId(safe.slice(own.length), ctx.prefix) ? safe : null;
+    }
     return attachmentTarget(ctx, safe);
   };
 }

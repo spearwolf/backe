@@ -19,7 +19,8 @@ export function attachmentKind(a: AttachmentListJson[number]): AttachmentKind {
   if (a.url !== undefined) return 'url';
   if (a.not_loaded === true) return 'not-loaded';
   const ext = extensionOf(a.name);
-  if (IMAGE_EXTENSIONS.has(ext)) return 'image';
+  // Ohne `size` fehlt die Datei; ein Bild-Tag hätte nichts zu laden.
+  if (IMAGE_EXTENSIONS.has(ext)) return a.size === undefined ? 'download' : 'image';
   if (a.size === undefined || a.size > ATTACHMENT_TEXT_LIMIT) return 'download';
   return ext === 'md' || ext === 'markdown' ? 'markdown' : 'text';
 }

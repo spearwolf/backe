@@ -26,11 +26,15 @@ const propText = (value: unknown): string =>
 /** ID mit Kopier-Knopf; die Bestätigung steht in einer Live-Region. */
 function CopyId({ id }: { id: string }) {
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), 2000);
+    if (!copied && !failed) return;
+    const timer = setTimeout(() => {
+      setCopied(false);
+      setFailed(false);
+    }, 2000);
     return () => clearTimeout(timer);
-  }, [copied]);
+  }, [copied, failed]);
   return (
     <span className="inline-flex items-center gap-1">
       <span className="font-mono text-xs">{id}</span>
@@ -41,13 +45,16 @@ function CopyId({ id }: { id: string }) {
         className="size-6"
         aria-label={m.copyId}
         onClick={() => {
-          void navigator.clipboard.writeText(id).then(() => setCopied(true));
+          navigator.clipboard.writeText(id).then(
+            () => setCopied(true),
+            () => setFailed(true),
+          );
         }}
       >
         {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
       </Button>
       <span role="status" className="text-xs text-muted-foreground">
-        {copied ? m.copied : ''}
+        {copied ? m.copied : failed ? m.copyFailed : ''}
       </span>
     </span>
   );

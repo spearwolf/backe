@@ -12,5 +12,6 @@ test('kinds by extension and size', () => {
   expect(attachmentKind({ name: 'big.md', file: 'big.md', size: 262_145 })).toBe('download');
   expect(attachmentKind({ name: 'x', url: 'https://example.com/x' })).toBe('url');
   expect(attachmentKind({ name: 'm.bin', file: 'm.bin', not_loaded: true })).toBe('not-loaded');
+  expect(attachmentKind({ name: 'gone.png', file: 'gone.png' })).toBe('download');
   expect(attachmentKind({ name: 'nosize.txt', file: 'nosize.txt' })).toBe('download');
 });
