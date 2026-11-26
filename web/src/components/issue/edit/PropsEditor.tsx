@@ -6,17 +6,14 @@
 import { PROP_KEY_RE } from '@backe/core/names.ts';
 import type { IssueJson } from '@backe/ui/api.ts';
 import { Check, X } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { m } from '../../../views/issue.messages.ts';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { ErrorBox } from '../../write/ActionError.tsx';
-import { type PropDeclaration, PropInput } from './inputs.tsx';
+import { type DeclaredProps, type PropDeclaration, PropInput, sameValue } from './PropInput.tsx';
+import { useFocusRescue } from './use-focus-return.ts';
 import { useIssueUpdate } from './use-issue-update.ts';
-
-type Declared = Record<string, PropDeclaration> | undefined;
-
-const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
 function PropRow(props: {
   issue: IssueJson;
@@ -28,14 +25,16 @@ function PropRow(props: {
   const [draft, setDraft] = useState<unknown>(current);
   // Ein neuer Wert vom Server (oder das Ende der Überlagerung) ersetzt den Entwurf.
   const [seen, setSeen] = useState(current);
-  if (!same(seen, current)) {
+  if (!sameValue(seen, current)) {
     setSeen(current);
     setDraft(current);
   }
-  const { busy, error, update } = useIssueUpdate(issue);
-  const changed = draft !== undefined && !same(draft, current);
+  const helpId = useId();
+  const { busy, error, update, scope } = useIssueUpdate<HTMLFormElement>(issue);
+  const changed = draft !== undefined && !sameValue(draft, current);
   return (
     <form
+      ref={scope}
       className="space-y-1"
       onSubmit={(e) => {
         e.preventDefault();
@@ -44,7 +43,14 @@ function PropRow(props: {
     >
       <div className="flex items-center gap-2">
         <span className="w-24 shrink-0 truncate font-mono text-xs">{name}</span>
-        <PropInput name={name} decl={decl} value={draft} disabled={busy} onChange={setDraft} />
+        <PropInput
+          name={name}
+          decl={decl}
+          value={draft}
+          disabled={busy}
+          onChange={setDraft}
+          {...(decl === undefined ? {} : { describedBy: helpId })}
+        />
         <Button
           type="submit"
           variant="ghost"
@@ -69,7 +75,11 @@ function PropRow(props: {
           </Button>
         )}
       </div>
-      {decl !== undefined && <p className="text-xs text-muted-foreground">{decl.description}</p>}
+      {decl !== undefined && (
+        <p id={helpId} className="text-xs text-muted-foreground">
+          {decl.description}
+        </p>
+      )}
       {error !== undefined && <ErrorBox error={error} compact />}
     </form>
   );
@@ -80,12 +90,13 @@ function AddProp({ issue }: { issue: IssueJson }) {
   const [value, setValue] = useState<unknown>();
   // Nach dem Hinzufügen beginnt die Wert-Eingabe neu, samt ihrem Text.
   const [round, setRound] = useState(0);
-  const { busy, error, update } = useIssueUpdate(issue);
+  const { busy, error, update, scope } = useIssueUpdate<HTMLFormElement>(issue);
   const name = key.trim();
   const keyInvalid = name !== '' && !PROP_KEY_RE.test(name);
   const ready = name !== '' && !keyInvalid && value !== undefined;
   return (
     <form
+      ref={scope}
       className="space-y-1"
       onSubmit={(e) => {
         e.preventDefault();
@@ -107,6 +118,7 @@ function AddProp({ issue }: { issue: IssueJson }) {
           aria-invalid={keyInvalid || undefined}
           spellCheck={false}
           className="h-8 w-24 shrink-0 font-mono text-xs"
+          data-focus-return
           onChange={(e) => setKey(e.target.value)}
         />
         <PropInput
@@ -128,7 +140,9 @@ function AddProp({ issue }: { issue: IssueJson }) {
 }
 
 /** Deklarierte Properties zuerst (mit Hilfetext), dann vorhandene undeklarierte, dann »hinzufügen«. */
-export function PropsEditor({ issue, declared }: { issue: IssueJson; declared: Declared }) {
+export function PropsEditor({ issue, declared }: { issue: IssueJson; declared: DeclaredProps }) {
+  // Eine entfernte undeklarierte Property verschwindet samt ihrer Zeile; der Fokus bleibt im Feld.
+  const rescue = useFocusRescue<HTMLDivElement>();
   const values: Record<string, unknown> = issue.props ?? {};
   // Nur eigene Keys: `constructor` ist ein gültiger Property-Key, aber kein Wert des Issues.
   const ownValue = (k: string) => (Object.hasOwn(values, k) ? values[k] : undefined);
@@ -136,7 +150,7 @@ export function PropsEditor({ issue, declared }: { issue: IssueJson; declared: D
   const declaredKeys = Object.keys(declared ?? {});
   const undeclared = Object.keys(values).filter((k) => !isDeclared(k));
   return (
-    <div className="space-y-2">
+    <div ref={rescue} className="space-y-2">
       {declaredKeys.map((k) => (
         <PropRow key={k} issue={issue} name={k} decl={declared?.[k]} current={ownValue(k)} />
       ))}

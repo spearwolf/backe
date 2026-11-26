@@ -18,7 +18,7 @@ export function DepsEditor(props: {
 }) {
   const { issue, dependsOn, backlog } = props;
   const [draft, setDraft] = useState('');
-  const { busy, error, update } = useIssueUpdate(issue);
+  const { busy, error, update, scope } = useIssueUpdate(issue);
   const target = draft.trim();
   const footer = (
     <form
@@ -47,23 +47,25 @@ export function DepsEditor(props: {
     </form>
   );
   return (
-    <RelationGroup title="depends_on" footer={footer}>
-      {dependsOn.map((d) => (
-        <li key={d.id} className="flex items-center gap-1">
-          <IssueRef issue={d} backlog={backlog} />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-6 shrink-0"
-            aria-label={m.remove(d.id)}
-            disabled={busy}
-            onClick={() => void update({ rm_deps: [d.id] })}
-          >
-            <X className="size-3.5" aria-hidden="true" />
-          </Button>
-        </li>
-      ))}
-    </RelationGroup>
+    <div ref={scope}>
+      <RelationGroup title="depends_on" footer={footer}>
+        {dependsOn.map((d) => (
+          <li key={d.id} className="flex items-center gap-1">
+            <IssueRef issue={d} backlog={backlog} />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-6 shrink-0"
+              aria-label={m.remove(d.id)}
+              disabled={busy}
+              onClick={() => void update({ rm_deps: [d.id] })}
+            >
+              <X className="size-3.5" aria-hidden="true" />
+            </Button>
+          </li>
+        ))}
+      </RelationGroup>
+    </div>
   );
 }

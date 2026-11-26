@@ -11,14 +11,12 @@ import {
   ProjectsEditor,
   SprintsEditor,
 } from './edit/FieldEditors.tsx';
-import type { PropDeclaration } from './edit/inputs.tsx';
+import type { DeclaredProps } from './edit/PropInput.tsx';
 import { PropsEditor } from './edit/PropsEditor.tsx';
 import { StateControl } from './edit/StateControl.tsx';
 import { IssueRef } from './IssueRef.tsx';
 import { Author, CopyValue, Time } from './parts.tsx';
 import { RepoPath } from './RepoPath.tsx';
-
-type Declared = Record<string, PropDeclaration> | undefined;
 
 function Field(props: { label: string; children: ReactNode }) {
   return (
@@ -44,7 +42,7 @@ function list(items: readonly string[] | undefined): ReactNode | undefined {
   );
 }
 
-function PropsView({ issue, declared }: { issue: IssueJson; declared: Declared }) {
+function PropsView({ issue, declared }: { issue: IssueJson; declared: DeclaredProps }) {
   return (
     <dl className="space-y-1">
       {Object.entries(issue.props ?? {}).map(([key, value]) => (
@@ -72,7 +70,7 @@ export function IssueFields(props: {
   issue: IssueJson;
   backlog: string;
   parents: IssueRelations['parents'];
-  declared: Declared;
+  declared: DeclaredProps;
   reason: string | undefined;
   markdownIssue: React.ComponentProps<typeof Markdown>['issue'];
 }) {

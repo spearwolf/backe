@@ -4,6 +4,7 @@ import { m } from '../../views/issue.messages.ts';
 import { Button } from '../ui/button.tsx';
 import { ErrorBox } from '../write/ActionError.tsx';
 import { useAction } from '../write/use-action.ts';
+import { useFocusReturn } from './edit/use-focus-return.ts';
 import { CopyValue } from './parts.tsx';
 
 /**
@@ -14,8 +15,10 @@ export function RepoPath({ name }: { name: string }) {
   const { writes } = useWrites();
   const { busy, error, run } = useAction();
   const [path, setPath] = useState<string>();
+  // Nach dem Erfolg ersetzt der Pfad den Knopf; der Fokus geht an »Pfad kopieren«.
+  const { scope, capture } = useFocusReturn<HTMLDivElement>(busy);
   return (
-    <div className="space-y-1">
+    <div ref={scope} className="space-y-1">
       {path === undefined ? (
         <Button
           type="button"
@@ -24,9 +27,10 @@ export function RepoPath({ name }: { name: string }) {
           className="h-6 px-2 text-xs"
           aria-label={m.localPathOf(name)}
           disabled={busy}
-          onClick={() =>
-            void run(async () => setPath((await writes.run('repo_locate', { name })).path))
-          }
+          onClick={() => {
+            capture();
+            void run(async () => setPath((await writes.run('repo_locate', { name })).path));
+          }}
         >
           {m.localPath}
         </Button>

@@ -1,78 +1,32 @@
-import type { IssueDetailJson, IssueJson } from '@backe/ui/api.ts';
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Router, RouterContext } from '../../../app/router.ts';
-import { ApiError } from '../../../data/api-client.ts';
-import { Store } from '../../../data/store.ts';
-import { StoreContext } from '../../../data/store-context.tsx';
-import { WriteContext } from '../../../data/write-context.tsx';
-import { Writes } from '../../../data/writes.ts';
-import { testConfig, testIssue, testPatch, testState, tid } from '../../../test/state.ts';
-import { IssueView } from '../../../views/IssueView.tsx';
+import {
+  call,
+  deferred,
+  expectOneCall,
+  flush,
+  ID,
+  registerIssueViewHarness,
+  view,
+} from '../../../test/issue-view.tsx';
+import { testConfig, testIssue, testPatch, tid } from '../../../test/state.ts';
 import { m } from '../../../views/issue.messages.ts';
-import { m as w } from '../../write/write.messages.ts';
 
 vi.mock('../../../markdown/index.tsx', () => ({
   Markdown: ({ source }: { source: string }) => <div data-testid="markdown">{source}</div>,
 }));
 
-const ID = tid(1);
-const call = vi.fn<(name: string, args: unknown) => Promise<unknown>>();
+registerIssueViewHarness();
 
-beforeEach(() => {
-  call.mockReset();
-  call.mockImplementation(async () => ({ commit: null, id: ID }));
-  vi.stubGlobal('fetch', async (url: string) => {
-    if (url.endsWith('/attachments')) return new Response('[]');
-    const id = url.split('/').pop() as string;
-    // Die Felder kommen aus dem Store; das Detail liefert nur, was der Tab zusätzlich lädt.
-    const { depends_on: _deps, ...issue } = testIssue(Number(id.slice(-4)));
-    const detail: IssueDetailJson = { ...issue, comments_count: 0 };
-    return new Response(JSON.stringify(detail));
-  });
-});
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
+const USERS = [
+  { handle: 'spw', name: 'Wolf', kind: 'human' as const, admin: true },
+  { handle: 'ada', name: 'Ada', kind: 'human' as const, admin: false },
+];
 
-function view(issues: IssueJson[], over: Parameters<typeof testState>[1] = {}, canWrite = true) {
-  window.history.replaceState(null, '', `/b/acme/issue/${ID}`);
-  const router = new Router(window);
-  const store = new Store();
-  store.load(testState(issues, over));
-  const writes = new Writes(store, {
-    call: call as never,
-    upload: vi.fn(),
-    refresh: async () => {},
-  });
-  render(
-    <RouterContext.Provider value={router}>
-      <StoreContext.Provider value={store}>
-        <WriteContext.Provider value={{ backlog: 'acme', canWrite, me: 'spw', writes }}>
-          <IssueView backlog="acme" id={ID} onClose={() => {}} />
-        </WriteContext.Provider>
-      </StoreContext.Provider>
-    </RouterContext.Provider>,
-  );
-  return { store };
-}
-
-const flush = () => act(async () => {});
-const fields = () => screen.getByText(m.fieldId).closest('dl') as HTMLElement;
-const stateField = () => screen.getByText(m.fieldState).parentElement as HTMLElement;
-
-function deferred<T>() {
-  let resolve!: (v: T) => void;
-  const promise = new Promise<T>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
-
-async function openStateMenu() {
-  await userEvent.click(screen.getByRole('button', { name: m.changeState }));
-}
+const assigneeButton = () =>
+  screen.getByRole('button', { name: new RegExp(`^${m.fieldAssignee}: `) }) as HTMLButtonElement;
+const menuTexts = (role: 'menuitem' | 'menuitemradio') =>
+  screen.getAllByRole(role).map((e) => e.textContent);
 
 test('without write access every editor is missing', async () => {
   view([testIssue(1, { repos: ['core'] }), testIssue(2)], {}, false);
@@ -80,6 +34,7 @@ test('without write access every editor is missing', async () => {
   expect(screen.queryByRole('button', { name: m.editTitle })).toBeNull();
   expect(screen.queryByRole('button', { name: m.changeState })).toBeNull();
   expect(screen.queryByRole('combobox')).toBeNull();
+  expect(screen.queryByRole('button', { name: new RegExp(`^${m.fieldAssignee}: `) })).toBeNull();
   expect(screen.queryByRole('button', { name: m.localPathOf('core') })).toBeNull();
   expect(screen.queryByRole('button', { name: m.addProp })).toBeNull();
   expect(screen.queryByRole('button', { name: m.addDep })).toBeNull();
@@ -95,115 +50,22 @@ test('title edits save on enter and cancel on escape', async () => {
   await userEvent.keyboard('{Enter}');
   expect(call).not.toHaveBeenCalled();
   await userEvent.type(input, 'Neu{Enter}');
-  expect(call).toHaveBeenCalledWith('issue_update', { id: ID, title: 'Neu' });
+  expectOneCall('issue_update', { id: ID, title: 'Neu' });
   await flush();
   expect(screen.queryByRole('textbox', { name: m.titleLabel })).toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: m.editTitle }));
 
-  call.mockClear();
   await userEvent.click(screen.getByRole('button', { name: m.editTitle }));
   await userEvent.type(screen.getByRole('textbox', { name: m.titleLabel }), 'xyz{Escape}');
   expect(screen.queryByRole('textbox', { name: m.titleLabel })).toBeNull();
   expect(screen.getByRole('heading', { level: 1 }).textContent).toContain('Alt');
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: m.editTitle }));
   expect(call).not.toHaveBeenCalled();
-});
-
-test('a state change is optimistic and posts issue_move', async () => {
-  const answer = deferred<unknown>();
-  call.mockImplementation(() => answer.promise);
-  view([testIssue(1)]);
-  await flush();
-  await openStateMenu();
-  await userEvent.click(screen.getByRole('menuitem', { name: 'in_progress' }));
-  expect(within(stateField()).getByText('in_progress')).toBeTruthy();
-  expect(within(stateField()).getByText(w.pending)).toBeTruthy();
-  expect(call).toHaveBeenCalledWith('issue_move', { id: ID, to: 'in_progress' });
-  await act(async () => answer.resolve({ commit: null, id: ID }));
-  expect(within(stateField()).queryByText(w.pending)).toBeNull();
-});
-
-test('blocked asks for blocked_by and reason', async () => {
-  view([testIssue(1), testIssue(2)]);
-  await flush();
-  await openStateMenu();
-  await userEvent.click(screen.getByRole('menuitem', { name: /blocked/ }));
-  const dialog = screen.getByRole('dialog');
-  const confirm = within(dialog).getByRole('button', { name: m.confirmState });
-  expect((confirm as HTMLButtonElement).disabled).toBe(true);
-  await userEvent.type(within(dialog).getByRole('combobox', { name: m.blockedBy }), tid(2));
-  await userEvent.type(within(dialog).getByRole('textbox', { name: m.reason }), 'wartet');
-  await userEvent.click(confirm);
-  expect(call).toHaveBeenCalledWith('issue_move', {
-    id: ID,
-    to: 'blocked',
-    reason: 'wartet',
-    blocked_by: [tid(2)],
-  });
-  await flush();
-  expect(screen.queryByRole('dialog')).toBeNull();
-});
-
-test('a resume uses issue_resume, a settled issue issue_reopen', async () => {
-  view([
-    testIssue(1, { state: 'blocked', paused_from: 'in_progress', blocked_by: [tid(2)] }),
-    testIssue(2),
-  ]);
-  await flush();
-  await openStateMenu();
-  await userEvent.click(screen.getByRole('menuitem', { name: 'in_progress' }));
-  expect(call).toHaveBeenCalledWith('issue_resume', { id: ID });
-  cleanup();
-
-  view([testIssue(1, { state: 'done' })]);
-  await flush();
-  await openStateMenu();
-  await userEvent.click(screen.getByRole('menuitem', { name: m.withReason }));
-  await waitFor(() => expect(screen.getAllByRole('menu')).toHaveLength(2));
-  const sub = screen.getAllByRole('menu')[1] as HTMLElement;
-  await userEvent.click(within(sub).getByRole('menuitem', { name: 'todo' }));
-  const dialog = screen.getByRole('dialog');
-  await userEvent.type(within(dialog).getByRole('textbox', { name: m.reason }), 'nochmal');
-  await userEvent.click(within(dialog).getByRole('button', { name: m.confirmState }));
-  expect(call).toHaveBeenLastCalledWith('issue_reopen', { id: ID, to: 'todo', reason: 'nochmal' });
-});
-
-test('a rejected move rolls back and shows the hint', async () => {
-  call.mockRejectedValue(
-    new ApiError(400, 'invariant', 'Nicht erlaubt', 'backe issue move --force'),
-  );
-  view([testIssue(1)]);
-  await flush();
-  await openStateMenu();
-  await userEvent.click(screen.getByRole('menuitem', { name: 'review' }));
-  await flush();
-  expect(within(stateField()).getByText('todo')).toBeTruthy();
-  expect(within(stateField()).getByText('Nicht erlaubt')).toBeTruthy();
-  expect(within(stateField()).getByText('backe issue move --force')).toBeTruthy();
-});
-
-test('done with open sub-issues offers force', async () => {
-  call.mockRejectedValueOnce(
-    new ApiError(400, 'invariant', 'Offene Sub-Issues', 'mit --force abschließen', {
-      reason: 'open_children',
-      ids: [tid(2)],
-    }),
-  );
-  view([testIssue(1, { state: 'review' }), testIssue(2, { title: 'Kind', parent: ID })]);
-  await flush();
-  await openStateMenu();
-  await userEvent.click(screen.getByRole('menuitem', { name: 'done' }));
-  const dialog = await screen.findByRole('dialog');
-  expect(within(dialog).getByRole('link', { name: /Kind/ })).toBeTruthy();
-  expect(within(stateField()).getByText('review')).toBeTruthy();
-  await userEvent.click(within(dialog).getByRole('button', { name: m.forceDone }));
-  expect(call).toHaveBeenLastCalledWith('issue_move', { id: ID, to: 'done', force: true });
 });
 
 test('assignee, projects, sprints and parent send issue_update', async () => {
   view([testIssue(1, { projects: ['web'], parent: tid(2) }), testIssue(2), testIssue(3)], {
-    users: [
-      { handle: 'spw', name: 'Wolf', kind: 'human', admin: true },
-      { handle: 'ada', name: 'Ada', kind: 'human', admin: false },
-    ],
+    users: USERS,
     projects: [
       { path: 'web', title: 'Web' },
       { path: 'api', title: 'API' },
@@ -214,37 +76,80 @@ test('assignee, projects, sprints and parent send issue_update', async () => {
     ],
   });
   await flush();
-  const assignee = within(fields()).getByRole('combobox', { name: m.fieldAssignee });
-  expect(
-    within(assignee)
-      .getAllByRole('option')
-      .map((o) => o.textContent),
-  ).toEqual(['none', 'me (spw)', 'ada']);
-  await userEvent.selectOptions(assignee, 'ada');
-  expect(call).toHaveBeenLastCalledWith('issue_update', { id: ID, assignee: 'ada' });
-  await userEvent.selectOptions(assignee, 'spw');
-  expect(call).toHaveBeenLastCalledWith('issue_update', { id: ID, assignee: 'spw' });
+  expect(assigneeButton().textContent).toBe('none');
+  await userEvent.click(assigneeButton());
+  expect(menuTexts('menuitemradio')).toEqual(['none', 'me (spw)', 'ada']);
+  await userEvent.click(screen.getByRole('menuitemradio', { name: 'ada' }));
+  expectOneCall('issue_update', { id: ID, assignee: 'ada' });
+  await flush();
+  await userEvent.click(assigneeButton());
+  await userEvent.click(screen.getByRole('menuitemradio', { name: 'none' }));
+  expect(call).not.toHaveBeenCalled();
+  await userEvent.click(assigneeButton());
+  await userEvent.click(screen.getByRole('menuitemradio', { name: 'me (spw)' }));
+  expectOneCall('issue_update', { id: ID, assignee: 'spw' });
 
   await userEvent.click(screen.getByRole('button', { name: m.remove('web') }));
-  expect(call).toHaveBeenLastCalledWith('issue_update', { id: ID, rm_projects: ['web'] });
+  expectOneCall('issue_update', { id: ID, rm_projects: ['web'] });
   await flush();
-  await userEvent.selectOptions(
-    screen.getByRole('combobox', { name: m.addTo(m.fieldProjects) }),
-    'api',
-  );
-  expect(call).toHaveBeenLastCalledWith('issue_update', { id: ID, add_projects: ['api'] });
+  await userEvent.click(screen.getByRole('button', { name: m.addTo(m.fieldProjects) }));
+  expect(menuTexts('menuitem')).toEqual(['api']);
+  await userEvent.click(screen.getByRole('menuitem', { name: 'api' }));
+  expectOneCall('issue_update', { id: ID, add_projects: ['api'] });
 
-  const sprints = screen.getByRole('combobox', { name: m.addTo(m.fieldSprints) });
-  expect(within(sprints).queryByRole('option', { name: 's0' })).toBeNull();
-  await userEvent.selectOptions(sprints, 's1');
-  expect(call).toHaveBeenLastCalledWith('issue_update', { id: ID, add_sprints: ['s1'] });
+  await userEvent.click(screen.getByRole('button', { name: m.addTo(m.fieldSprints) }));
+  expect(menuTexts('menuitem')).toEqual(['s1']);
+  await userEvent.click(screen.getByRole('menuitem', { name: 's1' }));
+  expectOneCall('issue_update', { id: ID, add_sprints: ['s1'] });
 
   await userEvent.click(screen.getByRole('button', { name: m.removeParent }));
-  expect(call).toHaveBeenLastCalledWith('issue_update', { id: ID, parent: null });
+  expectOneCall('issue_update', { id: ID, parent: null });
   await flush();
   await userEvent.type(screen.getByRole('combobox', { name: m.parent }), tid(3));
   await userEvent.click(screen.getByRole('button', { name: m.setParent }));
-  expect(call).toHaveBeenLastCalledWith('issue_update', { id: ID, parent: tid(3) });
+  expectOneCall('issue_update', { id: ID, parent: tid(3) });
+});
+
+test('keyboard navigation in a choice sends nothing until enter', async () => {
+  view([testIssue(1)], { users: USERS, projects: [{ path: 'web', title: 'Web' }] });
+  await flush();
+  assigneeButton().focus();
+  await userEvent.keyboard('{ArrowDown}');
+  expect(screen.getByRole('menu')).toBeTruthy();
+  await userEvent.keyboard('{ArrowDown}{ArrowDown}{ArrowUp}{Escape}');
+  expect(screen.queryByRole('menu')).toBeNull();
+
+  screen.getByRole('button', { name: m.addTo(m.fieldProjects) }).focus();
+  await userEvent.keyboard('{Enter}');
+  expect(screen.getByRole('menu')).toBeTruthy();
+  await userEvent.keyboard('{ArrowDown}{Escape}');
+  expect(call).not.toHaveBeenCalled();
+
+  assigneeButton().focus();
+  await userEvent.keyboard('{ArrowDown}');
+  await waitFor(() => expect(document.activeElement?.textContent).toBe('none'));
+  await userEvent.keyboard('{ArrowDown}{ArrowDown}');
+  expect(document.activeElement?.textContent).toBe('ada');
+  expect(call).not.toHaveBeenCalled();
+  await userEvent.keyboard('{Enter}');
+  expectOneCall('issue_update', { id: ID, assignee: 'ada' });
+});
+
+test('a sprint that closes leaves the choice at once', async () => {
+  const { store } = view([testIssue(1)], {
+    sprints: [
+      { slug: 's1', title: 'Sprint 1' },
+      { slug: 's2', title: 'Sprint 2' },
+    ],
+  });
+  await flush();
+  act(() => {
+    store.applyPatch(
+      testPatch(2, { upsert: { sprints: [{ slug: 's1', title: 'Sprint 1', closed: true }] } }),
+    );
+  });
+  await userEvent.click(screen.getByRole('button', { name: m.addTo(m.fieldSprints) }));
+  expect(menuTexts('menuitem')).toEqual(['s2']);
 });
 
 test('dependencies are added and removed', async () => {
@@ -252,13 +157,16 @@ test('dependencies are added and removed', async () => {
   await flush();
   const group = screen.getByRole('region', { name: 'depends_on' });
   await userEvent.click(within(group).getByRole('button', { name: m.remove(tid(2)) }));
-  expect(call).toHaveBeenLastCalledWith('issue_update', { id: ID, rm_deps: [tid(2)] });
+  expectOneCall('issue_update', { id: ID, rm_deps: [tid(2)] });
   await flush();
+  const input = within(group).getByRole('combobox', { name: m.dependency });
+  // Der entfernte Knopf ist weg; der Fokus landet in der Eingabe der Abhängigkeiten.
+  expect(document.activeElement).toBe(input);
   const add = within(group).getByRole('button', { name: m.addDep });
   expect((add as HTMLButtonElement).disabled).toBe(true);
-  await userEvent.type(within(group).getByRole('combobox', { name: m.dependency }), tid(3));
+  await userEvent.type(input, tid(3));
   await userEvent.click(add);
-  expect(call).toHaveBeenLastCalledWith('issue_update', { id: ID, add_deps: [tid(3)] });
+  expectOneCall('issue_update', { id: ID, add_deps: [tid(3)] });
 });
 
 test('declared properties get typed inputs with their description', async () => {
@@ -279,18 +187,25 @@ test('declared properties get typed inputs with their description', async () => 
       .getAllByRole('option')
       .map((o) => o.textContent),
   ).toEqual(['', 'low', 'high']);
-  expect(screen.getByRole('checkbox', { name: 'flag' })).toBeTruthy();
-  expect(screen.getByRole('spinbutton', { name: 'size' })).toBeTruthy();
-  expect(screen.getByRole('textbox', { name: 'note' })).toBeTruthy();
-  for (const text of ['Wie dringend', 'Ein Schalter', 'Größe', 'Notiz']) {
-    expect(screen.getByText(text)).toBeTruthy();
+  const inputs = {
+    prio,
+    flag: screen.getByRole('checkbox', { name: 'flag' }),
+    size: screen.getByRole('spinbutton', { name: 'size' }),
+    note: screen.getByRole('textbox', { name: 'note' }),
+  };
+  const help = { prio: 'Wie dringend', flag: 'Ein Schalter', size: 'Größe', note: 'Notiz' };
+  for (const [key, input] of Object.entries(inputs)) {
+    const id = input.getAttribute('aria-describedby') as string;
+    expect(document.getElementById(id)?.textContent).toBe(help[key as keyof typeof help]);
   }
+  // Die Auswahl allein schreibt nichts; erst »speichern«.
   await userEvent.selectOptions(prio, 'high');
+  expect(call).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole('button', { name: m.save('prio') }));
-  expect(call).toHaveBeenLastCalledWith('issue_update', { id: ID, props: { prio: 'high' } });
-  await userEvent.click(screen.getByRole('checkbox', { name: 'flag' }));
+  expectOneCall('issue_update', { id: ID, props: { prio: 'high' } });
+  await userEvent.click(inputs.flag);
   await userEvent.click(screen.getByRole('button', { name: m.save('flag') }));
-  expect(call).toHaveBeenLastCalledWith('issue_update', { id: ID, props: { flag: true } });
+  expectOneCall('issue_update', { id: ID, props: { flag: true } });
 });
 
 test('properties are set, changed and removed', async () => {
@@ -305,12 +220,12 @@ test('properties are set, changed and removed', async () => {
     true,
   );
   await userEvent.type(size, '5{Enter}');
-  expect(call).toHaveBeenLastCalledWith('issue_update', { id: ID, props: { size: 5 } });
+  expectOneCall('issue_update', { id: ID, props: { size: 5 } });
 
   const extra = screen.getByRole('textbox', { name: 'extra' }) as HTMLInputElement;
   expect(extra.value).toBe('{"a":1}');
   await userEvent.click(screen.getByRole('button', { name: m.remove('extra') }));
-  expect(call).toHaveBeenLastCalledWith('issue_update', { id: ID, props: { extra: null } });
+  expectOneCall('issue_update', { id: ID, props: { extra: null } });
 
   const add = screen.getByRole('button', { name: m.addProp }) as HTMLButtonElement;
   await userEvent.type(screen.getByRole('textbox', { name: m.propKey }), 'neu');
@@ -319,21 +234,31 @@ test('properties are set, changed and removed', async () => {
   await userEvent.clear(screen.getByRole('textbox', { name: m.propValue }));
   await userEvent.type(screen.getByRole('textbox', { name: m.propValue }), '"x"');
   await userEvent.click(add);
-  expect(call).toHaveBeenLastCalledWith('issue_update', { id: ID, props: { neu: 'x' } });
+  expectOneCall('issue_update', { id: ID, props: { neu: 'x' } });
 });
 
-test('a write locks its editor while it runs', async () => {
+test('a removed property hands focus to the key of a new one', async () => {
   const answer = deferred<unknown>();
   call.mockImplementation(() => answer.promise);
-  view([testIssue(1)], {
-    users: [{ handle: 'ada', name: 'Ada', kind: 'human', admin: false }],
-  });
+  view([testIssue(1, { props: { extra: 1 } })]);
   await flush();
-  const assignee = screen.getByRole('combobox', { name: m.fieldAssignee }) as HTMLSelectElement;
-  await userEvent.selectOptions(assignee, 'ada');
-  expect(assignee.disabled).toBe(true);
+  await userEvent.click(screen.getByRole('button', { name: m.remove('extra') }));
+  expect(screen.queryByRole('textbox', { name: 'extra' })).toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole('textbox', { name: m.propKey }));
   await act(async () => answer.resolve({ commit: null, id: ID }));
-  expect(assignee.disabled).toBe(false);
+});
+
+test('a write locks its editor while it runs and gives focus back', async () => {
+  const answer = deferred<unknown>();
+  call.mockImplementation(() => answer.promise);
+  view([testIssue(1)], { users: USERS });
+  await flush();
+  await userEvent.click(assigneeButton());
+  await userEvent.click(screen.getByRole('menuitemradio', { name: 'ada' }));
+  expect(assigneeButton().disabled).toBe(true);
+  await act(async () => answer.resolve({ commit: null, id: ID }));
+  expect(assigneeButton().disabled).toBe(false);
+  await waitFor(() => expect(document.activeElement).toBe(assigneeButton()));
 });
 
 test('a deleted issue keeps its data but loses its editors', async () => {

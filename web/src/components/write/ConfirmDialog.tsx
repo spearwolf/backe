@@ -24,6 +24,8 @@ type Props = {
   error: ApiError | undefined;
   onConfirm: () => void;
   onOpenChange: (open: boolean) => void;
+  /** Fokus nach dem Schließen; ohne Angabe der Radix-Default (das zuvor fokussierte Element). */
+  onCloseAutoFocus?: (event: Event) => void;
   children?: ReactNode;
 };
 
@@ -38,7 +40,13 @@ export function ConfirmDialog(props: Props) {
   };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent showCloseButton={false} closeLabel={m.dismiss}>
+      <DialogContent
+        showCloseButton={false}
+        closeLabel={m.dismiss}
+        {...(props.onCloseAutoFocus === undefined
+          ? {}
+          : { onCloseAutoFocus: props.onCloseAutoFocus })}
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {description === undefined ? (

@@ -12,97 +12,91 @@ import { m } from '../../../views/issue.messages.ts';
 import { Button } from '../../ui/button.tsx';
 import { ErrorBox } from '../../write/ActionError.tsx';
 import { AssigneeSelect, IssuePick, MultiPick } from './inputs.tsx';
+import { openSprints } from './store-options.ts';
 import { type IssueChange, useIssueUpdate } from './use-issue-update.ts';
-
-const added = (before: readonly string[], after: readonly string[]) =>
-  after.filter((x) => !before.includes(x));
 
 export function AssigneeEditor({ issue }: { issue: IssueJson }) {
   const { me } = useWrites();
   const users = useSignal(useStore().users.keys);
-  const { busy, error, update } = useIssueUpdate(issue);
+  const { busy, error, update, scope } = useIssueUpdate(issue);
+  const current = issue.assignee ?? null;
   return (
-    <div className="space-y-1">
+    <div ref={scope} className="space-y-1">
       <AssigneeSelect
-        value={issue.assignee ?? null}
+        value={current}
         me={me}
         users={users}
         disabled={busy}
-        onChange={(assignee) => void update({ assignee })}
+        onChange={(assignee) => {
+          if (assignee !== current) void update({ assignee });
+        }}
       />
       {error !== undefined && <ErrorBox error={error} compact />}
     </div>
   );
 }
 
+const LIST_KEYS = {
+  projects: ['add_projects', 'rm_projects'],
+  sprints: ['add_sprints', 'rm_sprints'],
+} as const;
+
+/** Die Differenz zweier Listen als `add_*`/`rm_*`; leere Seiten entfallen. */
+function listChange(
+  field: keyof typeof LIST_KEYS,
+  before: readonly string[],
+  after: readonly string[],
+): IssueChange {
+  const [addKey, rmKey] = LIST_KEYS[field];
+  const add = after.filter((x) => !before.includes(x));
+  const rm = before.filter((x) => !after.includes(x));
+  const change: IssueChange = {};
+  if (add.length > 0) change[addKey] = add;
+  if (rm.length > 0) change[rmKey] = rm;
+  return change;
+}
+
 function ListEditor(props: {
   issue: IssueJson;
+  field: keyof typeof LIST_KEYS;
   label: string;
-  values: readonly string[];
   options: readonly string[];
-  change: (add: string[], rm: string[]) => IssueChange;
 }) {
-  const { issue, label, values, options, change } = props;
-  const { busy, error, update } = useIssueUpdate(issue);
+  const { issue, field, label, options } = props;
+  const { busy, error, update, scope } = useIssueUpdate(issue);
+  const values = issue[field] ?? [];
   return (
-    <div className="space-y-1">
+    <div ref={scope} className="space-y-1">
       <MultiPick
         label={label}
         values={values}
         options={options}
         disabled={busy}
-        onChange={(next) => void update(change(added(values, next), added(next, values)))}
+        onChange={(next) => void update(listChange(field, values, next))}
       />
       {error !== undefined && <ErrorBox error={error} compact />}
     </div>
   );
 }
 
-const projectChange = (add: string[], rm: string[]): IssueChange => ({
-  ...(add.length > 0 ? { add_projects: add } : {}),
-  ...(rm.length > 0 ? { rm_projects: rm } : {}),
-});
-
-const sprintChange = (add: string[], rm: string[]): IssueChange => ({
-  ...(add.length > 0 ? { add_sprints: add } : {}),
-  ...(rm.length > 0 ? { rm_sprints: rm } : {}),
-});
-
 export function ProjectsEditor({ issue }: { issue: IssueJson }) {
   const projects = useSignal(useStore().projects.keys);
-  return (
-    <ListEditor
-      issue={issue}
-      label={m.fieldProjects}
-      values={issue.projects ?? []}
-      options={projects}
-      change={projectChange}
-    />
-  );
+  return <ListEditor issue={issue} field="projects" label={m.fieldProjects} options={projects} />;
 }
 
+/** Geschlossene Sprints nimmt niemand mehr auf; eingetragen bleiben sie als Chip stehen. */
 export function SprintsEditor({ issue }: { issue: IssueJson }) {
-  const store = useStore();
-  const slugs = useSignal(store.sprints.keys);
-  // Geschlossene Sprints nimmt niemand mehr auf; eingetragen bleiben sie als Chip stehen.
-  const open = slugs.filter((s) => store.sprints.get(s).value?.closed !== true);
-  return (
-    <ListEditor
-      issue={issue}
-      label={m.fieldSprints}
-      values={issue.sprints ?? []}
-      options={open}
-      change={sprintChange}
-    />
-  );
+  const open = useSignal(openSprints(useStore()));
+  return <ListEditor issue={issue} field="sprints" label={m.fieldSprints} options={open} />;
 }
 
 export function ParentEditor({ issue }: { issue: IssueJson }) {
   const [draft, setDraft] = useState('');
-  const { busy, error, update } = useIssueUpdate(issue);
+  const { busy, error, update, scope } = useIssueUpdate<HTMLFormElement>(issue);
   const target = draft.trim();
   return (
     <form
+      ref={scope}
       className="space-y-1"
       onSubmit={(e) => {
         e.preventDefault();

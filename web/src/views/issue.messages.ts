@@ -67,6 +67,7 @@ export const m = catalog({
     localPathOf: (name: string) => `Local path: ${name}`,
     localPath: 'Local path',
     copyPath: 'Copy path',
+    choice: (label: string, value: string) => `${label}: ${value}`,
   },
   de: {
     deletedNotice: 'Dieses Issue wurde gelöscht. Die letzten bekannten Daten bleiben sichtbar.',
@@ -134,5 +135,6 @@ export const m = catalog({
     localPathOf: (name: string) => `Lokaler Pfad: ${name}`,
     localPath: 'Lokaler Pfad',
     copyPath: 'Pfad kopieren',
+    choice: (label: string, value: string) => `${label}: ${value}`,
   },
 });

@@ -16,10 +16,19 @@ export function TitleEditor({ issue }: { issue: IssueJson }) {
   const [draft, setDraft] = useState<string>();
   const { busy, error, update, reset } = useIssueUpdate(issue);
   const input = useRef<HTMLInputElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  // Nach Speichern oder Esc ist die Eingabe weg; der Fokus geht zurück an »Titel bearbeiten«.
+  const backToButton = useRef(false);
   const editing = draft !== undefined;
   useEffect(() => {
     if (editing) input.current?.focus();
+    else if (backToButton.current) button.current?.focus();
+    backToButton.current = false;
   }, [editing]);
+  const close = (): void => {
+    backToButton.current = true;
+    setDraft(undefined);
+  };
 
   if (!canWrite) return <h1 className={HEADING}>{issue.title}</h1>;
   if (draft === undefined) {
@@ -27,6 +36,7 @@ export function TitleEditor({ issue }: { issue: IssueJson }) {
       <div className="flex items-start gap-1">
         <h1 className={HEADING}>{issue.title}</h1>
         <Button
+          ref={button}
           type="button"
           variant="ghost"
           size="icon"
@@ -46,7 +56,7 @@ export function TitleEditor({ issue }: { issue: IssueJson }) {
   const save = async (): Promise<void> => {
     const title = draft.trim();
     if (title === '') return;
-    if (title === issue.title || (await update({ title }))) setDraft(undefined);
+    if (title === issue.title || (await update({ title }))) close();
   };
   return (
     <form
@@ -66,7 +76,7 @@ export function TitleEditor({ issue }: { issue: IssueJson }) {
         onKeyDown={(e) => {
           if (e.key !== 'Escape') return;
           e.preventDefault();
-          setDraft(undefined);
+          close();
         }}
       />
       <ActionError error={error} />

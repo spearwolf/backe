@@ -48,6 +48,8 @@ test('repo path comes from repo_locate and can be copied', async () => {
   expect(call).toHaveBeenCalledWith('repo_locate', { name: 'core' });
   const path = await screen.findByText('/src/core');
   expect(path.className).toContain('font-mono');
+  // Der Knopf ist dem Pfad gewichen; der Fokus steht auf »Pfad kopieren«.
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: m.copyPath }));
   await userEvent.click(screen.getByRole('button', { name: m.copyPath }));
   expect(writeText).toHaveBeenCalledWith('/src/core');
   expect(screen.getByRole('status').textContent).toBe(m.copied);
