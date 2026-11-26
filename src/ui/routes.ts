@@ -48,3 +48,32 @@ export function readRoute(method: string, url: URL): ReadRoute | undefined {
   }
   return undefined;
 }
+
+export type WriteRoute =
+  | { kind: 'tool'; backlog: string; tool: string }
+  | { kind: 'upload'; backlog: string; id: string; name: string };
+
+/**
+ * POST auf `/api/b/<b>/tools/<tool>` und PUT auf `/api/b/<b>/issues/<id>/attachments/<name>`
+ * (ui.md §2.3.2); Segmente percent-dekodiert, `<b>` nach `BACKLOG_NAME_RE`. Jede andere Methode
+ * auf diesen Pfaden ergibt `undefined` und damit 404 wie jeder unbekannte Endpunkt.
+ */
+export function writeRoute(method: string, url: URL): WriteRoute | undefined {
+  const parts = url.pathname.split('/').slice(1);
+  if (parts[0] !== 'api' || parts[1] !== 'b') return undefined;
+  const backlog = segment(parts[2] ?? '');
+  if (backlog === undefined || !BACKLOG_NAME_RE.test(backlog)) return undefined;
+  const rest = parts.slice(3);
+  if (method === 'POST' && rest.length === 2 && rest[0] === 'tools') {
+    const tool = segment(rest[1] ?? '');
+    return tool === undefined ? undefined : { kind: 'tool', backlog, tool };
+  }
+  if (method === 'PUT' && rest.length === 4 && rest[0] === 'issues' && rest[2] === 'attachments') {
+    const id = segment(rest[1] ?? '');
+    const name = segment(rest[3] ?? '');
+    return id === undefined || name === undefined
+      ? undefined
+      : { kind: 'upload', backlog, id, name };
+  }
+  return undefined;
+}

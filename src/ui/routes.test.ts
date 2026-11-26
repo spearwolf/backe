@@ -1,4 +1,4 @@
-import { readRoute } from './routes.ts';
+import { readRoute, writeRoute } from './routes.ts';
 
 const url = (path: string) => new URL(path, 'http://127.0.0.1');
 
@@ -33,4 +33,38 @@ test.each([
   ['GET', '/other'],
 ])('rejects %s %s', (method, path) => {
   expect(readRoute(method, url(path))).toBeUndefined();
+});
+
+test('tool and upload routes', () => {
+  expect(writeRoute('POST', url('/api/b/acme/tools/issue_create'))).toEqual({
+    kind: 'tool',
+    backlog: 'acme',
+    tool: 'issue_create',
+  });
+  expect(writeRoute('PUT', url('/api/b/acme/issues/bk-12/attachments/a%20b.png'))).toEqual({
+    kind: 'upload',
+    backlog: 'acme',
+    id: 'bk-12',
+    name: 'a b.png',
+  });
+});
+
+test.each([
+  ['GET', '/api/b/acme/tools/issue_create'],
+  ['PUT', '/api/b/acme/tools/issue_create'],
+  ['DELETE', '/api/b/acme/tools/issue_create'],
+  ['POST', '/api/b/acme/issues/bk-12/attachments/x'],
+  ['GET', '/api/b/acme/issues/bk-12/attachments/x'],
+  ['POST', '/api/b/acme/tools'],
+  ['POST', '/api/b/acme/tools/a/b'],
+  ['POST', '/api/b/acme/tools/%E0'],
+  ['POST', '/api/b/ACME/tools/issue_create'],
+  ['POST', '/api/b//tools/issue_create'],
+  ['POST', '/other/b/acme/tools/issue_create'],
+  ['PUT', '/api/b/acme/issues/%E0/attachments/x'],
+  ['PUT', '/api/b/acme/issues/bk-1/attachments/%E0'],
+  ['PUT', '/api/b/acme/issues/bk-1/comments/x'],
+  ['PUT', '/api/b/acme/issues/bk-1/attachments'],
+])('other methods are no write route: %s %s', (method, path) => {
+  expect(writeRoute(method, url(path))).toBeUndefined();
 });

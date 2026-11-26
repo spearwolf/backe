@@ -8,15 +8,18 @@ import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import type { Env } from '../core/env.ts';
 import { BackeError } from '../core/errors.ts';
+import type { ToolDeps } from '../tools/run.ts';
 import { deniedJson, sendError, sendJson } from './http.ts';
 import { type LiveDeps, LiveHub } from './live.ts';
 import { forbiddenPage, noSessionPage } from './pages.ts';
 import { watchPhase } from './phase.ts';
 import { handleRead } from './read-api.ts';
-import { readRoute } from './routes.ts';
+import { readRoute, writeRoute } from './routes.ts';
 import { appHeaders, checkRequest, type Gate, newToken, ownOrigins } from './security.ts';
 import { m } from './server.messages.ts';
 import { serveStatic } from './static.ts';
+import { UiTools } from './tools.ts';
+import { handleWrite } from './write-api.ts';
 
 export type UiOptions = {
   cwd: string;
@@ -31,15 +34,18 @@ export type UiOptions = {
   token?: string;
   /** Watcher und periodischer Sync der Live-Updates; Tests ersetzen `fs.watch` und den Spawn. */
   live?: LiveDeps;
+  /** Test-Hooks der Services hinter den Tools, etwa der Spawn des Hintergrund-Syncs. */
+  tools?: ToolDeps;
 };
 
 export type UiServer = {
   /** Bindet `127.0.0.1`; `EADDRINUSE` → `BackeError('sync', …)`, Hint `backe ui --port <n>`. */
   listen(): Promise<{ port: number; url: string }>;
   /**
-   * Nimmt nichts Neues an, wartet die Arbeitsphase laufender Handler ab (`phase.ts`), beendet die
-   * Watcher der Live-Updates und schließt dann alle Verbindungen; das beendet auch Antworten, die
-   * noch Bytes streamen, und offene Event-Streams. Idempotent.
+   * Nimmt nichts Neues an, wartet die Arbeitsphase laufender Handler ab (`phase.ts`), dann die
+   * Write-Warteschlangen samt ihren Hintergrund-Starts und laufende Sync-Tools (ui.md §2.1,
+   * »Lebensdauer«), beendet die Watcher der Live-Updates und schließt zuletzt alle Verbindungen;
+   * das beendet auch Antworten, die noch Bytes streamen, und offene Event-Streams. Idempotent.
    */
   close(): Promise<void>;
 };
@@ -98,6 +104,7 @@ export function createUiServer(opts: UiOptions): UiServer {
   /** Arbeitsphasen laufender Handler; eine endet mit dem Handler oder mit `streaming(res)`. */
   const working = new Set<Promise<void>>();
   const hub = new LiveHub(opts.live === undefined ? {} : { deps: opts.live });
+  const tools = new UiTools(input, opts.start, opts.tools);
   let closing: Promise<void> | undefined;
 
   async function dispatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -122,11 +129,15 @@ export function createUiServer(opts: UiOptions): UiServer {
         sendHtml(res, verdict.status, html);
       }
     } else if (api) {
-      const route = readRoute(req.method ?? 'GET', url);
-      if (route === undefined) {
-        sendError(res, new BackeError('not_found', m.noEndpoint(url.pathname)));
+      const method = req.method ?? 'GET';
+      const read = readRoute(method, url);
+      const write = read === undefined ? writeRoute(method, url) : undefined;
+      if (read !== undefined) {
+        await handleRead(read, { input, start: opts.start, hub }, res);
+      } else if (write !== undefined) {
+        await handleWrite(write, req, res, { tools });
       } else {
-        await handleRead(route, { input, start: opts.start, hub }, res);
+        sendError(res, new BackeError('not_found', m.noEndpoint(url.pathname)));
       }
     } else {
       await serveStatic(req, url, res, staticDir);
@@ -188,7 +199,12 @@ export function createUiServer(opts: UiOptions): UiServer {
         const closed = new Promise<void>((resolve) => server.close(() => resolve()));
         // Ein Handler kann über eine noch offene Keep-Alive-Verbindung weitere nach sich ziehen.
         // Wer streamt, zählt nicht mehr: Ein Client, der nicht weiterliest, hielte sonst das Ende auf.
-        while (working.size > 0) await Promise.all(working);
+        // Während die Warteschlangen leerlaufen, kann über eine solche Verbindung noch ein Write
+        // ankommen; erst wenn danach kein Handler mehr arbeitet, ist alles abgewartet.
+        do {
+          while (working.size > 0) await Promise.all(working);
+          await tools.settled();
+        } while (working.size > 0);
         await hub.close();
         server.closeAllConnections();
         await closed;

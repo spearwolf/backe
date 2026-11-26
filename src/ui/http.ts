@@ -53,7 +53,11 @@ export function deniedJson(
   return { error: { code, message, ...(hint === undefined ? {} : { hint }) } };
 }
 
-/** `errorJson(err)` mit `httpStatus(err)`. */
-export function sendError(res: ServerResponse, err: unknown): void {
-  sendJson(res, httpStatus(err), errorJson(err));
+/** `errorJson(err)` mit `httpStatus(err)`; `headers` wie bei `sendJson`. */
+export function sendError(
+  res: ServerResponse,
+  err: unknown,
+  headers: OutgoingHttpHeaders = {},
+): void {
+  sendJson(res, httpStatus(err), errorJson(err), headers);
 }

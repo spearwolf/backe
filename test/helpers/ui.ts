@@ -135,6 +135,13 @@ export type UiHarness = {
   /** `backe_ui_<port>=<token>`, fertig für den `Cookie`-Header. */
   cookie: string;
   get(path: string, headers?: OutgoingHttpHeaders): Promise<Res>;
+  /**
+   * POST mit eigenem `Origin` und `Content-Type: application/json`; ein String geht roh hinaus,
+   * alles andere als JSON. `headers` überschreibt die Defaults.
+   */
+  post(path: string, body: unknown, headers?: OutgoingHttpHeaders): Promise<Res>;
+  /** PUT mit eigenem `Origin` und `Content-Type: application/octet-stream`. */
+  put(path: string, bytes: string | Uint8Array, headers?: OutgoingHttpHeaders): Promise<Res>;
   events(path: string, headers?: OutgoingHttpHeaders): Promise<SseStream>;
   close(): Promise<void>;
 };
@@ -151,11 +158,26 @@ export async function startUi(opts: Omit<UiOptions, 'port'>): Promise<UiHarness>
     throw new Error(`token exchange failed with status ${session.status}`);
   }
   const cookie = setCookie.split(';')[0] ?? '';
+  const origin = `http://127.0.0.1:${port}`;
   return {
     port,
     token,
     cookie,
     get: (path, headers = {}) => rawRequest(port, { path, headers: { cookie, ...headers } }),
+    post: (path, body, headers = {}) =>
+      rawRequest(port, {
+        method: 'POST',
+        path,
+        headers: { cookie, origin, 'content-type': 'application/json', ...headers },
+        body: typeof body === 'string' ? body : JSON.stringify(body),
+      }),
+    put: (path, bytes, headers = {}) =>
+      rawRequest(port, {
+        method: 'PUT',
+        path,
+        headers: { cookie, origin, 'content-type': 'application/octet-stream', ...headers },
+        body: bytes,
+      }),
     events: (path, headers = {}) => openEvents(port, path, { cookie, ...headers }),
     close: () => server.close(),
   };
