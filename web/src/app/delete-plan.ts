@@ -1,7 +1,9 @@
 /**
- * Was `issue_delete` vorher fragt (ui.md §2.8): dieselbe Rechnung wie `issueDelete` in BK, damit
- * der Dialog die Rückfragen kennt, bevor der Server sie als Fehler stellt.
+ * Was `issue_delete` vorher fragt (ui.md §2.8): dieselbe Rechnung wie `issueDelete` in BK (beide
+ * nutzen `deletedSet` und `referencingIssues`), damit der Dialog die Rückfragen kennt, bevor der
+ * Server sie als Fehler stellt.
  */
+import { deletedSet, referencingIssues } from '@backe/ops/delete-scope.ts';
 import { graphOf } from '@backe/ops/graph.ts';
 import type { BacklogSnapshot } from '@backe/store/snapshot.ts';
 
@@ -11,24 +13,7 @@ export function deletePlan(
   id: string,
   children?: 'orphan' | 'recursive',
 ): { children: string[]; referencing: string[] } {
-  const { children: tree } = graphOf(s);
-  const direct = [...(tree.get(id) ?? [])].sort();
-  const doomed = new Set([id]);
-  if (children === 'recursive') {
-    const stack = [id];
-    for (let next = stack.pop(); next !== undefined; next = stack.pop()) {
-      for (const child of tree.get(next) ?? []) {
-        if (doomed.has(child)) continue;
-        doomed.add(child);
-        stack.push(child);
-      }
-    }
-  }
-  const referencing: string[] = [];
-  for (const [other, { data }] of s.issues) {
-    if (doomed.has(other)) continue;
-    const refs = [...(data.blocked_by ?? []), ...(data.depends_on ?? [])];
-    if (refs.some((r) => doomed.has(r))) referencing.push(other);
-  }
-  return { children: direct, referencing: referencing.sort() };
+  const direct = [...(graphOf(s).children.get(id) ?? [])].sort();
+  const doomed = deletedSet(s, id, children === 'recursive');
+  return { children: direct, referencing: referencingIssues(s, doomed).sort() };
 }

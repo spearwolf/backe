@@ -1,3 +1,4 @@
+import { rankPlacement } from '@backe/ops/rank.ts';
 import { Store } from '../data/store.ts';
 import { testIssue, testState, tid } from '../test/state.ts';
 import { rankOverlay, stateOverlay, updateOverlay } from './optimistic.ts';
@@ -52,11 +53,9 @@ test('rank overlay equals rankPlacement', () => {
     testIssue(3, { rank: 5000 }),
   );
   const o = rankOverlay(s, tid(3), { before: tid(2) });
-  expect(o.get(tid(3))?.rank).toBeDefined();
-  expect(o.size).toBeGreaterThan(1);
-  const rank = (n: number) => o.get(tid(n))?.rank ?? s.issues.get(tid(n))?.data.rank;
-  expect(rank(1) as number).toBeLessThan(rank(3) as number);
-  expect(rank(3) as number).toBeLessThan(rank(2) as number);
+  const expected = rankPlacement(s, tid(3), { before: tid(2) });
+  expect(expected.size).toBeGreaterThan(1);
+  expect([...o].map(([k, v]) => [k, v.rank])).toEqual([...expected]);
 });
 
 test('update overlay adds, removes and unsets', () => {

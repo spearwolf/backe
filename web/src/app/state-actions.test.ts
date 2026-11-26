@@ -13,7 +13,7 @@ test('settled issues only reopen', () => {
       needsBlockedBy: false,
     })),
   );
-  expect(to(stateActions(testIssue(1, { state: 'cancelled' }), true))).toHaveLength(4);
+  expect(stateActions(testIssue(1, { state: 'cancelled' }), true)).toEqual(actions);
 });
 
 test('paused issues resume to paused_from', () => {
@@ -55,6 +55,19 @@ test('strict workflow allows neighbours only', () => {
   ]);
 });
 
+test('strict paused issues resume to paused_from or step to its neighbours', () => {
+  const issue = testIssue(1, { state: 'on_hold', paused_from: 'todo' });
+  const actions = stateActions(issue, true);
+  expect(actions.map((a) => [a.to, a.tool])).toEqual([
+    ['backlog', 'issue_move'],
+    ['todo', 'issue_resume'],
+    ['in_progress', 'issue_move'],
+    ['blocked', 'issue_move'],
+    ['cancelled', 'issue_move'],
+    ['rejected', 'issue_move'],
+  ]);
+});
+
 test('blocked needs blocked_by', () => {
   const actions = stateActions(testIssue(1, { state: 'todo' }), false);
   expect(actions.filter((a) => a.needsBlockedBy).map((a) => a.to)).toEqual(['blocked']);
@@ -89,4 +102,5 @@ test('open children come from the error details', () => {
   expect(openChildrenOf(err(undefined))).toBeUndefined();
   expect(openChildrenOf(new Error('x'))).toBeUndefined();
   expect(openChildrenOf(err({ reason: 'open_children', ids: 'x' }))).toBeUndefined();
+  expect(openChildrenOf(err({ reason: 'open_children', ids: [] }))).toBeUndefined();
 });

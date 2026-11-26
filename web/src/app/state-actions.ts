@@ -85,5 +85,6 @@ export function openChildrenOf(error: unknown): string[] | undefined {
   if (typeof details !== 'object' || details === null) return undefined;
   const { reason, ids } = details as { reason?: unknown; ids?: unknown };
   if (reason !== 'open_children' || !Array.isArray(ids)) return undefined;
-  return ids.filter((x): x is string => typeof x === 'string');
+  const list = ids.filter((x): x is string => typeof x === 'string');
+  return list.length > 0 ? list : undefined;
 }

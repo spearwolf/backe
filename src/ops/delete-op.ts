@@ -5,26 +5,11 @@
 
 import type { Issue } from '../core/schemas.ts';
 import { m } from './delete-op.messages.ts';
+import { deletedSet, referencingIssues } from './delete-scope.ts';
 import type { Draft } from './draft.ts';
 import { graphOf } from './graph.ts';
 import { violation } from './invariants.ts';
 import type { OpOf } from './operation.ts';
-
-/** Die Wurzel und, mit `recursive`, alle Nachfahren; iterativ, ohne Rekursion. */
-function deletedSet(d: Draft, id: string, recursive: boolean): Set<string> {
-  const doomed = new Set([id]);
-  if (!recursive) return doomed;
-  const { children } = graphOf(d.snapshot);
-  const stack = [id];
-  for (let next = stack.pop(); next !== undefined; next = stack.pop()) {
-    for (const child of children.get(next) ?? []) {
-      if (doomed.has(child)) continue;
-      doomed.add(child);
-      stack.push(child);
-    }
-  }
-  return doomed;
-}
 
 function without(list: readonly string[] | undefined, drop: ReadonlySet<string>) {
   const rest = (list ?? []).filter((x) => !drop.has(x));
@@ -40,7 +25,7 @@ export function issueDelete(d: Draft, op: OpOf<'issue.delete'>): OpOf<'issue.del
       hint: m.hasChildrenHint,
     });
   }
-  const doomed = deletedSet(d, op.id, op.children === 'recursive');
+  const doomed = deletedSet(d.snapshot, op.id, op.children === 'recursive');
 
   // Überlebende Issues mit geändertem Stand; ein Issue kann mehrfach betroffen sein.
   const updated = new Map<string, Issue>();
@@ -49,12 +34,7 @@ export function issueDelete(d: Draft, op: OpOf<'issue.delete'>): OpOf<'issue.del
       updated.set(child, { ...d.issue(child).data, parent: undefined });
     }
   }
-  const referencing: string[] = [];
-  for (const [id, { data }] of d.snapshot.issues) {
-    if (doomed.has(id)) continue;
-    const refs = [...(data.blocked_by ?? []), ...(data.depends_on ?? [])];
-    if (refs.some((r) => doomed.has(r))) referencing.push(id);
-  }
+  const referencing = referencingIssues(d.snapshot, doomed);
   if (referencing.length > 0 && op.force !== true) {
     throw violation(
       'references',

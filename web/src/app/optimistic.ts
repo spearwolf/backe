@@ -11,7 +11,10 @@ import type { StateAction } from './state-actions.ts';
 
 type Overlay = Map<string, Partial<IssueJson>>;
 
-/** Das Ergebnis von `planTransition`; fehlende Felder werden ausdrücklich gelöscht. */
+/**
+ * Das Ergebnis von `planTransition`; fehlende Felder werden ausdrücklich gelöscht. Wirft `BackeError`
+ * für Aktionen, die `stateActions` nicht anbietet: Aufrufer reichen nur Angebotenes durch.
+ */
 export function stateOverlay(
   s: BacklogSnapshot,
   id: string,
@@ -36,7 +39,10 @@ export function stateOverlay(
   ]);
 }
 
-/** `rank` aller Issues, die `rankPlacement` umnummeriert (inklusive `id`). */
+/**
+ * `rank` aller Issues, die `rankPlacement` umnummeriert (inklusive `id`). Wirft `BackeError` bei
+ * ungültigem Anker, wie `rankPlacement`.
+ */
 export function rankOverlay(s: BacklogSnapshot, id: string, pos: RankPosition): Overlay {
   return new Map([...rankPlacement(s, id, pos)].map(([key, rank]) => [key, { rank }]));
 }
