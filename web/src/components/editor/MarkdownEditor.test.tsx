@@ -180,7 +180,7 @@ test('a second paste during a running upload is queued, not lost', async () => {
   expect(screen.getByRole('status').textContent).toBe('Bild wird hochgeladen…');
   gates[1]?.('two.png');
   await waitFor(() => expect(screen.getByRole('status').textContent).toBe(''));
-  expect(box().value).toBe('![one.png](attachments/one.png)![two.png](attachments/two.png)');
+  expect(box().value).toBe('![one.png](attachments/one.png)\n![two.png](attachments/two.png)');
 });
 
 test('the status line names the upload while it runs', async () => {
@@ -209,7 +209,10 @@ test('the caret stays where the user put it meanwhile', async () => {
   box().setSelectionRange(5, 5);
   done('s.png');
   await waitFor(() => expect(box().value).toBe('a![s.png](attachments/s.png)bcdef'));
-  expect(box().selectionStart).not.toBe('a![s.png](attachments/s.png)'.length);
+  // Die Stelle des Nutzers (5) rückt um die Länge des eingefügten Links nach.
+  const shifted = 5 + '![s.png](attachments/s.png)'.length;
+  expect(box().selectionStart).toBe(shifted);
+  expect(box().selectionEnd).toBe(shifted);
 });
 
 test('a pending caret does not jump after a detour through the preview', async () => {
@@ -251,6 +254,41 @@ test('nothing is inserted after unmount mid-batch', async () => {
   await Promise.resolve();
   await Promise.resolve();
   expect(spy).toHaveBeenCalledTimes(1);
+});
+
+test('queued batches do not upload after unmount', async () => {
+  const gates: Array<(n: string) => void> = [];
+  const onImage = vi.fn((_f: File) => new Promise<string>((r) => gates.push(r)));
+  const view = setup({ onImage });
+  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
+  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
+  await waitFor(() => expect(gates).toHaveLength(1));
+  view.unmount();
+  gates[0]?.('a.png');
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(onImage).toHaveBeenCalledTimes(1);
+});
+
+test('a later queued batch clears the error of the one before', async () => {
+  const gates: Array<{ ok: (n: string) => void; fail: (e: Error) => void }> = [];
+  const onImage = vi.fn(
+    (_f: File) =>
+      new Promise<string>((ok, fail) => {
+        gates.push({ ok, fail });
+      }),
+  );
+  setup({ onImage });
+  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
+  fireEvent.paste(box(), { clipboardData: { files: [png()] } });
+  await waitFor(() => expect(gates).toHaveLength(1));
+  gates[0]?.fail(new Error('erster kaputt'));
+  await waitFor(() => expect(gates).toHaveLength(2));
+  expect(screen.queryByText('erster kaputt')).toBeNull();
+  gates[1]?.ok('two.png');
+  await waitFor(() => expect(box().value).toBe('![two.png](attachments/two.png)'));
+  expect(screen.queryByRole('alert')).toBeNull();
 });
 
 test('local previews and the issue context reach the preview', async () => {

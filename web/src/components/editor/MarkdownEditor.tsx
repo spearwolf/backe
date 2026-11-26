@@ -53,7 +53,8 @@ export function MarkdownEditor({
   // Während eines Uploads kann der Text sich ändern; Einfügungen rechnen immer gegen den neuesten.
   const latest = useRef(value);
   latest.current = value;
-  const cursor = useRef<number | undefined>(undefined);
+  // Auswahl, die nach dem nächsten Render ins Feld geschrieben wird; `ours` heißt: hinter unserem Link.
+  const cursor = useRef<{ start: number; end: number; ours: boolean } | undefined>(undefined);
   // Stapel laufen nacheinander: `chain` hängt den nächsten hinter den laufenden, `queued` zählt sie
   // für die Statuszeile, `tail` ist das Ende des zuletzt eingefügten Links.
   const chain = useRef<Promise<void>>(Promise.resolve());
@@ -74,10 +75,10 @@ export function MarkdownEditor({
   // Ohne Textfeld (Vorschau) verfällt er, damit er nicht später ins Leere greift.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `value` ist der Auslöser, nicht Eingabe.
   useLayoutEffect(() => {
-    const at = cursor.current;
-    if (at === undefined) return;
+    const sel = cursor.current;
+    if (sel === undefined) return;
     cursor.current = undefined;
-    area.current?.setSelectionRange(at, at);
+    area.current?.setSelectionRange(sel.start, sel.end);
   }, [value]);
 
   const insert = (link: string, at: { start: number; end: number }): number => {
@@ -85,14 +86,22 @@ export function MarkdownEditor({
     const from = Math.min(at.start, text.length);
     const to = Math.min(Math.max(at.end, from), text.length);
     const next = `${text.slice(0, from)}${link}${text.slice(to)}`;
-    // Der Cursor folgt dem Link nur, wenn der Nutzer ihn zwischenzeitlich nicht woanders hingesetzt hat.
+    // Der Cursor folgt dem Link nur, wenn der Nutzer ihn zwischenzeitlich nicht woanders hingesetzt
+    // hat; sonst bleibt seine Stelle erhalten und rückt nur um die eingefügte Länge nach.
     const el = area.current;
-    const unmoved =
-      el !== null &&
-      (cursor.current !== undefined ||
-        (el.selectionStart === at.start && el.selectionEnd === at.end));
+    const pending = cursor.current;
+    const sel =
+      pending ?? (el === null ? undefined : { start: el.selectionStart, end: el.selectionEnd });
+    const after = from + link.length;
+    if (sel === undefined) {
+      cursor.current = undefined;
+    } else if (pending?.ours === true || (sel.start === at.start && sel.end === at.end)) {
+      cursor.current = { start: after, end: after, ours: true };
+    } else {
+      const shift = (p: number) => (p >= to ? p + link.length - (to - from) : p);
+      cursor.current = { start: shift(sel.start), end: shift(sel.end), ours: false };
+    }
     latest.current = next;
-    cursor.current = unmoved ? from + link.length : undefined;
     onChange(next);
     return from + link.length;
   };
@@ -111,15 +120,22 @@ export function MarkdownEditor({
     setBusy(true);
     const batch = async () => {
       try {
+        // Ein später eingereihter Stapel meldet nicht den Fehler seines Vorgängers weiter.
+        if (behind && mounted.current) setError(undefined);
         let first = true;
         for (const file of files) {
+          // Nach dem Unmount startet kein weiterer Upload mehr.
+          if (!mounted.current) return;
           const name = await onImage(file);
           if (!mounted.current) return;
           const link = `![${name}](attachments/${name})`;
+          // Jeder Link steht in einer eigenen Zeile, auch der erste eines eingereihten Stapels.
+          let glue = !first;
           if (first && behind && tail.current !== undefined) {
             at = { start: tail.current, end: tail.current };
+            glue = true;
           }
-          const end = insert(first ? link : `\n${link}`, at);
+          const end = insert(glue ? `\n${link}` : link, at);
           at = { start: end, end };
           tail.current = end;
           first = false;
