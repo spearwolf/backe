@@ -6,6 +6,7 @@ export type ReadRoute =
   | { kind: 'state'; backlog: string }
   | { kind: 'events'; backlog: string }
   | { kind: 'issue'; backlog: string; id: string }
+  | { kind: 'attachments'; backlog: string; id: string }
   | { kind: 'attachment'; backlog: string; id: string; name: string }
   | { kind: 'search'; backlog: string; q: string | undefined };
 
@@ -42,6 +43,7 @@ export function readRoute(method: string, url: URL): ReadRoute | undefined {
   const id = segment(rawId);
   if (id === undefined) return undefined;
   if (rest.length === 4) return { kind: 'issue', backlog, id };
+  if (rest.length === 5 && sub === 'attachments') return { kind: 'attachments', backlog, id };
   if (rest.length === 6 && sub === 'attachments' && rawName !== undefined) {
     const name = segment(rawName);
     return name === undefined ? undefined : { kind: 'attachment', backlog, id, name };

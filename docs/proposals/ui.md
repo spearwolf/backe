@@ -85,6 +85,7 @@ Alle Endpunkte liegen unter `/api` und verlangen das Sitzungs-Cookie (§2.15). J
 | `GET /api/backlogs` | `{backlogs:[{name, current, can_write, user, prefix}], lang}`: die registrierten Backlogs plus der Start-Backlog; `current` kennzeichnet den Start-Backlog, `user` ist das Handle oder `null`, `prefix` das ID-Präfix aus der Backlog-Config (`null` ohne lesbare Config), `lang` die Sprache des Servers (§2.14) |
 | `GET /api/b/<b>/state` | Gesamtzustand für den Client: `{rev, head, context, config, issues, projects, sprints, repos, users, problems, sync}`. `issues` enthält alle Frontmatter-Felder jedes Issues, **ohne Body**. `users` enthält Key-Fingerprints, keine Keys. `config` ist der lesbare Teil von `backlog.jsonc` samt deklarierter Properties. `sync` ist das JSON von `sync status`, `null` ohne eigene Arbeitskopie. Die Listen sind immer vorhanden; Einträge von `projects` sind `{path, …}`, von `sprints` `{slug, …}`, von `repos` `{name, …}`, von `users` wie `user show --json` ohne `body`. |
 | `GET /api/b/<b>/issues/<id>` | wie `issue show --comments all --format json`: Body, Kommentare, `dependents`, `children`, Fortschritt |
+| `GET /api/b/<b>/issues/<id>/attachments` | wie `attach list <id> --format json`: Name, Datei oder URL, Größe; `not_loaded` bei nicht geladenen LFS-Anhängen (BK §2.8) |
 | `GET /api/b/<b>/issues/<id>/attachments/<name>` | Dateibytes eines Anhangs (§2.9.4, Header nach §2.15); ein URL-Anhang hat keine Bytes → 404 |
 | `GET /api/b/<b>/search?q=<text>` | Volltextsuche wie `issue list -q <text> --state all --all`; ohne `q` → 400 |
 | `GET /api/b/<b>/events` | Event-Stream (§2.4.3) |
@@ -225,7 +226,7 @@ Nach `board.png`:
 
 ### 2.9 Tab Issue
 
-Nach `issue-details.png`. Ein Issue-Tab zeigt den Stand von `GET …/issues/<id>` und lädt ihn neu, wenn ein Patch das Issue in `upsert` oder `touched` nennt.
+Nach `issue-details.png`. Ein Issue-Tab zeigt Felder und Beziehungen aus dem Client-Store (§2.5, §3.5), Beschreibung und Zeitleiste aus `GET …/issues/<id>`, Anhänge aus `GET …/issues/<id>/attachments`. Beide lädt er neu, wenn ein Patch das Issue in `upsert` oder `touched` nennt, und nach jedem Neuladen von `/state`.
 
 #### 2.9.1 Kopf und Felder
 

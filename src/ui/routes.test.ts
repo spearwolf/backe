@@ -8,6 +8,10 @@ test.each([
   ['/api/b/acme/events', { kind: 'events', backlog: 'acme' }],
   ['/api/b/acme/issues/bk-12', { kind: 'issue', backlog: 'acme', id: 'bk-12' }],
   [
+    '/api/b/acme/issues/bk-7f3k2/attachments',
+    { kind: 'attachments', backlog: 'acme', id: 'bk-7f3k2' },
+  ],
+  [
     '/api/b/acme/issues/bk-12/attachments/a%20b.png',
     { kind: 'attachment', backlog: 'acme', id: 'bk-12', name: 'a b.png' },
   ],

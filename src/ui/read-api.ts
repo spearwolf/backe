@@ -1,7 +1,7 @@
 /** Handler der lesenden API von `backe ui` (ui.md §2.3); Fehler gehen über `sendError`. */
 import type { ServerResponse } from 'node:http';
 import { BackeError } from '../core/errors.ts';
-import { getAttachment } from '../services/attachments.ts';
+import { getAttachment, listAttachments } from '../services/attachments.ts';
 import { listIssues } from '../services/issue-list.ts';
 import { showIssue } from '../services/issue-show.ts';
 import { requireRoot } from '../services/read.ts';
@@ -50,6 +50,8 @@ export async function handleRead(
       sendJson(res, 200, await stateJson(ctx, rev));
     } else if (route.kind === 'issue') {
       sendJson(res, 200, issueShowJson(await showIssue(ctx, route.id, { comments: 'all' })));
+    } else if (route.kind === 'attachments') {
+      sendJson(res, 200, await listAttachments(ctx, route.id));
     } else if (route.kind === 'attachment') {
       // Der Name aus der URL ist nur ein Schlüssel für die Anhangsliste des Issues; der Pfad
       // entsteht in `getAttachment` aus der gespeicherten Datei, nie aus der URL.

@@ -225,6 +225,23 @@ test.skipIf(!lfsInstalled)(
   },
 );
 
+test.skipIf(!lfsInstalled)('list marks lfs pointers as not loaded', async () => {
+  await setLfs(true);
+  await addAttachment(ctx, id, { name: 'log', source: file('log.txt', bytes('viele Bytes\n')) });
+  const path = ((await getAttachment(ctx, id, 'log')) as { path: string }).path;
+  await writeFile(path, POINTER);
+  expect(await listAttachments(ctx, id)).toEqual([
+    { name: 'log', file: 'log.txt', size: POINTER.length, not_loaded: true },
+  ]);
+});
+
+test('list ignores pointer text without lfs', async () => {
+  await addAttachment(ctx, id, { name: 'log', source: file('log.txt', bytes(POINTER)) });
+  expect(await listAttachments(ctx, id)).toEqual([
+    { name: 'log', file: 'log.txt', size: POINTER.length },
+  ]);
+});
+
 test('addAttachment rejects instead of throwing synchronously', async () => {
   let pending: Promise<unknown> | undefined;
   expect(() => {

@@ -244,7 +244,14 @@ export async function addAttachment(
   );
 }
 
-export type AttachmentView = { name: string; file?: string; url?: string; size?: number };
+export type AttachmentView = {
+  name: string;
+  file?: string;
+  url?: string;
+  size?: number;
+  /** Nur mit `attachments.lfs`: Die Datei ist noch der LFS-Pointer, `git lfs pull` fehlt. */
+  not_loaded?: true;
+};
 
 async function sizeOf(path: string): Promise<number | undefined> {
   try {
@@ -252,27 +259,6 @@ async function sizeOf(path: string): Promise<number | undefined> {
   } catch {
     return undefined;
   }
-}
-
-export async function listAttachments(
-  ctx: ResolvedContext,
-  ref: string,
-): Promise<AttachmentView[]> {
-  const { root, snapshot: s } = await openSnapshot(ctx);
-  const id = resolveIssueRef(s, ref);
-  const list = s.issues.get(id)?.data.attachments ?? [];
-  const dir = join(root, attachmentsDir(id));
-  return Promise.all(
-    list.map(async (a) => {
-      const size = a.file === undefined ? undefined : await sizeOf(join(dir, a.file));
-      return {
-        name: a.name,
-        ...(a.file === undefined ? {} : { file: a.file }),
-        ...(a.url === undefined ? {} : { url: a.url }),
-        ...(size === undefined ? {} : { size }),
-      };
-    }),
-  );
 }
 
 const LFS_POINTER = Buffer.from('version https://git-lfs.github.com/spec/v1');
@@ -287,6 +273,32 @@ async function isLfsPointer(path: string): Promise<boolean> {
   } finally {
     await handle.close();
   }
+}
+
+export async function listAttachments(
+  ctx: ResolvedContext,
+  ref: string,
+): Promise<AttachmentView[]> {
+  const { root, snapshot: s } = await openSnapshot(ctx);
+  const id = resolveIssueRef(s, ref);
+  const list = s.issues.get(id)?.data.attachments ?? [];
+  const dir = join(root, attachmentsDir(id));
+  const lfs = (await headConfig(root))?.attachments.lfs === true;
+  return Promise.all(
+    list.map(async (a) => {
+      const path = a.file === undefined ? undefined : join(dir, a.file);
+      const size = path === undefined ? undefined : await sizeOf(path);
+      const notLoaded =
+        lfs && size !== undefined && path !== undefined && (await isLfsPointer(path));
+      return {
+        name: a.name,
+        ...(a.file === undefined ? {} : { file: a.file }),
+        ...(a.url === undefined ? {} : { url: a.url }),
+        ...(size === undefined ? {} : { size }),
+        ...(notLoaded ? { not_loaded: true as const } : {}),
+      };
+    }),
+  );
 }
 
 export async function getAttachment(

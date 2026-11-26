@@ -4,7 +4,7 @@ import { tempDir } from '../../test/helpers/backlog.ts';
 import { writeOp } from '../../test/helpers/context.ts';
 import { setAttachmentsLfs, testBacklog } from '../../test/helpers/git.ts';
 import { rawRequest, startUi, type UiHarness } from '../../test/helpers/ui.ts';
-import { addAttachment } from '../services/attachments.ts';
+import { addAttachment, listAttachments } from '../services/attachments.ts';
 import { listIssues } from '../services/issue-list.ts';
 import { showIssue } from '../services/issue-show.ts';
 import { issueListResultJson, issueShowJson } from '../services/views.ts';
@@ -173,6 +173,28 @@ test('a link attachment is 404', async () => {
   });
   const r = await ui.get(`/api/b/acme/issues/${id}/attachments/spec`);
   expect([r.status, r.json().error.code]).toEqual([404, 'not_found']);
+});
+
+test('attachment list equals attach list --format json', async () => {
+  const id = await seedIssue();
+  const ctx = await backlog.context();
+  await addAttachment(ctx, id, {
+    name: 'spec',
+    source: { kind: 'url', url: 'https://example.com/spec' },
+  });
+  const short = id.slice(id.indexOf('-') + 1);
+  const res = await ui.get(`/api/b/acme/issues/${short}/attachments`);
+  expect(res.status).toBe(200);
+  expect(res.json()).toEqual([
+    { name: 'logo.svg', file: 'logo.svg', size: SVG_BYTES.length },
+    { name: 'spec', url: 'https://example.com/spec' },
+  ]);
+  expect(res.json()).toEqual(JSON.parse(JSON.stringify(await listAttachments(ctx, id))));
+});
+
+test('attachment list of an unknown issue is 404', async () => {
+  const res = await ui.get('/api/b/acme/issues/zzzzzz/attachments');
+  expect([res.status, res.json().error.code]).toEqual([404, 'not_found']);
 });
 
 test('search finds body text in settled issues', async () => {
