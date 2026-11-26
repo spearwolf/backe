@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { writeOp } from '../../test/helpers/context.ts';
-import { testBacklog } from '../../test/helpers/git.ts';
+import { setAttachmentsLfs, testBacklog } from '../../test/helpers/git.ts';
 import { rawRequest, startUi, type UiHarness } from '../../test/helpers/ui.ts';
 import { addAttachment } from '../services/attachments.ts';
 import { listIssues } from '../services/issue-list.ts';
@@ -98,6 +98,42 @@ test('a large attachment streams as a download', async () => {
   expect(r.body.equals(big)).toBe(true);
   expect(r.headers['content-type']).toBe('application/octet-stream');
   expect(r.headers['content-disposition']).toBe("attachment; filename*=UTF-8''big.log");
+});
+
+test('an html attachment goes out as a sandboxed download', async () => {
+  const ctx = await backlog.context();
+  const id = await writeOp(ctx, { op: 'issue.create', title: 'Seite', state: 'todo' });
+  const html = Buffer.from('<p>hallo</p><script>alert(1)</script>');
+  await addAttachment(ctx, id, {
+    name: 'page.html',
+    source: { kind: 'file', fileName: 'page.html', content: html },
+  });
+  const r = await ui.get(`/api/b/acme/issues/${id}/attachments/page.html`);
+  expect(r.status).toBe(200);
+  expect(r.body.equals(html)).toBe(true);
+  expect(r.headers['content-type']).toBe('application/octet-stream');
+  expect(r.headers['content-disposition']).toBe("attachment; filename*=UTF-8''page.html");
+  expect(r.headers['content-security-policy']).toBe('sandbox');
+  expect(r.headers['x-content-type-options']).toBe('nosniff');
+});
+
+test('an attachment that is only an lfs pointer is 502 with a pull hint', async () => {
+  const ctx = await backlog.context();
+  const id = await writeOp(ctx, { op: 'issue.create', title: 'LFS', state: 'todo' });
+  await addAttachment(ctx, id, {
+    name: 'log',
+    source: { kind: 'file', fileName: 'log.txt', content: Buffer.from('viele Bytes\n') },
+  });
+  // Erst danach `attachments.lfs`: So braucht der Test kein git-lfs.
+  await setAttachmentsLfs(backlog);
+  // Ein Clone ohne `git lfs pull` hat statt der Bytes den Pointer im Arbeitsbaum.
+  await writeFile(
+    join(backlog.root, attachmentsDir(id), 'log.txt'),
+    'version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 12\n',
+  );
+  const r = await ui.get(`/api/b/acme/issues/${id}/attachments/log`);
+  expect([r.status, r.json().error.code]).toEqual([502, 'sync']);
+  expect(r.json().error.hint).toContain('lfs pull');
 });
 
 test('HEAD on an attachment sends headers only', async () => {

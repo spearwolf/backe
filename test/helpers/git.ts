@@ -364,17 +364,41 @@ export async function twoClones(): Promise<{
   return { remote: spw.remote as string, spw: { ...spw, ctx }, agent: { ctx: agentCtx, wc } };
 }
 
+/** Ein gültiger Admin-Commit von `b.handle` hängt `"<key>": <block>` an die Backlog-Config an. */
+async function appendConfigBlock(
+  b: TestBacklog,
+  key: string,
+  block: string,
+  subject: string,
+): Promise<void> {
+  const config = await readFile(join(b.root, BACKLOG_CONFIG), 'utf8');
+  const changed = config.replace(/\n}\n$/, `,\n  "${key}": ${block}\n}\n`);
+  if (changed === config) throw new Error('Config ohne erwartetes Ende');
+  await executeWrite(await b.context(), {
+    kind: 'manual',
+    subject,
+    changes: [{ path: BACKLOG_CONFIG, content: changed }],
+  });
+}
+
 /**
  * Ein gültiger Admin-Commit von `b.handle` setzt `sync.pull_interval` in der Backlog-Config; die
  * Config darf noch keinen `sync`-Block haben.
  */
 export async function setPullInterval(b: TestBacklog, seconds: number): Promise<void> {
-  const config = await readFile(join(b.root, BACKLOG_CONFIG), 'utf8');
-  const changed = config.replace(/\n}\n$/, `,\n  "sync": { "pull_interval": ${seconds} }\n}\n`);
-  if (changed === config) throw new Error('Config ohne erwartetes Ende');
-  await executeWrite(await b.context(), {
-    kind: 'manual',
-    subject: `pull_interval: ${seconds}`,
-    changes: [{ path: BACKLOG_CONFIG, content: changed }],
-  });
+  await appendConfigBlock(
+    b,
+    'sync',
+    `{ "pull_interval": ${seconds} }`,
+    `pull_interval: ${seconds}`,
+  );
+}
+
+/**
+ * Ein gültiger Admin-Commit von `b.handle` setzt `attachments.lfs: true`; die Config darf noch
+ * keinen `attachments`-Block haben. Der Commit selbst braucht kein git-lfs, solange die Config
+ * davor `lfs` noch aus hat; Anhänge, die danach dazukommen, schon.
+ */
+export async function setAttachmentsLfs(b: TestBacklog): Promise<void> {
+  await appendConfigBlock(b, 'attachments', '{ "lfs": true }', 'attachments.lfs: true');
 }

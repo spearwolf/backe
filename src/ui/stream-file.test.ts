@@ -225,7 +225,8 @@ test.runIf(process.platform === 'linux')('the handle is closed on every path', a
       () => undefined,
     );
     await s.close();
-    // Der Stream schließt sein Handle selbst, sobald er zu Ende ist; das kann einen Tick dauern.
+    // `sendFile` schließt das Handle im `finally` (der Stream läuft mit `autoClose: false`);
+    // `rawRequest` löst schon bei `res.end` auf, bevor `fh.close()` fertig ist. Darum `waitFor`.
     await vi.waitFor(async () => expect(await openFds(), name).toBeLessThanOrEqual(before));
   }
 });

@@ -50,10 +50,13 @@ export function attachmentDelivery(name: string, bytes: Uint8Array | undefined):
   return DOWNLOAD;
 }
 
-/** `inline|attachment; filename*=UTF-8''<encodeURIComponent(name)>` */
+/**
+ * `inline|attachment; filename*=UTF-8''<encodeURIComponent(name)>`. Ein einzelnes Surrogat im
+ * Namen wird zu U+FFFD, sonst würfe `encodeURIComponent`.
+ */
 export function contentDisposition(d: Delivery['disposition'], name: string): string {
   // RFC 8187: `'()*` sind keine attr-char und müssen zusätzlich kodiert werden.
-  const encoded = encodeURIComponent(name).replace(
+  const encoded = encodeURIComponent(name.toWellFormed()).replace(
     /['()*]/g,
     (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
   );
@@ -65,7 +68,9 @@ export function contentDisposition(d: Delivery['disposition'], name: string): st
  * Handles. Kleine Dateien (bis `ATTACHMENT_TEXT_LIMIT`) werden ganz gelesen, damit die
  * Inhaltsprüfung und die ausgelieferten Bytes dieselben sind; größere gehen als Stream. `path`
  * stammt aus dem Anhangsverzeichnis des Issues, nie aus der URL. Ist die Datei inzwischen weg,
- * ist das `not_found` wie in `getAttachment`. `head`: nur die Header.
+ * ist das `not_found` wie in `getAttachment`. `head`: nur die Header; auch dann liest ein kleiner
+ * Anhang ganz, denn `Content-Type` und `Content-Disposition` hängen bei unbekannter Endung vom
+ * Inhalt ab.
  */
 export async function sendAttachment(
   res: ServerResponse,

@@ -1,8 +1,9 @@
 import { truncateSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { createServer } from 'node:http';
+import { createServer, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
+import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { rawRequest } from '../../test/helpers/ui.ts';
 import { attachmentDelivery, contentDisposition, sendAttachment } from './attachment.ts';
 
@@ -38,6 +39,23 @@ test('contentDisposition encodes quotes, parentheses and asterisks', () => {
   expect(contentDisposition('attachment', "it's (1)*.txt")).toBe(
     "attachment; filename*=UTF-8''it%27s%20%281%29%2A.txt",
   );
+});
+
+test('contentDisposition replaces a lone surrogate instead of throwing', () => {
+  expect(contentDisposition('attachment', 'a\uD800b.txt')).toBe(
+    "attachment; filename*=UTF-8''a%EF%BF%BDb.txt",
+  );
+});
+
+test('a vanished attachment file is not_found and sends nothing', async () => {
+  const dir = await tempDir();
+  const path = join(dir, 'gone.txt');
+  // Ohne Datei öffnet `sendFile` nichts und fasst die Antwort nicht an.
+  const err = await catchErrAsync(() =>
+    sendAttachment({} as ServerResponse, { name: 'gone.txt', path }, false),
+  );
+  expect([err.code, err.exitCode]).toEqual(['not_found', 3]);
+  expect(err.message).toContain(path);
 });
 
 test('sendAttachment takes length and bytes from the opened file', async () => {
