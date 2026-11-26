@@ -1,6 +1,6 @@
 # backe ui — lokale Web-Oberfläche für ein Backlog
 
-> **Status: in Umsetzung.** Gebaut: Befehl `backe ui`, Sitzung und Sicherheits-Header, lesende API, statische Auslieferung, Live-Updates ohne Nachbarn (§2.1 ohne das Warten der Write-Warteschlange, §2.3.1, §2.3.3, §2.4 ohne §2.4.1 Punkt 3, §2.15 ohne Uploads, §2.16 »Server«). Offen: §2.3.2, §2.4.1 Punkt 3 und alles ab §2.5. Die Empfehlungen in §4.1 gelten, solange keine Zeile dort anders entschieden ist. Wünsche an BK in §4.2.
+> **Status: in Umsetzung.** Gebaut: Befehl `backe ui`, Sitzung und Sicherheits-Header, lesende und schreibende API samt Uploads, statische Auslieferung, Live-Updates ohne Nachbarn (§2.1, §2.3, §2.4 ohne §2.4.1 Punkt 3, §2.15, §2.16 »Server«). Offen: §2.4.1 Punkt 3 und alles ab §2.5. Die Empfehlungen in §4.1 gelten, solange keine Zeile dort anders entschieden ist. Wünsche an BK in §4.2.
 > Bezug: Adapter über den Service-Layer von BK (`backe.md`), vor allem BK §2.14 (Kontext), §2.16 (Schreibpfad und Sync), §2.18 (Ausgabe), §2.19 (MCP als Vorbild des Adapters), §2.22–§2.24 (Abhängigkeiten, Sub-Issues, Properties).
 > Skizzen: [`layout-tabs.png`](../assets/layout-tabs.png), [`backlog.png`](../assets/backlog.png), [`board.png`](../assets/board.png), [`issue-details.png`](../assets/issue-details.png), [`settings.png`](../assets/settings.png).
 
@@ -56,7 +56,7 @@ backe ui [-p | --port <n>] [--open]          globale Optionen -B/--backlog und -
 - **Start-Ausgabe** auf stdout, eine Zeile: `backe ui: http://127.0.0.1:8002/?token=<token>`. Die URL trägt das Sitzungs-Token (§2.15). `--open` öffnet sie zusätzlich im Standardbrowser (`xdg-open` bzw. `open`); ein Startfehler oder ein Exit-Code ≠ 0 des Öffners ist ein Hinweis auf stderr, kein Fehler; auf anderen Plattformen als Linux und macOS kommt der Hinweis sofort.
 - **Start-Backlog:** aus dem Kontext (BK §2.14), ausgehend von Arbeitsverzeichnis, Env und globalen Optionen. Fehlt nur die Angabe eines Backlogs und ist mindestens einer registriert, startet die UI ohne Start-Backlog und zeigt den Umschalter. Ein genannter, unbekannter Backlog (`-B`, `BACKE_BACKLOG`, Projekt-Config) ist ein Startfehler wie im CLI. Eine gebundene Arbeitskopie im Startverzeichnis ist Start-Backlog, auch wenn ihr Backlog nicht registriert ist. Ist keins registriert: Fehler wie im CLI (Exit-Code 2, Hinweis `backe init` / `backe backlog use`).
 - **Identität:** je Backlog wie beim CLI aufgelöst, bei jedem Aufruf neu (wie MCP, BK §2.19). Ein Handle ohne Key in der User-Config darf lesen, nicht schreiben; die UI zeigt dann »nur lesen« und blendet Schreibaktionen aus.
-- **Lebensdauer:** läuft bis SIGINT oder SIGTERM. Vor dem Ende warten die Write-Warteschlange, die von ihr angestoßenen Hintergrund-Syncs und laufende synchrone Aufrufe ab (wie BK §2.19, »Ende«), ebenso die Arbeit laufender Anfragen; laufende Downloads und Event-Streams bricht das Ende danach ab. Offene Browser-Tabs zeigen danach »Verbindung getrennt«.
+- **Lebensdauer:** läuft bis SIGINT oder SIGTERM und endet dann mit Exit-Code 0. Mit dem Ende nimmt der Server nichts Neues mehr an; Anfragen, die danach noch über eine offene Verbindung kommen, lehnt er ab (§2.3.3). Vor dem Ende warten die Write-Warteschlangen, die von ihnen angestoßenen Hintergrund-Syncs und laufende synchrone Aufrufe ab (wie BK §2.19, »Ende«), ebenso die Arbeit laufender Anfragen, auch ein Upload, der noch Bytes liest; danach verschwindet das Upload-Verzeichnis (§2.15), und laufende Downloads und Event-Streams bricht das Ende ab. Offene Browser-Tabs zeigen danach »Verbindung getrennt«.
 - **Sprache** der Konsolen-Ausgabe nach BK §2.18.
 
 ### 2.2 Architektur
@@ -91,7 +91,7 @@ Alle Endpunkte liegen unter `/api` und verlangen das Sitzungs-Cookie (§2.15). J
 
 #### 2.3.2 Schreiben
 
-`POST /api/b/<b>/tools/<tool>` mit den Parametern des Tools als JSON-Body. Tool-Namen, Parameter und Ergebnis-JSON entsprechen den MCP-Tools (BK §2.19, Tabelle »Tools«), damit es nur ein Vokabular gibt. Zusätzlich zu den MCP-Tools — die die UI für die Verwaltung braucht und die das CLI schon kann — gibt es:
+`POST /api/b/<b>/tools/<tool>` mit den Parametern des Tools als JSON-Body. Tool-Namen, Parameter und Ergebnis-JSON entsprechen den MCP-Tools (BK §2.19, Tabelle »Tools«), gebaut aus demselben Katalog `src/tools/`, damit es nur ein Vokabular gibt. Zusätzlich zu den MCP-Tools — die die UI für die Verwaltung braucht und die das CLI schon kann — gibt es:
 
 | Tool | Entspricht |
 | --- | --- |
@@ -104,13 +104,26 @@ Alle Endpunkte liegen unter `/api` und verlangen das Sitzungs-Cookie (§2.15). J
 | `repo_add`, `repo_rm`, `repo_check` | `repo add`, `rm`, `check` |
 | `user_add`, `user_create_agent`, `user_revoke_key`, `user_rm` | die gleichnamigen `user`-Befehle |
 
-- **Upload:** `PUT /api/b/<b>/issues/<id>/attachments/<name>` mit den Dateibytes als Body. Der Server schreibt sie in eine Temp-Datei in seinem eigenen Temp-Verzeichnis, ruft denselben Service wie `attach add <datei> --name <name>` und löscht sie danach. Das Größenlimit ist `attachments.max_bytes` (BK §2.8); der Server bricht den Upload ab, sobald es überschritten ist.
-- **Nebenläufigkeit und Sync** wie im MCP-Modus (BK §2.19): lokale Writes nacheinander über eine Warteschlange, danach ein Hintergrund-Sync; `issue_claim`, `issue_next` mit `claim` und `sync_now` synchron mit dem Remote.
-- **Ergebnis:** Das Write-JSON enthält `commit`. Den neuen Zustand selbst bekommt der Client über den Event-Stream, nicht aus der Antwort (§2.5).
+Außer `issue_delete`, das MCP mit `--allow-delete` registriert, gibt es diese Tools nur in der UI. Für alle Tools gilt:
+
+- **Schreibrecht:** Jeder Tool-Aufruf verlangt eine schreibende Identität (§2.1 »Identität«), auch der eines lesenden Tools — wie MCP, das ohne sie gar nicht startet. Gelesen wird über die Endpunkte aus §2.3.1. Ohne Schreibrecht: 400 `usage` wie im CLI.
+- **Reihenfolge der Prüfungen:** Nach Sitzung, `Host` und `Origin` (§2.15) prüft der Server erst den Medientyp, dann den Tool-Namen, dann liest er den Body, dann prüft er das Schema; erst danach löst er Kontext und Identität auf. Eine abgelehnte Anfrage liest so keinen Body, ein unbekanntes Tool löst keinen Kontext auf.
+- **Medientyp:** `Content-Type: application/json`; Parameter wie `; charset=utf-8` und Groß- und Kleinschreibung zählen nicht. Sonst 403 `forbidden`, bevor ein Byte des Bodys gelesen wird.
+- **Body:** höchstens 16 MiB (16 777 216 Bytes), angekündigt per `Content-Length` oder beim Lesen gezählt. Darüber liest der Server nicht weiter: 400 `validation`, `Connection: close`. Ein leerer Body gilt als `{}`; kein gültiges JSON oder kein Objekt → 400 `usage`.
+- **Schema:** Passen die Parameter nicht zum Tool, kommt 400 `usage` mit `details.issues: [{path, message}]`; `path` sind die Schlüssel bis zur Fundstelle, mit `.` verbunden, leer für die Wurzel.
+- **Unbekanntes Tool** → 404 `not_found`. Andere Methoden als POST auf `…/tools/<tool>` sind ein unbekannter Endpunkt (§2.3.3).
+- **Ergebnis:** 200 mit dem Ergebnis-JSON des Tools, genau wie MCP es als Text liefert; ein Tool ohne Ergebnis antwortet `null`. Das Write-JSON enthält `commit`. Den neuen Zustand selbst bekommt der Client über den Event-Stream, nicht aus der Antwort (§2.5).
+- **`batch`** nimmt die Operationen des MCP-Tools (BK §2.19, Tabelle »Tools«) und immer auch `issue.delete`. Jede andere Operation lehnt der Server ab, bevor etwas geschrieben wird: 400 `validation` `line <n>: '<op>' is not available in backe ui` mit `details.line`.
+- **`repo_check`** ist ein lesendes Tool und antwortet wie `repo check --format json` mit `{repos, notices}`, immer mit 200, auch bei Befunden der Stufe `error`. Einen Exit-Code wie im CLI gibt es nicht; jeder Befund trägt seine Stufe selbst.
+- **`user_add`** nimmt in `key` die Public-Key-Zeile (`ssh-ed25519 AAAA… [kommentar]`), keinen Pfad (§2.15). Der Service prüft sie wie bei `user add` und speichert sie ohne umgebenden Leerraum.
+- **`user_create_agent`** antwortet wie `user create-agent --format json` mit `{handle, key_path, commit}`; der private Key liegt wie dort unter `<BACKE_HOME>/keys/<backlog>/<handle>`.
+- **Nebenläufigkeit und Sync** wie im MCP-Modus (BK §2.19): lokale Writes nacheinander über eine Warteschlange je Backlog, die beim ersten Aufruf entsteht und bis zum Ende des Servers lebt, danach ein Hintergrund-Sync; `issue_claim`, `issue_next` mit `claim` und `sync_now` synchron mit dem Remote.
+
+**Upload:** `PUT /api/b/<b>/issues/<id>/attachments/<name>` mit den Dateibytes als Body und `Content-Type: application/octet-stream` (sonst 403 wie oben). Der Server prüft zuerst den Namen gegen die Regel für Anhangsnamen (BK §2.8; sonst 400 `validation`), dann das Schreibrecht wie bei den Tools, dann die Größe. Die Grenze ist `attachments.max_bytes` (BK §2.8): Ein `Content-Length` darüber scheitert sofort, sonst zählt der Server beim Lesen mit und bricht beim ersten Byte über der Grenze ab. Beide Fälle bringen dieselbe Meldung wie `attach add` (400 `validation`, `details.reason: "too_large"`) und `Connection: close`. Die Bytes landen in einer Temp-Datei (§2.15 »Uploads«); danach ruft der Server über dieselbe Warteschlange wie die Tools denselben Service wie `attach add <datei> --name <name>` und antwortet wie `attachment_add`. Andere Methoden als GET, HEAD und PUT auf `…/attachments/<name>` sind ein unbekannter Endpunkt.
 
 #### 2.3.3 Fehler
 
-Fehler kommen als `{"error":{code, message, hint?, details?}}` wie im CLI (BK §2.18). Der HTTP-Status folgt dem Exit-Code: `2` → 400, `3` → 404, `4` → 409, `5` → 422, `6` → 502, `1` → 500. Fehlendes oder falsches Sitzungs-Cookie → 401 mit `code: "unauthorized"`, falscher `Host` oder `Origin` → 403 mit `code: "forbidden"` (§2.15). Ein unbekannter Endpunkt ist 404 `not_found`.
+Fehler kommen als `{"error":{code, message, hint?, details?}}` wie im CLI (BK §2.18). Der HTTP-Status folgt dem Exit-Code: `2` → 400, `3` → 404, `4` → 409, `5` → 422, `6` → 502, `1` → 500. Fehlendes oder falsches Sitzungs-Cookie → 401 mit `code: "unauthorized"`, falscher `Host` oder `Origin` → 403 mit `code: "forbidden"` (§2.15). Anfragen, die ankommen, nachdem der Server mit dem Ende begonnen hat (§2.1 »Lebensdauer«), bekommen 503 mit `code: "unavailable"` und `Connection: close`, auch auf einer Keep-Alive-Verbindung mit bereits nachgeschickten Anfragen. Wie 401 und 403 liegt 503 außerhalb der Abbildung der Exit-Codes. Ein unbekannter Endpunkt ist 404 `not_found`.
 
 ### 2.4 Live-Updates
 
@@ -300,12 +313,12 @@ Die UI kann signierte Commits im Namen des Nutzers erzeugen. Jede Webseite im se
 - **Nur lokal:** Bind auf `127.0.0.1`.
 - **Sitzungs-Token:** 32 Zufallsbytes je Serverprozess (64 Hex-Zeichen), nur in der Start-URL auf stdout. Die erste Anfrage mit `?token=` setzt ein Cookie `backe_ui_<port>`, z. B. `backe_ui_8002` (`HttpOnly`, `SameSite=Strict`, `Path=/`), und antwortet mit 303 auf dieselbe URL ohne Token. Cookies gelten nicht je Port; der Port im Namen verhindert, dass zwei Instanzen auf verschiedenen Ports sich die Sitzung verdrängen. Jede Anfrage braucht das Cookie, nicht nur die API: Seiten und statische Dateien ebenso. Ohne gültiges Cookie antwortet die API mit 401 und dem Hinweis, die URL aus der Konsole zu öffnen, jeder andere Pfad mit einer HTML-Seite und 401. Schickt der Browser mehrere Cookies dieses Namens, genügt eines mit dem gültigen Token. Wer das Token hat, schreibt als die Identität der UI. Hingenommenes Risiko: Der Browser schickt das Cookie auch an andere Server auf `127.0.0.1`, denn Cookies trennen keine Ports und `SameSite` ebenso wenig; vor schreibenden Anfragen fremder Seiten schützt deshalb die `Origin`-Prüfung, die den Port einschließt.
 - **DNS-Rebinding:** Der `Host`-Header muss `127.0.0.1:<port>` oder `localhost:<port>` sein, Groß- und Kleinschreibung zählt nicht, sonst 403 (API als Fehler-JSON, sonst als HTML-Seite). Auf Port 80 gilt für `Host` und `Origin` auch die Form ohne Port, denn Browser lassen den Default-Port weg.
-- **CSRF:** Ein vorhandener `Origin` muss bei jeder Anfrage der eigene sein; jede Anfrage außer GET und HEAD braucht ihn. Schreibende Anfragen verlangen zusätzlich `Content-Type: application/json` (Upload: `application/octet-stream`).
+- **CSRF:** Ein vorhandener `Origin` muss bei jeder Anfrage der eigene sein; jede Anfrage außer GET und HEAD braucht ihn. Schreibende Anfragen verlangen zusätzlich `Content-Type: application/json` (Upload: `application/octet-stream`), sonst 403, bevor ein Byte des Bodys gelesen wird (§2.3.2).
 - **Referrer:** Jede Antwort trägt `Referrer-Policy: no-referrer`.
 - **Content-Security-Policy** der App: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`. `unsafe-inline` bei Styles braucht Mermaid.
 - **Anhänge** werden mit `X-Content-Type-Options: nosniff` und `Content-Security-Policy: sandbox` ausgeliefert. Inline (`Content-Disposition: inline`) gehen nur Bilder (`png`, `jpg`/`jpeg`, `gif`, `webp`, `avif`, `svg`) und gültiges UTF-8 bis 262 144 Bytes hinaus, Letzteres als `text/plain; charset=utf-8`; alles andere als `attachment`. Die HTML-Endungen `html`, `htm`, `xhtml` und `xht` gehen nie inline hinaus. Dateinamen stehen in `Content-Disposition` als `filename*=UTF-8''…` (RFC 8187).
 - **Markdown** wird bereinigt (§2.9.2), Mermaid läuft strikt.
-- **Uploads** bestimmen nie einen Pfad: Der Name ist ein Anhangsname nach BK §2.8, die Bytes landen in einer Temp-Datei des Servers.
+- **Uploads** bestimmen nie einen Pfad: Der Name ist ein Anhangsname nach BK §2.8 und wird geprüft, bevor ein Byte des Bodys gelesen wird. Die Bytes landen in einer Datei `upload-<uuid>` im Temp-Verzeichnis des Serverprozesses (`backe-ui-*` im Temp-Verzeichnis des Systems, Modus 0700, angelegt beim ersten Upload, entfernt beim Ende des Servers). Die Datei entsteht exklusiv mit Modus 0600 — ein vorhandener Pfad, auch ein Symlink, wird nie beschrieben — und verschwindet nach dem Upload in jedem Fall, auch nach einem Fehler oder Abbruch. Der Server schreibt nur bis zur Grenze `attachments.max_bytes` und bricht beim ersten Byte darüber ab (§2.3.2); geladen wird der Anhang nur aus diesem Verzeichnis.
 
 ### 2.16 Technik und Paket
 

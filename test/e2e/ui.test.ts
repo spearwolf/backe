@@ -1,4 +1,7 @@
-/** `backe ui` als echter Prozess (ui.md §2.1): Startzeile, Signale, Exit-Codes, --open, API-Parität. */
+/**
+ * `backe ui` als echter Prozess (ui.md §2.1): Startzeile, Signale, Exit-Codes, --open, Parität der
+ * API mit dem CLI und der Tools mit MCP.
+ */
 import { type ChildProcess, spawn } from 'node:child_process';
 import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -8,7 +11,8 @@ import type { Env } from '../../src/context/paths.ts';
 import { cookieName } from '../../src/ui/security.ts';
 import { tempDir } from '../helpers/backlog.ts';
 import { writeOp } from '../helpers/context.ts';
-import { testBacklog } from '../helpers/git.ts';
+import { revParse, testBacklog } from '../helpers/git.ts';
+import { connectMcp } from '../helpers/mcp.ts';
 import { rawRequest } from '../helpers/ui.ts';
 import { CLI, childEnv, cli } from './cli.ts';
 
@@ -259,4 +263,75 @@ test('api json equals the cli json', async () => {
   });
   expect(search.json()).toEqual(JSON.parse(listed.stdout));
   expect(await ui.stop('SIGTERM')).toBe(0);
+});
+
+/**
+ * Ohne `commit`, mit vereinheitlichten Issue-IDs, Zeitstempeln und Kommentar-Dateinamen: Die beiden
+ * Seiten schreiben nicht zwingend in derselben Sekunde.
+ */
+function normalized(value: unknown, ids: readonly string[]): unknown {
+  let text = JSON.stringify(value);
+  for (const [i, id] of ids.entries()) text = text.replaceAll(id, `<id${i}>`);
+  text = text.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z/g, '<zeit>');
+  text = text.replace(/\d{8}T\d{6}Z-([a-z]+)-[a-z0-9]+\.md/g, '<zeit>-$1-<x>.md');
+  const { commit: _commit, ...rest } = JSON.parse(text) as Record<string, unknown>;
+  return rest;
+}
+
+const BK_ID = expect.stringMatching(/^bk-/);
+
+test('tool json equals the mcp json', async () => {
+  // Zwei gleich aufgebaute Backlogs: auf dem einen schreibt `backe ui`, auf dem anderen MCP.
+  const viaUi = await testBacklog();
+  const viaMcp = await testBacklog();
+  const ui = await spawnUi(['ui', '--port', '0'], { env: env(viaUi), cwd: viaUi.root });
+  const mcp = await connectMcp(viaMcp);
+  try {
+    const cookie = await ui.cookie();
+    const origin = `http://127.0.0.1:${ui.port}`;
+    // biome-ignore lint/suspicious/noExplicitAny: Tests greifen ohne Narrowing in das Ergebnis.
+    const both = async (tool: string, args: (side: 'ui' | 'mcp') => object): Promise<any[]> => {
+      const http = await rawRequest(ui.port, {
+        method: 'POST',
+        path: `/api/b/acme/tools/${tool}`,
+        headers: { cookie, origin, 'content-type': 'application/json' },
+        body: JSON.stringify(args('ui')),
+      });
+      expect([tool, http.status, http.status === 200 ? '' : http.text()]).toEqual([tool, 200, '']);
+      const called = await mcp.call(tool, args('mcp'));
+      if (!('ok' in called)) throw new Error(JSON.stringify(called));
+      return [http.json(), called.ok];
+    };
+    const ids = { ui: [] as string[], mcp: [] as string[] };
+    const same = (pair: unknown[]) => {
+      expect(normalized(pair[0], ids.ui)).toEqual(normalized(pair[1], ids.mcp));
+    };
+
+    const created = await both('issue_create', () => ({ title: 'Erstes', body: 'Der Body\n' }));
+    ids.ui.push(created[0].id);
+    ids.mcp.push(created[1].id);
+    same(created);
+    const first = (side: 'ui' | 'mcp') => ids[side][0];
+    same(await both('issue_move', (side) => ({ id: first(side), to: 'in_progress' })));
+    same(await both('comment_add', (side) => ({ id: first(side), body: 'Ein Kommentar' })));
+    const batch = await both('batch', (side) => ({
+      ops: [
+        { op: 'issue.create', ref: '$a', title: 'Zweites', parent: first(side) },
+        { op: 'comment.add', id: '$a', body: 'Im Batch' },
+        { op: 'issue.move', id: first(side), from: 'in_progress', to: 'review' },
+      ],
+    }));
+    ids.ui.push(batch[0].refs.$a);
+    ids.mcp.push(batch[1].refs.$a);
+    same(batch);
+    for (const side of [ids.ui, ids.mcp]) expect(side).toEqual([BK_ID, BK_ID]);
+
+    // SIGTERM direkt nach einem Write: Der Prozess endet mit 0, der Commit des Writes steht.
+    const commit = batch[0].commit as string;
+    expect(commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(await ui.stop('SIGTERM')).toBe(0);
+    expect(await revParse(viaUi.root, 'HEAD')).toBe(commit);
+  } finally {
+    await mcp.close();
+  }
 });
