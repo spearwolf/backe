@@ -25,6 +25,7 @@ import { projectCommands } from './commands/project.ts';
 import { repoCommands } from './commands/repo.ts';
 import { sprintCommands } from './commands/sprint.ts';
 import { syncCommands } from './commands/sync.ts';
+import { uiCommand } from './commands/ui.ts';
 import { userCommands } from './commands/user.ts';
 import { verifyCommand } from './commands/verify.ts';
 import type { CliIo } from './io.ts';
@@ -83,6 +84,7 @@ export function buildProgram(rt: Runtime): Command {
   verifyCommand(program, rt);
   doctorCommand(program, rt);
   mcpCommand(program, rt);
+  uiCommand(program, rt);
   configCommands(program, rt);
   trackAllDispatch(program);
   return program;
