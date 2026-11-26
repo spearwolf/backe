@@ -13,20 +13,23 @@ export function sseFrame(event: ServerEvent, id: string): string {
   return `id: ${id}\nevent: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`;
 }
 
-/**
- * Hängt `res` als Abonnent an `live`: Header, dann `hello` und was `subscribe` sonst schickt, danach
- * jedes Ereignis und der Heartbeat. Die Antwort zählt ab hier als strömend (`phase.ts`) und hält
- * das Ende des Servers nicht auf. `HEAD` bekommt nur die Header.
- */
-export function serveEvents(res: ServerResponse, live: LiveBacklog): void {
+/** Status und Header des Event-Streams. */
+export function writeEventHead(res: ServerResponse): void {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-store',
   });
-  if (res.req.method === 'HEAD') {
-    res.end();
-    return;
-  }
+}
+
+/**
+ * Hängt `res` als Abonnent an `live`: Header, dann `hello` und was `subscribe` sonst schickt, danach
+ * jedes Ereignis und der Heartbeat. Die Antwort zählt ab hier als strömend (`phase.ts`) und hält
+ * das Ende des Servers nicht auf. Ist der Client schon weg — er kann gehen, während der Watcher
+ * startet, und sein `close` kommt dann nie wieder —, meldet sich nichts an.
+ */
+export function serveEvents(res: ServerResponse, live: LiveBacklog): void {
+  if (res.destroyed || res.req.socket.destroyed) return;
+  writeEventHead(res);
   const last = res.req.headers['last-event-id'];
   const off = live.subscribe(
     (event, id) => {

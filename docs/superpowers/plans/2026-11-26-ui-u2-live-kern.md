@@ -15,7 +15,7 @@
 Alle Global Constraints des Gesamtplans und des U1-Plans. Dazu für U2:
 
 - Zeitkonstanten wörtlich und an einer Stelle (`LIVE_TIMING` in `src/ui/live.ts`): Arbeitsbaum-Debounce 150 ms, Sicherheitsnetz 10 s, Heartbeat 15 s, Ende 30 s nach dem letzten Abonnenten, Puffer 200 Patches.
-- Tests nutzen `vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] })`: Timer sind fake, Git-Prozesse und `fs.watch` laufen echt. Gewartet wird auf I/O per `vi.waitFor`, nie per `sleep` und nie per Last.
+- Tests nutzen `vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })`: Timer sind fake, Git-Prozesse und `fs.watch` laufen echt. `Date` bleibt echt, weil Writes daraus Commit-Zeitstempel und Kommentar-Dateinamen bilden. Gewartet wird auf I/O per `vi.waitFor`, nie per `sleep` und nie per Last.
 - Der Test-Hook ist `WatchFn` (`src/ui/watch.ts`): Tests reichen eine Funktion durch, die Ereignisse eines Pfads unterdrückt oder alle verschluckt. Kein Flag im Produktionscode, das nur Tests kennen.
 - `src/ui/delta.ts` und die neuen Typen in `src/ui/api.ts` sind rein (kein `node:`, kein I/O); `api.ts` bleibt in `WEB_ENTRIES`.
 - Patches tragen nur Sichtbares: Entitäten als vollständiges JSON (dieselbe Form wie in `/state`), `remove` als Keys, `problems` als vollständige Liste, wenn sie sich ändert. Kein Patch, wenn sich nichts Sichtbares ändert — auch nicht, wenn nur `head` wandert.
@@ -32,8 +32,8 @@ Alle Global Constraints des Gesamtplans und des U1-Plans. Dazu für U2:
 | `/state.rev` | `rev` des laufenden `LiveBacklog`, sonst der letzte gemerkte, sonst 0. |
 | IDs von `hello`, `sync`, `reset` | `<boot>:<rev>` mit dem aktuellen `rev`; nur `patch` erhöht `rev`, nur Patches liegen im Puffer. |
 | Ref-Ereignisse | ohne Debounce; Single-Flight mit Nachlauf fasst Bursts zusammen. |
-| Arbeitsbaum-Pfade | gefiltert auf `issues/`, `projects/`, `sprints/`, `repos/`, `users/`, `.backe/` (und nie `.git/`). Ein Ereignis ohne Dateinamen, ein Pfad ohne `.md`-Endung außerhalb von `comments/`/`attachments/` oder eine Änderung an `.backe/backlog.jsonc` erzwingt ein vollständiges Neuladen (`loadSnapshot`); sonst `snapshotAt` mit den Pfaden plus `orphanedProjectPaths`. |
-| `touched` | Issue-IDs aus Pfaden `issues/<shard>/<id>/comments/…` und `…/attachments/…`, sortiert. |
+| Arbeitsbaum-Pfade | gefiltert auf `issues/`, `projects/`, `sprints/`, `repos/`, `users/`, `.backe/` (und nie `.git/`). Temp-Dateien von `writeFileAtomic` (`isAtomicTemp`) und Editor-Dateien zählen nicht. Ein Ereignis ohne Dateinamen, ein Pfad ohne `.md`-Endung außerhalb von `comments/`/`attachments/` oder eine Änderung an `.backe/backlog.jsonc` erzwingt ein vollständiges Neuladen (`loadSnapshot`); sonst `snapshotAt` mit den Pfaden plus `orphanedProjectPaths`. |
+| `touched` | Issue-IDs aus Pfaden `issues/<shard>/<id>/comments[/…]` und `…/attachments[/…]`, deren Inhalt sich seit dem letzten Blick geändert hat (Hash), dazu Issues mit geändertem Body; sortiert. |
 | Sync-Ereignis | nach jeder Änderung unter `stateDir` (entprellt 150 ms) und nach jeder Bewegung von `HEAD` (`unpushed`): `syncStatusJson(syncStatus(ctx))`, gesendet nur, wenn es sich vom zuletzt gesendeten unterscheidet. |
 | Periodischer Sync | `startPeriodicSync(ctx, deps.sync)` beim Start eines `LiveBacklog`, Abbau mit seinem Ende. |
 | Ende des Servers | `close()` baut alle `LiveBacklog`s ab (Watcher, Timer) und beendet die Event-Streams; ein Event-Stream meldet sich per `streaming(res)` und hält das Ende nicht auf. |

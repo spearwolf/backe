@@ -1,10 +1,17 @@
-import { existsSync } from 'node:fs';
+import { existsSync, watch } from 'node:fs';
 import { chmod, lstat, mkdir, readdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { copyFixture, tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { BackeError } from '../core/errors.ts';
-import { applyFileChanges, exists, fsFailure, isMissing, writeFileAtomic } from './files.ts';
+import {
+  applyFileChanges,
+  exists,
+  fsFailure,
+  isAtomicTemp,
+  isMissing,
+  writeFileAtomic,
+} from './files.ts';
 import { issueFile } from './layout.ts';
 
 const rmFails = vi.hoisted(() => ({ on: false }));
@@ -209,6 +216,24 @@ test('writeFileAtomic replaces the target of a symlink and keeps the link', asyn
   await writeFileAtomic(join(dir, 'config.jsonc'), '{"a":1}\n');
   expect((await lstat(join(dir, 'config.jsonc'))).isSymbolicLink()).toBe(true);
   expect(await readFile(join(dir, 'real.jsonc'), 'utf8')).toBe('{"a":1}\n');
+});
+
+test('isAtomicTemp recognizes the temp files of writeFileAtomic', async () => {
+  const dir = await tempDir();
+  const names = new Set<string>();
+  const w = watch(dir, (_e, name) => {
+    if (name !== null) names.add(String(name));
+  });
+  try {
+    await writeFileAtomic(join(dir, 'issue.md'), 'x');
+    await vi.waitFor(() => expect([...names].some((n) => n !== 'issue.md')).toBe(true));
+  } finally {
+    w.close();
+  }
+  for (const n of names)
+    expect([n, isAtomicTemp(`issues/t0/x/${n}`)]).toEqual([n, n !== 'issue.md']);
+  expect(isAtomicTemp('issues/t0/x/.issue.md.swp')).toBe(false);
+  expect(isAtomicTemp('.tmp-1-deadbeef')).toBe(false);
 });
 
 test('writeFileAtomic keeps the mode of an existing file', async () => {

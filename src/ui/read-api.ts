@@ -4,11 +4,12 @@ import { BackeError } from '../core/errors.ts';
 import { getAttachment } from '../services/attachments.ts';
 import { listIssues } from '../services/issue-list.ts';
 import { showIssue } from '../services/issue-show.ts';
+import { requireRoot } from '../services/read.ts';
 import { issueListResultJson, issueShowJson } from '../services/views.ts';
 import { m as attachmentMessages } from './attachment.messages.ts';
 import { sendAttachment } from './attachment.ts';
 import { backlogsJson, type StartInput, uiContext } from './context.ts';
-import { serveEvents } from './events.ts';
+import { serveEvents, writeEventHead } from './events.ts';
 import { sendError, sendJson } from './http.ts';
 import type { LiveHub } from './live.ts';
 import { m } from './read-api.messages.ts';
@@ -29,6 +30,13 @@ export async function handleRead(
   }
   try {
     if (route.kind === 'events') {
+      if (res.req.method === 'HEAD') {
+        // Nur die Header; ein HEAD startet keinen Watcher, prüft aber die Arbeitskopie wie GET.
+        requireRoot(await uiContext(env.input, env.start, route.backlog));
+        writeEventHead(res);
+        res.end();
+        return;
+      }
       const live = await env.hub.acquire(route.backlog, () =>
         uiContext(env.input, env.start, route.backlog),
       );

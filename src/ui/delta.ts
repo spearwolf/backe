@@ -7,6 +7,7 @@
 import { compareCodeUnits } from '../core/compare.ts';
 import { sshFingerprint } from '../core/fingerprint.ts';
 import type { User } from '../core/schemas.ts';
+import { isAtomicTemp } from '../store/files.ts';
 import { BACKLOG_CONFIG, isJunkFile } from '../store/layout.ts';
 import type { BacklogSnapshot } from '../store/snapshot.ts';
 import type { PatchJson, StateJson, UserJson } from './api.ts';
@@ -130,19 +131,18 @@ const WATCHED_DIRS = ['issues/', 'projects/', 'sprints/', 'repos/', 'users/', '.
 
 /**
  * Ob ein Pfad im Arbeitsbaum (relativ, mit `/`) den sichtbaren Stand betreffen kann. Sicherungs-
- * und Swap-Dateien von Editoren zählen nicht; sie entstehen bei jedem Hand-Edit.
+ * und Swap-Dateien von Editoren zählen nicht, sie entstehen bei jedem Hand-Edit; ebenso wenig die
+ * Temp-Dateien von `writeFileAtomic` — deren `rename` meldet sich unter dem echten Namen.
  */
 export function watchedPath(path: string): boolean {
-  if (isJunkFile(path)) return false;
+  if (isJunkFile(path) || isAtomicTemp(path)) return false;
   return WATCHED_DIRS.some((dir) => path.startsWith(dir) || `${path}/` === dir);
 }
 
-/** `issues/<shard>/<id>/comments|attachments/…` → `<id>`, sonst `undefined`. */
-function touchedIssue(path: string): string | undefined {
-  const [top, shard, id, sub, ...rest] = path.split('/');
-  if (top !== 'issues' || shard === undefined || id === undefined || rest.length === 0) {
-    return undefined;
-  }
+/** `issues/<shard>/<id>/comments|attachments[/…]` → `<id>`, sonst `undefined`. */
+export function touchedIssue(path: string): string | undefined {
+  const [top, shard, id, sub] = path.split('/');
+  if (top !== 'issues' || shard === undefined || id === undefined) return undefined;
   return sub === 'comments' || sub === 'attachments' ? id : undefined;
 }
 

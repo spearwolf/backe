@@ -5,7 +5,7 @@
  * sie nacheinander ab (Single-Flight mit Nachlauf). So verschmelzen Bursts, und kein Patch
  * überholt einen anderen.
  */
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ResolvedContext } from '../context/resolve.ts';
@@ -27,10 +27,10 @@ import {
   type EntityTable,
   entityTable,
   needsFullReload,
-  touchedIssues,
+  touchedIssue,
   watchedPath,
 } from './delta.ts';
-import { syncJson } from './state.ts';
+import { hasOwnCopy, syncJson } from './state.ts';
 import { type Watched, type WatchFn, watchWorkingCopy } from './watch.ts';
 
 /** Zeitkonstanten und Puffergröße aus ui.md §2.4.1 und §2.4.3. */
@@ -85,29 +85,50 @@ async function changedPaths(root: string, from: string, to: string): Promise<str
   return stdout.split('\0').filter((p) => p !== '');
 }
 
-type LiveInit = {
-  ctx: ResolvedContext;
-  root: string;
+/**
+ * Signatur eines Pfads für `touched`: Inhalts-Hash einer Datei, `dir` für ein Verzeichnis, `gone`
+ * für einen fehlenden. Nach Inhalt, nicht nach mtime: `backe commit` schreibt unveränderte Dateien
+ * neu, und das ist keine Änderung.
+ */
+async function signature(root: string, path: string): Promise<string> {
+  try {
+    return createHash('sha256')
+      .update(await readFile(join(root, path)))
+      .digest('hex');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code ?? '';
+    if (code === 'EISDIR') return 'dir';
+    if (MISSING.has(code)) return 'gone';
+    throw err;
+  }
+}
+
+export type LiveStartOptions = {
   boot: string;
+  /** Der erste `rev`. */
   rev: number;
-  snapshot: BacklogSnapshot;
-  head: string;
-  sync: Record<string, unknown> | null;
-  onEnd: (rev: number) => void;
+  deps?: LiveDeps;
+  /**
+   * Synchron, sobald der Watcher endet (ohne Abonnenten nach `lingerMs`, oder per `stop`), mit dem
+   * letzten `rev`: Danach entsteht kein Patch mehr.
+   */
+  onStop?: (rev: number) => void;
 };
 
 export class LiveBacklog {
   readonly #ctx: ResolvedContext;
   readonly #root: string;
   readonly #boot: string;
-  readonly #onEnd: (rev: number) => void;
-  #snapshot: BacklogSnapshot;
-  #table: EntityTable;
-  #head: string;
+  readonly #onStop: (rev: number) => void;
+  #snapshot!: BacklogSnapshot;
+  #table!: EntityTable;
+  #head = '';
   #rev: number;
   #buffer: PatchJson[] = [];
   #sync: { json: Record<string, unknown>; text: string } | undefined;
   readonly #listeners = new Set<LiveListener>();
+  /** Zuletzt gesehene Signatur je Kommentar- oder Anhangspfad; nur eine Änderung ergibt `touched`. */
+  readonly #touchSigs = new Map<string, string>();
 
   /** Offene Arbeit: Pfade aus dem Arbeitsbaum, vollständiges Neuladen, Ref, Sync-Zustand. */
   readonly #paths = new Set<string>();
@@ -116,6 +137,8 @@ export class LiveBacklog {
   #refDirty = false;
   #syncDirty = false;
   #running: Promise<void> | undefined;
+  /** Erst nach dem Laden des Stands laufen Runden; Ereignisse davor bleiben als Flags liegen. */
+  #ready = false;
 
   #watched: Watched | undefined;
   #stopPeriodic: () => void = () => {};
@@ -125,47 +148,33 @@ export class LiveBacklog {
   #safety: ReturnType<typeof setInterval> | undefined;
   #stopped = false;
 
-  private constructor(init: LiveInit) {
-    this.#ctx = init.ctx;
-    this.#root = init.root;
-    this.#boot = init.boot;
-    this.#onEnd = init.onEnd;
-    this.#snapshot = init.snapshot;
-    this.#table = entityTable(init.snapshot);
-    this.#head = init.head;
-    this.#rev = init.rev;
-    this.#sync =
-      init.sync === null ? undefined : { json: init.sync, text: JSON.stringify(init.sync) };
+  private constructor(ctx: ResolvedContext, root: string, opts: LiveStartOptions) {
+    this.#ctx = ctx;
+    this.#root = root;
+    this.#boot = opts.boot;
+    this.#rev = opts.rev;
+    this.#onStop = opts.onStop ?? (() => {});
   }
 
   /**
-   * Lädt den Stand von `root` des Kontexts und beginnt zu beobachten. Ohne Arbeitskopie oder mit
-   * kaputter Backlog-Config wirft es wie `/state`. `rev` ist der erste `rev`; `onEnd` erfährt den
-   * letzten, wenn der Watcher endet (ohne Abonnenten nach `lingerMs`, oder per `stop`).
+   * Beginnt zu beobachten und lädt danach den Stand von `root` des Kontexts: erst die Watcher, dann
+   * `HEAD`, dann der Snapshot. Was sich dazwischen ändert, liegt als Ereignis vor und läuft nach dem
+   * Laden als Runde; nichts fällt in eine Lücke. Ohne Arbeitskopie oder mit kaputter Backlog-Config
+   * wirft es wie `/state` und hinterlässt weder Watcher noch Timer.
    */
-  static async start(
-    ctx: ResolvedContext,
-    opts: { boot: string; rev: number; deps?: LiveDeps; onEnd?: (rev: number) => void },
-  ): Promise<LiveBacklog> {
-    const root = requireRoot(ctx);
-    const snapshot = await loadSnapshot(root);
-    const head = await resolveCommit(root, 'HEAD');
-    const sync = await syncJson(ctx);
-    const live = new LiveBacklog({
-      ctx,
-      root,
-      boot: opts.boot,
-      rev: opts.rev,
-      snapshot,
-      head,
-      sync,
-      onEnd: opts.onEnd ?? (() => {}),
-    });
-    await live.#begin(sync !== null, opts.deps ?? {});
+  static async start(ctx: ResolvedContext, opts: LiveStartOptions): Promise<LiveBacklog> {
+    const live = new LiveBacklog(ctx, requireRoot(ctx), opts);
+    try {
+      await live.#open(opts.deps ?? {});
+    } catch (err) {
+      live.#teardown();
+      throw err;
+    }
     return live;
   }
 
-  async #begin(ownCopy: boolean, deps: LiveDeps): Promise<void> {
+  async #open(deps: LiveDeps): Promise<void> {
+    const ownCopy = await hasOwnCopy(this.#ctx);
     const syncDir = ownCopy ? await stateDir(this.#root) : undefined;
     this.#watched = await watchWorkingCopy(
       this.#root,
@@ -201,8 +210,27 @@ export class LiveBacklog {
       this.#refDirty = true;
       this.#kick();
     }, LIVE_TIMING.safetyMs);
+    this.#head = await resolveCommit(this.#root, 'HEAD');
+    this.#snapshot = await loadSnapshot(this.#root);
+    this.#table = entityTable(this.#snapshot);
+    const sync = ownCopy ? await syncJson(this.#ctx) : null;
+    if (sync !== null) this.#sync = { json: sync, text: JSON.stringify(sync) };
     if (ownCopy) this.#stopPeriodic = await startPeriodicSync(this.#ctx, deps.sync);
+    this.#ready = true;
     this.#linger();
+    this.#kick();
+  }
+
+  /** Watcher, Timer und periodischen Sync abbauen. */
+  #teardown(): void {
+    this.#stopped = true;
+    clearTimeout(this.#treeTimer);
+    clearTimeout(this.#syncTimer);
+    clearTimeout(this.#lingerTimer);
+    clearInterval(this.#safety);
+    this.#watched?.close();
+    this.#stopPeriodic();
+    this.#listeners.clear();
   }
 
   get rev(): number {
@@ -211,6 +239,11 @@ export class LiveBacklog {
 
   get head(): string {
     return this.#head;
+  }
+
+  /** Ob der Watcher beendet ist; ein beendeter liefert keine Patches mehr. */
+  get stopped(): boolean {
+    return this.#stopped;
   }
 
   #id(): string {
@@ -272,17 +305,27 @@ export class LiveBacklog {
     }
   }
 
+  #due(): boolean {
+    return !this.#stopped && (this.#refDirty || this.#treeReady || this.#syncDirty);
+  }
+
   #kick(): void {
-    if (this.#stopped || this.#running !== undefined) return;
-    this.#running = (async () => {
-      try {
-        while (!this.#stopped && (this.#refDirty || this.#treeReady || this.#syncDirty)) {
+    if (!this.#ready || this.#running !== undefined || !this.#due()) return;
+    const run = (async () => {
+      while (this.#due()) {
+        try {
           await this.#round();
+        } catch {
+          // Ein unerwarteter Fehler kostet nur diese Runde; die nächste lädt vollständig.
+          this.#full = true;
         }
-      } finally {
-        this.#running = undefined;
       }
     })();
+    // Erst zuweisen, dann abmelden: Auch eine Schleife, die sofort fertig wäre, bleibt nicht hängen.
+    this.#running = run;
+    void run.finally(() => {
+      if (this.#running === run) this.#running = undefined;
+    });
   }
 
   /** Wartet, bis keine Runde mehr läuft. */
@@ -300,6 +343,19 @@ export class LiveBacklog {
     if (syncDue) await this.#refreshSync();
   }
 
+  /** Issues, deren Kommentar- oder Anhangspfade sich seit dem letzten Blick geändert haben. */
+  async #touched(paths: Iterable<string>): Promise<string[]> {
+    const ids = new Set<string>();
+    for (const p of paths) {
+      const id = touchedIssue(p);
+      if (id === undefined) continue;
+      const sig = await signature(this.#root, p);
+      if (this.#touchSigs.get(p) !== sig) ids.add(id);
+      this.#touchSigs.set(p, sig);
+    }
+    return [...ids];
+  }
+
   /** Schreibt den Snapshot fort; liefert, ob `HEAD` sich bewegt hat. */
   async #refresh(): Promise<boolean> {
     const paths = new Set(this.#paths);
@@ -313,6 +369,7 @@ export class LiveBacklog {
       head = this.#head;
     }
     const moved = head !== this.#head;
+    if (!moved && !full && paths.size === 0) return false;
     if (moved) {
       try {
         for (const p of await changedPaths(this.#root, this.#head, head)) {
@@ -324,15 +381,16 @@ export class LiveBacklog {
     }
     this.#head = head;
     for (const p of paths) if (needsFullReload(p)) full = true;
-    const touched = touchedIssues(paths);
     let next: BacklogSnapshot;
+    let touched: string[];
     try {
+      touched = await this.#touched(paths);
       if (full) {
         next = await loadSnapshot(this.#root);
       } else {
         // Kommentare und Anhänge liest der Snapshot nicht; sie stehen nur in `touched`.
         const entityPaths = [...paths].filter(
-          (p) => p.endsWith('.md') && touchedIssues([p]).length === 0,
+          (p) => p.endsWith('.md') && touchedIssue(p) === undefined,
         );
         const reread = [...new Set([...entityPaths, ...orphanedProjectPaths(this.#snapshot)])];
         next = snapshotAt(this.#snapshot, await readPaths(this.#root, reread));
@@ -343,6 +401,8 @@ export class LiveBacklog {
       for (const p of paths) this.#paths.add(p);
       return moved;
     }
+    // Ein Ende während der Runde friert `rev` ein; der Rest der Runde verwirft sein Ergebnis.
+    if (this.#stopped) return moved;
     const table = entityTable(next);
     const diff = diffTables(this.#table, table, touched);
     this.#snapshot = next;
@@ -364,33 +424,30 @@ export class LiveBacklog {
     } catch {
       return;
     }
-    if (json === null) return;
+    if (json === null || this.#stopped) return;
     const text = JSON.stringify(json);
     if (text === this.#sync?.text) return;
     this.#sync = { json, text };
     this.#emit({ event: 'sync', data: json }, this.#id());
   }
 
-  /** Beendet Watcher und Timer, wartet die laufende Runde ab; meldet den letzten `rev`. Idempotent. */
+  /**
+   * Beendet Watcher und Timer und meldet den letzten `rev` sofort an `onStop`; wartet danach die
+   * laufende Runde ab, die nichts mehr sendet. Idempotent.
+   */
   async stop(): Promise<void> {
     if (this.#stopped) return;
-    this.#stopped = true;
-    clearTimeout(this.#treeTimer);
-    clearTimeout(this.#syncTimer);
-    clearTimeout(this.#lingerTimer);
-    clearInterval(this.#safety);
-    this.#watched?.close();
-    this.#stopPeriodic();
-    this.#listeners.clear();
+    this.#teardown();
+    this.#onStop(this.#rev);
     await this.idle();
-    this.#onEnd(this.#rev);
   }
 }
 
 /**
  * Alle `LiveBacklog`s eines Serverprozesses. `boot` sind 8 Hex-Zeichen Zufall je Prozess. Der Hub
  * merkt sich je Backlog den letzten `rev`: Ein neuer Watcher beginnt dahinter mit leerem Puffer,
- * sodass jede ältere Event-ID ein `reset` ergibt.
+ * sodass jede ältere Event-ID ein `reset` ergibt. Ein endender Watcher verlässt den Hub sofort; wer
+ * danach `acquire` ruft, bekommt einen neuen.
  */
 export class LiveHub {
   readonly boot: string;
@@ -401,7 +458,7 @@ export class LiveHub {
   #closed = false;
 
   constructor(opts: { boot?: string; deps?: LiveDeps } = {}) {
-    this.boot = opts.boot ?? Buffer.from(randomBytes(4)).toString('hex');
+    this.boot = opts.boot ?? randomBytes(4).toString('hex');
     this.#deps = opts.deps ?? {};
   }
 
@@ -410,24 +467,23 @@ export class LiveHub {
     const running = this.#live.get(backlog);
     if (running !== undefined) return running;
     const last = this.#lastRev.get(backlog);
-    const started = (async () => {
+    // `started` steht vor dem ersten `await` fest; die Rückfragen darauf laufen erst danach.
+    let started!: Promise<LiveBacklog>;
+    started = (async () => {
       const live = await LiveBacklog.start(await context(), {
         boot: this.boot,
         rev: last === undefined ? 0 : last + 1,
         deps: this.#deps,
-        onEnd: (rev) => {
+        onStop: (rev) => {
           this.#lastRev.set(backlog, rev);
-          if (this.#current.get(backlog) === live) {
-            this.#current.delete(backlog);
+          if (this.#live.get(backlog) === started) {
             this.#live.delete(backlog);
+            this.#current.delete(backlog);
           }
         },
       });
-      if (this.#closed) {
-        await live.stop();
-      } else {
-        this.#current.set(backlog, live);
-      }
+      if (this.#closed) await live.stop();
+      else if (this.#live.get(backlog) === started) this.#current.set(backlog, live);
       return live;
     })();
     this.#live.set(backlog, started);

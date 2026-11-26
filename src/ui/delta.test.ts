@@ -105,7 +105,7 @@ test('touchedIssues reads comment and attachment paths', () => {
       'issues/t0/bk-t0004/comments',
       'projects/web.md',
     ]),
-  ).toEqual(['bk-t0001', 'bk-t0002']);
+  ).toEqual(['bk-t0001', 'bk-t0002', 'bk-t0004']);
 });
 
 test('watchedPath filters to the backlog dirs', () => {
@@ -126,6 +126,7 @@ test('watchedPath filters to the backlog dirs', () => {
     'issuesx/a.md',
     'issues/t0/bk-t0001/.issue.md.swp',
     'issues/t0/bk-t0001/issue.md~',
+    'issues/t0/bk-t0001/.issue.md.tmp-123-deadbeef',
   ]) {
     expect([p, watchedPath(p)]).toEqual([p, false]);
   }
@@ -139,6 +140,6 @@ test('needsFullReload for config, directories and non-md paths', () => {
   expect(needsFullReload('issues/t0/bk-t0001/issue.md')).toBe(false);
   expect(needsFullReload('projects/web/api.md')).toBe(false);
   expect(needsFullReload('issues/t0/bk-t0001/attachments/a.png')).toBe(false);
-  expect(needsFullReload('issues/t0/bk-t0001/comments')).toBe(true);
+  expect(needsFullReload('issues/t0/bk-t0001/comments')).toBe(false);
   expect(needsFullReload('.backe/quarantine.jsonc')).toBe(false);
 });

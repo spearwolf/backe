@@ -1,4 +1,5 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { writeOp } from '../../test/helpers/context.ts';
 import { setPullInterval, type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
@@ -9,7 +10,9 @@ import { bodyHash } from '../ops/operation.ts';
 import { addAttachment } from '../services/attachments.ts';
 import { commitEdits } from '../services/commit.ts';
 import { writeSyncState } from '../services/sync-state.ts';
-import { BACKLOG_CONFIG, issueFile } from '../store/layout.ts';
+import { writeFileAtomic } from '../store/files.ts';
+import { BACKLOG_CONFIG, commentsDir, issueFile } from '../store/layout.ts';
+import * as snapshotModule from '../store/snapshot.ts';
 import { LIVE_TIMING, LiveBacklog, LiveHub, parseEventId } from './live.ts';
 import { stateJson } from './state.ts';
 import type { WatchFn } from './watch.ts';
@@ -32,12 +35,12 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-async function start(opts: { watch?: WatchFn; rev?: number; onEnd?: (rev: number) => void } = {}) {
+async function start(opts: { watch?: WatchFn; rev?: number; onStop?: (rev: number) => void } = {}) {
   const live = await LiveBacklog.start(ctx, {
     boot: BOOT,
     rev: opts.rev ?? 0,
     deps: opts.watch === undefined ? {} : { watch: opts.watch },
-    ...(opts.onEnd === undefined ? {} : { onEnd: opts.onEnd }),
+    ...(opts.onStop === undefined ? {} : { onStop: opts.onStop }),
   });
   running.push(live);
   return live;
@@ -131,13 +134,90 @@ test('comments and attachments mark the issue touched', async () => {
   await writeOp(ctx, { op: 'comment.add', id, body: 'Hallo\n' });
   await vi.waitFor(() => expect(c.patches().at(-1)?.touched).toEqual([id]), WAIT);
   await settle(live);
+  // Ref-Runde und Arbeitsbaum-Runde sehen denselben Kommentar; gemeldet wird er einmal.
+  expect(c.patches()).toHaveLength(1);
   const before = c.patches().length;
   await addAttachment(ctx, id, {
     name: 'a.txt',
     source: { kind: 'file', fileName: 'a.txt', content: Buffer.from('x') },
   });
   await vi.waitFor(() => expect(c.patches().length).toBeGreaterThan(before), WAIT);
+  await settle(live);
+  expect(c.patches()).toHaveLength(before + 1);
   expect(c.patches().at(-1)?.touched).toEqual([id]);
+});
+
+test('a hand written comment is touched once, backe commit after it adds nothing', async () => {
+  const id = await create('Kommentar per Hand');
+  const live = await start();
+  const c = collect(live);
+  const dir = join(b.root, commentsDir(id));
+  await mkdir(dir, { recursive: true });
+  await writeFile(
+    join(dir, '20261126T100000Z-spw-a1b.md'),
+    '---\nauthor: spw\ncreated: 2026-11-26T10:00:00Z\n---\nPer Hand\n',
+  );
+  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
+  expect(c.patches()[0]?.touched).toEqual([id]);
+  await settle(live);
+  await commitEdits(ctx, {});
+  await settle(live);
+  expect(c.patches().slice(1)).toEqual([]);
+});
+
+test('an atomic write reloads by delta, a temp file is no event', async () => {
+  const id = await create('Atomar');
+  const live = await start();
+  const c = collect(live);
+  const full = vi.spyOn(snapshotModule, 'loadSnapshot');
+  try {
+    const file = join(b.root, issueFile(id));
+    await writeFileAtomic(
+      file,
+      (await readFile(file, 'utf8')).replace('title: Atomar', 'title: Neu'),
+    );
+    await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
+    await settle(live);
+    expect(full).not.toHaveBeenCalled();
+  } finally {
+    full.mockRestore();
+  }
+});
+
+test('a change before the watchers stand is not lost', async () => {
+  const id = await create('Vorher');
+  const file = join(b.root, issueFile(id));
+  const original = await readFile(file, 'utf8');
+  // Der Hand-Edit fällt in das Fenster, in dem der Watcher noch aufgebaut wird.
+  const live = await start({
+    watch: (path, opts, listener) => {
+      if (path === b.root) writeFileSync(file, original.replace('title: Vorher', 'title: Fenster'));
+      return fsWatch(path, opts, listener);
+    },
+  });
+  await settle(live);
+  const c = collect(live);
+  await writeFile(file, original);
+  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
+  expect(c.patches()[0]?.upsert.issues?.[0]?.title).toBe('Vorher');
+});
+
+test('a failed start leaves no watcher or timer', async () => {
+  await writeFile(join(b.root, BACKLOG_CONFIG), '{ kaputt');
+  const handles: { closed: boolean }[] = [];
+  const watch: WatchFn = () => {
+    const h = { closed: false };
+    handles.push(h);
+    return {
+      close() {
+        h.closed = true;
+      },
+    };
+  };
+  await expect(LiveBacklog.start(ctx, { boot: BOOT, rev: 0, deps: { watch } })).rejects.toThrow();
+  expect(handles.length).toBeGreaterThan(0);
+  expect(handles.every((h) => h.closed)).toBe(true);
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 test('a broken hand edit becomes a problem, the fix a patch', async () => {
@@ -285,18 +365,19 @@ test('an event id outside the buffer gets reset', async () => {
 });
 
 test('the watcher ends 30 s after the last subscriber', async () => {
-  const onEnd = vi.fn();
-  const live = await start({ rev: 3, onEnd });
+  const onStop = vi.fn();
+  const live = await start({ rev: 3, onStop });
   const c = collect(live);
   c.off();
   c.off();
   await vi.advanceTimersByTimeAsync(LIVE_TIMING.lingerMs - 1);
   const again = collect(live);
   await vi.advanceTimersByTimeAsync(LIVE_TIMING.lingerMs);
-  expect(onEnd).not.toHaveBeenCalled();
+  expect(onStop).not.toHaveBeenCalled();
   again.off();
   await vi.advanceTimersByTimeAsync(LIVE_TIMING.lingerMs);
-  await vi.waitFor(() => expect(onEnd).toHaveBeenCalledWith(3), WAIT);
+  expect(onStop).toHaveBeenCalledWith(3);
+  expect(live.stopped).toBe(true);
   await create('Niemand schaut');
   await settle(live);
   expect(live.rev).toBe(3);
@@ -340,11 +421,12 @@ describe('LiveHub', () => {
     await create('Eins');
     await vi.waitFor(() => expect(hub.revOf('acme')).toBe(1), WAIT);
     c.off();
+    // Eine Runde läuft, wenn die Frist abläuft: Der Watcher verlässt den Hub trotzdem sofort.
+    await create('Während des Endes');
     await vi.advanceTimersByTimeAsync(LIVE_TIMING.lingerMs);
-    await vi.waitFor(() => expect(l1.subscribers()).toBe(0), WAIT);
-    await l1.idle();
-    await vi.waitFor(async () => expect(await hub.acquire('acme', ctxFn)).not.toBe(l1), WAIT);
+    expect(l1.stopped).toBe(true);
     const l3 = await hub.acquire('acme', ctxFn);
+    expect(l3).not.toBe(l1);
     expect(l3.rev).toBe(2);
     expect(hub.revOf('acme')).toBe(2);
     expect(collect(l3, `${BOOT}:1`).names()).toEqual(['hello', 'reset', 'sync']);

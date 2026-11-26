@@ -4,7 +4,7 @@ import type { ResolvedContext } from '../context/resolve.ts';
 import { resolveCommit } from '../git/history.ts';
 import { syncStatus } from '../services/background.ts';
 import { contextInfo } from '../services/context-info.ts';
-import { openSnapshot } from '../services/read.ts';
+import { openSnapshot, requireRoot } from '../services/read.ts';
 import { contextJson, syncStatusJson } from '../services/views.ts';
 import { exists } from '../store/files.ts';
 import { BACKLOG_CONFIG } from '../store/layout.ts';
@@ -13,11 +13,15 @@ import { entityLists } from './delta.ts';
 
 export { userJson } from './delta.ts';
 
+/** Ob die Identität eine eigene Arbeitskopie des Backlogs hat (dann gibt es einen Sync-Zustand). */
+export async function hasOwnCopy(ctx: ResolvedContext): Promise<boolean> {
+  const wc = ctx.backlog.workingCopy;
+  return wc !== undefined && (await exists(join(wc, BACKLOG_CONFIG)));
+}
+
 /** JSON von `sync status` der eigenen Arbeitskopie; ohne eine `null`. */
 export async function syncJson(ctx: ResolvedContext): Promise<Record<string, unknown> | null> {
-  const wc = ctx.backlog.workingCopy;
-  const ownCopy = wc !== undefined && (await exists(join(wc, BACKLOG_CONFIG)));
-  return ownCopy ? syncStatusJson(await syncStatus(ctx)) : null;
+  return (await hasOwnCopy(ctx)) ? syncStatusJson(await syncStatus(ctx)) : null;
 }
 
 /**
@@ -25,10 +29,12 @@ export async function syncJson(ctx: ResolvedContext): Promise<Record<string, unk
  * wird: So ist der Zustand mindestens so neu wie `rev` (ui.md §2.4.3).
  */
 export async function stateJson(ctx: ResolvedContext, rev = 0): Promise<StateJson> {
-  const { root, snapshot: s } = await openSnapshot(ctx);
+  // `head` vor dem Snapshot: Der Zustand ist dann mindestens so neu wie `head`.
+  const head = await resolveCommit(requireRoot(ctx), 'HEAD');
+  const { snapshot: s } = await openSnapshot(ctx);
   return {
     rev,
-    head: await resolveCommit(root, 'HEAD'),
+    head,
     context: contextJson(await contextInfo(ctx)),
     ...entityLists(s),
     problems: s.problems,

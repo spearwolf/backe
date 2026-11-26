@@ -109,6 +109,11 @@ export function assertRecursiveAllowed(change: FileChange): void {
   }
 }
 
+/** Ob der Dateiname von `path` eine Temp-Datei von `writeFileAtomic` ist (`.<name>.tmp-<pid>-<hex>`). */
+export function isAtomicTemp(path: string): boolean {
+  return /^\..+\.tmp-\d+-[0-9a-f]{8}$/.test(path.slice(path.lastIndexOf('/') + 1));
+}
+
 /**
  * Schreibt per Temp-Datei + `rename`. Ein Symlink bleibt erhalten, ersetzt wird sein Ziel; eine
  * bestehende Datei behält ihren Modus. Scheitert das Aufräumen, fliegt der ursprüngliche Fehler.

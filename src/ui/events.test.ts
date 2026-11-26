@@ -1,3 +1,5 @@
+import { createServer, request } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { writeOp } from '../../test/helpers/context.ts';
 import { type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
@@ -5,8 +7,8 @@ import { fakeTimers } from '../../test/helpers/live.ts';
 import { rawRequest, startUi, type UiHarness } from '../../test/helpers/ui.ts';
 import { registerBacklog } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
-import { sseFrame } from './events.ts';
-import { LIVE_TIMING } from './live.ts';
+import { serveEvents, sseFrame } from './events.ts';
+import { LIVE_TIMING, LiveBacklog } from './live.ts';
 import { CSP } from './security.ts';
 
 const WAIT = { timeout: 10_000 };
@@ -108,7 +110,8 @@ test('heartbeat every 15 s', async () => {
   }
 });
 
-test('head gets only the headers', async () => {
+test('head gets only the headers and starts no watcher', async () => {
+  const timers = vi.getTimerCount();
   const head = await rawRequest(ui.port, {
     method: 'HEAD',
     path: EVENTS,
@@ -119,6 +122,47 @@ test('head gets only the headers', async () => {
     'text/event-stream; charset=utf-8',
     0,
   ]);
+  expect(vi.getTimerCount()).toBe(timers);
+  const other = await rawRequest(ui.port, {
+    method: 'HEAD',
+    path: '/api/b/nope/events',
+    headers: { cookie: ui.cookie },
+  });
+  expect(other.status).toBe(404);
+});
+
+test('a client gone before the watcher stands is no subscriber', async () => {
+  const live = await LiveBacklog.start(ctx, { boot: '0123abcd', rev: 0 });
+  let served!: () => void;
+  const done = new Promise<void>((resolve) => {
+    served = resolve;
+  });
+  let arrived!: () => void;
+  const got = new Promise<void>((resolve) => {
+    arrived = resolve;
+  });
+  // Der Handler kommt erst nach dem Abbruch des Clients zu `serveEvents`, wie nach einem langen Start.
+  const server = createServer((_req, res) => {
+    res.once('close', () => {
+      serveEvents(res, live);
+      served();
+    });
+    arrived();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const req = request({ host: '127.0.0.1', port, path: '/', agent: false });
+    req.on('error', () => {});
+    req.end();
+    await got;
+    req.destroy();
+    await done;
+    expect(live.subscribers()).toBe(0);
+  } finally {
+    await live.stop();
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test('close ends open event streams', async () => {
