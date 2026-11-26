@@ -7,8 +7,8 @@ import { basename, join } from 'node:path';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
 import type { Comment, Issue } from '../core/schemas.ts';
-import { isSettled, type State } from '../core/state.ts';
-import { ancestors, graphOf } from '../ops/graph.ts';
+import type { State } from '../core/state.ts';
+import { ancestors, childProgress, graphOf } from '../ops/graph.ts';
 import type { Notice } from '../ops/notice.ts';
 import { settledDependencyNotice, unblockableNotice } from '../ops/notice.ts';
 import { compareIssues } from '../ops/order.ts';
@@ -97,10 +97,7 @@ export async function showIssue(
 
   const graph = graphOf(s);
   const childIds = graph.children.get(id) ?? [];
-  const settled = childIds.filter((c) => {
-    const st = s.issues.get(c)?.data.state;
-    return st !== undefined && isSettled(st);
-  }).length;
+  const progress = childProgress(s, id);
 
   const all = await listComments(root, id);
   const lastTransition = all.findLast(
@@ -122,7 +119,7 @@ export async function showIssue(
     dependsOn: (issue.depends_on ?? []).map((dep) => view(dep)[0] ?? { id: dep, missing: true }),
     dependents: sorted(graph.dependents.get(id)),
     children: sorted(childIds),
-    ...(childIds.length > 0 ? { progress: { settled, total: childIds.length } } : {}),
+    ...(progress === undefined ? {} : { progress }),
     commentsCount: all.length,
     ...(lastReason ? { lastReason } : {}),
     comments: picked.map(commentView),

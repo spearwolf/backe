@@ -4,6 +4,7 @@ import type { Issue } from '../core/schemas.ts';
 import type { StoredEntity } from '../store/snapshot.ts';
 import {
   ancestors,
+  childProgress,
   findCycle,
   findPath,
   graphOf,
@@ -579,5 +580,24 @@ describe('graphOf on a draft view', () => {
     const e = s.issues.get(I(2)) as StoredEntity<Issue>;
     const view = new LayeredMap(s.issues, new Map([[I(2), { ...e, body: 'neu\n' }]]));
     expect(graphOf({ ...s, issues: view }).children).toBe(graphOf(s).children);
+  });
+});
+
+describe('childProgress', () => {
+  test('counts settled direct children', () => {
+    const s = snap({
+      issues: [
+        { id: I(1) },
+        { id: I(2), parent: I(1), state: 'done' },
+        { id: I(3), parent: I(1), state: 'cancelled' },
+        { id: I(4), parent: I(1) },
+        { id: I(5), parent: I(1), state: 'in_progress' },
+        { id: I(6), parent: I(1), state: 'rejected' },
+        { id: I(7), parent: I(4), state: 'done' },
+      ],
+    });
+    expect(childProgress(s, I(1))).toEqual({ settled: 3, total: 5 });
+    expect(childProgress(s, I(4))).toEqual({ settled: 1, total: 1 });
+    expect(childProgress(s, I(7))).toBeUndefined();
   });
 });

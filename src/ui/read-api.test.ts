@@ -195,6 +195,20 @@ test('search finds body text in settled issues', async () => {
   expect(res.json().issues.map((i: { id: string }) => i.id)).toEqual([id]);
 });
 
+test('search ignores the project bound by the start context', async () => {
+  const ctx = await backlog.context();
+  await writeOp(ctx, { op: 'project.create', path: 'web', title: 'Web' });
+  const outside = await writeOp(ctx, {
+    op: 'issue.create',
+    title: 'Ohne Projekt',
+    body: 'Zebrastreifen im Body\n',
+  });
+  await ui.close();
+  ui = await startUi({ ...input, env: { ...input.env, BACKE_PROJECT: 'web' }, start: 'acme' });
+  const res = await ui.get('/api/b/acme/search?q=Zebrastreifen');
+  expect(res.json().issues.map((i: { id: string }) => i.id)).toEqual([outside]);
+});
+
 test('search without q is 400', async () => {
   expect((await ui.get('/api/b/acme/search')).json().error.code).toBe('usage');
   expect((await ui.get('/api/b/acme/search?q=')).json().error.code).toBe('usage');

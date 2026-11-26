@@ -69,3 +69,19 @@ test('openDeps marks dependencies that are missing or not settled', () => {
     [I(3), true],
   ]);
 });
+
+test('bodyHits replace the body search, the title still matches', () => {
+  const s = snap({
+    issues: [
+      { id: I(1), title: 'Zebra crossing', rank: 1 },
+      { id: I(2), title: 'Other', rank: 2 },
+      { id: I(3), title: 'Third', rank: 3 },
+    ],
+  });
+  const withBody = { ...s, issues: new Map(s.issues) };
+  const two = withBody.issues.get(I(2));
+  if (two !== undefined) withBody.issues.set(I(2), { ...two, body: 'a zebra here' });
+  const q = { filter: {}, states: 'all' as const, text: 'zebra' };
+  expect(ids(selectIssues(withBody, q))).toEqual([I(1), I(2)]);
+  expect(ids(selectIssues(withBody, { ...q, bodyHits: new Set([I(3)]) }))).toEqual([I(1), I(3)]);
+});

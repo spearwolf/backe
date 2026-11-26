@@ -86,7 +86,7 @@ Alle Endpunkte liegen unter `/api` und verlangen das Sitzungs-Cookie (§2.15). J
 | `GET /api/b/<b>/state` | Gesamtzustand für den Client: `{rev, head, context, config, issues, projects, sprints, repos, users, problems, sync}`. `issues` enthält alle Frontmatter-Felder jedes Issues, **ohne Body**. `users` enthält Key-Fingerprints, keine Keys. `config` ist der lesbare Teil von `backlog.jsonc` samt deklarierter Properties. `sync` ist das JSON von `sync status`, `null` ohne eigene Arbeitskopie. Die Listen sind immer vorhanden; Einträge von `projects` sind `{path, …}`, von `sprints` `{slug, …}`, von `repos` `{name, …}`, von `users` wie `user show --json` ohne `body`. |
 | `GET /api/b/<b>/issues/<id>` | wie `issue show --comments all --format json`: Body, Kommentare, `dependents`, `children`, Fortschritt |
 | `GET /api/b/<b>/issues/<id>/attachments/<name>` | Dateibytes eines Anhangs (§2.9.4, Header nach §2.15); ein URL-Anhang hat keine Bytes → 404 |
-| `GET /api/b/<b>/search?q=<text>` | Volltextsuche wie `issue list -q <text> --state all`; ohne `q` → 400 |
+| `GET /api/b/<b>/search?q=<text>` | Volltextsuche wie `issue list -q <text> --state all --all`; ohne `q` → 400 |
 | `GET /api/b/<b>/events` | Event-Stream (§2.4.3) |
 
 #### 2.3.2 Schreiben
@@ -200,7 +200,7 @@ backe · Backlogs for humans                         [Backlog ▾]  spw  ● syn
 
 Nach `backlog.png`: Filterleiste oben, darunter die Issue-Liste.
 
-- **Filter** mit der Semantik von `issue list` (BK §2.18): State (Mehrfachauswahl, Default »offen«, auch `all`), Projekt (Baumauswahl, rekursiv oder `exact`), Sprint, Assignee (User, `me`, `none`), Creator, Repo, Modus (`ready`, `blocked`, `unblockable`), Properties (`=`, `>=`, `<=`, vorhanden), Text. Werte innerhalb eines Filters sind ODER-, verschiedene Filter UND-verknüpft.
+- **Filter** mit der Semantik von `issue list` (BK §2.18): State (Mehrfachauswahl, Default »offen«, auch `all`), Projekt (Baumauswahl, rekursiv oder `exact`), Sprint, Assignee (User, `me`, `none`), Creator, Repo, Modus (`ready`, `blocked`, `unblockable`), Properties (`=`, `>=`, `<=`, vorhanden), Text. Werte innerhalb eines Filters sind ODER-, verschiedene Filter UND-verknüpft. Kontextwerte (aktives Projekt, Sprint, Repo) filtern nicht mit; die Liste entspricht `issue list --all`. Text filtert sofort über Titel und vereinigt das mit den Treffern von `GET …/search` in Beschreibungen.
 - **Darstellung:** Baum (Default, wie `issue list --tree`: Sub-Issues eingerückt unter ihrem Parent) oder flach. Sortierung `rank` (Default) oder `created` (BK §2.18).
 - **Zeile:** State-Icon und State, ID, Titel, Assignee, Projekte und Sprints als dezente Chips, `⧗` bei offenen Abhängigkeiten, Fortschritt der Sub-Issues (`3/5`).
 - **Aktionen:** Klick öffnet den Issue-Tab; Kontextmenü für State, Assignee, Rank (`top`, `bottom`), Löschen. Ziehen einer Zeile sortiert um (`issue_rank` mit `before`/`after`), nur bei Sortierung `rank`.

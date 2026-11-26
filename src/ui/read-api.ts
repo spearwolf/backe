@@ -65,7 +65,7 @@ export async function handleRead(
       sendJson(
         res,
         200,
-        issueListResultJson(await listIssues(ctx, { text: route.q, states: ['all'] })),
+        issueListResultJson(await listIssues(ctx, { text: route.q, states: ['all'], all: true })),
       );
     }
   } catch (err) {

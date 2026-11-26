@@ -29,6 +29,11 @@ export type IssueSelector = {
   mode?: 'blocked' | 'unblockable' | 'ready';
   /** Kleingeschrieben; durchsucht Titel und `body` des Snapshots. */
   text?: string;
+  /**
+   * IDs, deren Beschreibung `text` enthält. Gesetzt ersetzt es die Suche im `body` des Snapshots:
+   * Der Client von `backe ui` hat keine Bodies und holt diese Treffer vom Server.
+   */
+  bodyHits?: ReadonlySet<string>;
   tree?: boolean;
   sort?: 'rank' | 'created';
 };
@@ -125,10 +130,11 @@ export function selectIssues(s: BacklogSnapshot, q: IssueSelector): SelectedIssu
     if (q.mode === 'unblockable' && !isUnblockable(s, issue.id)) return false;
     if (q.mode === 'ready' && !isReady(s, issue.id, { level: 'leaf' })) return false;
     if (text !== undefined) {
-      const body = s.issues.get(issue.id)?.body ?? '';
-      if (!issue.title.toLowerCase().includes(text) && !body.toLowerCase().includes(text)) {
-        return false;
-      }
+      const inBody =
+        q.bodyHits === undefined
+          ? (s.issues.get(issue.id)?.body ?? '').toLowerCase().includes(text)
+          : q.bodyHits.has(issue.id);
+      if (!issue.title.toLowerCase().includes(text) && !inBody) return false;
     }
     return true;
   };

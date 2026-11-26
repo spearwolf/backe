@@ -15,7 +15,8 @@ export type State =
 export const MAIN_LINE: readonly State[] = ['backlog', 'todo', 'in_progress', 'review', 'done'];
 export const PAUSED: readonly State[] = ['blocked', 'on_hold'];
 
-const ALL_STATES: readonly State[] = [...MAIN_LINE, ...PAUSED, 'cancelled', 'rejected'];
+/** Alle States, Hauptlinie zuerst. */
+export const ALL_STATES: readonly State[] = [...MAIN_LINE, ...PAUSED, 'cancelled', 'rejected'];
 
 export interface StateFields {
   state: State;

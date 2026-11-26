@@ -263,6 +263,16 @@ export function openChildren(s: BacklogSnapshot, id: string): string[] {
   });
 }
 
+/** Erledigte und alle direkten Sub-Issues; `undefined` ohne Kinder. */
+export function childProgress(
+  s: BacklogSnapshot,
+  id: string,
+): { settled: number; total: number } | undefined {
+  const children = graphOf(s).children.get(id) ?? [];
+  if (children.length === 0) return undefined;
+  return { settled: children.length - openChildren(s, id).length, total: children.length };
+}
+
 export type Readiness =
   | { ready: true }
   | {
