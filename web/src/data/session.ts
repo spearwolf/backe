@@ -3,6 +3,8 @@ import { createSignal, type Signal, SignalGroup } from '@spearwolf/signalize';
 import { ApiError } from './api-client.ts';
 import { Connection, type ConnectionDeps, type ConnectionStatus } from './connection.ts';
 import { Store } from './store.ts';
+import { callTool, uploadAttachment } from './tools.ts';
+import { Writes } from './writes.ts';
 
 export type Session = {
   readonly backlog: string;
@@ -14,6 +16,9 @@ export type Session = {
    * jedem erfolgreichen Laden.
    */
   readonly error: Signal<ApiError | undefined>;
+  readonly writes: Writes;
+  /** Lädt `/state` neu; erfüllt, sobald das letzte Laden fertig ist, auch nach einem Fehler. */
+  refresh(): Promise<void>;
   dispose(): void;
 };
 
@@ -43,6 +48,15 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
   // das nächste hello lädt neu.
   let stale = false;
   const buffer: PatchJson[] = [];
+  // Wer `refresh` rief, wartet, bis kein Laden mehr läuft: Ein Neuladen während eines anderen
+  // kommt erst mit dem letzten.
+  let waiters: Array<() => void> = [];
+  const wake = (): void => {
+    if (loading) return;
+    const ready = waiters;
+    waiters = [];
+    for (const resolve of ready) resolve();
+  };
 
   const drain = (): void => {
     while (buffer.length > 0 && !disposed) {
@@ -71,6 +85,7 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
         } else {
           drain();
         }
+        wake();
       },
       (cause: unknown) => {
         if (disposed) return;
@@ -84,6 +99,7 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
           reloadPending = false;
           load();
         }
+        wake();
       },
     );
   };
@@ -129,6 +145,23 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
     }),
   ];
 
+  const refresh = (): Promise<void> => {
+    const done = new Promise<void>((resolve) => {
+      waiters.push(resolve);
+    });
+    // Ohne laufenden Stream fehlen womöglich Patches: Dann ist es eine Probe, und das nächste
+    // hello lädt noch einmal.
+    if (loading) reloadPending = true;
+    else load(connection.status !== 'open');
+    return done;
+  };
+
+  const writes = new Writes(store, {
+    call: (name, args) => callTool(backlog, name, args, deps.fetch),
+    upload: (id, name, bytes) => uploadAttachment(backlog, id, name, bytes, deps.fetch),
+    refresh,
+  });
+
   connection.open();
 
   return {
@@ -137,13 +170,19 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
     store,
     status,
     error,
+    writes,
+    refresh,
     dispose() {
       if (disposed) return;
       disposed = true;
       for (const off of handles) off();
       connection.close();
+      writes.dispose();
       store.dispose();
       SignalGroup.delete(owner);
+      // Ein Laden nach dem Ende meldet sich nicht mehr; niemand soll darauf ewig warten.
+      loading = false;
+      wake();
     },
   };
 }

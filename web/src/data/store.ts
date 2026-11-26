@@ -23,13 +23,32 @@ function sameKeys(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
+ * Trägt `value` jedes Feld von `fields` mit demselben Wert? Verglichen wird per JSON, ein
+ * fehlendes Feld gilt als `undefined`. Ohne `value` nie: Ein Issue, das der Server nicht kennt,
+ * gleicht keiner Überlagerung.
+ */
+export function hasFields<T extends object>(value: T | undefined, fields: Partial<T>): boolean {
+  if (value === undefined) return false;
+  const record = value as Record<string, unknown>;
+  return Object.entries(fields).every(
+    ([field, want]) => JSON.stringify(record[field]) === JSON.stringify(want),
+  );
+}
+
+/**
  * Eine Entitätsart als ein Signal je Eintrag plus ein Signal für die Schlüsselliste. Wer eine
  * Zeile zeigt, hängt nur an `get(key)`; ein Patch auf ein Issue weckt so genau diese Zeile.
  * Alle Signale hängen an `owner` und gehen mit `SignalGroup.delete(owner)` unter.
+ *
+ * Neben dem Serverstand hält die Tabelle Überlagerungen (»ausstehend«, ui.md §2.5): `get(key)`
+ * zeigt den Serverwert mit allen Überlagerungen in Token-Reihenfolge darüber. Ohne Serverwert
+ * bleibt der Eintrag leer, und die Schlüsselliste kennt nur Serverwerte.
  */
-export class EntityTable<T> {
+export class EntityTable<T extends object> {
   readonly keys: Signal<readonly string[]>;
   readonly #entries = new Map<string, Signal<T | undefined>>();
+  readonly #server = new Map<string, T>();
+  readonly #overlays = new Map<number, ReadonlyMap<string, Partial<T>>>();
   readonly #keyOf: (item: T) => string;
   readonly #owner: object;
 
@@ -43,10 +62,15 @@ export class EntityTable<T> {
   get(key: string): Signal<T | undefined> {
     let entry = this.#entries.get(key);
     if (entry === undefined) {
-      entry = createSignal<T | undefined>(undefined, { attach: this.#owner });
+      entry = createSignal<T | undefined>(this.#effective(key), { attach: this.#owner });
       this.#entries.set(key, entry);
     }
     return entry;
+  }
+
+  /** Serverstand ohne Überlagerung, ungetrackt. */
+  server(key: string): T | undefined {
+    return this.#server.get(key);
   }
 
   /** Tracked: die Schlüsselliste und jeder Eintrag. */
@@ -63,9 +87,16 @@ export class EntityTable<T> {
     batch(() => {
       const next = items.map(this.#keyOf);
       const keep = new Set(next);
-      for (const [key, entry] of this.#entries) if (!keep.has(key)) entry.set(undefined);
+      for (const key of [...this.#server.keys()]) {
+        if (!keep.has(key)) {
+          this.#server.delete(key);
+          this.#publish(key);
+        }
+      }
       items.forEach((item, i) => {
-        this.get(next[i] as string).set(item);
+        const key = next[i] as string;
+        this.#server.set(key, item);
+        this.#publish(key);
       });
       this.#setKeys(next);
     });
@@ -78,7 +109,8 @@ export class EntityTable<T> {
       const added: string[] = [];
       for (const item of items) {
         const key = this.#keyOf(item);
-        this.get(key).set(item);
+        this.#server.set(key, item);
+        this.#publish(key);
         if (!known.has(key)) {
           known.add(key);
           added.push(key);
@@ -89,12 +121,67 @@ export class EntityTable<T> {
   }
 
   remove(keys: readonly string[]): void {
-    const gone = new Set(keys.filter((key) => this.#entries.get(key)?.value !== undefined));
+    const gone = new Set(keys.filter((key) => this.#server.has(key)));
     if (gone.size === 0) return;
     batch(() => {
-      for (const key of gone) this.get(key).set(undefined);
+      for (const key of gone) {
+        this.#server.delete(key);
+        this.#publish(key);
+      }
       this.#setKeys(this.keys.value.filter((key) => !gone.has(key)));
     });
+  }
+
+  /** Legt die Überlagerung `token` über die Einträge; ein schon vergebenes Token wird ersetzt. */
+  overlay(token: number, entries: ReadonlyMap<string, Partial<T>>): void {
+    const before = this.#overlays.get(token);
+    this.#overlays.set(token, entries);
+    batch(() => {
+      for (const key of new Set([...(before?.keys() ?? []), ...entries.keys()])) {
+        this.#publish(key);
+      }
+    });
+  }
+
+  dropOverlay(token: number): void {
+    const entries = this.#overlays.get(token);
+    if (entries === undefined) return;
+    this.#overlays.delete(token);
+    batch(() => {
+      for (const key of entries.keys()) this.#publish(key);
+    });
+  }
+
+  /**
+   * Serverwert mit den Überlagerungen darüber; ein Feld mit `undefined` fällt weg. Gleicht der
+   * Serverwert schon jedem überlagerten Feld, bleibt es beim Serverobjekt: Wer an der Identität
+   * hängt (die Zeilen der Backlog-Liste), rechnet dann nichts neu.
+   */
+  #effective(key: string): T | undefined {
+    const server = this.#server.get(key);
+    if (server === undefined || this.#overlays.size === 0) return server;
+    const layers = [...this.#overlays]
+      .filter(([, entries]) => entries.has(key))
+      .sort(([a], [b]) => a - b);
+    if (layers.length === 0) return server;
+    const fields: Partial<T> = Object.assign({}, ...layers.map(([, entries]) => entries.get(key)));
+    if (hasFields(server, fields)) return server;
+    const merged: Record<string, unknown> = { ...server, ...fields };
+    for (const [field, value] of Object.entries(fields)) {
+      if (value === undefined) delete merged[field];
+    }
+    return merged as T;
+  }
+
+  #publish(key: string): void {
+    const next = this.#effective(key);
+    const entry = this.#entries.get(key);
+    if (entry === undefined) {
+      // Ein Eintrag ohne Wert braucht noch kein Signal; `get` legt es mit dem Wert an.
+      if (next !== undefined) this.get(key);
+      return;
+    }
+    entry.set(next);
   }
 
   // Eine gleichbleibende Schlüsselmenge darf die Liste nicht wecken.
@@ -128,6 +215,9 @@ export class Store {
     { attach: this },
   );
   readonly #touches = new Map<string, Signal<number>>();
+  readonly #pending = new Map<string, Signal<number>>();
+  /** Issues je Überlagerung, damit `clearOverlay` die Zähler zurücknimmt. */
+  readonly #overlayIds = new Map<number, readonly string[]>();
 
   /**
    * Snapshot für `graphOf` und `selectIssues`; das Memo liest `issues`, `projects` und `config`.
@@ -162,6 +252,44 @@ export class Store {
       this.#touches.set(id, count);
     }
     return count;
+  }
+
+  /** Anzahl offener Überlagerungen des Issues; > 0 heißt »ausstehend«. */
+  pendingCount(id: string): Signal<number> {
+    let count = this.#pending.get(id);
+    if (count === undefined) {
+      count = createSignal(0, { attach: this });
+      this.#pending.set(id, count);
+    }
+    return count;
+  }
+
+  /** Überlagert Issues bis `clearOverlay(token)`; ein schon vergebenes Token wird ersetzt. */
+  setOverlay(token: number, issues: ReadonlyMap<string, Partial<IssueJson>>): void {
+    batch(() => {
+      this.#countPending(this.#overlayIds.get(token) ?? [], -1);
+      const ids = [...issues.keys()];
+      this.#overlayIds.set(token, ids);
+      this.issues.overlay(token, issues);
+      this.#countPending(ids, 1);
+    });
+  }
+
+  clearOverlay(token: number): void {
+    const ids = this.#overlayIds.get(token);
+    if (ids === undefined) return;
+    this.#overlayIds.delete(token);
+    batch(() => {
+      this.issues.dropOverlay(token);
+      this.#countPending(ids, -1);
+    });
+  }
+
+  #countPending(ids: readonly string[], delta: number): void {
+    for (const id of ids) {
+      const count = this.pendingCount(id);
+      count.set(count.value + delta);
+    }
   }
 
   load(state: StateJson): void {
