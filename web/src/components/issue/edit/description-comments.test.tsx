@@ -240,6 +240,41 @@ test('own comments can be edited and deleted, others not', async () => {
   expect(screen.queryByRole('dialog')).toBeNull();
 });
 
+test('an edited comment stays until the reload brings it, never the old one', async () => {
+  served.comments = [testComment(1, { body: 'Alt' })];
+  const { store } = view([testIssue(1)]);
+  await flush();
+  const own = () => within(region(m.timeline)).getAllByRole('listitem')[0] as HTMLElement;
+  await userEvent.click(button(m.editNamed(commentName()), own()));
+  const box = within(own()).getByRole('textbox', { name: m.comment });
+  await userEvent.clear(box);
+  await userEvent.type(box, 'Neu');
+  await userEvent.click(button(m.saveChanges, own()));
+  await flush();
+  // Der Server liefert noch den alten Text: Angezeigt wird trotzdem der gespeicherte.
+  expect(within(own()).getByText('Neu')).toBeTruthy();
+  expect(within(own()).queryByText('Alt')).toBeNull();
+  // Erneut bearbeiten beginnt beim gespeicherten Text.
+  await userEvent.click(button(m.editNamed(commentName()), own()));
+  expect(
+    (within(own()).getByRole('textbox', { name: m.comment }) as HTMLTextAreaElement).value,
+  ).toBe('Neu');
+  await userEvent.click(button(w.cancel, own()));
+  served.comments = [testComment(1, { body: 'Neu' })];
+  act(() => {
+    store.applyPatch(testPatch(2, { touched: [ID] }));
+  });
+  await flush();
+  expect(within(own()).getByText('Neu')).toBeTruthy();
+  // Ein späterer fremder Stand löst den gespeicherten ab.
+  served.comments = [testComment(1, { body: 'Fremd' })];
+  act(() => {
+    store.applyPatch(testPatch(3, { touched: [ID] }));
+  });
+  await flush();
+  expect(within(own()).getByText('Fremd')).toBeTruthy();
+});
+
 test('open editors disappear when the issue is deleted', async () => {
   served.body = 'Text';
   served.comments = [testComment(1, { body: 'Meins' })];

@@ -71,6 +71,8 @@ function TimelineItem(props: {
   const { id, item: c, own, backlog, issue, uploads } = props;
   const { writes } = useWrites();
   const [draft, setDraft] = useState<string>();
+  // Gespeicherter Text, bis das Neuladen den Body `over` ablöst; sonst stünde kurz der alte da.
+  const [saved, setSaved] = useState<{ text: string; over: string }>();
   const [confirming, setConfirming] = useState(false);
   const edit = useAction();
   const remove = useAction();
@@ -83,14 +85,21 @@ function TimelineItem(props: {
     if (!editing && backToButton.current) editButton.current?.focus();
     backToButton.current = false;
   }, [editing]);
+  useEffect(() => {
+    if (saved !== undefined && c.body !== saved.over) setSaved(undefined);
+  }, [c.body, saved]);
+  const body = saved !== undefined && c.body === saved.over ? saved.text : c.body;
   const close = (): void => {
     backToButton.current = true;
     setDraft(undefined);
   };
 
-  const save = async (body: string): Promise<void> => {
-    const args = { id, comment: c.file, body };
-    if (await edit.run(() => writes.run('comment_edit', args))) close();
+  const save = async (text: string): Promise<void> => {
+    const over = c.body;
+    const args = { id, comment: c.file, body: text };
+    if (!(await edit.run(() => writes.run('comment_edit', args)))) return;
+    setSaved({ text, over });
+    close();
   };
   const confirmDelete = async (): Promise<void> => {
     const args = { id, comment: c.file };
@@ -122,7 +131,7 @@ function TimelineItem(props: {
               aria-label={m.editNamed(named)}
               onClick={() => {
                 edit.reset();
-                setDraft(c.body);
+                setDraft(body);
               }}
             >
               {m.edit}
@@ -143,7 +152,7 @@ function TimelineItem(props: {
         )}
       </div>
       {!editing || draft === undefined ? (
-        c.body !== '' && <Markdown source={c.body} backlog={backlog} issue={issue} />
+        body !== '' && <Markdown source={body} backlog={backlog} issue={issue} />
       ) : (
         <div className="space-y-2">
           <MarkdownEditor
