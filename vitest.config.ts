@@ -13,6 +13,7 @@ const thresholds = {
   'src/ops/**': { lines: 90, branches: 90 },
   'src/context/**': { lines: 90, branches: 90 },
   'src/services/**': { lines: 90, branches: 90 },
+  'src/tools/**': { lines: 90, branches: 85 },
   'src/mcp/**': { lines: 90, branches: 85 },
 };
 

@@ -14,8 +14,8 @@ import { createIssue } from '../services/issues.ts';
 import type { SpawnFn, SyncDeps, SyncHooks } from '../services/sync.ts';
 import { syncNow } from '../services/sync.ts';
 import { writeSyncState } from '../services/sync-state.ts';
+import { startPeriodicSync, syncResult } from '../tools/sync.ts';
 import type { McpDeps } from './server.ts';
-import { startPeriodicSync, syncResult } from './sync-tools.ts';
 
 // Der MCP-Modus spricht immer Englisch (backe.md §2.18); `backe mcp` setzt die Locale beim Start.
 beforeAll(() => setLocale('en'));

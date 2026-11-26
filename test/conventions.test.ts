@@ -68,7 +68,7 @@ test('CLI JSON keys are snake_case in every golden file', async () => {
 });
 
 /** Schichten unter den Adaptern und der MCP-Adapter selbst: stdout gehört dort dem Protokoll. */
-const QUIET_LAYERS = ['core', 'store', 'context', 'git', 'ops', 'services', 'mcp'];
+const QUIET_LAYERS = ['core', 'store', 'context', 'git', 'ops', 'services', 'tools', 'mcp'];
 /** Zeilenweise: `process.stdout` und jede `console`-Methode, die nach stdout schreibt. */
 const STDOUT_WRITE =
   /process\.stdout|console\.(log|info|debug|dir|dirxml|table|group|groupCollapsed|count|timeLog|timeEnd)\b/;

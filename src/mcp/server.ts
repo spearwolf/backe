@@ -4,21 +4,16 @@
  * mit den Start-Eingaben neu auf (backe.md §2.14).
  */
 import { McpServer } from '@modelcontextprotocol/server';
-import { z } from 'zod';
 import pkg from '../../package.json' with { type: 'json' };
 import type { Env } from '../context/paths.ts';
 import { type ResolvedContext, requireWriter, resolveContext } from '../context/resolve.ts';
-import type { ClaimDeps } from '../services/claim.ts';
-import { contextInfo } from '../services/context-info.ts';
-import type { SyncDeps } from '../services/sync.ts';
-import { contextJson } from '../services/views.ts';
-import type { WriteDeps } from '../services/write.ts';
-import { registerIssueResource, registerReadTools } from './read-tools.ts';
-import { registerSyncTools, startPeriodicSync } from './sync-tools.ts';
-import { defineTool, pendingStarts, type ToolEnv, writeQueue } from './tool.ts';
-import { registerWriteTools } from './write-tools.ts';
+import { toolsFor } from '../tools/catalog.ts';
+import { pendingStarts, type ToolDeps, type ToolEnv, writeQueue } from '../tools/run.ts';
+import { startPeriodicSync } from '../tools/sync.ts';
+import { registerIssueResource } from './resource.ts';
+import { registerTool } from './tool.ts';
 
-export type McpDeps = { sync?: SyncDeps; write?: WriteDeps; claim?: ClaimDeps };
+export type McpDeps = ToolDeps;
 export type McpOptions = {
   cwd: string;
   env: Env;
@@ -54,21 +49,9 @@ export async function prepareMcp(opts: McpOptions): Promise<ResolvedContext> {
 export type BackeMcp = { build(): McpServer; close(): Promise<void> };
 
 function registerTools(server: McpServer, env: ToolEnv): void {
-  defineTool(
-    server,
-    env,
-    'context_get',
-    {
-      description:
-        'Show the resolved context with the source of each value (like backe context); with props, the property declarations of the backlog',
-      input: z.strictObject({ props: z.boolean().optional() }),
-      kind: 'read',
-    },
-    async (ctx, args) => contextJson(await contextInfo(ctx, { props: args.props === true })),
-  );
-  registerReadTools(server, env);
-  registerWriteTools(server, env);
-  registerSyncTools(server, env);
+  for (const def of toolsFor('mcp', { allowDelete: env.allowDelete })) {
+    registerTool(server, env, def);
+  }
   registerIssueResource(server, env);
 }
 
@@ -80,7 +63,9 @@ function registerTools(server: McpServer, env: ToolEnv): void {
 export async function createBackeMcp(opts: McpOptions, start: ResolvedContext): Promise<BackeMcp> {
   const env: ToolEnv = {
     context: () => resolve(opts),
-    opts,
+    cwd: opts.cwd,
+    allowDelete: opts.allowDelete,
+    ...(opts.deps === undefined ? {} : { deps: opts.deps }),
     queue: writeQueue(),
     pending: pendingStarts(),
   };

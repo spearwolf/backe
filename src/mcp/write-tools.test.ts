@@ -6,7 +6,7 @@ import { connectMcp } from '../../test/helpers/mcp.ts';
 import { git } from '../git/exec.ts';
 import { setLocale } from '../i18n/locale.ts';
 import { issueFile } from '../store/layout.ts';
-import { propsArgs } from './write-tools.ts';
+import { propsArgs } from '../tools/write.ts';
 
 // Der MCP-Modus spricht immer Englisch (backe.md §2.18); `backe mcp` setzt die Locale beim Start.
 beforeAll(() => setLocale('en'));

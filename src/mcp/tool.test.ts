@@ -6,15 +6,9 @@ import { BackeError } from '../core/errors.ts';
 import { setLocale } from '../i18n/locale.ts';
 import { scheduleSync } from '../services/background.ts';
 import type { SyncDeps } from '../services/sync.ts';
-import {
-  defineTool,
-  pendingStarts,
-  runTool,
-  type ToolEnv,
-  toolError,
-  toolResult,
-  writeQueue,
-} from './tool.ts';
+import { tool } from '../tools/define.ts';
+import { pendingStarts, runTool, type ToolEnv, writeQueue } from '../tools/run.ts';
+import { registerTool, toolError, toolResult } from './tool.ts';
 
 // Der MCP-Modus spricht immer Englisch (backe.md §2.18); `backe mcp` setzt die Locale beim Start.
 beforeAll(() => setLocale('en'));
@@ -35,16 +29,11 @@ beforeEach(() => {
 /** Frisches `McpServer` mit eigener `ToolEnv` über einem Test-Backlog, per Client verbunden. */
 async function harness(define: (server: McpServer, env: ToolEnv) => void) {
   const b = await testBacklog();
-  const opts = {
-    cwd: b.root,
-    env: b.env,
-    flags: { as: b.handle },
-    allowDelete: false,
-    deps: { sync: SYNC },
-  };
   const env: ToolEnv = {
     context: () => b.context(),
-    opts,
+    cwd: b.root,
+    allowDelete: false,
+    deps: { sync: SYNC },
     queue: writeQueue(),
     pending: pendingStarts(),
   };
@@ -57,11 +46,31 @@ const EMPTY = z.object({});
 
 test('an unexpected error becomes an error result without a stack', async () => {
   const m = await harness((server, env) => {
-    defineTool(server, env, 'boom', { description: 'wirft', input: EMPTY, kind: 'read' }, () => {
-      throw new Error('boom');
-    });
-    defineTool(server, env, 'fine', { description: 'gelingt', input: EMPTY, kind: 'read' }, () =>
-      Promise.resolve({ fine: true }),
+    registerTool(
+      server,
+      env,
+      tool({
+        name: 'boom',
+        description: 'wirft',
+        input: EMPTY,
+        kind: 'read',
+        surfaces: ['mcp'],
+        run: () => {
+          throw new Error('boom');
+        },
+      }),
+    );
+    registerTool(
+      server,
+      env,
+      tool({
+        name: 'fine',
+        description: 'gelingt',
+        input: EMPTY,
+        kind: 'read',
+        surfaces: ['mcp'],
+        run: () => Promise.resolve({ fine: true }),
+      }),
     );
   });
   try {
@@ -81,13 +90,18 @@ test('an unexpected error becomes an error result without a stack', async () => 
 
 test('a BackeError keeps code, message and hint', async () => {
   const m = await harness((server, env) => {
-    defineTool(
+    registerTool(
       server,
       env,
-      'refuse',
-      { description: 'lehnt ab', input: EMPTY, kind: 'write' },
-      () =>
-        Promise.reject(new BackeError('usage', 'Nein »x«', { hint: 'backe issue move --force' })),
+      tool({
+        name: 'refuse',
+        description: 'lehnt ab',
+        input: EMPTY,
+        kind: 'write',
+        surfaces: ['mcp'],
+        run: () =>
+          Promise.reject(new BackeError('usage', 'Nein »x«', { hint: 'backe issue move --force' })),
+      }),
     );
   });
   try {
@@ -107,15 +121,20 @@ test('a read tool schedules a read sync before it runs and gets parsed arguments
     return false;
   });
   const m = await harness((server, env) => {
-    defineTool(
+    registerTool(
       server,
       env,
-      'echo',
-      { description: 'echo', input: z.object({ word: z.string() }), kind: 'read' },
-      async (ctx, args) => {
-        order.push('run');
-        return { word: args.word, user: ctx.user.value };
-      },
+      tool({
+        name: 'echo',
+        description: 'echo',
+        input: z.object({ word: z.string() }),
+        kind: 'read',
+        surfaces: ['mcp'],
+        run: async (ctx, args) => {
+          order.push('run');
+          return { word: args.word, user: ctx.user.value };
+        },
+      }),
     );
   });
   try {
@@ -135,11 +154,11 @@ test('a check on the arguments runs before the read sync; a failing one schedule
     return false;
   });
   const m = await harness((server, env) => {
-    defineTool(
+    registerTool(
       server,
       env,
-      'checked',
-      {
+      tool({
+        name: 'checked',
         description: 'checked',
         input: z.object({ ok: z.boolean() }),
         kind: 'read',
@@ -147,11 +166,12 @@ test('a check on the arguments runs before the read sync; a failing one schedule
           order.push('check');
           if (!a.ok) throw new BackeError('usage', 'nicht ok');
         },
-      },
-      async () => {
-        order.push('run');
-        return {};
-      },
+        surfaces: ['mcp'],
+        run: async () => {
+          order.push('run');
+          return {};
+        },
+      }),
     );
   });
   try {
@@ -167,17 +187,13 @@ test('a check on the arguments runs before the read sync; a failing one schedule
   }
 });
 
-test('runTool plans the read sync like defineTool', async () => {
+test('runTool plans the read sync like a registered tool', async () => {
   const b = await testBacklog();
   const env: ToolEnv = {
     context: () => b.context(),
-    opts: {
-      cwd: b.root,
-      env: b.env,
-      flags: { as: b.handle },
-      allowDelete: false,
-      deps: { sync: SYNC },
-    },
+    cwd: b.root,
+    allowDelete: false,
+    deps: { sync: SYNC },
     queue: writeQueue(),
     pending: pendingStarts(),
   };
@@ -188,16 +204,17 @@ test('runTool plans the read sync like defineTool', async () => {
 
 test('a write tool schedules a write sync only after a commit', async () => {
   const m = await harness((server, env) => {
-    defineTool(
+    registerTool(
       server,
       env,
-      'write',
-      {
+      tool({
+        name: 'write',
         description: 'schreibt',
         input: z.object({ commit: z.string().nullable() }),
         kind: 'write',
-      },
-      async (_ctx, args) => ({ commit: args.commit }),
+        surfaces: ['mcp'],
+        run: async (_ctx, args) => ({ commit: args.commit }),
+      }),
     );
   });
   try {
@@ -233,28 +250,38 @@ test('a sync tool answers while a write waits in the queue', async () => {
         },
       },
     };
-    defineTool(
+    registerTool(
       server,
       counting,
-      'w',
-      { description: 'w', input: EMPTY, kind: 'write' },
-      async () => {
-        log.push('w+');
-        await gate;
-        log.push('w-');
-        return { commit: 'abc1234' };
-      },
+      tool({
+        name: 'w',
+        description: 'w',
+        input: EMPTY,
+        kind: 'write',
+        surfaces: ['mcp'],
+        run: async () => {
+          log.push('w+');
+          await gate;
+          log.push('w-');
+          return { commit: 'abc1234' };
+        },
+      }),
     );
-    defineTool(
+    registerTool(
       server,
       counting,
-      's',
-      { description: 's', input: EMPTY, kind: 'sync' },
-      async () => {
-        log.push('s');
-        release();
-        return { commit: 'def5678' };
-      },
+      tool({
+        name: 's',
+        description: 's',
+        input: EMPTY,
+        kind: 'sync',
+        surfaces: ['mcp'],
+        run: async () => {
+          log.push('s');
+          release();
+          return { commit: 'def5678' };
+        },
+      }),
     );
   });
   try {
@@ -286,16 +313,17 @@ test('the kind may depend on the arguments', async () => {
         },
       },
     };
-    defineTool(
+    registerTool(
       server,
       counting,
-      'k',
-      {
+      tool({
+        name: 'k',
         description: 'k',
         input: z.object({ write: z.boolean() }),
         kind: (a) => (a.write ? 'write' : 'sync'),
-      },
-      () => Promise.resolve({ commit: null }),
+        surfaces: ['mcp'],
+        run: () => Promise.resolve({ commit: null }),
+      }),
     );
   });
   try {
@@ -310,16 +338,25 @@ test('the kind may depend on the arguments', async () => {
 
 test('a context that fails to resolve becomes an error result', async () => {
   const b = await testBacklog();
-  const opts = { cwd: b.root, env: b.env, flags: { as: b.handle }, allowDelete: false };
   const env: ToolEnv = {
     context: () => Promise.reject(new BackeError('not_found', 'Backlog »x« nicht gefunden')),
-    opts,
+    cwd: b.root,
+    allowDelete: false,
     queue: writeQueue(),
     pending: pendingStarts(),
   };
   const server = new McpServer({ name: 'test', version: '0' });
-  defineTool(server, env, 'any', { description: 'x', input: EMPTY, kind: 'read' }, () =>
-    Promise.resolve({}),
+  registerTool(
+    server,
+    env,
+    tool({
+      name: 'any',
+      description: 'x',
+      input: EMPTY,
+      kind: 'read',
+      surfaces: ['mcp'],
+      run: () => Promise.resolve({}),
+    }),
   );
   const m = await connectServer(server);
   try {
@@ -329,36 +366,6 @@ test('a context that fails to resolve becomes an error result', async () => {
   } finally {
     await m.close();
   }
-});
-
-test('the write queue runs one job after the other', async () => {
-  const q = writeQueue();
-  const log: string[] = [];
-  let release: () => void = () => {};
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const a = q.run(async () => {
-    log.push('a+');
-    await gate;
-    log.push('a-');
-    return 'a';
-  });
-  const b = q.run(async () => {
-    log.push('b');
-    return 'b';
-  });
-  release();
-  expect(await Promise.all([a, b])).toEqual(['a', 'b']);
-  expect(log).toEqual(['a+', 'a-', 'b']);
-});
-
-test('a failed job does not stop the write queue', async () => {
-  const q = writeQueue();
-  const failed = q.run(() => Promise.reject(new Error('kaputt')));
-  const next = q.run(() => Promise.resolve(2));
-  await expect(failed).rejects.toThrow('kaputt');
-  expect(await next).toBe(2);
 });
 
 test('toolResult and toolError carry compact JSON', () => {
@@ -371,25 +378,4 @@ test('toolResult and toolError carry compact JSON', () => {
     content: [{ type: 'text', text: '{"error":{"code":"conflict","message":"besetzt"}}' }],
     isError: true,
   });
-});
-
-test('pending starts are settled, including one added while waiting', async () => {
-  const p = pendingStarts();
-  await p.settled();
-  // Ein abgelehnter Start hält `settled` nicht auf und wird nicht zur unbehandelten Ablehnung.
-  p.add(Promise.reject(new Error('abgelehnt')));
-  const order: string[] = [];
-  let finishFirst!: () => void;
-  p.add(
-    new Promise<void>((r) => {
-      finishFirst = r;
-    }).then(() => {
-      order.push('first');
-      p.add(Promise.reject(new Error('second')).catch(() => order.push('second')));
-    }),
-  );
-  const settled = p.settled().then(() => order.push('settled'));
-  finishFirst();
-  await settled;
-  expect(order).toEqual(['first', 'second', 'settled']);
 });

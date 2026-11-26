@@ -1,0 +1,23 @@
+/** Die Tools der Tabelle in backe.md §2.19; `issue_delete` kommt nur mit `--allow-delete` dazu. */
+export const SPEC_TOOLS = [
+  'context_get',
+  'issue_list',
+  'issue_get',
+  'issue_create',
+  'issue_update',
+  'issue_move',
+  'issue_resume',
+  'issue_reopen',
+  'issue_claim',
+  'issue_next',
+  'comment_add',
+  'attachment_add',
+  'attachment_get',
+  'project_list',
+  'sprint_list',
+  'sprint_get',
+  'repo_locate',
+  'issue_rank',
+  'batch',
+  'sync_now',
+] as const;

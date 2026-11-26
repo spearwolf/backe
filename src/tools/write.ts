@@ -1,9 +1,8 @@
 /**
  * Schreibende Tools (backe.md §2.19): jedes ruft genau einen Service, der genau eine Operation
  * (bzw. `batch` einen Batch) schreibt. Die Warteschlange und der Sync-Nachlauf stecken in
- * `defineTool` mit `kind: 'write'`.
+ * `runTool` mit `kind: 'write'`.
  */
-import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { BackeError } from '../core/errors.ts';
@@ -27,7 +26,7 @@ import {
   resumeIssue,
 } from '../services/issues.ts';
 import { batchJson, outcomeJson } from '../services/views.ts';
-import { defineTool, type ToolEnv } from './tool.ts';
+import { ALL_SURFACES, type ToolDef, tool } from './define.ts';
 
 const strings = z.array(z.string());
 
@@ -155,28 +154,25 @@ export function rejectBatchOps(
   });
 }
 
-export function registerWriteTools(server: McpServer, env: ToolEnv): void {
-  defineTool(
-    server,
-    env,
-    'issue_create',
-    {
-      description: 'Create an issue (like backe issue create); props is an object',
-      input: z.strictObject({
-        title: z.string(),
-        body: z.string().optional(),
-        state: z.string().optional(),
-        projects: strings.optional(),
-        sprints: strings.optional(),
-        repos: strings.optional(),
-        assignee: z.string().optional(),
-        depends_on: strings.optional(),
-        parent: z.string().optional(),
-        props: z.record(z.string(), z.unknown()).optional(),
-      }),
-      kind: 'write',
-    },
-    async (ctx, a) => {
+export const WRITE_TOOLS: readonly ToolDef[] = [
+  tool({
+    name: 'issue_create',
+    description: 'Create an issue (like backe issue create); props is an object',
+    input: z.strictObject({
+      title: z.string(),
+      body: z.string().optional(),
+      state: z.string().optional(),
+      projects: strings.optional(),
+      sprints: strings.optional(),
+      repos: strings.optional(),
+      assignee: z.string().optional(),
+      depends_on: strings.optional(),
+      parent: z.string().optional(),
+      props: z.record(z.string(), z.unknown()).optional(),
+    }),
+    kind: 'write',
+    surfaces: ALL_SURFACES,
+    run: async (ctx, a, env) => {
       const input: Parameters<typeof createIssue>[1] = { title: a.title };
       if (a.body !== undefined) input.body = a.body;
       if (a.state !== undefined) input.state = a.state;
@@ -187,34 +183,30 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
       if (a.depends_on !== undefined) input.deps = a.depends_on;
       if (a.parent !== undefined) input.parent = a.parent;
       if (a.props !== undefined) input.props = propsArgs(a.props, false).props;
-      return outcomeJson(await createIssue(ctx, input, env.opts.deps?.write));
+      return outcomeJson(await createIssue(ctx, input, env.deps?.write));
     },
-  );
-
-  defineTool(
-    server,
-    env,
-    'issue_update',
-    {
-      description:
-        'Change an issue (like backe issue edit / assign); parent and assignee: null removes, props: null removes the key',
-      input: z.strictObject({
-        id: z.string(),
-        title: z.string().optional(),
-        body: z.string().optional(),
-        add_projects: strings.optional(),
-        rm_projects: strings.optional(),
-        add_sprints: strings.optional(),
-        rm_sprints: strings.optional(),
-        add_deps: strings.optional(),
-        rm_deps: strings.optional(),
-        parent: z.string().nullable().optional(),
-        assignee: z.string().nullable().optional(),
-        props: z.record(z.string(), z.unknown()).optional(),
-      }),
-      kind: 'write',
-    },
-    async (ctx, a) => {
+  }),
+  tool({
+    name: 'issue_update',
+    description:
+      'Change an issue (like backe issue edit / assign); parent and assignee: null removes, props: null removes the key',
+    input: z.strictObject({
+      id: z.string(),
+      title: z.string().optional(),
+      body: z.string().optional(),
+      add_projects: strings.optional(),
+      rm_projects: strings.optional(),
+      add_sprints: strings.optional(),
+      rm_sprints: strings.optional(),
+      add_deps: strings.optional(),
+      rm_deps: strings.optional(),
+      parent: z.string().nullable().optional(),
+      assignee: z.string().nullable().optional(),
+      props: z.record(z.string(), z.unknown()).optional(),
+    }),
+    kind: 'write',
+    surfaces: ALL_SURFACES,
+    run: async (ctx, a, env) => {
       const input: Parameters<typeof editIssue>[2] = {};
       if (a.title !== undefined) input.title = a.title;
       if (a.body !== undefined) input.body = a.body;
@@ -231,174 +223,138 @@ export function registerWriteTools(server: McpServer, env: ToolEnv): void {
         input.props = p.props;
         input.unsetProps = p.unset;
       }
-      return outcomeJson(await editIssue(ctx, a.id, input, env.opts.deps?.write));
+      return outcomeJson(await editIssue(ctx, a.id, input, env.deps?.write));
     },
-  );
-
-  defineTool(
-    server,
-    env,
-    'issue_move',
-    {
-      description: 'Move an issue to a state (like backe issue move)',
-      input: z.strictObject({
-        id: z.string(),
-        to: z.string(),
-        reason: z.string().optional(),
-        blocked_by: strings.optional(),
-        force: z.boolean().optional(),
-      }),
-      kind: 'write',
-    },
-    async (ctx, a) => {
+  }),
+  tool({
+    name: 'issue_move',
+    description: 'Move an issue to a state (like backe issue move)',
+    input: z.strictObject({
+      id: z.string(),
+      to: z.string(),
+      reason: z.string().optional(),
+      blocked_by: strings.optional(),
+      force: z.boolean().optional(),
+    }),
+    kind: 'write',
+    surfaces: ALL_SURFACES,
+    run: async (ctx, a, env) => {
       const input: Parameters<typeof moveIssue>[2] = { to: a.to };
       if (a.reason !== undefined) input.reason = a.reason;
       if (a.blocked_by !== undefined) input.blockedBy = a.blocked_by;
       if (a.force !== undefined) input.force = a.force;
-      return outcomeJson(await moveIssue(ctx, a.id, input, env.opts.deps?.write));
+      return outcomeJson(await moveIssue(ctx, a.id, input, env.deps?.write));
     },
-  );
-
-  defineTool(
-    server,
-    env,
-    'issue_resume',
-    {
-      description: 'Resume a blocked issue (like backe issue resume)',
-      input: z.strictObject({ id: z.string(), reason: z.string().optional() }),
-      kind: 'write',
-    },
-    async (ctx, a) =>
+  }),
+  tool({
+    name: 'issue_resume',
+    description: 'Resume a blocked issue (like backe issue resume)',
+    input: z.strictObject({ id: z.string(), reason: z.string().optional() }),
+    kind: 'write',
+    surfaces: ALL_SURFACES,
+    run: async (ctx, a, env) =>
       outcomeJson(
         await resumeIssue(
           ctx,
           a.id,
           a.reason === undefined ? {} : { reason: a.reason },
-          env.opts.deps?.write,
+          env.deps?.write,
         ),
       ),
-  );
-
-  defineTool(
-    server,
-    env,
-    'issue_reopen',
-    {
-      description: 'Reopen a closed issue (like backe issue reopen)',
-      input: z.strictObject({
-        id: z.string(),
-        to: z.string().optional(),
-        reason: z.string().optional(),
-      }),
-      kind: 'write',
-    },
-    async (ctx, a) => {
+  }),
+  tool({
+    name: 'issue_reopen',
+    description: 'Reopen a closed issue (like backe issue reopen)',
+    input: z.strictObject({
+      id: z.string(),
+      to: z.string().optional(),
+      reason: z.string().optional(),
+    }),
+    kind: 'write',
+    surfaces: ALL_SURFACES,
+    run: async (ctx, a, env) => {
       const input: Parameters<typeof reopenIssue>[2] = {};
       if (a.to !== undefined) input.to = a.to;
       if (a.reason !== undefined) input.reason = a.reason;
-      return outcomeJson(await reopenIssue(ctx, a.id, input, env.opts.deps?.write));
+      return outcomeJson(await reopenIssue(ctx, a.id, input, env.deps?.write));
     },
-  );
-
-  defineTool(
-    server,
-    env,
-    'issue_rank',
-    {
-      description:
-        'Rerank an issue (like backe issue rank); exactly one of top, bottom, before, after, value',
-      input: z.strictObject({
-        id: z.string(),
-        top: z.boolean().optional(),
-        bottom: z.boolean().optional(),
-        before: z.string().optional(),
-        after: z.string().optional(),
-        value: z.number().optional(),
-      }),
-      kind: 'write',
+  }),
+  tool({
+    name: 'issue_rank',
+    description:
+      'Rerank an issue (like backe issue rank); exactly one of top, bottom, before, after, value',
+    input: z.strictObject({
+      id: z.string(),
+      top: z.boolean().optional(),
+      bottom: z.boolean().optional(),
+      before: z.string().optional(),
+      after: z.string().optional(),
+      value: z.number().optional(),
+    }),
+    kind: 'write',
+    surfaces: ALL_SURFACES,
+    run: async (ctx, a, env) =>
+      outcomeJson(await rankIssue(ctx, a.id, rankPosition(a), env.deps?.write)),
+  }),
+  tool({
+    name: 'issue_delete',
+    description: 'Delete an issue permanently (like backe issue delete); only with --allow-delete',
+    gate: 'allowDelete',
+    input: z.strictObject({
+      id: z.string(),
+      force: z.boolean().optional(),
+      children: z.enum(['orphan', 'recursive']).optional(),
+    }),
+    kind: 'write',
+    surfaces: ALL_SURFACES,
+    run: async (ctx, a, env) => {
+      const input: Parameters<typeof deleteIssue>[2] = {};
+      if (a.force !== undefined) input.force = a.force;
+      if (a.children !== undefined) input.children = a.children;
+      return outcomeJson(await deleteIssue(ctx, a.id, input, env.deps?.write));
     },
-    async (ctx, a) =>
-      outcomeJson(await rankIssue(ctx, a.id, rankPosition(a), env.opts.deps?.write)),
-  );
-
-  if (env.opts.allowDelete) {
-    defineTool(
-      server,
-      env,
-      'issue_delete',
-      {
-        description:
-          'Delete an issue permanently (like backe issue delete); only with --allow-delete',
-        input: z.strictObject({
-          id: z.string(),
-          force: z.boolean().optional(),
-          children: z.enum(['orphan', 'recursive']).optional(),
-        }),
-        kind: 'write',
-      },
-      async (ctx, a) => {
-        const input: Parameters<typeof deleteIssue>[2] = {};
-        if (a.force !== undefined) input.force = a.force;
-        if (a.children !== undefined) input.children = a.children;
-        return outcomeJson(await deleteIssue(ctx, a.id, input, env.opts.deps?.write));
-      },
-    );
-  }
-
-  defineTool(
-    server,
-    env,
-    'comment_add',
-    {
-      description: 'Write a comment on an issue (like backe comment add)',
-      input: z.strictObject({ id: z.string(), body: z.string() }),
-      kind: 'write',
+  }),
+  tool({
+    name: 'comment_add',
+    description: 'Write a comment on an issue (like backe comment add)',
+    input: z.strictObject({ id: z.string(), body: z.string() }),
+    kind: 'write',
+    surfaces: ALL_SURFACES,
+    run: async (ctx, a, env) => outcomeJson(await addComment(ctx, a.id, a.body, env.deps?.write)),
+  }),
+  tool({
+    name: 'attachment_add',
+    description:
+      'Add an attachment (like backe attach add); exactly one of path (file in the server working directory, relative to it), url, json, text',
+    input: z.strictObject({
+      id: z.string(),
+      name: z.string(),
+      path: z.string().optional(),
+      url: z.string().optional(),
+      json: z.string().optional(),
+      text: z.string().optional(),
+    }),
+    kind: 'write',
+    surfaces: ALL_SURFACES,
+    run: async (ctx, a, env) => {
+      const source = await attachSource(a, ctx, env.cwd);
+      return outcomeJson(await addAttachment(ctx, a.id, { name: a.name, source }, env.deps?.write));
     },
-    async (ctx, a) => outcomeJson(await addComment(ctx, a.id, a.body, env.opts.deps?.write)),
-  );
-
-  defineTool(
-    server,
-    env,
-    'attachment_add',
-    {
-      description:
-        'Add an attachment (like backe attach add); exactly one of path (file in the server working directory, relative to it), url, json, text',
-      input: z.strictObject({
-        id: z.string(),
-        name: z.string(),
-        path: z.string().optional(),
-        url: z.string().optional(),
-        json: z.string().optional(),
-        text: z.string().optional(),
-      }),
-      kind: 'write',
-    },
-    async (ctx, a) => {
-      const source = await attachSource(a, ctx, env.opts.cwd);
-      return outcomeJson(
-        await addAttachment(ctx, a.id, { name: a.name, source }, env.opts.deps?.write),
-      );
-    },
-  );
-
-  defineTool(
-    server,
-    env,
-    'batch',
-    {
-      description:
-        'Several operations in one commit (like backe batch); ops are objects in the format of backe.md §2.16.6, placeholders such as $a link them; supported: issue.create, issue.edit, issue.move, issue.resume, issue.reopen, issue.rank, comment.add, attach.add with url and, with --allow-delete, issue.delete',
-      input: z.strictObject({ ops: z.array(z.record(z.string(), z.unknown())) }),
-      kind: 'write',
-    },
-    async (ctx, a) => {
+  }),
+  tool({
+    name: 'batch',
+    description:
+      'Several operations in one commit (like backe batch); ops are objects in the format of backe.md §2.16.6, placeholders such as $a link them; supported: issue.create, issue.edit, issue.move, issue.resume, issue.reopen, issue.rank, comment.add, attach.add with url and, with --allow-delete, issue.delete',
+    input: z.strictObject({ ops: z.array(z.record(z.string(), z.unknown())) }),
+    kind: 'write',
+    surfaces: ALL_SURFACES,
+    run: async (ctx, a, env) => {
       if (a.ops.length === 0) {
         throw new BackeError('usage', 'batch needs at least one operation');
       }
-      rejectBatchOps(a.ops, env.opts.allowDelete);
+      rejectBatchOps(a.ops, env.allowDelete);
       const text = a.ops.map((o) => JSON.stringify(o)).join('\n');
-      return batchJson(await runBatch(ctx, text, env.opts.deps?.write));
+      return batchJson(await runBatch(ctx, text, env.deps?.write));
     },
-  );
-}
+  }),
+];
