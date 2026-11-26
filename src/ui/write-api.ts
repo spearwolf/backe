@@ -56,7 +56,7 @@ function parseArgs(def: ToolDef, body: unknown): unknown {
 }
 
 /** Ein Upload über `attachments.max_bytes`; die Verbindung endet mit der Antwort. */
-class TooLarge {
+export class TooLarge {
   readonly error: BackeError;
   constructor(error: BackeError) {
     this.error = error;
@@ -67,6 +67,21 @@ class TooLarge {
 function checkSize(name: string, size: number, maxBytes: number | null, lfs: boolean): void {
   const error = attachmentTooLarge(name, size, { max_bytes: maxBytes, lfs });
   if (error !== undefined) throw new TooLarge(error);
+}
+
+/**
+ * Der Wurf für einen Upload, den `receiveUpload` als zu groß abgebrochen hat: Die Temp-Datei ist
+ * dann abgeschnitten und darf nie committet werden. Gäbe `attachmentTooLarge` für dieselbe Größe
+ * keinen Fehler zurück (die Grenzen wären uneins), steht ersatzweise eine eigene Meldung.
+ */
+export function tooLarge(
+  name: string,
+  size: number,
+  maxBytes: number | null,
+  lfs: boolean,
+): TooLarge {
+  const error = attachmentTooLarge(name, size, { max_bytes: maxBytes, lfs });
+  return new TooLarge(error ?? new BackeError('validation', m.uploadTooLarge(name, maxBytes)));
 }
 
 /**
@@ -96,7 +111,7 @@ async function upload(
   const path = await env.uploads.file();
   try {
     const received = await receiveUpload(req, path, maxBytes);
-    if ('tooLarge' in received) checkSize(name, received.tooLarge, maxBytes, lfs);
+    if ('tooLarge' in received) throw tooLarge(name, received.tooLarge, maxBytes, lfs);
     return await runTool(toolEnv, 'write', ctx, async () => {
       const source = await loadAttachmentSource(
         { name, path },

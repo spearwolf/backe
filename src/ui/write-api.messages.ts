@@ -9,6 +9,8 @@ export const m = catalog({
     contentTypeRequired: (expected: string) => `Write requests need Content-Type ${expected}`,
     unknownTool: (name: string) => `Unknown tool '${name}'`,
     invalidArguments: (tool: string) => `Invalid arguments for '${tool}'`,
+    uploadTooLarge: (name: string, max: number | null) =>
+      `Attachment '${name}' is larger than the allowed ${max ?? 'configured'} bytes`,
   },
   de: {
     bodyTooLarge: (limit: number) => `Der Body der Anfrage ist größer als ${limit} Bytes`,
@@ -19,5 +21,7 @@ export const m = catalog({
       `Schreibende Anfragen brauchen Content-Type ${expected}`,
     unknownTool: (name: string) => `Unbekanntes Tool »${name}«`,
     invalidArguments: (tool: string) => `Ungültige Argumente für »${tool}«`,
+    uploadTooLarge: (name: string, max: number | null) =>
+      `Anhang »${name}« ist größer als die erlaubten ${max ?? 'konfigurierten'} Bytes`,
   },
 });

@@ -19,7 +19,7 @@ import { appHeaders, checkRequest, type Gate, newToken, ownOrigins } from './sec
 import { m } from './server.messages.ts';
 import { serveStatic } from './static.ts';
 import { UiTools } from './tools.ts';
-import { uploadDir } from './upload.ts';
+import { type UploadDir, uploadDir } from './upload.ts';
 import { handleWrite } from './write-api.ts';
 
 export type UiOptions = {
@@ -37,6 +37,8 @@ export type UiOptions = {
   live?: LiveDeps;
   /** Test-Hooks der Services hinter den Tools, etwa der Spawn des Hintergrund-Syncs. */
   tools?: ToolDeps;
+  /** Test-Hook: ersetzt das Temp-Verzeichnis der Uploads (Default `uploadDir()`). */
+  uploads?: UploadDir;
 };
 
 export type UiServer = {
@@ -108,7 +110,7 @@ export function createUiServer(opts: UiOptions): UiServer {
   const working = new Set<Promise<void>>();
   const hub = new LiveHub(opts.live === undefined ? {} : { deps: opts.live });
   const tools = new UiTools(input, opts.start, opts.tools);
-  const uploads = uploadDir();
+  const uploads = opts.uploads ?? uploadDir();
   let closing: Promise<void> | undefined;
 
   async function dispatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -216,10 +218,20 @@ export function createUiServer(opts: UiOptions): UiServer {
         // die Warteschlangen also nichts mehr dazu. Ein Upload, der noch Bytes liest, arbeitet.
         while (working.size > 0) await Promise.all(working);
         await tools.settled();
-        await uploads.remove();
+        // Scheitert das Entfernen des Temp-Verzeichnisses (EACCES, EBUSY), laufen Watcher-Ende und
+        // `closeAllConnections` trotzdem: Der Prozess darf nach dem Signal nicht an offenen
+        // Streams hängen. Der Fehler geht erst danach hinaus; `close()` lehnt dann ab, und der
+        // Aufrufer (`backe ui`) meldet ihn.
+        let removeError: unknown;
+        try {
+          await uploads.remove();
+        } catch (err) {
+          removeError = err;
+        }
         await hub.close();
         server.closeAllConnections();
         await closed;
+        if (removeError !== undefined) throw removeError;
       })();
       return closing;
     },
