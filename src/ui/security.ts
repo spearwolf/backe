@@ -8,7 +8,13 @@ import { m } from './security.messages.ts';
 
 export const CSP =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
-export const COOKIE = 'backe_ui';
+/**
+ * Name des Sitzungs-Cookies, z. B. `backe_ui_8002`. Cookies unterscheiden nicht nach Port: Mit
+ * einem festen Namen überschriebe der Token-Tausch einer zweiten Instanz das Cookie der ersten.
+ */
+export function cookieName(port: number): string {
+  return `backe_ui_${port}`;
+}
 
 /** 32 Bytes aus `randomBytes`, hex (64 Zeichen). */
 export function newToken(): string {
@@ -90,10 +96,10 @@ export function checkRequest(
     return {
       kind: 'session',
       location,
-      cookie: `${COOKIE}=${gate.token}; HttpOnly; SameSite=Strict; Path=/`,
+      cookie: `${cookieName(gate.port)}=${gate.token}; HttpOnly; SameSite=Strict; Path=/`,
     };
   }
-  if (!sameToken(cookieOf(req.headers.cookie, COOKIE), gate.token)) {
+  if (!sameToken(cookieOf(req.headers.cookie, cookieName(gate.port)), gate.token)) {
     return unauthorized(m.noSession);
   }
   return { kind: 'pass' };

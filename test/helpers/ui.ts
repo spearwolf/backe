@@ -3,6 +3,7 @@ import {
   type IncomingHttpHeaders,
   type OutgoingHttpHeaders,
 } from 'node:http';
+import { cookieName } from '../../src/ui/security.ts';
 import { createUiServer, type UiOptions } from '../../src/ui/server.ts';
 
 export type Res = {
@@ -59,7 +60,7 @@ export function rawRequest(
 export type UiHarness = {
   port: number;
   token: string;
-  /** `backe_ui=<token>`, fertig für den `Cookie`-Header. */
+  /** `backe_ui_<port>=<token>`, fertig für den `Cookie`-Header. */
   cookie: string;
   get(path: string, headers?: OutgoingHttpHeaders): Promise<Res>;
   close(): Promise<void>;
@@ -72,7 +73,7 @@ export async function startUi(opts: Omit<UiOptions, 'port'>): Promise<UiHarness>
   const token = new URL(url).searchParams.get('token') ?? '';
   const session = await rawRequest(port, { path: `/?token=${token}` });
   const setCookie = session.headers['set-cookie']?.[0];
-  if (session.status !== 303 || setCookie === undefined) {
+  if (session.status !== 303 || !setCookie?.startsWith(`${cookieName(port)}=`)) {
     await server.close();
     throw new Error(`token exchange failed with status ${session.status}`);
   }

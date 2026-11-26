@@ -46,7 +46,7 @@ test('the token sets the session cookie and redirects without it', async () => {
   expect(r.status).toBe(303);
   expect(r.headers.location).toBe('/b/acme?x=1');
   expect(r.headers['set-cookie']).toEqual([
-    `backe_ui=${ui.token}; HttpOnly; SameSite=Strict; Path=/`,
+    `backe_ui_${ui.port}=${ui.token}; HttpOnly; SameSite=Strict; Path=/`,
   ]);
 });
 
@@ -83,6 +83,22 @@ test('rejects foreign host and origin', async () => {
   expect([page.status, page.headers['content-type']]).toEqual([403, 'text/html; charset=utf-8']);
   expect(page.text()).toContain('&lt;b&gt;evil&lt;/b&gt;');
   expect(page.text()).not.toContain('<b>');
+});
+
+test('a session cookie only opens its own server', async () => {
+  const other = await startUi({ ...opts, token: ui.token });
+  try {
+    expect(ui.cookie).toBe(`backe_ui_${ui.port}=${ui.token}`);
+    expect(other.cookie).toBe(`backe_ui_${other.port}=${ui.token}`);
+    // Der Browser schickt beide Cookies an beide Ports; jeder Server liest nur seinen Namen.
+    expect((await other.get('/', { cookie: ui.cookie })).status).toBe(401);
+    expect((await ui.get('/', { cookie: other.cookie })).status).toBe(401);
+    const both = { cookie: `${ui.cookie}; ${other.cookie}` };
+    expect((await ui.get('/', both)).status).toBe(200);
+    expect((await other.get('/', both)).status).toBe(200);
+  } finally {
+    await other.close();
+  }
 });
 
 test('a token in the referer opens no session', async () => {

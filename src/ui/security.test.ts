@@ -3,6 +3,7 @@ import {
   appHeaders,
   CSP,
   checkRequest,
+  cookieName,
   cookieOf,
   type Gate,
   newToken,
@@ -14,7 +15,7 @@ const PORT = 8123;
 const TOKEN = 'a'.repeat(64);
 const GATE: Gate = { port: PORT, token: TOKEN, origins: ownOrigins(PORT) };
 const HOST = `127.0.0.1:${PORT}`;
-const COOKIE_HEADER = `backe_ui=${TOKEN}`;
+const COOKIE_HEADER = `backe_ui_${PORT}=${TOKEN}`;
 
 /** Prüft eine Anfrage gegen `GATE`; `path` samt Query wie in `req.url`. */
 function check(path: string, headers: IncomingHttpHeaders, method = 'GET') {
@@ -41,6 +42,10 @@ test('cookieOf finds a cookie by name', () => {
   expect(cookieOf(undefined, 'backe_ui')).toBeUndefined();
 });
 
+test('cookieName carries the port', () => {
+  expect(cookieName(8002)).toBe('backe_ui_8002');
+});
+
 test('ownOrigins names both loopback spellings', () => {
   expect(ownOrigins(PORT)).toEqual([`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`]);
 });
@@ -64,7 +69,9 @@ test.each([
   ['a wrong token', `/?token=${'b'.repeat(64)}`, { host: HOST, cookie: COOKIE_HEADER }, 'GET', 401],
   ['an empty token', '/?token=', { host: HOST }, 'GET', 401],
   ['no cookie', '/', { host: HOST }, 'GET', 401],
-  ['a wrong cookie', '/', { host: HOST, cookie: `backe_ui=${'b'.repeat(64)}` }, 'GET', 401],
+  ['a wrong cookie', '/', { host: HOST, cookie: `backe_ui_${PORT}=${'b'.repeat(64)}` }, 'GET', 401],
+  ['the cookie of another port', '/', { host: HOST, cookie: `backe_ui_1=${TOKEN}` }, 'GET', 401],
+  ['the unscoped cookie name', '/', { host: HOST, cookie: `backe_ui=${TOKEN}` }, 'GET', 401],
   [
     'a token only in the referer',
     '/',
@@ -100,7 +107,7 @@ test('a valid token opens a session and redirects without it', () => {
   expect(check(`/b/acme?token=${TOKEN}&x=1`, { host: HOST })).toEqual({
     kind: 'session',
     location: '/b/acme?x=1',
-    cookie: `backe_ui=${TOKEN}; HttpOnly; SameSite=Strict; Path=/`,
+    cookie: `backe_ui_${PORT}=${TOKEN}; HttpOnly; SameSite=Strict; Path=/`,
   });
   expect(check(`/?token=${TOKEN}`, { host: HOST })).toMatchObject({ location: '/' });
 });
