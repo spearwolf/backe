@@ -84,7 +84,26 @@ export function MultiPick(props: {
 }
 
 /** Wert des Radio-Eintrags für `none`; Handles sind nie leer. */
-const NONE = '';
+export const NO_ASSIGNEE = '';
+
+/**
+ * Die Wahlen für den Assignee, in jedem Menü gleich: `none`, `me (<handle>)`, dann die übrigen
+ * Users. Ein Handle, das der Store nicht (mehr) kennt, bleibt wählbar, statt still auf `none` zu
+ * springen.
+ */
+export function assigneeChoices(
+  value: string | null,
+  me: string | null,
+  users: readonly string[],
+): { value: string; label: string }[] {
+  const others = users.filter((u) => u !== me);
+  if (value !== null && value !== me && !others.includes(value)) others.push(value);
+  return [
+    { value: NO_ASSIGNEE, label: 'none' },
+    ...(me === null ? [] : [{ value: me, label: `me (${me})` }]),
+    ...others.map((u) => ({ value: u, label: u })),
+  ];
+}
 
 /** `none` heißt `null`; `me` steht für die eigene Identität, gemeldet wird ihr Handle. */
 export function AssigneeSelect(props: {
@@ -95,10 +114,8 @@ export function AssigneeSelect(props: {
   disabled?: boolean;
 }) {
   const { value, me, users, onChange, disabled } = props;
-  const others = users.filter((u) => u !== me);
-  // Ein Handle, das der Store nicht (mehr) kennt, bleibt wählbar, statt still auf `none` zu springen.
-  if (value !== null && value !== me && !others.includes(value)) others.push(value);
-  const shown = value === null ? 'none' : value === me ? `me (${me})` : value;
+  const choices = assigneeChoices(value, me, users);
+  const shown = choices.find((c) => c.value === (value ?? NO_ASSIGNEE))?.label ?? 'none';
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -117,14 +134,12 @@ export function AssigneeSelect(props: {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
         <DropdownMenuRadioGroup
-          value={value ?? NONE}
-          onValueChange={(v) => onChange(v === NONE ? null : v)}
+          value={value ?? NO_ASSIGNEE}
+          onValueChange={(v) => onChange(v === NO_ASSIGNEE ? null : v)}
         >
-          <DropdownMenuRadioItem value={NONE}>none</DropdownMenuRadioItem>
-          {me !== null && <DropdownMenuRadioItem value={me}>{`me (${me})`}</DropdownMenuRadioItem>}
-          {others.map((u) => (
-            <DropdownMenuRadioItem key={u} value={u}>
-              {u}
+          {choices.map((c) => (
+            <DropdownMenuRadioItem key={c.value} value={c.value}>
+              {c.label}
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>

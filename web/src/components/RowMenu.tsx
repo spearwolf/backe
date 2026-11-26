@@ -1,0 +1,188 @@
+import type { IssueJson } from '@backe/ui/api.ts';
+import { createContext, type ReactNode, useContext, useRef, useState } from 'react';
+import { updateOverlay } from '../app/optimistic.ts';
+import { openChildrenOf, type StateAction, stateActions, stateCall } from '../app/state-actions.ts';
+import type { ApiError } from '../data/api-client.ts';
+import { useStore } from '../data/store-context.tsx';
+import { useSignal } from '../data/use-signal.ts';
+import { useWrites } from '../data/write-context.tsx';
+import { m } from '../views/backlog.messages.ts';
+import { DeleteDialog } from './issue/edit/DeleteDialog.tsx';
+import { assigneeChoices, NO_ASSIGNEE } from './issue/edit/inputs.tsx';
+import { StateDialog } from './issue/edit/StateControl.tsx';
+import { overlayOf, runState } from './issue/edit/state-write.ts';
+import { rank } from './rank-write.ts';
+import { StateIcon } from './StateIcon.tsx';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuRadioGroup,
+  ContextMenuRadioItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from './ui/context-menu.tsx';
+
+type RowDialog =
+  | { kind: 'state'; id: string; action: StateAction; rejected?: ApiError }
+  | { kind: 'delete'; id: string };
+
+const OpenDialog = createContext<(dialog: RowDialog) => void>(() => {});
+
+/**
+ * Die Dialoge des Kontextmenüs hängen an der Liste, nicht an der Zeile: Die Liste ist
+ * virtualisiert, und eine Zeile, die der Wechsel aus dem Filter nimmt, blendet aus und verschwindet,
+ * während ihr Dialog noch schreibt. Nach dem Schließen geht der Fokus an die Zeile zurück.
+ */
+export function RowDialogs(props: { focusRow: (id: string) => void; children: ReactNode }) {
+  const { focusRow, children } = props;
+  const [dialog, setDialog] = useState<RowDialog>();
+  const close = (open: boolean) => {
+    if (!open) setDialog(undefined);
+  };
+  const refocus = (id: string) => (e: Event) => {
+    e.preventDefault();
+    focusRow(id);
+  };
+  return (
+    <OpenDialog.Provider value={setDialog}>
+      {children}
+      {dialog?.kind === 'state' && (
+        <StateHost dialog={dialog} onOpenChange={close} onCloseAutoFocus={refocus(dialog.id)} />
+      )}
+      <DeleteDialog
+        id={dialog?.id ?? ''}
+        open={dialog?.kind === 'delete'}
+        onOpenChange={close}
+        {...(dialog === undefined ? {} : { onCloseAutoFocus: refocus(dialog.id) })}
+      />
+    </OpenDialog.Provider>
+  );
+}
+
+function StateHost(props: {
+  dialog: Extract<RowDialog, { kind: 'state' }>;
+  onOpenChange: (open: boolean) => void;
+  onCloseAutoFocus: (e: Event) => void;
+}) {
+  const { dialog, onOpenChange, onCloseAutoFocus } = props;
+  const issue = useSignal(useStore().issues.get(dialog.id));
+  if (issue === undefined) return null;
+  return (
+    <StateDialog
+      issue={issue}
+      action={dialog.action}
+      {...(dialog.rejected === undefined ? {} : { rejected: dialog.rejected })}
+      onOpenChange={onOpenChange}
+      onCloseAutoFocus={onCloseAutoFocus}
+    />
+  );
+}
+
+/**
+ * Kontextmenü einer Zeile (ui.md §2.7): Rechtsklick, Kontextmenü-Taste oder Umschalt+F10 an der
+ * fokussierten Zeile. Ohne Schreibrecht gibt es keins. Der Inhalt entsteht erst beim Öffnen: Nur
+ * dann liest die Zeile Config und Users.
+ */
+export function RowMenu({ issue, children }: { issue: IssueJson; children: ReactNode }) {
+  const { canWrite } = useWrites();
+  const toDialog = useRef(false);
+  if (!canWrite) return children;
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent
+        onCloseAutoFocus={(e) => {
+          // Öffnet ein Eintrag einen Dialog, gehört ihm der Fokus, nicht der Zeile.
+          if (toDialog.current) e.preventDefault();
+          toDialog.current = false;
+        }}
+      >
+        <RowMenuItems issue={issue} toDialog={toDialog} />
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+function RowMenuItems({ issue, toDialog }: { issue: IssueJson; toDialog: { current: boolean } }) {
+  const { me, writes } = useWrites();
+  const store = useStore();
+  const strict = useSignal(store.config)?.workflow.strict ?? false;
+  const users = useSignal(store.users.keys);
+  const openDialog = useContext(OpenDialog);
+  const { id } = issue;
+  const dialog = (d: RowDialog) => {
+    toDialog.current = true;
+    openDialog(d);
+  };
+
+  const move = (action: StateAction) => {
+    if (action.needsBlockedBy) {
+      dialog({ kind: 'state', id, action });
+      return;
+    }
+    runState(writes, stateCall(id, action), overlayOf(store, id, action)).catch(
+      (cause: ApiError) => {
+        // `done` mit offenen Sub-Issues: Der Dialog nennt sie und bietet `force` an.
+        if (openChildrenOf(cause) === undefined) writes.report(cause);
+        else openDialog({ kind: 'state', id, action, rejected: cause });
+      },
+    );
+  };
+
+  const current = issue.assignee ?? null;
+  const assign = (value: string) => {
+    const assignee = value === NO_ASSIGNEE ? null : value;
+    if (assignee === current) return;
+    const args = { id, assignee };
+    writes
+      .run('issue_update', args, { optimistic: updateOverlay(issue, args) })
+      .catch(writes.report);
+  };
+
+  return (
+    <>
+      <ContextMenuSub>
+        <ContextMenuSubTrigger>{m.menuState}</ContextMenuSubTrigger>
+        <ContextMenuSubContent>
+          {stateActions(issue, strict).map((a) => (
+            <ContextMenuItem key={a.to} onSelect={() => move(a)}>
+              <StateIcon state={a.to} />
+              {a.needsBlockedBy && <span aria-hidden="true">…</span>}
+            </ContextMenuItem>
+          ))}
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+      <ContextMenuSub>
+        <ContextMenuSubTrigger>{m.menuAssignee}</ContextMenuSubTrigger>
+        <ContextMenuSubContent>
+          <ContextMenuRadioGroup value={current ?? NO_ASSIGNEE} onValueChange={assign}>
+            {assigneeChoices(current, me, users).map((c) => (
+              <ContextMenuRadioItem key={c.value} value={c.value}>
+                {c.label}
+              </ContextMenuRadioItem>
+            ))}
+          </ContextMenuRadioGroup>
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+      <ContextMenuSub>
+        <ContextMenuSubTrigger>{m.menuRank}</ContextMenuSubTrigger>
+        <ContextMenuSubContent>
+          <ContextMenuItem onSelect={() => rank(store, writes, id, { top: true })}>
+            {m.rankTop}
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => rank(store, writes, id, { bottom: true })}>
+            {m.rankBottom}
+          </ContextMenuItem>
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+      <ContextMenuSeparator />
+      <ContextMenuItem variant="destructive" onSelect={() => dialog({ kind: 'delete', id })}>
+        {m.deleteIssue}
+      </ContextMenuItem>
+    </>
+  );
+}

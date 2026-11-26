@@ -10,7 +10,13 @@ import { IssueRef } from '../IssueRef.tsx';
 
 type Children = 'orphan' | 'recursive';
 
-type Props = { id: string; open: boolean; onOpenChange: (open: boolean) => void };
+type Props = {
+  id: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Wohin der Fokus nach dem Schließen geht; `preventDefault` übernimmt ihn (Radix). */
+  onCloseAutoFocus?: (event: Event) => void;
+};
 
 /**
  * Löschen eines Issues (ui.md §2.9.1). Die Rückfragen kommen aus `deletePlan` auf dem Store, also
@@ -18,12 +24,12 @@ type Props = { id: string; open: boolean; onOpenChange: (open: boolean) => void 
  * Pflicht, bei Verweisen anderer Issues das Häkchen für `force`. Fehlt eins, bleibt »Löschen«
  * gesperrt.
  */
-export function DeleteDialog({ id, open, onOpenChange }: Props) {
+export function DeleteDialog({ open, ...props }: Props) {
   // Jedes Öffnen beginnt ohne Wahl und ohne Häkchen.
-  return open ? <OpenDeleteDialog id={id} onOpenChange={onOpenChange} /> : null;
+  return open ? <OpenDeleteDialog {...props} /> : null;
 }
 
-function OpenDeleteDialog({ id, onOpenChange }: Omit<Props, 'open'>) {
+function OpenDeleteDialog({ id, onOpenChange, onCloseAutoFocus }: Omit<Props, 'open'>) {
   const { writes } = useWrites();
   const store = useStore();
   const snapshot = useSignal(store.toSnapshot);
@@ -57,6 +63,7 @@ function OpenDeleteDialog({ id, onOpenChange }: Omit<Props, 'open'>) {
       error={error}
       onConfirm={() => void confirm()}
       onOpenChange={onOpenChange}
+      {...(onCloseAutoFocus === undefined ? {} : { onCloseAutoFocus })}
     >
       {needsChoice && (
         <fieldset className="space-y-2">

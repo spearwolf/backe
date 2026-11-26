@@ -20,6 +20,7 @@ import { searchIds } from '../data/search.ts';
 import type { Store } from '../data/store.ts';
 import { useStore } from '../data/store-context.tsx';
 import { useSignal } from '../data/use-signal.ts';
+import { useWrites } from '../data/write-context.tsx';
 import { useOwned } from '../lib/use-owned.ts';
 
 /** Filter aus der URL, Ansicht aus dem `localStorage`, darüber das Listenmodell. */
@@ -72,6 +73,7 @@ function Loaded(props: {
 }) {
   const { state, router, backlog, me } = props;
   const create = useCreateIssue();
+  const { canWrite } = useWrites();
   const filter = useSignal(state.filter);
   const view = useSignal(state.prefs.view);
   const rows = useSignal(state.model.rows);
@@ -106,7 +108,8 @@ function Loaded(props: {
           </div>
         )}
       </div>
-      <IssueList backlog={backlog} rows={rows} />
+      {/* Umsortieren nur, wo die Reihenfolge der Rang ist (ui.md §2.7). */}
+      <IssueList backlog={backlog} rows={rows} reorder={canWrite && view.sort === 'rank'} />
     </section>
   );
 }

@@ -1,11 +1,17 @@
-import type { IssueJson } from '@backe/ui/api.ts';
-import { act, cleanup, render, screen, within } from '@testing-library/react';
+import { act, createEvent, fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Router, RouterContext } from '../app/router.ts';
-import { Store } from '../data/store.ts';
-import { StoreContext } from '../data/store-context.tsx';
-import { testIssue, testPatch, testState, tid } from '../test/state.ts';
-import { BacklogView } from './BacklogView.tsx';
+import { DRAG_TYPE } from '../components/row-drag.ts';
+import {
+  call,
+  linkOf,
+  registerBacklogViewHarness,
+  rowIds,
+  rowOf,
+  rows,
+  searches,
+  view,
+} from '../test/backlog-view.tsx';
+import { testIssue, testPatch, tid } from '../test/state.ts';
 import { m } from './backlog.messages.ts';
 
 // Zählt, wie oft eine Zeile ihren Inhalt rendert: Jede Zeile rendert genau ein `StateIcon`.
@@ -21,55 +27,7 @@ vi.mock('../components/StateIcon.tsx', async (importOriginal) => {
   };
 });
 
-// jsdom rechnet kein Layout; der Virtualizer misst die Fläche über `clientWidth`/`clientHeight`.
-const layout = ['clientHeight', 'clientWidth'].map(
-  (key) => [key, Object.getOwnPropertyDescriptor(HTMLElement.prototype, key)] as const,
-);
-beforeAll(() => {
-  Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, value: 600 });
-  Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 1024 });
-});
-afterAll(() => {
-  for (const [key, desc] of layout) {
-    if (desc !== undefined) Object.defineProperty(HTMLElement.prototype, key, desc);
-  }
-});
-
-const searches: string[] = [];
-beforeEach(() => {
-  searches.length = 0;
-  vi.stubGlobal('fetch', async (url: string) => {
-    searches.push(url);
-    return new Response(JSON.stringify({ issues: [] }));
-  });
-});
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-  localStorage.clear();
-});
-
-function view(issues: IssueJson[], opts: { search?: string; me?: string | null } = {}) {
-  window.history.replaceState(null, '', `/b/acme/backlog${opts.search ?? ''}`);
-  const router = new Router(window);
-  const store = new Store();
-  store.load(testState(issues));
-  const ui = (
-    <RouterContext.Provider value={router}>
-      <StoreContext.Provider value={store}>
-        <BacklogView backlog="acme" me={opts.me === undefined ? 'spw' : opts.me} />
-      </StoreContext.Provider>
-    </RouterContext.Provider>
-  );
-  const result = render(ui);
-  return { router, store, ...result, rerender: () => result.rerender(ui) };
-}
-
-const rows = () => {
-  const list = screen.queryByRole('list', { name: m.issues });
-  return list === null ? [] : within(list).queryAllByRole('listitem');
-};
-const rowOf = (id: string) => rows().find((r) => r.textContent?.includes(id)) as HTMLElement;
+registerBacklogViewHarness();
 
 test('lists open issues as a tree by default', () => {
   view([testIssue(1), testIssue(2, { parent: tid(1) }), testIssue(3, { state: 'done' })]);
@@ -347,4 +305,94 @@ test('a project and a sprint of the same name both show', () => {
   } finally {
     errors.mockRestore();
   }
+});
+
+describe('reordering', () => {
+  const three = () => view([1, 2, 3].map((n) => testIssue(n)));
+
+  /** jsdom kennt weder `DataTransfer` noch `DragEvent`: ein Ersatz mit `types`, `setData`, `getData`. */
+  function dataTransfer() {
+    const data = new Map<string, string>();
+    return {
+      get types() {
+        return [...data.keys()];
+      },
+      setData: (type: string, value: string) => data.set(type, value),
+      getData: (type: string) => data.get(type) ?? '',
+      dropEffect: 'none',
+      effectAllowed: 'all',
+    };
+  }
+  type Drag = 'dragStart' | 'dragOver' | 'drop' | 'dragEnd';
+  function drag(type: Drag, el: HTMLElement, dt: object, clientY = 0) {
+    const event = createEvent[type](el, { dataTransfer: dt });
+    Object.defineProperty(event, 'clientY', { value: clientY });
+    fireEvent(el, event);
+  }
+
+  test('dragging a row reranks it optimistically', () => {
+    three();
+    const dt = dataTransfer();
+    drag('dragStart', rowOf(tid(3)), dt);
+    expect(dt.getData(DRAG_TYPE)).toBe(tid(3));
+    drag('dragOver', rowOf(tid(3)), dt, 5);
+    expect(rowOf(tid(3)).getAttribute('data-drop')).toBeNull();
+    drag('dragOver', rowOf(tid(1)), dt, 30);
+    expect(rowOf(tid(1)).getAttribute('data-drop')).toBe('after');
+    drag('dragOver', rowOf(tid(1)), dt, 5);
+    expect(rowOf(tid(1)).getAttribute('data-drop')).toBe('before');
+    drag('drop', rowOf(tid(1)), dt, 5);
+    expect(rowIds()).toEqual([tid(3), tid(1), tid(2)]);
+    expect(call).toHaveBeenCalledExactlyOnceWith('issue_rank', { id: tid(3), before: tid(1) });
+    drag('dragEnd', rowOf(tid(3)), dt);
+    expect(rowOf(tid(1)).getAttribute('data-drop')).toBeNull();
+  });
+
+  test('a drop on itself or without the issue type does nothing', () => {
+    three();
+    const dt = dataTransfer();
+    drag('dragStart', rowOf(tid(2)), dt);
+    drag('drop', rowOf(tid(2)), dt, 5);
+    const foreign = dataTransfer();
+    foreign.setData('text/plain', 'x');
+    drag('dragOver', rowOf(tid(1)), foreign, 5);
+    expect(rowOf(tid(1)).getAttribute('data-drop')).toBeNull();
+    drag('drop', rowOf(tid(1)), foreign, 5);
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  test('alt+arrow reranks with the keyboard', async () => {
+    // Ohne Antwort bleibt die Überlagerung stehen.
+    call.mockImplementation(() => new Promise(() => {}));
+    three();
+    linkOf(tid(2)).focus();
+    await userEvent.keyboard('{Alt>}{ArrowUp}{/Alt}');
+    expect(rowIds()).toEqual([tid(2), tid(1), tid(3)]);
+    expect(call).toHaveBeenCalledExactlyOnceWith('issue_rank', { id: tid(2), before: tid(1) });
+    expect(document.activeElement).toBe(linkOf(tid(2)));
+    call.mockClear();
+    await userEvent.keyboard('{Alt>}{ArrowUp}{/Alt}');
+    expect(call).not.toHaveBeenCalled();
+    await userEvent.keyboard('{Alt>}{ArrowDown}{/Alt}');
+    expect(rowIds()).toEqual([tid(1), tid(2), tid(3)]);
+    expect(call).toHaveBeenCalledExactlyOnceWith('issue_rank', { id: tid(2), after: tid(1) });
+    expect(document.activeElement).toBe(linkOf(tid(2)));
+    expect(linkOf(tid(2)).getAttribute('aria-keyshortcuts')).toBe('Alt+ArrowUp Alt+ArrowDown');
+  });
+
+  test('no drag when sorted by created', async () => {
+    three();
+    expect(rowOf(tid(1)).getAttribute('draggable')).toBe('true');
+    await userEvent.click(screen.getByRole('button', { name: m.sortCreated }));
+    expect(rowOf(tid(1)).hasAttribute('draggable')).toBe(false);
+    expect(linkOf(tid(1)).hasAttribute('aria-keyshortcuts')).toBe(false);
+    linkOf(tid(2)).focus();
+    await userEvent.keyboard('{Alt>}{ArrowUp}{/Alt}');
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  test('no drag without write access', () => {
+    view([testIssue(1)], { canWrite: false });
+    expect(rowOf(tid(1)).hasAttribute('draggable')).toBe(false);
+  });
 });
