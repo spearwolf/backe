@@ -2,11 +2,13 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { ApiError } from '../data/api-client.ts';
 import {
+  answerNever,
   call,
   linkOf,
   registerBacklogViewHarness,
   rowIds,
   rowOf,
+  scroller,
   view,
 } from '../test/backlog-view.tsx';
 import { testIssue, tid } from '../test/state.ts';
@@ -18,10 +20,12 @@ registerBacklogViewHarness();
 
 function deferred<T>() {
   let resolve!: (v: T) => void;
-  const promise = new Promise<T>((res) => {
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 /** Rechtsklick auf die Zeile, dann im Untermenü `sub` den Eintrag `item` (oder `role`). */
@@ -54,11 +58,8 @@ test('blocked from the menu opens the state dialog', async () => {
   expect(call).not.toHaveBeenCalled();
 });
 
-// Ohne Antwort bleibt die Überlagerung stehen; eine Antwort ohne Commit nähme sie sofort zurück.
-const pendingAnswer = () => call.mockImplementation(() => new Promise(() => {}));
-
 test('rank top and bottom from the menu', async () => {
-  pendingAnswer();
+  answerNever();
   view([testIssue(1), testIssue(2), testIssue(3)]);
   await pick(tid(3), m.menuRank, m.rankTop);
   expect(rowIds()).toEqual([tid(3), tid(1), tid(2)]);
@@ -69,8 +70,32 @@ test('rank top and bottom from the menu', async () => {
   expect(call).toHaveBeenCalledExactlyOnceWith('issue_rank', { id: tid(3), bottom: true });
 });
 
+test('a rejected rank restores the order and shows in the failures', async () => {
+  const answer = deferred<unknown>();
+  call.mockImplementation(() => answer.promise);
+  view([testIssue(1), testIssue(2), testIssue(3)]);
+  await pick(tid(3), m.menuRank, m.rankTop);
+  expect(rowIds()).toEqual([tid(3), tid(1), tid(2)]);
+  await act(async () => answer.reject(new ApiError(409, 'conflict', 'Rang belegt', 'backe sync')));
+  expect(rowIds()).toEqual([tid(1), tid(2), tid(3)]);
+  const failures = screen.getByRole('region', { name: w.failures });
+  expect(within(failures).getByText('Rang belegt')).toBeTruthy();
+});
+
+test('to the top follows the row out of the rendered range', async () => {
+  answerNever();
+  view(Array.from({ length: 80 }, (_, i) => testIssue(i + 1)));
+  // Zeilen ab etwa 40 sichtbar; Zeile 0 liegt außerhalb des gerenderten Bereichs.
+  act(() => scroller().scrollTo({ top: 1800 }));
+  expect(rowOf(tid(1))).toBeUndefined();
+  await pick(tid(60), m.menuRank, m.rankTop);
+  expect(rowIds()[0]).toBe(tid(60));
+  expect(scroller().scrollTop).toBe(0);
+  await waitFor(() => expect(document.activeElement).toBe(linkOf(tid(60))));
+});
+
 test('assignee from the menu', async () => {
-  pendingAnswer();
+  answerNever();
   view([testIssue(1, { assignee: 'ada' })], {
     over: { users: [{ handle: 'ada', name: 'Ada', kind: 'human', admin: false }] },
   });

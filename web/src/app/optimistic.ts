@@ -3,6 +3,7 @@
  * die Issues schriebe, gerechnet mit demselben reinen BK-Code. Listen stehen in der Form, in der
  * der Server sie schreibt; ein Schlüssel mit `undefined` entfernt das Feld.
  */
+import { BackeError } from '@backe/core/errors.ts';
 import { planTransition } from '@backe/core/state.ts';
 import { type RankPosition, rankPlacement } from '@backe/ops/rank.ts';
 import type { BacklogSnapshot } from '@backe/store/snapshot.ts';
@@ -10,6 +11,20 @@ import type { IssueJson, ToolArgs } from '@backe/ui/api.ts';
 import type { StateAction } from './state-actions.ts';
 
 type Overlay = Map<string, Partial<IssueJson>>;
+
+/**
+ * Eine Überlagerung ist nur Vorschau: Lehnt die Rechnung ab (`BackeError`, etwa ein Anker oder
+ * eine Blocker-ID, die BK nicht annimmt), läuft der Write ohne sie und der Server entscheidet
+ * allein. Jeder andere Wurf ist ein Fehler im Client und fliegt weiter.
+ */
+export function preview<T>(compute: () => T): T | undefined {
+  try {
+    return compute();
+  } catch (cause) {
+    if (cause instanceof BackeError) return undefined;
+    throw cause;
+  }
+}
 
 /**
  * Das Ergebnis von `planTransition`; fehlende Felder werden ausdrücklich gelöscht. Wirft `BackeError`

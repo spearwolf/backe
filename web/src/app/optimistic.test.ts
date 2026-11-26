@@ -1,7 +1,8 @@
+import { BackeError } from '@backe/core/errors.ts';
 import { rankPlacement } from '@backe/ops/rank.ts';
 import { Store } from '../data/store.ts';
 import { testIssue, testState, tid } from '../test/state.ts';
-import { rankOverlay, stateOverlay, updateOverlay } from './optimistic.ts';
+import { preview, rankOverlay, stateOverlay, updateOverlay } from './optimistic.ts';
 
 function snapshot(...issues: ReturnType<typeof testIssue>[]) {
   const store = new Store();
@@ -95,4 +96,18 @@ test('update overlay leaves untouched fields out and clears empty props', () => 
   expect(updateOverlay(issue, { id: issue.id }).get(issue.id)).toEqual({});
   const cleared = updateOverlay(issue, { id: issue.id, parent: null, props: { x: null } });
   expect(cleared.get(issue.id)).toEqual({ parent: undefined, props: undefined });
+});
+
+test('a preview the calculation rejects is left out, other errors fly on', () => {
+  expect(preview(() => 1)).toBe(1);
+  expect(
+    preview(() => {
+      throw new BackeError('validation', 'nein');
+    }),
+  ).toBeUndefined();
+  expect(() =>
+    preview(() => {
+      throw new TypeError('bug');
+    }),
+  ).toThrow(TypeError);
 });

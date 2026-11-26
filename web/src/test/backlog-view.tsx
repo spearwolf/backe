@@ -21,11 +21,28 @@ export const searches: string[] = [];
 
 /** Registriert die Hooks: Layout für den Virtualizer, `fetch` für die Suche, `call` ohne Commit. */
 export function registerBacklogViewHarness(): void {
-  // jsdom rechnet kein Layout; der Virtualizer misst die Fläche über `clientWidth`/`clientHeight`.
-  const layout = ['clientHeight', 'clientWidth'].map(
+  // jsdom rechnet kein Layout; der Virtualizer misst die Fläche über `clientWidth`/`clientHeight`,
+  // begrenzt das Scrollen über `scrollHeight` (hier die Höhe der Liste darin) und scrollt über
+  // `scrollTo`, das jsdom nicht kennt: Hier setzt es `scrollTop` und meldet `scroll`.
+  const layout = ['clientHeight', 'clientWidth', 'scrollHeight', 'scrollTo'].map(
     (key) => [key, Object.getOwnPropertyDescriptor(HTMLElement.prototype, key)] as const,
   );
   beforeAll(() => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return (
+          Number.parseFloat((this.firstElementChild as HTMLElement | null)?.style.height ?? '') || 0
+        );
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+      configurable: true,
+      value(this: HTMLElement, options: ScrollToOptions) {
+        if (options.top !== undefined) this.scrollTop = options.top;
+        this.dispatchEvent(new Event('scroll'));
+      },
+    });
     Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
       configurable: true,
       value: 600,
@@ -38,6 +55,7 @@ export function registerBacklogViewHarness(): void {
   afterAll(() => {
     for (const [key, desc] of layout) {
       if (desc !== undefined) Object.defineProperty(HTMLElement.prototype, key, desc);
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[key];
     }
   });
   beforeEach(() => {
@@ -95,5 +113,10 @@ export const rows = () => {
   return list === null ? [] : within(list).queryAllByRole('listitem');
 };
 export const rowIds = () => rows().map((r) => r.getAttribute('data-id'));
-export const rowOf = (id: string) => rows().find((r) => r.textContent?.includes(id)) as HTMLElement;
+export const rowOf = (id: string) => rows().find((r) => r.dataset.id === id) as HTMLElement;
 export const linkOf = (id: string) => within(rowOf(id)).getByRole('link');
+/** Das scrollende Element um die Liste. */
+export const scroller = () =>
+  screen.getByRole('list', { name: m.issues }).parentElement as HTMLElement;
+/** Ohne Antwort bleibt eine Überlagerung stehen; eine Antwort ohne Commit nähme sie sofort zurück. */
+export const answerNever = () => call.mockImplementation(() => new Promise(() => {}));

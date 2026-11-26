@@ -6,10 +6,11 @@ import { useWrites } from '../data/write-context.tsx';
 import { m } from '../views/backlog.messages.ts';
 import { IssueRow, ROW_HEIGHT, type RowReorder } from './IssueRow.tsx';
 import { RowDialogs } from './RowMenu.tsx';
-import { rank } from './rank-write.ts';
-import { DRAG_TYPE, dropPosition, keyboardPosition } from './row-drag.ts';
+import { type RankMove, rank } from './rank-write.ts';
+import { DRAG_TYPE, type DropMarker, dropTarget, keyboardPosition } from './row-drag.ts';
 
-type Drop = { id: string; side: 'before' | 'after' };
+/** Eine umsortierte Zeile, der Scrollposition und Fokus folgen, sobald ihre Liste gerendert ist. */
+type Follow = { id: string; rows: readonly ListRow[]; scrolled: boolean; waited: boolean };
 
 const linkIn = (scope: HTMLElement | null, id: string) =>
   scope?.querySelector<HTMLElement>(`li[data-id="${id}"] a`) ?? null;
@@ -23,10 +24,11 @@ export function IssueList(props: { backlog: string; rows: readonly ListRow[]; re
   const store = useStore();
   const { writes } = useWrites();
   const scroller = useRef<HTMLDivElement>(null);
-  const [drop, setDrop] = useState<Drop>();
+  const [drop, setDrop] = useState<DropMarker>();
   // Während des Ziehens verrät `dataTransfer` nur die Typen, nicht die ID: Sie steht hier.
   const dragged = useRef<string | undefined>(undefined);
-  const refocus = useRef<string | undefined>(undefined);
+  const follow = useRef<Follow | undefined>(undefined);
+  const current = useRef(rows);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scroller.current,
@@ -35,25 +37,50 @@ export function IssueList(props: { backlog: string; rows: readonly ListRow[]; re
     getItemKey: (i) => rows[i]?.issue.id ?? i,
   });
 
-  // Die Zeile behält ihren Key; verschiebt React beim Umsortieren aber ihren Knoten, fällt der
-  // Fokus auf `body`. Dann holt ihn die Zeile zurück, sonst nirgends.
+  // Nach dem Umsortieren: an die neue Stelle scrollen, und hat die Zeile den Fokus verloren (React
+  // hat ihren Knoten verschoben, oder sie lag kurz außerhalb des gerenderten Bereichs), holt sie
+  // ihn zurück. Liegt sie erst nach dem Scrollen im Bereich, wartet das auf genau einen Render.
   useLayoutEffect(() => {
-    const id = refocus.current;
-    if (id === undefined) return;
-    refocus.current = undefined;
+    current.current = rows;
+    const f = follow.current;
+    if (f === undefined || rows === f.rows) return;
+    const index = rows.findIndex((r) => r.issue.id === f.id);
+    if (index < 0) {
+      follow.current = undefined;
+      return;
+    }
+    if (!f.scrolled) {
+      f.scrolled = true;
+      virtualizer.scrollToIndex(index);
+    }
+    const link = linkIn(scroller.current, f.id);
+    if (link === null && !f.waited) {
+      f.waited = true;
+      return;
+    }
+    follow.current = undefined;
     const active = document.activeElement;
-    if (active === null || active === document.body) linkIn(scroller.current, id)?.focus();
+    if (link !== null && (active === null || active === document.body)) link.focus();
   });
 
   const focusRow = useCallback((id: string) => linkIn(scroller.current, id)?.focus(), []);
+  /** Umsortieren, dem die Ansicht folgt; ohne Vorschau ändert sich nichts, dem zu folgen wäre. */
+  const move = useCallback(
+    (id: string, pos: RankMove) => {
+      if (rank(store, writes, id, pos)) {
+        follow.current = { id, rows: current.current, scrolled: false, waited: false };
+      }
+    },
+    [store, writes],
+  );
 
-  const positionAt = (e: DragEvent<HTMLLIElement>, id: string) => {
-    const target = e.currentTarget;
-    if (target.dataset.live === 'leaving' || target.dataset.id === undefined) return undefined;
-    const offset = e.clientY - target.getBoundingClientRect().top;
-    return dropPosition(id, target.dataset.id, offset, ROW_HEIGHT);
+  const targetOf = (e: DragEvent<HTMLLIElement>, id: string) => {
+    const target = e.currentTarget.dataset.id;
+    if (target === undefined) return undefined;
+    const offset = e.clientY - e.currentTarget.getBoundingClientRect().top;
+    return dropTarget(rows, id, target, offset, ROW_HEIGHT);
   };
-  const show = (next: Drop | undefined) =>
+  const show = (next: DropMarker | undefined) =>
     setDrop((prev) => (prev?.id === next?.id && prev?.side === next?.side ? prev : next));
 
   const handlers: RowReorder = {
@@ -65,32 +92,28 @@ export function IssueList(props: { backlog: string; rows: readonly ListRow[]; re
       e.dataTransfer.effectAllowed = 'move';
     },
     onDragOver: (e) => {
-      if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
-      // Von außen (anderes Fenster) ist die ID unbekannt; dann entscheidet erst das Ablegen.
-      const pos = positionAt(e, dragged.current ?? '');
-      const target = e.currentTarget.dataset.id;
-      if (pos === undefined || target === undefined) {
-        show(undefined);
-        return;
-      }
+      // Ein Drag aus einem anderen Fenster hat hier keine Zeile und keine Geschwister: kein Ziel.
+      const id = dragged.current;
+      if (id === undefined || !e.dataTransfer.types.includes(DRAG_TYPE)) return;
+      const target = targetOf(e, id);
+      show(target?.marker);
+      if (target === undefined) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
-      show({ id: target, side: 'before' in pos ? 'before' : 'after' });
     },
     onDragLeave: (e) => {
       if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
-      const id = e.currentTarget.dataset.id;
-      setDrop((prev) => (prev?.id === id ? undefined : prev));
+      // Die Markierung steht nach einem Teilbaum an dessen letzter Zeile, nicht am Ziel.
+      show(undefined);
     },
     onDrop: (e) => {
       const id = e.dataTransfer.getData(DRAG_TYPE);
       show(undefined);
       dragged.current = undefined;
-      if (id === '') return;
-      const pos = positionAt(e, id);
-      if (pos === undefined) return;
+      const target = id === '' ? undefined : targetOf(e, id);
+      if (target === undefined) return;
       e.preventDefault();
-      rank(store, writes, id, pos);
+      rank(store, writes, id, target.pos);
     },
     onDragEnd: () => {
       show(undefined);
@@ -105,15 +128,13 @@ export function IssueList(props: { backlog: string; rows: readonly ListRow[]; re
       if (id === undefined) return;
       e.preventDefault();
       const pos = keyboardPosition(rows, id, e.key);
-      if (pos === undefined) return;
-      refocus.current = id;
-      rank(store, writes, id, pos);
+      if (pos !== undefined) move(id, pos);
     },
   };
 
   // Die Dialoge bleiben, auch wenn ihr Write die letzte Zeile aus dem Filter nimmt.
   return (
-    <RowDialogs focusRow={focusRow}>
+    <RowDialogs focusRow={focusRow} move={move}>
       {rows.length === 0 ? (
         <p className="p-4 text-sm text-muted-foreground">{m.noIssues}</p>
       ) : (

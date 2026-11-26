@@ -1,5 +1,5 @@
 import type { IssueJson } from '@backe/ui/api.ts';
-import { createContext, type ReactNode, useContext, useRef, useState } from 'react';
+import { createContext, type ReactNode, useContext, useMemo, useRef, useState } from 'react';
 import { updateOverlay } from '../app/optimistic.ts';
 import { openChildrenOf, type StateAction, stateActions, stateCall } from '../app/state-actions.ts';
 import type { ApiError } from '../data/api-client.ts';
@@ -11,7 +11,7 @@ import { DeleteDialog } from './issue/edit/DeleteDialog.tsx';
 import { assigneeChoices, NO_ASSIGNEE } from './issue/edit/inputs.tsx';
 import { StateDialog } from './issue/edit/StateControl.tsx';
 import { overlayOf, runState } from './issue/edit/state-write.ts';
-import { rank } from './rank-write.ts';
+import type { RankMove } from './rank-write.ts';
 import { StateIcon } from './StateIcon.tsx';
 import {
   ContextMenu,
@@ -30,16 +30,27 @@ type RowDialog =
   | { kind: 'state'; id: string; action: StateAction; rejected?: ApiError }
   | { kind: 'delete'; id: string };
 
-const OpenDialog = createContext<(dialog: RowDialog) => void>(() => {});
+type RowActions = {
+  openDialog: (dialog: RowDialog) => void;
+  /** Umsortieren, dem Scrollposition und Fokus folgen (die Liste ist virtualisiert). */
+  move: (id: string, pos: RankMove) => void;
+};
+
+const Actions = createContext<RowActions>({ openDialog: () => {}, move: () => {} });
 
 /**
  * Die Dialoge des Kontextmenüs hängen an der Liste, nicht an der Zeile: Die Liste ist
  * virtualisiert, und eine Zeile, die der Wechsel aus dem Filter nimmt, blendet aus und verschwindet,
  * während ihr Dialog noch schreibt. Nach dem Schließen geht der Fokus an die Zeile zurück.
  */
-export function RowDialogs(props: { focusRow: (id: string) => void; children: ReactNode }) {
-  const { focusRow, children } = props;
+export function RowDialogs(props: {
+  focusRow: (id: string) => void;
+  move: RowActions['move'];
+  children: ReactNode;
+}) {
+  const { focusRow, move, children } = props;
   const [dialog, setDialog] = useState<RowDialog>();
+  const actions = useMemo(() => ({ openDialog: setDialog, move }), [move]);
   const close = (open: boolean) => {
     if (!open) setDialog(undefined);
   };
@@ -48,7 +59,7 @@ export function RowDialogs(props: { focusRow: (id: string) => void; children: Re
     focusRow(id);
   };
   return (
-    <OpenDialog.Provider value={setDialog}>
+    <Actions.Provider value={actions}>
       {children}
       {dialog?.kind === 'state' && (
         <StateHost dialog={dialog} onOpenChange={close} onCloseAutoFocus={refocus(dialog.id)} />
@@ -59,7 +70,7 @@ export function RowDialogs(props: { focusRow: (id: string) => void; children: Re
         onOpenChange={close}
         {...(dialog === undefined ? {} : { onCloseAutoFocus: refocus(dialog.id) })}
       />
-    </OpenDialog.Provider>
+    </Actions.Provider>
   );
 }
 
@@ -112,7 +123,7 @@ function RowMenuItems({ issue, toDialog }: { issue: IssueJson; toDialog: { curre
   const store = useStore();
   const strict = useSignal(store.config)?.workflow.strict ?? false;
   const users = useSignal(store.users.keys);
-  const openDialog = useContext(OpenDialog);
+  const { openDialog, move: rerank } = useContext(Actions);
   const { id } = issue;
   const dialog = (d: RowDialog) => {
     toDialog.current = true;
@@ -171,10 +182,8 @@ function RowMenuItems({ issue, toDialog }: { issue: IssueJson; toDialog: { curre
       <ContextMenuSub>
         <ContextMenuSubTrigger>{m.menuRank}</ContextMenuSubTrigger>
         <ContextMenuSubContent>
-          <ContextMenuItem onSelect={() => rank(store, writes, id, { top: true })}>
-            {m.rankTop}
-          </ContextMenuItem>
-          <ContextMenuItem onSelect={() => rank(store, writes, id, { bottom: true })}>
+          <ContextMenuItem onSelect={() => rerank(id, { top: true })}>{m.rankTop}</ContextMenuItem>
+          <ContextMenuItem onSelect={() => rerank(id, { bottom: true })}>
             {m.rankBottom}
           </ContextMenuItem>
         </ContextMenuSubContent>
