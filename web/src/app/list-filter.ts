@@ -5,6 +5,7 @@
  * Abbruchs, und die übrigen Filter weiter wirken.
  */
 import { BackeError } from '@backe/core/errors.ts';
+import { isHandle } from '@backe/core/names.ts';
 import type { BacklogConfig } from '@backe/core/schemas.ts';
 import { normalizeStateInput, type State } from '@backe/core/state.ts';
 import type { IssueSelector } from '@backe/ops/issue-query.ts';
@@ -49,15 +50,14 @@ export const DEFAULT_VIEW: ListView = { tree: true, sort: 'rank' };
 
 type ListKey = 'states' | 'projects' | 'sprints' | 'repos' | 'props' | 'hasProps';
 
-/** URL-Parameter in Schreibreihenfolge; `split` teilt zusätzlich an Kommas wie das CLI. */
+/** URL-Parameter in Schreibreihenfolge; `split` teilt zusätzlich an Kommas wie `--state` im CLI. */
 const LISTS: readonly { key: ListKey; param: string; split: boolean }[] = [
   { key: 'states', param: 'state', split: true },
-  { key: 'projects', param: 'project', split: true },
-  { key: 'sprints', param: 'sprint', split: true },
-  { key: 'repos', param: 'repo', split: true },
-  // `prio=a,b` ist ein Ausdruck mit ODER-Werten, keine zwei Ausdrücke.
+  { key: 'projects', param: 'project', split: false },
+  { key: 'sprints', param: 'sprint', split: false },
+  { key: 'repos', param: 'repo', split: false },
   { key: 'props', param: 'prop', split: false },
-  { key: 'hasProps', param: 'has-prop', split: true },
+  { key: 'hasProps', param: 'has-prop', split: false },
 ];
 
 function listOf(params: URLSearchParams, param: string, split: boolean): string[] {
@@ -127,18 +127,21 @@ export function toSelector(
       return fail(field, value, err.message);
     }
   };
+  // Wie `resolveHandle` im CLI; `none` gibt es nur beim Assignee.
   const handle = (field: 'assignee' | 'creator', value: string | undefined) => {
-    if (value !== 'me') return value;
-    return env.me ?? fail(field, value, m.meNeedsIdentity);
+    if (value === undefined || (field === 'assignee' && value === 'none')) return value;
+    if (value === 'me') return env.me ?? fail(field, value, m.meNeedsIdentity);
+    return isHandle(value) ? value : fail(field, value, m.invalidHandle(value));
   };
 
   const sel: IssueSelector = { filter: {}, exact: f.exact, tree: view.tree, sort: view.sort };
 
-  if (f.states.includes('all')) sel.states = 'all';
+  if (f.states.includes('all') && f.states.length > 1) fail('states', 'all', m.allStandsAlone);
+  if (f.states.length === 1 && f.states[0] === 'all') sel.states = 'all';
   else {
-    const states = f.states.flatMap(
-      (v) => attempt('states', v, () => normalizeStateInput(v)) ?? [],
-    );
+    const states = f.states
+      .filter((v) => v !== 'all')
+      .flatMap((v) => attempt('states', v, () => normalizeStateInput(v)) ?? []);
     if (states.length > 0) sel.states = states as State[];
   }
   if (f.projects.length > 0) sel.filter.project = [...f.projects];
@@ -166,7 +169,7 @@ export function toSelector(
   });
   if (f.hasProps.length > 0) sel.hasProps = [...f.hasProps];
 
-  const text = f.text.trim().toLowerCase();
-  if (text !== '') sel.text = text;
+  // Ungetrimmt wie `-q` im CLI.
+  if (f.text !== '') sel.text = f.text.toLowerCase();
   return { selector: sel, errors };
 }

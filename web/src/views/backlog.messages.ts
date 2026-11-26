@@ -3,6 +3,8 @@ import { catalog } from '@backe/i18n/catalog.ts';
 export const m = catalog({
   en: {
     meNeedsIdentity: '`me` needs an identity',
+    invalidHandle: (input: string) => `Invalid handle: '${input}'`,
+    allStandsAlone: "'all' must stand alone",
     unknownMode: (mode: string) => `Unknown mode: ${mode} (ready, blocked, unblockable)`,
     filters: 'Filters',
     filterState: 'State',
@@ -34,6 +36,8 @@ export const m = catalog({
   },
   de: {
     meNeedsIdentity: '`me` braucht eine Identität',
+    invalidHandle: (input: string) => `Ungültiger Handle: »${input}«`,
+    allStandsAlone: '»all« steht allein',
     unknownMode: (mode: string) => `Unbekannter Modus: ${mode} (ready, blocked, unblockable)`,
     filters: 'Filter',
     filterState: 'State',

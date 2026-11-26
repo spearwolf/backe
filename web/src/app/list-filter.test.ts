@@ -99,7 +99,7 @@ test('selector carries every filter', () => {
     mode: 'ready',
     props: [{ key: 'prio', op: 'ge', value: 'medium', raw: 'medium' }],
     hasProps: ['area'],
-    text: 'login',
+    text: ' login ',
     tree: false,
     sort: 'created',
   });
@@ -110,9 +110,47 @@ test('me resolves to the identity', () => {
   expect(toSelector(f, DEFAULT_VIEW, env).selector.assignee).toBe('spw');
 });
 
-test('all wins over other states', () => {
-  const f = { ...EMPTY_FILTER, states: ['all', 'todo'] };
-  expect(toSelector(f, DEFAULT_VIEW, env).selector.states).toBe('all');
+test('all with other states is a field error, like the cli', () => {
+  const { selector, errors } = toSelector(
+    { ...EMPTY_FILTER, states: ['all', 'todo'] },
+    DEFAULT_VIEW,
+    env,
+  );
+  expect(errors).toEqual([{ field: 'states', value: 'all', message: m.allStandsAlone }]);
+  expect(selector.states).toEqual(['todo']);
+});
+
+test('only state splits at commas', () => {
+  const f = parseListFilter('?project=a,b&sprint=c,d&repo=e,f&has-prop=g,h');
+  expect([f.projects, f.sprints, f.repos, f.hasProps]).toEqual([
+    ['a,b'],
+    ['c,d'],
+    ['e,f'],
+    ['g,h'],
+  ]);
+});
+
+test('the text keeps its spaces, like the cli', () => {
+  expect(toSelector({ ...EMPTY_FILTER, text: ' Login ' }, DEFAULT_VIEW, env).selector.text).toBe(
+    ' login ',
+  );
+  expect(
+    toSelector({ ...EMPTY_FILTER, text: '' }, DEFAULT_VIEW, env).selector.text,
+  ).toBeUndefined();
+});
+
+test('an invalid handle is a field error', () => {
+  const { selector, errors } = toSelector(
+    { ...EMPTY_FILTER, assignee: 'Bad Name', creator: 'x y' },
+    DEFAULT_VIEW,
+    env,
+  );
+  expect(errors).toEqual([
+    { field: 'assignee', value: 'Bad Name', message: m.invalidHandle('Bad Name') },
+    { field: 'creator', value: 'x y', message: m.invalidHandle('x y') },
+  ]);
+  expect(selector.assignee).toBeUndefined();
+  expect(selector.creator).toBeUndefined();
 });
 
 test('in-progress normalizes', () => {

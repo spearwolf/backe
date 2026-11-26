@@ -128,6 +128,7 @@ const CASES: [name: string, search: string, view: ListView, q: IssueListQuery][]
     { text: 'zebrastreifen', states: ['all'] },
   ],
   ['text in title', '?q=Zebra', flat, { text: 'Zebra' }],
+  ['text with spaces', '?q=%20in%20&state=all', flat, { text: ' in ', states: ['all'] }],
   [
     'created order, tree, filter',
     '?state=all&project=api',
