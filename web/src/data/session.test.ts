@@ -455,6 +455,31 @@ describe('openSession', () => {
     session.dispose();
   });
 
+  it('a refresh during a probe without stream loads again on the next hello', async () => {
+    const { session, es, urls, answer } = setup();
+    es()?.emitError();
+    expect(urls).toHaveLength(1);
+    void session.refresh();
+    expect(urls).toHaveLength(1);
+    await answer(state(1));
+    // Das nachgeholte Laden läuft noch ohne Stream: wieder eine Probe.
+    expect(urls).toHaveLength(2);
+    await answer(state(2));
+    es()?.emitOpen();
+    es()?.emitEvent('hello', hello(3));
+    expect(urls).toHaveLength(3);
+    await answer(state(3));
+    expect(session.store.rev.value).toBe(3);
+    session.dispose();
+  });
+
+  it('a refresh after dispose resolves at once', async () => {
+    const { session, urls } = setup();
+    session.dispose();
+    await expect(session.refresh()).resolves.toBeUndefined();
+    expect(urls).toHaveLength(0);
+  });
+
   it('dispose of the session disposes its writes', async () => {
     const { session, es, urls, answer, pending, flush } = setup();
     es()?.emitOpen();

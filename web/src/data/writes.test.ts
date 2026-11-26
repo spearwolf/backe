@@ -326,6 +326,22 @@ describe('Writes', () => {
     expect([getSignalsCount(), getEffectsCount(), getLinksCount()]).toEqual(before);
   });
 
+  it('a write after dispose rejects without call or overlay', async () => {
+    const { store, writes, calls, uploads } = setup();
+    writes.dispose();
+    const done = writes.run('issue_move', { id: id(1), to: 'in_progress' }, { optimistic: move });
+    await expect(done).rejects.toBeInstanceOf(ApiError);
+    await expect(done).rejects.toMatchObject({ status: 0, code: 'disposed' });
+    await expect(writes.upload(id(1), 'shot.png', new Blob(['x']))).rejects.toMatchObject({
+      code: 'disposed',
+    });
+    expect(calls).toHaveLength(0);
+    expect(uploads).toHaveLength(0);
+    expect(store.issues.get(id(1)).value?.state).toBe('todo');
+    expect(store.pendingCount(id(1)).value).toBe(0);
+    store.dispose();
+  });
+
   it('a refresh after dispose does not touch the store', async () => {
     const { store, writes, refreshes, answer } = setup();
     void writes.run('issue_move', { id: id(1), to: 'in_progress' }, { optimistic: move });

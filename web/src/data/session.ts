@@ -48,6 +48,9 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
   // das nächste hello lädt neu.
   let stale = false;
   const buffer: PatchJson[] = [];
+  // Ohne laufenden Stream fehlen womöglich Patches: Ein Laden dann ist eine Probe, und das nächste
+  // hello lädt noch einmal. Gefragt wird beim Start des Ladens, auch für ein nachgeholtes.
+  const probing = (): boolean => connection.status !== 'open';
   // Wer `refresh` rief, wartet, bis kein Laden mehr läuft: Ein Neuladen während eines anderen
   // kommt erst mit dem letzten.
   let waiters: Array<() => void> = [];
@@ -81,7 +84,7 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
         error.set(undefined);
         if (reloadPending) {
           reloadPending = false;
-          load();
+          load(probing());
         } else {
           drain();
         }
@@ -97,7 +100,7 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
         // Ein Reset während des Ladens geht nicht verloren: ein zweiter Versuch, nicht mehr.
         if (reloadPending) {
           reloadPending = false;
-          load();
+          load(probing());
         }
         wake();
       },
@@ -146,13 +149,12 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
   ];
 
   const refresh = (): Promise<void> => {
+    if (disposed) return Promise.resolve();
     const done = new Promise<void>((resolve) => {
       waiters.push(resolve);
     });
-    // Ohne laufenden Stream fehlen womöglich Patches: Dann ist es eine Probe, und das nächste
-    // hello lädt noch einmal.
     if (loading) reloadPending = true;
-    else load(connection.status !== 'open');
+    else load(probing());
     return done;
   };
 

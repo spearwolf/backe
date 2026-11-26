@@ -11,7 +11,7 @@ import {
   SignalGroup,
 } from '@spearwolf/signalize';
 import { describe, expect, it } from 'vitest';
-import { EntityTable, Store } from './store.ts';
+import { EntityTable, hasFields, Store } from './store.ts';
 
 const id = (n: number) => `bk-t${String(n).padStart(4, '0')}`;
 
@@ -124,6 +124,21 @@ describe('EntityTable', () => {
     table.remove(['nope']);
     expect(runs).toBe(1);
     SignalGroup.delete(table);
+  });
+});
+
+describe('hasFields', () => {
+  it('compares objects regardless of key order, arrays in order', () => {
+    const value = issue(1, {
+      props: { a: 1, b: { x: [1, 2], y: 'z' } },
+      depends_on: [id(2), id(3)],
+    });
+    expect(hasFields(value, { props: { b: { y: 'z', x: [1, 2] }, a: 1 } })).toBe(true);
+    expect(hasFields(value, { props: { a: 1, b: { x: [2, 1], y: 'z' } } })).toBe(false);
+    expect(hasFields(value, { depends_on: [id(2), id(3)] })).toBe(true);
+    expect(hasFields(value, { depends_on: [id(3), id(2)] })).toBe(false);
+    expect(hasFields(value, { parent: undefined, state: 'todo' })).toBe(true);
+    expect(hasFields(undefined, {})).toBe(false);
   });
 });
 
@@ -381,6 +396,16 @@ describe('Store', () => {
       patch({ upsert: { issues: [issue(3, { state: 'in_progress', depends_on: [id(2)] })] } }),
     );
     expect(row.value).toBe(store.issues.server(id(3)));
+    store.dispose();
+  });
+
+  it('an overlay with props in another key order keeps the server object', () => {
+    const store = new Store();
+    store.load(state({ issues: [issue(1, { props: { a: 1, b: 2 } })] }));
+    const row = store.issues.get(id(1));
+    const before = row.value;
+    store.setOverlay(1, new Map<string, Partial<IssueJson>>([[id(1), { props: { b: 2, a: 1 } }]]));
+    expect(row.value).toBe(before);
     store.dispose();
   });
 

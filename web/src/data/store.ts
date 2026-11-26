@@ -22,16 +22,29 @@ function sameKeys(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((key, i) => key === b[i]);
 }
 
+/** JSON-Wert mit sortierten Objekt-Keys; Arrays behalten ihre Reihenfolge. */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (typeof value !== 'object' || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([key, item]) => [key, canonical(item)]),
+  );
+}
+
 /**
- * Trägt `value` jedes Feld von `fields` mit demselben Wert? Verglichen wird per JSON, ein
- * fehlendes Feld gilt als `undefined`. Ohne `value` nie: Ein Issue, das der Server nicht kennt,
- * gleicht keiner Überlagerung.
+ * Trägt `value` jedes Feld von `fields` mit demselben Wert? Verglichen wird per JSON, unabhängig
+ * von der Reihenfolge der Keys in Objekten (`props`); ein fehlendes Feld gilt als `undefined`.
+ * Arrays zählen samt Reihenfolge: Überlagerungen geben sie in der Form des Servers an (etwa
+ * `depends_on` so sortiert wie der Server), sonst gleichen sie nie und der Write wartet auf den
+ * Rückfall. Ohne `value` nie: Ein Issue, das der Server nicht kennt, gleicht keiner Überlagerung.
  */
 export function hasFields<T extends object>(value: T | undefined, fields: Partial<T>): boolean {
   if (value === undefined) return false;
   const record = value as Record<string, unknown>;
   return Object.entries(fields).every(
-    ([field, want]) => JSON.stringify(record[field]) === JSON.stringify(want),
+    ([field, want]) => JSON.stringify(canonical(record[field])) === JSON.stringify(canonical(want)),
   );
 }
 

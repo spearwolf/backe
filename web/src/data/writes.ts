@@ -106,6 +106,8 @@ export class Writes {
     optimistic: ReadonlyMap<string, Partial<IssueJson>> | undefined,
     call: () => Promise<R>,
   ): Promise<R> {
+    // Nach dem Ende gehört der Store niemandem mehr: kein Aufruf, keine Überlagerung.
+    if (this.#disposed) throw new ApiError(0, 'disposed', 'writes are disposed');
     const token = this.#nextToken++;
     this.#pending.set(token, { optimistic, seen: new Set() });
     // Vor dem `fetch`: Die Anzeige wechselt im selben Frame wie die Geste.
