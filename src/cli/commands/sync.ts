@@ -10,7 +10,7 @@ import { runBackground, type SyncStatus, syncStatus } from '../../services/backg
 import { resolveConflict } from '../../services/resolve.ts';
 import { type SyncOutcome, syncNow } from '../../services/sync.ts';
 import { type ConflictEntry, listConflicts } from '../../services/sync-state.ts';
-import { syncJson } from '../../services/views.ts';
+import { conflictJson, conflictSubject, syncJson, syncStatusJson } from '../../services/views.ts';
 import { action, type CommandEnv, emit, type Runtime, subcommand } from '../options.ts';
 import { m as outputMessages } from '../output.messages.ts';
 import { json, lines, renderError, renderHints, safeText } from '../output.ts';
@@ -20,18 +20,10 @@ import { m } from './sync.messages.ts';
 const short = (sha: string) => sha.slice(0, 7);
 
 /** Die Subjects der Konflikt-Einträge: das der gescheiterten Einheit. */
-const subjectOf = (e: ConflictEntry): string => e.units[0]?.subject ?? '';
 
 /** `<id>  <subject>  <reason.message>` je Konflikt, wie `sync status` und `sync resolve` ihn zeigen. */
 const conflictLines = (conflicts: readonly ConflictEntry[]): string[] =>
-  conflicts.map((c) => safeText(`${c.id}  ${subjectOf(c)}  ${c.reason.message}`));
-
-const conflictJson = (c: ConflictEntry) => ({
-  id: c.id,
-  created: c.created,
-  subject: subjectOf(c),
-  reason: c.reason,
-});
+  conflicts.map((c) => safeText(`${c.id}  ${conflictSubject(c)}  ${c.reason.message}`));
 
 /**
  * Ergebnis einer Runde als Text: `kein Remote`, `aktuell` oder je Schritt eine Zeile
@@ -40,7 +32,7 @@ const conflictJson = (c: ConflictEntry) => ({
  */
 function syncText(out: SyncOutcome, entries: readonly ConflictEntry[]): string {
   if (out.skipped !== undefined) return `${m.noRemote}\n`;
-  const subjects = new Map(entries.map((e) => [e.id, subjectOf(e)]));
+  const subjects = new Map(entries.map((e) => [e.id, conflictSubject(e)]));
   const rows: string[] = [];
   if (out.fetched > 0) rows.push(m.fetched(out.fetched));
   if (out.replayed > 0) rows.push(m.replayed(out.replayed));
@@ -74,17 +66,6 @@ function statusText(s: SyncStatus): string {
   if (s.running) rows.push(`${m.labelRunning}  ${m.yes}`);
   return lines([...rows.map(safeText), ...conflictLines(s.conflicts)]);
 }
-
-const statusJson = (s: SyncStatus) => ({
-  remote: s.remote ?? null,
-  mode: s.mode,
-  unpushed: s.unpushed,
-  last_attempt: s.state.last_attempt,
-  last_success: s.state.last_success,
-  last_error: s.state.last_error,
-  running: s.running,
-  conflicts: s.conflicts.map(conflictJson),
-});
 
 type ResolveOpts = { drop?: boolean; apply?: boolean };
 
@@ -155,7 +136,7 @@ export function syncCommands(program: Command, rt: Runtime): void {
       rt,
       async (env) => {
         const s = await syncStatus(await env.context());
-        emit(env, statusJson(s), () => statusText(s));
+        emit(env, syncStatusJson(s), () => statusText(s));
       },
       { statusLine: () => false },
     ),

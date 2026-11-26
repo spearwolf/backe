@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { BackeError } from '../core/errors.ts';
 import type { Operation } from '../ops/operation.ts';
+import type { SyncStatus } from './background.ts';
 import type { IssueListResult } from './issue-list.ts';
 import {
   attachmentJson,
@@ -17,6 +18,7 @@ import {
   repoLocateJson,
   sprintShowJson,
   syncJson,
+  syncStatusJson,
   toBackeError,
 } from './views.ts';
 
@@ -266,5 +268,46 @@ describe('pickFields', () => {
   test('keeps request order and drops undefined values', () => {
     const out = pickFields({ a: 1, b: undefined, c: 3 }, ['c', 'b', 'a'], ['a', 'b', 'c']);
     expect(Object.keys(out)).toEqual(['c', 'a']);
+  });
+});
+
+describe('syncStatusJson', () => {
+  const status = (over: Partial<SyncStatus> = {}): SyncStatus => ({
+    remote: 'git@example.com:acme/backlog.git',
+    mode: 'auto',
+    unpushed: 2,
+    running: false,
+    state: { last_attempt: '2026-11-26T09:00:00Z' },
+    conflicts: [],
+    ...over,
+  });
+
+  test('keeps the keys of sync status --json', () => {
+    expect(Object.keys(syncStatusJson(status()))).toEqual([
+      'remote',
+      'mode',
+      'unpushed',
+      'last_attempt',
+      'last_success',
+      'last_error',
+      'running',
+      'conflicts',
+    ]);
+    expect(syncStatusJson(status({ remote: undefined })).remote).toBeNull();
+  });
+
+  test('a conflict carries id, created, the subject of its first unit and the reason', () => {
+    const reason = { code: 'conflict', message: 'beide geändert' };
+    const conflict = {
+      version: 1 as const,
+      id: '20261126T090000Z-abc123',
+      created: '2026-11-26T09:00:00Z',
+      onto: 'f'.repeat(40),
+      reason,
+      units: [{ subject: 'issue.edit bk-7f3k2' } as never],
+    };
+    expect(syncStatusJson(status({ conflicts: [conflict] })).conflicts).toEqual([
+      { id: conflict.id, created: conflict.created, subject: 'issue.edit bk-7f3k2', reason },
+    ]);
   });
 });

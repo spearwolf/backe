@@ -6,6 +6,7 @@
 import { BackeError } from '../core/errors.ts';
 import { KEY_ORDER } from '../core/schemas.ts';
 import type { Notice } from '../ops/notice.ts';
+import type { SyncStatus } from './background.ts';
 import type { BatchOutcome } from './batch.ts';
 import type { ContextInfo } from './context-info.ts';
 import type { IssueListItem, IssueListResult } from './issue-list.ts';
@@ -15,6 +16,7 @@ import type { WriteOpsOutcome, WriteOutcome } from './outcome.ts';
 import type { locateRepo } from './repo-local.ts';
 import type { showSprint } from './sprints.ts';
 import type { SyncOutcome } from './sync.ts';
+import type { ConflictEntry } from './sync-state.ts';
 import { m } from './views.messages.ts';
 
 /** Felder eines Issues, wie sie in der Datei stehen; Grundlage für `--fields`. */
@@ -248,6 +250,29 @@ export function batchJson(r: BatchOutcome): Record<string, unknown> {
     warnings: nonEmpty(r.warnings),
   };
 }
+
+/** Subject der ersten Einheit eines Konflikts; leer, wenn er keine hat. */
+export const conflictSubject = (e: ConflictEntry): string => e.units[0]?.subject ?? '';
+
+/** Ein Konflikt wie in `sync status --json` und `sync resolve --json`. */
+export const conflictJson = (c: ConflictEntry): Record<string, unknown> => ({
+  id: c.id,
+  created: c.created,
+  subject: conflictSubject(c),
+  reason: c.reason,
+});
+
+/** Zustand des Syncs wie `sync status --json` (backe.md §2.16.2). */
+export const syncStatusJson = (s: SyncStatus): Record<string, unknown> => ({
+  remote: s.remote ?? null,
+  mode: s.mode,
+  unpushed: s.unpushed,
+  last_attempt: s.state.last_attempt,
+  last_success: s.state.last_success,
+  last_error: s.state.last_error,
+  running: s.running,
+  conflicts: s.conflicts.map(conflictJson),
+});
 
 /** Ergebnis einer Sync-Runde. */
 export const syncJson = (out: SyncOutcome): Record<string, unknown> => ({
