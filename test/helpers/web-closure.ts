@@ -17,6 +17,7 @@ export const WEB_ENTRIES: readonly string[] = [
   'src/core/sync-line.ts',
   'src/i18n/catalog.ts',
   'src/ui/api.ts',
+  'src/tools/limits.ts',
 ];
 
 /** Nackte Imports, die das Web-Bundle mitbringen darf. */

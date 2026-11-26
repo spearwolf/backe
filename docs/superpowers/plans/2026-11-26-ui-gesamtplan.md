@@ -109,7 +109,7 @@ Jeder Meilenstein endet mit grünem `mise run check`, `mise run smoke` und einem
 ### U7 — Writes im Frontend
 
 - **Spec:** UI §2.5 »Optimistische Anzeige«, §2.7 Aktionen, §2.9.1 Bearbeiten und Aktionen, §2.9.2 Editor und paralleles Ändern, §2.9.3 Schreiben, §2.9.4 Hochladen/Entfernen, §2.12.
-- **Inhalt:** `callTool(name, args)` im Client; Feld-Editoren inkl. deklarierter Properties; Editor mit Vorschau und Bild-Upload; Kommentare; Issue anlegen (`c`); Kontextmenü und Zeilen-Drag in Backlog; Ausstehend-Überlagerung mit 5-s-Rückfall auf `/state`; Fehler mit `hint`; Nur-lesen blendet aus.
+- **Inhalt:** `callTool(name, args)` im Client; lokaler Repo-Pfad über `repo_locate` (§2.9.1; `repo_locate` ist ein Tool und verlangt Schreibrecht, ui.md §2.3.2); Feld-Editoren inkl. deklarierter Properties; Editor mit Vorschau und Bild-Upload; Kommentare; Issue anlegen (`c`); Kontextmenü und Zeilen-Drag in Backlog; Ausstehend-Überlagerung mit 5-s-Rückfall auf `/state`; Fehler mit `hint`; Nur-lesen blendet aus.
 - **Produziert:** `callTool`, `Pending`-Overlay im Store, Dialog-Bausteine.
 
 ### U8 — Tab Board

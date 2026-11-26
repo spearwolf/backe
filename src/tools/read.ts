@@ -27,9 +27,9 @@ import {
   sprintShowJson,
 } from '../services/views.ts';
 import { ALL_SURFACES, type ToolDef, tool } from './define.ts';
+import { ATTACHMENT_TEXT_LIMIT } from './limits.ts';
 
-/** Größte Datei, deren Inhalt `attachment_get` als `text` mitliefert. */
-export const ATTACHMENT_TEXT_LIMIT = 262_144;
+export { ATTACHMENT_TEXT_LIMIT };
 
 const strings = z.array(z.string());
 const sortSchema = z.enum(['rank', 'created']);

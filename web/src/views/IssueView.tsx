@@ -2,6 +2,7 @@ import { useCallback, useRef } from 'react';
 import { m as app } from '../app/app.messages.ts';
 import { IssueDetailModel } from '../app/issue-detail.ts';
 import { ErrorAlert } from '../components/ErrorPage.tsx';
+import { Attachments } from '../components/issue/Attachments.tsx';
 import { IssueFields } from '../components/issue/IssueFields.tsx';
 import { IssueRelations } from '../components/issue/IssueRelations.tsx';
 import { Timeline } from '../components/issue/Timeline.tsx';
@@ -19,6 +20,14 @@ function useLast<T>(value: T | undefined): T | undefined {
   const ref = useRef(value);
   if (value !== undefined) ref.current = value;
   return ref.current;
+}
+
+/** Pfad der Working Copy aus dem Kontext des Stores (`context.backlog.root`). */
+function workingCopy(context: Record<string, unknown>): string | undefined {
+  const backlog = context.backlog;
+  if (typeof backlog !== 'object' || backlog === null) return undefined;
+  const root = (backlog as { root?: unknown }).root;
+  return typeof root === 'string' ? root : undefined;
 }
 
 type Props = { backlog: string; id: string; onClose: (id: string) => void };
@@ -45,6 +54,7 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
   const current = useSignal(model.relations);
   const live = useSignal(store.issues.get(id));
   const config = useSignal(store.config);
+  const context = useSignal(store.context);
   const issue = useLast(live);
   const relations = useLast(current);
   const ready = useLast(state.status === 'ready' ? state : undefined);
@@ -97,6 +107,13 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
             <Markdown source={detail.body} backlog={backlog} issue={markdownIssue} />
           </section>
         )}
+        <Attachments
+          attachments={ready?.attachments ?? []}
+          backlog={backlog}
+          id={id}
+          root={workingCopy(context)}
+          issue={markdownIssue}
+        />
         <Timeline comments={detail?.comments ?? []} backlog={backlog} issue={markdownIssue} />
       </div>
     </section>
