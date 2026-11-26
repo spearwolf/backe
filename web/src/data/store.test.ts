@@ -323,4 +323,17 @@ describe('Store', () => {
     store.dispose();
     expect([getSignalsCount(), getEffectsCount(), getLinksCount()]).toEqual(before);
   });
+
+  it('a patch names its changed issues, a load does not', () => {
+    const store = new Store();
+    store.load(state());
+    expect(store.lastChange.value).toBeUndefined();
+    store.applyPatch(patch({ upsert: { issues: [issue(5)] }, remove: { issues: [id(2)] } }));
+    expect(store.lastChange.value).toEqual({ rev: 2, issues: [id(5), id(2)] });
+    store.applyPatch(patch({ rev: 3, upsert: { users: [alice] } }));
+    expect(store.lastChange.value?.rev).toBe(2);
+    store.load(state({ rev: 7 }));
+    expect(store.lastChange.value?.rev).toBe(2);
+    store.dispose();
+  });
 });

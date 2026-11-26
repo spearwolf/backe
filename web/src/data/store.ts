@@ -119,6 +119,14 @@ export class Store {
   readonly config = createSignal<StateJson['config'] | undefined>(undefined, { attach: this });
   readonly problems = createSignal<readonly ProblemJson[]>([], { attach: this });
   readonly sync = createSignal<Record<string, unknown> | null>(null, { attach: this });
+  /**
+   * Issues, die der letzte Patch geändert, angelegt oder entfernt hat; Ansichten heben sie hervor.
+   * `load` setzt es nie: Ein Neuladen ist kein Ereignis, das jemand sehen soll.
+   */
+  readonly lastChange = createSignal<{ rev: number; issues: readonly string[] } | undefined>(
+    undefined,
+    { attach: this },
+  );
   readonly #touches = new Map<string, Signal<number>>();
 
   /**
@@ -198,6 +206,8 @@ export class Store {
         const count = this.#touches.get(id);
         count?.set(count.value + 1);
       }
+      const changed = [...(upsert.issues ?? []).map((i) => i.id), ...(remove.issues ?? [])];
+      if (changed.length > 0) this.lastChange.set({ rev: p.rev, issues: changed });
       this.rev.set(p.rev);
       this.head.set(p.head);
     });

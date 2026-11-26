@@ -1,7 +1,15 @@
 import { createSignal } from '@spearwolf/signalize';
 import { Store } from '../data/store.ts';
 import { testIssue, testPatch, testState, tid } from '../test/state.ts';
-import { BacklogListModel, type ListRow, SEARCH_DEBOUNCE_MS, ViewPrefs } from './backlog-list.ts';
+import {
+  BacklogListModel,
+  FADE_MS,
+  HIGHLIGHT_MS,
+  type ListRow,
+  mergeLeaving,
+  SEARCH_DEBOUNCE_MS,
+  ViewPrefs,
+} from './backlog-list.ts';
 import { DEFAULT_VIEW, EMPTY_FILTER, type ListFilter, type ListView } from './list-filter.ts';
 
 const ids = (rows: readonly ListRow[]) => rows.map((r) => r.issue.id);
@@ -169,4 +177,111 @@ test('view prefs survive a broken storage', () => {
   } finally {
     if (original !== undefined) Object.defineProperty(globalThis, 'localStorage', original);
   }
+});
+
+describe('live marks', () => {
+  const rowsOf = (...ns: number[]): ListRow[] =>
+    ns.map((n) => ({ issue: testIssue(n), depth: 0, openDeps: false }));
+  const live = (rows: readonly ListRow[]) => rows.map((r) => [r.issue.id, r.live]);
+
+  test('mergeLeaving keeps the old neighbour', () => {
+    const out = mergeLeaving(rowsOf(1, 2, 3, 4), rowsOf(1, 4), new Set([tid(2), tid(3)]));
+    expect(live(out)).toEqual([
+      [tid(1), undefined],
+      [tid(2), 'leaving'],
+      [tid(3), 'leaving'],
+      [tid(4), undefined],
+    ]);
+  });
+
+  test('mergeLeaving puts a leading row first', () => {
+    const out = mergeLeaving(rowsOf(1, 2), rowsOf(2), new Set([tid(1)]));
+    expect(live(out)).toEqual([
+      [tid(1), 'leaving'],
+      [tid(2), undefined],
+    ]);
+  });
+
+  test('mergeLeaving without leaving rows is the next list', () => {
+    const next = rowsOf(1);
+    expect(mergeLeaving(rowsOf(1, 2), next, new Set())).toBe(next);
+  });
+
+  test('a changed row is fresh for 1.5 s', () => {
+    const { model, store } = setup();
+    expect(live(model.rows.value)).toEqual([
+      [tid(1), undefined],
+      [tid(2), undefined],
+    ]);
+    store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(2, { title: 'neu' })] } }));
+    expect(live(model.rows.value)).toEqual([
+      [tid(1), undefined],
+      [tid(2), 'fresh'],
+    ]);
+    vi.advanceTimersByTime(HIGHLIGHT_MS - 1);
+    expect(model.rows.value[1]?.live).toBe('fresh');
+    vi.advanceTimersByTime(1);
+    expect(model.rows.value[1]?.live).toBeUndefined();
+    model.dispose();
+  });
+
+  test('a new row is fresh', () => {
+    const { model, store } = setup();
+    store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(9, { rank: 1 })] } }));
+    expect(live(model.rows.value)[0]).toEqual([tid(9), 'fresh']);
+    model.dispose();
+  });
+
+  test('a row leaving through a patch fades', () => {
+    const { model, store } = setup();
+    store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(1, { state: 'done' })] } }));
+    expect(ids(model.selected())).toEqual([tid(2)]);
+    expect(live(model.rows.value)).toEqual([
+      [tid(1), 'leaving'],
+      [tid(2), undefined],
+    ]);
+    vi.advanceTimersByTime(FADE_MS);
+    expect(live(model.rows.value)).toEqual([[tid(2), undefined]]);
+    model.dispose();
+  });
+
+  test('a removed issue fades too', () => {
+    const { model, store } = setup();
+    store.applyPatch(testPatch(2, { remove: { issues: [tid(2)] } }));
+    expect(live(model.rows.value)).toEqual([
+      [tid(1), undefined],
+      [tid(2), 'leaving'],
+    ]);
+    model.dispose();
+  });
+
+  test('a filter change never fades', () => {
+    const { model, filter } = setup();
+    filter.set({ ...EMPTY_FILTER, states: ['all'] });
+    filter.set({ ...EMPTY_FILTER, states: ['done'] });
+    expect(live(model.rows.value)).toEqual([[tid(3), undefined]]);
+    model.dispose();
+  });
+
+  test('a filter change drops rows still fading', () => {
+    const { model, store, filter } = setup();
+    store.applyPatch(testPatch(2, { remove: { issues: [tid(2)] } }));
+    filter.set({ ...EMPTY_FILTER, states: ['todo'] });
+    expect(live(model.rows.value)).toEqual([[tid(1), undefined]]);
+    model.dispose();
+  });
+
+  test('load after reset marks nothing', () => {
+    const { model, store } = setup();
+    store.load(testState([testIssue(1, { title: 'x' })], { rev: 5 }));
+    expect(live(model.rows.value)).toEqual([[tid(1), undefined]]);
+    model.dispose();
+  });
+
+  test('dispose stops pending timers', () => {
+    const { model, store } = setup();
+    store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(1, { state: 'done' })] } }));
+    model.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
