@@ -127,7 +127,9 @@ export function diffTables(
   };
 }
 
-const WATCHED_DIRS = ['issues/', 'projects/', 'sprints/', 'repos/', 'users/', '.backe/'];
+/** Die Verzeichnisse eines Backlogs, deren Inhalt den sichtbaren Stand bestimmt. */
+export const BACKLOG_DIRS = ['issues', 'projects', 'sprints', 'repos', 'users', '.backe'] as const;
+const WATCHED_DIRS = BACKLOG_DIRS.map((d) => `${d}/`);
 
 /**
  * Ob ein Pfad im Arbeitsbaum (relativ, mit `/`) den sichtbaren Stand betreffen kann. Sicherungs-

@@ -26,20 +26,39 @@ export function writeEventHead(res: ServerResponse): void {
  * jedes Ereignis und der Heartbeat. Die Antwort zählt ab hier als strömend (`phase.ts`) und hält
  * das Ende des Servers nicht auf. Ist der Client schon weg — er kann gehen, während der Watcher
  * startet, und sein `close` kommt dann nie wieder —, meldet sich nichts an.
+ *
+ * Kommt der Client mit dem Lesen nicht nach (`write` meldet einen vollen Puffer), hält der Stream
+ * alles Weitere zurück, statt es im Speicher zu stapeln; nach `drain` folgt `reset` statt der
+ * übersprungenen Ereignisse, und der Client lädt `/state` neu. Heartbeats fallen dabei weg.
  */
 export function serveEvents(res: ServerResponse, live: LiveBacklog): void {
   if (res.destroyed || res.req.socket.destroyed) return;
   writeEventHead(res);
+  let congested = false;
+  let skipped = false;
+  const send = (text: string, droppable: boolean) => {
+    if (congested) {
+      if (!droppable) skipped = true;
+      return;
+    }
+    if (!res.write(text)) congested = true;
+  };
+  const onDrain = () => {
+    congested = false;
+    if (!skipped) return;
+    skipped = false;
+    send(sseFrame({ event: 'reset', data: {} }, live.eventId), false);
+  };
+  res.on('drain', onDrain);
   const last = res.req.headers['last-event-id'];
   const off = live.subscribe(
-    (event, id) => {
-      res.write(sseFrame(event, id));
-    },
+    (event, id) => send(sseFrame(event, id), false),
     typeof last === 'string' ? last : undefined,
   );
-  const ping = setInterval(() => res.write(': ping\n\n'), LIVE_TIMING.heartbeatMs);
+  const ping = setInterval(() => send(': ping\n\n', true), LIVE_TIMING.heartbeatMs);
   res.once('close', () => {
     clearInterval(ping);
+    res.off('drain', onDrain);
     off();
   });
   streaming(res);

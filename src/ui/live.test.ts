@@ -307,6 +307,28 @@ test('the safety net catches a lost event', async () => {
   await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
 });
 
+test('the safety net catches a lost hand edit and its revert', async () => {
+  const id = await create('Original');
+  const live = await start({ watch: () => ({ close() {} }) });
+  const c = collect(live);
+  const file = join(b.root, issueFile(id));
+  const original = await readFile(file, 'utf8');
+  await writeFile(file, original.replace('title: Original', 'title: Verloren'));
+  await settle(live);
+  expect(c.patches()).toEqual([]);
+  await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
+  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
+  expect(c.patches()[0]?.upsert.issues?.[0]?.title).toBe('Verloren');
+  await writeFile(file, original);
+  await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
+  await vi.waitFor(() => expect(c.patches()).toHaveLength(2), WAIT);
+  expect(c.patches()[1]?.upsert.issues?.[0]?.title).toBe('Original');
+  // Ohne Änderung findet das Netz nichts.
+  await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
+  await settle(live);
+  expect(c.patches()).toHaveLength(2);
+});
+
 test('sync state changes become sync events', async () => {
   const live = await start();
   const c = collect(live);

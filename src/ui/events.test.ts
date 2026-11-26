@@ -1,4 +1,5 @@
-import { createServer, request } from 'node:http';
+import { EventEmitter } from 'node:events';
+import { createServer, request, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { writeOp } from '../../test/helpers/context.ts';
@@ -181,4 +182,50 @@ test('events of a backlog without working copy are 404', async () => {
 test('events need the session cookie', async () => {
   const res = await rawRequest(ui.port, { path: EVENTS });
   expect([res.status, res.json().error.code]).toEqual([401, 'unauthorized']);
+});
+
+/** Antwort ohne Socket: `write` meldet einen vollen Puffer, solange `full` gilt. */
+class SlowResponse extends EventEmitter {
+  destroyed = false;
+  full = false;
+  frames: string[] = [];
+  req = { socket: { destroyed: false }, headers: {}, method: 'GET' };
+  writeHead() {
+    return this;
+  }
+  write(text: string): boolean {
+    this.frames.push(text);
+    return !this.full;
+  }
+}
+
+test('a client that does not read gets reset instead of a growing buffer', async () => {
+  const live = await LiveBacklog.start(ctx, { boot: '0123abcd', rev: 0 });
+  const res = new SlowResponse();
+  try {
+    serveEvents(res as unknown as ServerResponse, live);
+    const kinds = () => res.frames.map((f) => (f.startsWith(':') ? 'ping' : f.split('\n')[1]));
+    expect(kinds()).toEqual(['event: hello', 'event: sync']);
+    // Ein Heartbeat in den vollen Puffer staut; der nächste fällt weg und verlangt kein reset.
+    res.full = true;
+    await vi.advanceTimersByTimeAsync(LIVE_TIMING.heartbeatMs * 2);
+    expect(kinds()).toEqual(['event: hello', 'event: sync', 'ping']);
+    res.full = false;
+    res.emit('drain');
+    expect(kinds()).toHaveLength(3);
+    // Ein Patch staut, der nächste wird übersprungen; nach drain kommt reset mit dem neuesten Stand.
+    res.full = true;
+    await create('Eins');
+    await vi.waitFor(() => expect(live.rev).toBe(1), WAIT);
+    await create('Zwei');
+    await vi.waitFor(() => expect(live.rev).toBe(2), WAIT);
+    expect(kinds()).toEqual(['event: hello', 'event: sync', 'ping', 'event: patch']);
+    res.full = false;
+    res.emit('drain');
+    expect(res.frames.at(-1)).toBe('id: 0123abcd:2\nevent: reset\ndata: {}\n\n');
+    res.emit('close');
+    expect(live.subscribers()).toBe(0);
+  } finally {
+    await live.stop();
+  }
 });

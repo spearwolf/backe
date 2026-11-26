@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { testBacklog } from '../../test/helpers/git.ts';
 import { git } from '../git/exec.ts';
+import { BACKLOG_DIRS } from './delta.ts';
 import { fsWatch, gitDirs, type WatchFn, watchWorkingCopy } from './watch.ts';
 
 type Recorded = {
@@ -24,7 +25,7 @@ function recorder(): { watch: WatchFn; all: Recorded[]; at(path: string): Record
     };
   };
   const at = (path: string) => {
-    const r = all.find((x) => x.path === path);
+    const r = all.findLast((x) => x.path === path);
     if (r === undefined) throw new Error(`not watched: ${path}`);
     return r;
   };
@@ -51,8 +52,13 @@ test('watches refs, head and packed refs of the common dir', async () => {
   await watchWorkingCopy(b.root, { watch: rec.watch }, s.on);
   expect(rec.at(join(gitDir, 'refs', 'heads')).recursive).toBe(true);
   expect(rec.at(gitDir).recursive).toBe(false);
-  expect(rec.at(b.root).recursive).toBe(true);
-  expect(rec.all).toHaveLength(3);
+  expect(rec.at(b.root).recursive).toBe(false);
+  for (const dir of BACKLOG_DIRS) expect(rec.at(join(b.root, dir)).recursive).toBe(true);
+  expect(rec.all).toHaveLength(3 + BACKLOG_DIRS.length);
+  expect(rec.all.filter((r) => r.recursive).map((r) => r.path)).toEqual([
+    join(gitDir, 'refs', 'heads'),
+    ...BACKLOG_DIRS.map((d) => join(b.root, d)),
+  ]);
   rec.at(join(gitDir, 'refs', 'heads')).fire('main');
   rec.at(gitDir).fire('HEAD.lock');
   rec.at(gitDir).fire('packed-refs');
@@ -83,18 +89,37 @@ test('worktree events are filtered and relative', async () => {
   const rec = recorder();
   const s = signals();
   await watchWorkingCopy(b.root, { watch: rec.watch }, s.on);
-  const tree = rec.at(b.root);
-  tree.fire('issues/t0/bk-t0001/issue.md');
-  tree.fire('.git/index');
-  tree.fire('.git');
-  tree.fire('README.md');
-  tree.fire('projects\\web.md');
-  tree.fire(null);
+  rec.at(join(b.root, 'issues')).fire('t0/bk-t0001/issue.md');
+  rec.at(join(b.root, 'issues')).fire('t0/bk-t0001/.issue.md.swp');
+  rec.at(join(b.root, 'projects')).fire('web\\api.md');
+  rec.at(join(b.root, '.backe')).fire('backlog.jsonc');
+  rec.at(join(b.root, 'users')).fire(null);
   expect(s.log).toEqual([
     'paths:issues/t0/bk-t0001/issue.md',
-    'paths:projects/web.md',
+    'paths:projects/web/api.md',
+    'paths:.backe/backlog.jsonc',
     'paths:all',
   ]);
+});
+
+test('a backlog dir that appears or vanishes is reopened and reported', async () => {
+  const b = await testBacklog();
+  const rec = recorder();
+  const s = signals();
+  await watchWorkingCopy(b.root, { watch: rec.watch }, s.on);
+  const first = rec.at(join(b.root, 'sprints'));
+  rec.at(b.root).fire('README.md');
+  rec.at(b.root).fire('.git');
+  expect(s.log).toEqual([]);
+  rec.at(b.root).fire('sprints');
+  expect(first.closed).toBe(true);
+  const second = rec.at(join(b.root, 'sprints'));
+  expect(second).not.toBe(first);
+  second.fire('2026-w48.md');
+  expect(s.log).toEqual(['paths:sprints', 'paths:sprints/2026-w48.md']);
+  rec.at(b.root).fire(null);
+  expect(second.closed).toBe(true);
+  expect(s.log.at(-1)).toBe('paths:all');
 });
 
 test('sync dir events signal sync, close closes every handle', async () => {
@@ -131,18 +156,29 @@ test('fsWatch rethrows other errors', () => {
   expect(() => fsWatch('\0', { recursive: false }, () => {})).toThrow();
 });
 
-test('a real write in refs/heads reaches the ref signal', async () => {
+test('real writes reach the signals, .git stays quiet', async () => {
   const b = await testBacklog();
   const s = signals();
   const watched = await watchWorkingCopy(b.root, {}, s.on);
   try {
     await git(['update-ref', 'refs/heads/other', 'HEAD'], { cwd: b.root });
-    await mkdir(join(b.root, 'projects'), { recursive: true });
-    await writeFile(join(b.root, 'projects', 'web.md'), '---\ntitle: Web\n---\n');
+    await writeFile(join(b.root, 'users', 'alice.md'), '---\nname: Alice\n---\n');
     await vi.waitFor(() => {
       expect(s.log).toContain('ref');
-      expect(s.log).toContain('paths:projects/web.md');
+      expect(s.log).toContain('paths:users/alice.md');
     });
+    // Ein Backlog-Verzeichnis, das erst jetzt entsteht, meldet sich und wird danach beobachtet.
+    await mkdir(join(b.root, 'projects'));
+    await vi.waitFor(() => expect(s.log).toContain('paths:projects'));
+    await writeFile(join(b.root, 'projects', 'web.md'), '---\ntitle: Web\n---\n');
+    await vi.waitFor(() => expect(s.log).toContain('paths:projects/web.md'));
+    // `.git/` meldet nichts außer Refs.
+    const before = s.log.length;
+    await writeFile(join(b.root, '.git', 'description'), 'x');
+    await writeFile(join(b.root, 'README.md'), 'x');
+    await writeFile(join(b.root, 'users', 'bob.md'), '---\nname: Bob\n---\n');
+    await vi.waitFor(() => expect(s.log).toContain('paths:users/bob.md'));
+    expect(new Set(s.log.slice(before))).toEqual(new Set(['paths:users/bob.md']));
   } finally {
     watched.close();
   }

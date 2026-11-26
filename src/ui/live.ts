@@ -23,6 +23,7 @@ import {
 import { startPeriodicSync } from '../tools/sync.ts';
 import type { PatchJson, ServerEvent } from './api.ts';
 import {
+  BACKLOG_DIRS,
   diffTables,
   type EntityTable,
   entityTable,
@@ -129,6 +130,9 @@ export class LiveBacklog {
   readonly #listeners = new Set<LiveListener>();
   /** Zuletzt gesehene Signatur je Kommentar- oder Anhangspfad; nur eine Änderung ergibt `touched`. */
   readonly #touchSigs = new Map<string, string>();
+  /** Inhalts-Signatur je geänderter Datei im Arbeitsbaum beim letzten Blick des Sicherheitsnetzes. */
+  #dirtySigs = new Map<string, string>();
+  #scanDue = false;
 
   /** Offene Arbeit: Pfade aus dem Arbeitsbaum, vollständiges Neuladen, Ref, Sync-Zustand. */
   readonly #paths = new Set<string>();
@@ -205,12 +209,15 @@ export class LiveBacklog {
         },
       },
     );
-    // Sicherheitsnetz: `fs.watch` kann Ereignisse verlieren; `HEAD` wird regelmäßig verglichen.
+    // Sicherheitsnetz: `fs.watch` kann Ereignisse verlieren. Regelmäßig werden `HEAD` und die im
+    // Arbeitsbaum geänderten Dateien mit dem letzten Blick verglichen.
     this.#safety = setInterval(() => {
       this.#refDirty = true;
+      this.#scanDue = true;
       this.#kick();
     }, LIVE_TIMING.safetyMs);
     this.#head = await resolveCommit(this.#root, 'HEAD');
+    this.#dirtySigs = await this.#dirtyFiles();
     this.#snapshot = await loadSnapshot(this.#root);
     this.#table = entityTable(this.#snapshot);
     const sync = ownCopy ? await syncJson(this.#ctx) : null;
@@ -244,6 +251,11 @@ export class LiveBacklog {
   /** Ob der Watcher beendet ist; ein beendeter liefert keine Patches mehr. */
   get stopped(): boolean {
     return this.#stopped;
+  }
+
+  /** Event-ID des aktuellen Stands, `<boot>:<rev>`. */
+  get eventId(): string {
+    return this.#id();
   }
 
   #id(): string {
@@ -333,7 +345,48 @@ export class LiveBacklog {
     while (this.#running !== undefined) await this.#running;
   }
 
+  /**
+   * Geänderte, neue und gelöschte Dateien der Backlog-Verzeichnisse gegenüber `HEAD` samt
+   * Inhalts-Signatur. `--no-optional-locks`: Der Blick schreibt den Index nicht und kommt so keinem
+   * Write in die Quere.
+   */
+  async #dirtyFiles(): Promise<Map<string, string>> {
+    const { stdout } = await git(
+      [
+        '--no-optional-locks',
+        'status',
+        '--porcelain=v1',
+        '-z',
+        '--untracked-files=all',
+        '--no-renames',
+        '--',
+        ...BACKLOG_DIRS,
+      ],
+      { cwd: this.#root },
+    );
+    const sigs = new Map<string, string>();
+    for (const entry of stdout.split('\0')) {
+      const path = entry.slice(3);
+      if (path === '' || !watchedPath(path)) continue;
+      sigs.set(path, await signature(this.#root, path));
+    }
+    return sigs;
+  }
+
+  /** Was sich im Arbeitsbaum seit dem letzten Blick geändert hat, kommt als Pfad in die Runde. */
+  async #scan(): Promise<void> {
+    const now = await this.#dirtyFiles();
+    for (const [path, sig] of now) if (this.#dirtySigs.get(path) !== sig) this.#paths.add(path);
+    // Nicht mehr geändert heißt: wieder gleich `HEAD`; auch das kann sichtbar sein.
+    for (const path of this.#dirtySigs.keys()) if (!now.has(path)) this.#paths.add(path);
+    this.#dirtySigs = now;
+  }
+
   async #round(): Promise<void> {
+    if (this.#scanDue) {
+      this.#scanDue = false;
+      await this.#scan();
+    }
     const tree = this.#refDirty || this.#treeReady;
     this.#refDirty = false;
     this.#treeReady = false;

@@ -7,7 +7,7 @@
 import { watch } from 'node:fs';
 import { join } from 'node:path';
 import { git } from '../git/exec.ts';
-import { watchedPath } from './delta.ts';
+import { BACKLOG_DIRS, watchedPath } from './delta.ts';
 
 /** Beobachtet `path`; `filename` ist relativ zu `path` oder `null`, wenn das System keinen nennt. */
 export type WatchFn = (
@@ -62,8 +62,12 @@ const slashed = (name: string): string => name.replaceAll('\\', '/');
 
 /**
  * Beobachtet `root`: `refs/heads/` (rekursiv) und `packed-refs` unter dem Common-Dir, `HEAD` unter
- * dem Git-Dir, den Arbeitsbaum ohne `.git/` (gefiltert per `watchedPath`) und, falls angegeben,
- * `syncDir` (`sync.json`, `conflicts/`). `close` schließt alle Handles.
+ * dem Git-Dir, die Backlog-Verzeichnisse (`BACKLOG_DIRS`, je rekursiv, gefiltert per `watchedPath`)
+ * und, falls angegeben, `syncDir` (`sync.json`, `conflicts/`). `.git/` und alles andere im
+ * Arbeitsbaum bleiben unbeobachtet; ein rekursiver Watch auf die Wurzel legte unter Linux auch
+ * auf jedes Verzeichnis unter `.git/objects/` einen inotify-Watch. Die Wurzel selbst wird nur
+ * flach beobachtet: Entsteht oder verschwindet ein Backlog-Verzeichnis, wird sein Watch neu
+ * geöffnet und das Verzeichnis als geänderter Pfad gemeldet. `close` schließt alle Handles.
  */
 export async function watchWorkingCopy(
   root: string,
@@ -88,15 +92,39 @@ export async function watchWorkingCopy(
         }),
       );
     }
+    const dirHandles = new Map<string, { close(): void }>();
+    const openDir = (dir: string) => {
+      dirHandles.get(dir)?.close();
+      dirHandles.set(
+        dir,
+        w(join(root, dir), { recursive: true }, (name) => {
+          if (name === null) {
+            on.paths('all');
+            return;
+          }
+          const path = `${dir}/${slashed(name)}`;
+          if (watchedPath(path)) on.paths([path]);
+        }),
+      );
+    };
+    add({
+      close() {
+        for (const h of dirHandles.values()) h.close();
+        dirHandles.clear();
+      },
+    });
+    for (const dir of BACKLOG_DIRS) openDir(dir);
+    const backlogDirs = new Set<string>(BACKLOG_DIRS);
     add(
-      w(root, { recursive: true }, (name) => {
+      w(root, { recursive: false }, (name) => {
         if (name === null) {
+          for (const dir of BACKLOG_DIRS) openDir(dir);
           on.paths('all');
           return;
         }
-        const path = slashed(name);
-        if (path === '.git' || path.startsWith('.git/')) return;
-        if (watchedPath(path)) on.paths([path]);
+        if (!backlogDirs.has(name)) return;
+        openDir(name);
+        on.paths([name]);
       }),
     );
     if (opts.syncDir !== undefined) {

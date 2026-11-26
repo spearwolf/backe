@@ -35,6 +35,9 @@ Alle Global Constraints des Gesamtplans und des U1-Plans. Dazu für U2:
 | Arbeitsbaum-Pfade | gefiltert auf `issues/`, `projects/`, `sprints/`, `repos/`, `users/`, `.backe/` (und nie `.git/`). Temp-Dateien von `writeFileAtomic` (`isAtomicTemp`) und Editor-Dateien zählen nicht. Ein Ereignis ohne Dateinamen, ein Pfad ohne `.md`-Endung außerhalb von `comments/`/`attachments/` oder eine Änderung an `.backe/backlog.jsonc` erzwingt ein vollständiges Neuladen (`loadSnapshot`); sonst `snapshotAt` mit den Pfaden plus `orphanedProjectPaths`. |
 | `touched` | Issue-IDs aus Pfaden `issues/<shard>/<id>/comments[/…]` und `…/attachments[/…]`, deren Inhalt sich seit dem letzten Blick geändert hat (Hash), dazu Issues mit geändertem Body; sortiert. |
 | Sync-Ereignis | nach jeder Änderung unter `stateDir` (entprellt 150 ms) und nach jeder Bewegung von `HEAD` (`unpushed`): `syncStatusJson(syncStatus(ctx))`, gesendet nur, wenn es sich vom zuletzt gesendeten unterscheidet. |
+| Beobachtete Verzeichnisse | Je ein rekursiver Watch auf die Backlog-Verzeichnisse (`BACKLOG_DIRS`), die Wurzel flach; nie `.git/` rekursiv. |
+| Sicherheitsnetz | Alle 10 s `HEAD` und `git --no-optional-locks status` über `BACKLOG_DIRS`, geänderte Dateien per Inhalts-Hash gegen den letzten Blick. |
+| Langsamer Client | Meldet `res.write` einen vollen Puffer, hält der Stream Ereignisse zurück; nach `drain` folgt `reset`. Kein Abbruch der Verbindung: ein großes Replay führte sonst in eine Schleife aus Abbruch und Wiederverbinden. |
 | Periodischer Sync | `startPeriodicSync(ctx, deps.sync)` beim Start eines `LiveBacklog`, Abbau mit seinem Ende. |
 | Ende des Servers | `close()` baut alle `LiveBacklog`s ab (Watcher, Timer) und beendet die Event-Streams; ein Event-Stream meldet sich per `streaming(res)` und hält das Ende nicht auf. |
 
