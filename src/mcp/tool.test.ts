@@ -33,6 +33,7 @@ async function harness(define: (server: McpServer, env: ToolEnv) => void) {
     context: () => b.context(),
     cwd: b.root,
     allowDelete: false,
+    surface: 'mcp',
     deps: { sync: SYNC },
     queue: writeQueue(),
     pending: pendingStarts(),
@@ -193,6 +194,7 @@ test('runTool plans the read sync like a registered tool', async () => {
     context: () => b.context(),
     cwd: b.root,
     allowDelete: false,
+    surface: 'mcp',
     deps: { sync: SYNC },
     queue: writeQueue(),
     pending: pendingStarts(),
@@ -342,6 +344,7 @@ test('a context that fails to resolve becomes an error result', async () => {
     context: () => Promise.reject(new BackeError('not_found', 'Backlog »x« nicht gefunden')),
     cwd: b.root,
     allowDelete: false,
+    surface: 'mcp',
     queue: writeQueue(),
     pending: pendingStarts(),
   };

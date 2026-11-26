@@ -26,7 +26,8 @@ import {
   resumeIssue,
 } from '../services/issues.ts';
 import { batchJson, outcomeJson } from '../services/views.ts';
-import { ALL_SURFACES, type ToolDef, tool } from './define.ts';
+import { ALL_SURFACES, type ToolDef, type ToolSurface, tool } from './define.ts';
+import { m } from './tools.messages.ts';
 
 const strings = z.array(z.string());
 
@@ -41,13 +42,13 @@ export function propsArgs(
   const out = { props: [] as string[], unset: [] as string[] };
   for (const [key, value] of Object.entries(props)) {
     if (!PROP_KEY_RE.test(key)) {
-      throw new BackeError('validation', `Invalid property key '${key}'`, {
-        hint: 'use lowercase letters, digits, _ . -, starting with a letter',
+      throw new BackeError('validation', m.invalidPropKey(key), {
+        hint: m.invalidPropKeyHint,
       });
     }
     if (value === null) {
       if (!allowNull) {
-        throw new BackeError('validation', `Property '${key}': null only works in issue_update`);
+        throw new BackeError('validation', m.nullOnlyInUpdate(key));
       }
       out.unset.push(key);
     } else {
@@ -73,16 +74,16 @@ function rankPosition(a: RankArgs): RankPositionInput {
   if (a.after !== undefined) given.push({ after: a.after });
   if (a.value !== undefined) {
     if (!Number.isInteger(a.value)) {
-      throw new BackeError('validation', `Invalid rank: '${a.value}'`, {
-        hint: 'expects an integer',
+      throw new BackeError('validation', m.invalidRank(a.value), {
+        hint: m.invalidRankHint,
       });
     }
     given.push({ value: a.value });
   }
   const [only] = given;
   if (given.length !== 1 || only === undefined) {
-    throw new BackeError('usage', 'Give exactly one position', {
-      hint: 'top, bottom, before, after or value',
+    throw new BackeError('usage', m.exactlyOnePosition, {
+      hint: m.exactlyOnePositionHint,
     });
   }
   return only;
@@ -108,11 +109,11 @@ async function attachSource(
 ): Promise<AttachmentSource> {
   const given = [a.path, a.url, a.json, a.text].filter((v) => v !== undefined).length;
   if (given !== 1) {
-    throw new BackeError('usage', 'Give exactly one of path, url, json, text');
+    throw new BackeError('usage', m.exactlyOneSource);
   }
   if (cwd === undefined && a.path !== undefined) {
-    throw new BackeError('validation', "Parameter 'path' is not available here", {
-      hint: 'pass the content via text or json',
+    throw new BackeError('validation', m.pathNotAvailable, {
+      hint: m.pathNotAvailableHint,
     });
   }
   return loadAttachmentSource(a, {
@@ -148,13 +149,14 @@ const BATCH_OPS: ReadonlySet<string> = new Set([
 export function rejectBatchOps(
   ops: readonly Record<string, unknown>[],
   allowDelete: boolean,
+  surface: ToolSurface,
 ): void {
   ops.forEach((o, i) => {
     const op = o.op;
     if (typeof op !== 'string') return;
     if (BATCH_OPS.has(op) || (allowDelete && op === 'issue.delete')) return;
     const line = i + 1;
-    throw new BackeError('validation', `line ${line}: '${op}' is not available in MCP mode`, {
+    throw new BackeError('validation', m.opNotAvailable(line, op, surface), {
       details: { line },
     });
   });
@@ -356,9 +358,9 @@ export const WRITE_TOOLS: readonly ToolDef[] = [
     surfaces: ALL_SURFACES,
     run: async (ctx, a, env) => {
       if (a.ops.length === 0) {
-        throw new BackeError('usage', 'batch needs at least one operation');
+        throw new BackeError('usage', m.batchEmpty);
       }
-      rejectBatchOps(a.ops, env.allowDelete);
+      rejectBatchOps(a.ops, env.allowDelete, env.surface);
       const text = a.ops.map((o) => JSON.stringify(o)).join('\n');
       return batchJson(await runBatch(ctx, text, env.deps?.write));
     },

@@ -8,6 +8,7 @@ import { scheduleSync } from '../services/background.ts';
 import type { ClaimDeps } from '../services/claim.ts';
 import type { SyncDeps } from '../services/sync.ts';
 import type { WriteDeps } from '../services/write.ts';
+import type { ToolSurface } from './define.ts';
 
 /**
  * `read`: Frische vorher wie bei einem lesenden Befehl. `write`: lokaler Write über die
@@ -39,6 +40,8 @@ export type ToolEnv = {
   context(): Promise<ResolvedContext>;
   cwd?: string;
   allowDelete: boolean;
+  /** Die Tür, durch die der Adapter Tools anbietet; Meldungen nennen sie beim Namen. */
+  surface: ToolSurface;
   deps?: ToolDeps;
   queue: WriteQueue;
   pending: Pending;

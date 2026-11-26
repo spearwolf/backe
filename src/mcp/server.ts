@@ -65,6 +65,7 @@ export async function createBackeMcp(opts: McpOptions, start: ResolvedContext): 
     context: () => resolve(opts),
     cwd: opts.cwd,
     allowDelete: opts.allowDelete,
+    surface: 'mcp',
     ...(opts.deps === undefined ? {} : { deps: opts.deps }),
     queue: writeQueue(),
     pending: pendingStarts(),
