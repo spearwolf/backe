@@ -1,6 +1,6 @@
 # backe ui — lokale Web-Oberfläche für ein Backlog
 
-> **Status: in Umsetzung.** Gebaut: Befehl `backe ui`, Sitzung und Sicherheits-Header, lesende API ohne `events`, statische Auslieferung (§2.1 ohne das Warten der Write-Warteschlange, §2.3.1, §2.3.3, §2.15 ohne Uploads, §2.16 »Server«). Offen: alles ab §2.3.2 und §2.4. Die Empfehlungen in §4.1 gelten, solange keine Zeile dort anders entschieden ist. Wünsche an BK in §4.2.
+> **Status: in Umsetzung.** Gebaut: Befehl `backe ui`, Sitzung und Sicherheits-Header, lesende API, statische Auslieferung, Live-Updates ohne Nachbarn (§2.1 ohne das Warten der Write-Warteschlange, §2.3.1, §2.3.3, §2.4 ohne §2.4.1 Punkt 3, §2.15 ohne Uploads, §2.16 »Server«). Offen: §2.3.2, §2.4.1 Punkt 3 und alles ab §2.5. Die Empfehlungen in §4.1 gelten, solange keine Zeile dort anders entschieden ist. Wünsche an BK in §4.2.
 > Bezug: Adapter über den Service-Layer von BK (`backe.md`), vor allem BK §2.14 (Kontext), §2.16 (Schreibpfad und Sync), §2.18 (Ausgabe), §2.19 (MCP als Vorbild des Adapters), §2.22–§2.24 (Abhängigkeiten, Sub-Issues, Properties).
 > Skizzen: [`layout-tabs.png`](../assets/layout-tabs.png), [`backlog.png`](../assets/backlog.png), [`board.png`](../assets/board.png), [`issue-details.png`](../assets/issue-details.png), [`settings.png`](../assets/settings.png).
 
@@ -118,20 +118,20 @@ Fehler kommen als `{"error":{code, message, hint?, details?}}` wie im CLI (BK §
 
 Für jedes Backlog, das mindestens ein Browser-Tab abonniert hat, beobachtet der Server die eigene Arbeitskopie der Identität. Der Watcher endet 30 s nach dem letzten Abonnenten.
 
-1. **Ref der eigenen Arbeitskopie.** Jeder Weg, der den Stand ändert — Write aus CLI, MCP oder UI, Fast-Forward oder Replay des Sync, ein manuelles `git` —, bewegt den Ref von `sync.branch`. Der Server beobachtet per `fs.watch` die Verzeichnisse unter `<gitdir>/refs/heads/` sowie `<gitdir>/packed-refs` und `<gitdir>/HEAD`; ein Ereignis löst `git rev-parse HEAD` aus. Git schreibt Refs über Lock-Datei und Umbenennen, deshalb werden Verzeichnisse beobachtet, nicht die Ref-Datei.
-2. **Arbeitsbaum.** Hand-Edits vor `backe commit` liest auch das CLI (BK §2.3); die UI zeigt denselben Stand. Ein rekursiver `fs.watch` auf die Arbeitskopie (ohne `.git/`) sammelt geänderte Pfade unter `issues/`, `projects/`, `sprints/`, `repos/`, `users/` und `.backe/`, entprellt über 150 ms.
+1. **Ref der eigenen Arbeitskopie.** Jeder Weg, der den Stand ändert — Write aus CLI, MCP oder UI, Fast-Forward oder Replay des Sync, ein manuelles `git` —, bewegt den Ref von `sync.branch`. Beobachtet wird die Arbeitskopie, aus der auch `/state` liest. Der Server beobachtet per `fs.watch` die Verzeichnisse unter `refs/heads/` und `packed-refs` im gemeinsamen Git-Dir sowie `HEAD` im Git-Dir der Arbeitskopie (bei einem Worktree verschieden); ein Ereignis löst `git rev-parse HEAD` aus, ohne Entprellung — Ereignisse während einer laufenden Runde fassen sich zu genau einer weiteren zusammen. Git schreibt Refs über Lock-Datei und Umbenennen, deshalb werden Verzeichnisse beobachtet, nicht die Ref-Datei.
+2. **Arbeitsbaum.** Hand-Edits vor `backe commit` liest auch das CLI (BK §2.3); die UI zeigt denselben Stand. Ein rekursiver `fs.watch` auf die Arbeitskopie (ohne `.git/`) sammelt geänderte Pfade unter `issues/`, `projects/`, `sprints/`, `repos/`, `users/` und `.backe/`, entprellt über 150 ms. Sicherungs- und Swap-Dateien von Editoren (die Muster aus BK §2.13, »Editor- und Systemdateien«) zählen nicht.
 3. **Nachbarn auf derselben Maschine.** Andere Identitäten — etwa Agents — schreiben in ihre eigenen Arbeitskopien (BK §2.16.1), nicht in die der UI. Ihr Stand kommt erst über einen Sync an. Damit das sofort passiert, beobachtet der Server die Branch-Refs des lokalen Hubs (`hub.git`, BK §2.16.1) und die Remote-Tracking-Refs (`refs/remotes/<sync.remote>/<sync.branch>`) der anderen Arbeitskopien desselben Backlogs unter `<BACKE_HOME>/backlogs/<backlog>/`. Bewegt sich einer, hat ein Nachbar erfolgreich gepusht; der Server startet dann eine Hintergrund-Sync-Runde der eigenen Arbeitskopie (BK §2.16.2), entprellt über 250 ms. Nur bei `sync.mode: auto`.
 4. **Entfernte Änderungen** auf einem echten Remote lassen sich nicht beobachten. Der Server synchronisiert im Takt von `pull_interval` wie der MCP-Server (BK §2.19, »Hintergrund-Sync«).
 5. **Sicherheitsnetz:** `fs.watch` kann Ereignisse verlieren (Netzlaufwerke, Überlauf). Alle 10 s vergleicht der Server `HEAD` mit dem zuletzt gesehenen Stand.
 
-Sync-Zustand und Konflikte (`sync.json`, `conflicts/` unter `.git/backe/`) werden ebenso beobachtet und als Ereignis `sync` gemeldet.
+Sync-Zustand und Konflikte (`sync.json`, `conflicts/` unter `.git/backe/`) werden ebenso beobachtet, entprellt über 150 ms, und nach jeder Bewegung von `HEAD` neu gelesen (`unpushed`); ändert sich das JSON von `sync status`, geht es als Ereignis `sync` hinaus. Ohne eigene Arbeitskopie gibt es weder Sync-Ereignisse noch periodischen Sync.
 
 #### 2.4.2 Delta
 
 Der Server hält je beobachtetem Backlog den zuletzt ausgelieferten Snapshot (BK, `loadSnapshot`). Bei einer Änderung:
 
 1. Geänderte Pfade bestimmen: `git diff --name-only -z <alt> <neu>` bei bewegtem `HEAD`, dazu die Pfade aus dem Arbeitsbaum-Watcher.
-2. Nur diese Pfade neu laden und den Snapshot fortschreiben (`snapshotAt`, samt den Pfaden aus `orphanedProjectPaths`).
+2. Nur diese Pfade aus dem Arbeitsbaum neu laden und den Snapshot fortschreiben (`snapshotAt`, samt den Pfaden aus `orphanedProjectPaths`). Vollständig neu geladen wird bei einer Änderung an `.backe/backlog.jsonc` (die `snapshotAt` nicht liest), bei einem Pfad, der keine einzelne Entitätsdatei ist (etwa ein gelöschtes Verzeichnis), und wenn das System zu einem Ereignis keinen Pfad nennt. Scheitert das Laden (kaputte Config), bleibt der letzte Stand stehen, und die nächste Runde lädt vollständig.
 3. Je Entitätsart vergleichen: neu oder geändert → `upsert`, verschwunden → `remove`. Pfade unter `comments/` und `attachments/` eines Issues ergeben einen Eintrag in `touched`.
 4. Ein Patch mit fortlaufender Nummer `rev` geht an alle Abonnenten des Backlogs. Ändert sich nichts Sichtbares, entsteht kein Patch.
 
@@ -148,7 +148,10 @@ Abgeleitete Werte (`dependents`, `children`, offene Abhängigkeiten, Bereitschaf
 | `sync` | JSON von `sync status` |
 | `reset` | `{}` — der Client lädt `/state` neu |
 
-- Jedes Ereignis trägt `id: <boot>:<rev>`; `boot` sind 8 Hex-Zeichen Zufall je Serverprozess, `rev` zählt je Backlog ab 0. Der Server hält die letzten 200 Patches. Verbindet sich ein Client mit `Last-Event-ID` neu, bekommt er die verpassten Patches; liegt `rev` außerhalb des Puffers oder stammt die ID aus einem früheren Serverprozess (anderes `boot`), bekommt er `reset`.
+- Jedes Ereignis trägt `id: <boot>:<rev>`; `boot` sind 8 Hex-Zeichen Zufall je Serverprozess, `rev` zählt je Backlog ab 0. Nur `patch` erhöht `rev`; `hello`, `sync` und `reset` tragen den aktuellen. Der Server hält die letzten 200 Patches. Verbindet sich ein Client mit `Last-Event-ID` neu, bekommt er die verpassten Patches; liegt `rev` außerhalb des Puffers oder stammt die ID aus einem früheren Serverprozess (anderes `boot`), bekommt er `reset`, ebenso bei einer ungültigen ID.
+- **Reihenfolge beim Verbinden:** zuerst `hello`, dann die verpassten Patches oder `reset`, dann `sync` mit dem aktuellen Zustand, falls es eine eigene Arbeitskopie gibt.
+- **Client-Protokoll:** Der Client verbindet zuerst den Event-Stream und lädt `/state` nach `hello`. `/state.rev` ist der `rev` des Watchers, gelesen vor dem Laden des Zustands; der Zustand ist damit mindestens so neu wie `rev`, und Patches mit `rev` ≤ `state.rev` verwirft der Client. Ohne laufenden Watcher ist `rev` der zuletzt erreichte, sonst 0.
+- **Neustart des Watchers:** Endet ein Watcher (30 s nach dem letzten Abonnenten) und startet derselbe Serverprozess später einen neuen, beginnt dieser mit dem `rev` nach dem letzten und leerem Puffer. Eine ältere `Last-Event-ID` ergibt so `reset`, nie fremde Patches.
 - Alle 15 s ein Kommentar-Heartbeat (`: ping`), damit die Verbindung nicht stillschweigend abreißt.
 
 ### 2.5 Client-Zustand und Reactivity
