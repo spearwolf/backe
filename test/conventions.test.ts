@@ -4,6 +4,7 @@ import { CATALOG_TEXTS } from '../src/i18n/catalog.ts';
 import { findGermanLiterals, germanVocabulary } from './helpers/german-literals.ts';
 import {
   allImports,
+  dynamicImports,
   runtimeImports,
   WEB_ENTRIES,
   webClosure,
@@ -336,17 +337,23 @@ async function webSources(dir: string): Promise<string[]> {
 }
 
 /**
- * Verstöße einer Datei unter `web/src/`: ein Laufzeit-Import per `@backe/…` außerhalb der reinen
- * Hülle (Schlüssel wie `src/core/ids.ts`) und jeder `node:`-Import, auch als Typ.
+ * Verstöße einer Datei unter `web/src/` (`rel` relativ zum Repo): ein Laufzeit-Import per
+ * `@backe/…` außerhalb der reinen Hülle (Schlüssel wie `src/core/ids.ts`), statisch oder
+ * dynamisch; jeder `node:`-Import, auch als Typ; jeder relative Import, der aus `web/src/`
+ * hinausführt, auch als Typ: `src/` erreicht der Client nur über `@backe/…`, sonst sähe die
+ * Hüllenprüfung den Import nicht.
  */
 function webSourceOffenses(rel: string, text: string, closure: ReadonlySet<string>): string[] {
-  const outside = runtimeImports(text)
-    .filter((s) => s.startsWith('@backe/') && !closure.has(`src/${s.slice('@backe/'.length)}`))
-    .map((s) => `${rel}: import ${s}`);
-  const node = allImports(text)
-    .filter((s) => s.startsWith('node:'))
-    .map((s) => `${rel}: import ${s}`);
-  return [...outside, ...node];
+  const dynamic = dynamicImports(text);
+  const everything = [...allImports(text), ...dynamic];
+  const outsideClosure = (s: string) =>
+    s.startsWith('@backe/') && !closure.has(`src/${s.slice('@backe/'.length)}`);
+  const leavesWebSrc = (s: string) =>
+    s.startsWith('.') && !posix.join(posix.dirname(rel), s).startsWith('web/src/');
+  return [
+    ...[...runtimeImports(text), ...dynamic].filter(outsideClosure),
+    ...everything.filter((s) => s.startsWith('node:') || leavesWebSrc(s)),
+  ].map((s) => `${rel}: import ${s}`);
 }
 
 test('web sources import only the pure closure from src', async () => {
@@ -358,6 +365,20 @@ test('web sources import only the pure closure from src', async () => {
   expect(flagged("import type { Ctx } from '@backe/services/read.ts';")).toEqual([]);
   expect(flagged("import { catalog } from '@backe/i18n/catalog.ts';")).toEqual([]);
   expect(flagged("import { cn } from '@/lib/utils';")).toEqual([]);
+  // `src/` nur per Alias: ein relativer Weg dorthin umginge die Hüllenprüfung, auch als Typ.
+  expect(flagged("import { openSnapshot } from '../../src/services/read.ts';")).toHaveLength(1);
+  expect(flagged("import type { IssueId } from '../../src/core/ids.ts';")).toHaveLength(1);
+  const nested = (text: string) => webSourceOffenses('web/src/lib/y.ts', text, closure);
+  expect(nested("import { a } from './a.ts';")).toEqual([]);
+  expect(nested("import { b } from '../data/b.ts';")).toEqual([]);
+  expect(nested("import { c } from '../../public/c.ts';")).toHaveLength(1);
+  // dynamische Importe zählen wie statische
+  expect(flagged("const m = await import('@backe/services/read.ts');")).toHaveLength(1);
+  expect(flagged('const m = await import(`@backe/services/read.ts`);')).toHaveLength(1);
+  expect(flagged("const fs = await import('node:fs');")).toHaveLength(1);
+  expect(flagged("const r = await import('../../src/core/ids.ts');")).toHaveLength(1);
+  expect(flagged("const ids = await import('@backe/core/ids.ts');")).toEqual([]);
+  expect(flagged("// import('node:fs') im Kommentar")).toEqual([]);
 
   const files = await webSources(WEB_SRC);
   expect(files.length).toBeGreaterThan(0);

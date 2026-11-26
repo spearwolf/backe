@@ -46,6 +46,19 @@ export function runtimeImports(text: string): string[] {
   return found;
 }
 
+/** Dynamisches `import('…')` mit festem Modulnamen; Gruppe 2 ist der Modulname. */
+const DYNAMIC_IMPORT_RE = /\bimport\s*\(\s*(['"`])([^'"`]+)\1/g;
+
+/**
+ * Modulnamen dynamischer Importe außerhalb von Kommentaren. `IMPORT_RE` sieht nur statische
+ * Importe; ein `import('…')` zur Laufzeit liefe sonst an jeder Prüfung vorbei.
+ */
+export function dynamicImports(text: string): string[] {
+  return [...stripComments(text).matchAll(DYNAMIC_IMPORT_RE)].flatMap((m) =>
+    m[2] === undefined ? [] : [m[2]],
+  );
+}
+
 /** Entfernt Block- und Zeilenkommentare, damit Doku-Kommentare nicht zählen. */
 function stripComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '$1');
