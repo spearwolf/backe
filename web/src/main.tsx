@@ -1,12 +1,5 @@
-import { StrictMode } from 'react';
-import { createRoot } from 'react-dom/client';
+import { bootstrap } from './app/bootstrap.tsx';
 import './styles.css';
 
-const root = document.getElementById('root');
-if (root !== null) {
-  createRoot(root).render(
-    <StrictMode>
-      <div>backe</div>
-    </StrictMode>,
-  );
-}
+// biome-ignore lint/style/noNonNullAssertion: `index.html` liefert #root immer mit
+void bootstrap(document.getElementById('root')!);
