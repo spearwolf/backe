@@ -9,7 +9,8 @@ import { useLinkClick } from '../app/router.ts';
 import { routeHref } from '../app/routes.ts';
 import { useStore } from '../data/store-context.tsx';
 import { useSignal } from '../data/use-signal.ts';
-import { remarkIssueLinks } from './issue-links.ts';
+import { rehypeIssueLinks } from './issue-links.ts';
+import { rehypeStripSrcset } from './strip-srcset.ts';
 import { issueUrlTransform } from './url-transform.ts';
 import './markdown.css';
 
@@ -57,6 +58,8 @@ function Code({ node: _node, ...rest }: ComponentProps<'code'> & { node?: unknow
 
 const components: Components = { a: Anchor, code: Code };
 
+const remarkPlugins = [remarkGfm, remarkGemoji];
+
 export default function Markdown({ source, backlog, issue, className }: MarkdownProps) {
   const store = useStore();
   const config = useSignal(store.config);
@@ -65,12 +68,16 @@ export default function Markdown({ source, backlog, issue, className }: Markdown
   const attachments = issue?.attachments;
   const issueId = issue?.id;
 
-  const remarkPlugins = useMemo((): NonNullable<Options['remarkPlugins']> => {
+  const rehypePlugins = useMemo((): NonNullable<Options['rehypePlugins']> => {
     const known = new Set(keys);
-    const plugins: NonNullable<Options['remarkPlugins']> = [remarkGfm, remarkGemoji];
+    const plugins: NonNullable<Options['rehypePlugins']> = [
+      rehypeRaw,
+      [rehypeSanitize, defaultSchema],
+      rehypeStripSrcset,
+    ];
     if (prefix !== undefined) {
       plugins.push([
-        remarkIssueLinks,
+        rehypeIssueLinks,
         {
           prefix,
           exists: (id: string) => known.has(id),
@@ -97,7 +104,7 @@ export default function Markdown({ source, backlog, issue, className }: Markdown
     <div className={`markdown ${className ?? ''}`.trim()}>
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, defaultSchema]]}
+        rehypePlugins={rehypePlugins}
         urlTransform={urlTransform}
         components={components}
       >

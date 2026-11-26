@@ -124,11 +124,14 @@ test('only own attachment files resolve', () => {
       '![5](//evil.example/x.png)',
       '![6](attachments/%2e%2e/a.png)',
       '<img src="attachments/../a.png">',
+      '<picture><source srcset="../../api/b/other/issues/x/attachments/y 1x, /api/evil 2x"><img src="attachments/nope.png"></picture>',
+      '<img src="attachments/nope.png" srcset="/api/evil 2x">',
     ].join('\n\n'),
     { attachments },
   );
   const withSrc = [...container.querySelectorAll('img')].filter((i) => i.hasAttribute('src'));
   expect(withSrc).toEqual([]);
+  expect(container.querySelectorAll('[srcset]')).toHaveLength(0);
 });
 
 test('relative paths fall away without issue context', () => {
@@ -149,4 +152,12 @@ test('the lazy entry renders the markdown after loading', async () => {
   const { container } = setup('**fett**', { lazy: true });
   expect(await screen.findByText('fett')).toBeDefined();
   expect(container.querySelector('strong')).not.toBeNull();
+});
+
+test('raw html code and links keep their text and gain no issue link', () => {
+  const { container } = setup(`a <code>${ID}</code> <a href="https://x.test">${ID}</a>`);
+  expect(container.querySelector('code')?.textContent).toBe(ID);
+  const anchors = [...container.querySelectorAll('a')];
+  expect(anchors.map((a) => a.getAttribute('href'))).toEqual(['https://x.test']);
+  expect(anchors[0]?.textContent).toBe(ID);
 });
