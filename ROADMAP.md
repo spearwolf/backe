@@ -13,7 +13,7 @@ sonst.
 Umsetzung nach UI §6, Status im Kopf von `docs/proposals/ui.md`.
 
 - [x] Vorlauf in BK: reine Modul-Hülle, Tool-Katalog `src/tools/` (UI §2.2, §3.3, §4.2)
-- [ ] Server-Gerüst (UI §6 Schritt 1)
+- [x] Server-Gerüst (UI §6 Schritt 1)
 - [ ] Live-Kern (UI §6 Schritt 2)
 - [ ] Server-Writes (UI §2.3.2, §6 Schritt 6)
 - [ ] Frontend-Gerüst (UI §6 Schritt 3)

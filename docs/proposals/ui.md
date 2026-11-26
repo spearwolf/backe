@@ -1,6 +1,6 @@
 # backe ui — lokale Web-Oberfläche für ein Backlog
 
-> **Status: spezifiziert.** Nicht umgesetzt; die Empfehlungen in §4.1 gelten, solange keine Zeile dort anders entschieden ist. Wünsche an BK in §4.2.
+> **Status: in Umsetzung.** Gebaut: Befehl `backe ui`, Sitzung und Sicherheits-Header, lesende API ohne `events`, statische Auslieferung (§2.1 ohne das Warten der Write-Warteschlange, §2.3.1, §2.3.3, §2.15 ohne Uploads, §2.16 »Server«). Offen: alles ab §2.3.2 und §2.4. Die Empfehlungen in §4.1 gelten, solange keine Zeile dort anders entschieden ist. Wünsche an BK in §4.2.
 > Bezug: Adapter über den Service-Layer von BK (`backe.md`), vor allem BK §2.14 (Kontext), §2.16 (Schreibpfad und Sync), §2.18 (Ausgabe), §2.19 (MCP als Vorbild des Adapters), §2.22–§2.24 (Abhängigkeiten, Sub-Issues, Properties).
 > Skizzen: [`layout-tabs.png`](../assets/layout-tabs.png), [`backlog.png`](../assets/backlog.png), [`board.png`](../assets/board.png), [`issue-details.png`](../assets/issue-details.png), [`settings.png`](../assets/settings.png).
 
@@ -51,10 +51,10 @@ Es gibt keine UI. Gelesen und geschrieben wird über das CLI und den MCP-Modus. 
 backe ui [-p | --port <n>] [--open]          globale Optionen -B/--backlog und --as wie bei mcp
 ```
 
-- **Port:** Default `8002`. `--port 0` wählt einen freien Port. Belegter Port → `Error: Port 8002 is in use`, Hinweis `backe ui --port <n>`, Exit-Code 6.
+- **Port:** Default `8002`. `--port` nimmt 0–65535; `--port 0` wählt einen freien Port. Belegter Port → `Error: Port 8002 is in use`, Hinweis `backe ui --port <n>`, Exit-Code 6.
 - **Adresse:** immer `127.0.0.1`, keine Option dafür (§2.15).
-- **Start-Ausgabe** auf stdout, eine Zeile: `backe ui: http://127.0.0.1:8002/?token=<token>`. Die URL trägt das Sitzungs-Token (§2.15). `--open` öffnet sie zusätzlich im Standardbrowser (`xdg-open` bzw. `open`); scheitert das, ist es ein Hinweis, kein Fehler.
-- **Start-Backlog:** aus dem Kontext (BK §2.14), ausgehend von Arbeitsverzeichnis, Env und globalen Optionen. Löst sich kein Backlog auf, startet die UI trotzdem, sofern mindestens ein Backlog registriert ist, und zeigt den Umschalter. Ist keins registriert: Fehler wie im CLI (Exit-Code 2, Hinweis `backe init` / `backe backlog use`).
+- **Start-Ausgabe** auf stdout, eine Zeile: `backe ui: http://127.0.0.1:8002/?token=<token>`. Die URL trägt das Sitzungs-Token (§2.15). `--open` öffnet sie zusätzlich im Standardbrowser (`xdg-open` bzw. `open`); ein Startfehler oder ein Exit-Code ≠ 0 des Öffners ist ein Hinweis auf stderr, kein Fehler; auf anderen Plattformen als Linux und macOS kommt der Hinweis sofort.
+- **Start-Backlog:** aus dem Kontext (BK §2.14), ausgehend von Arbeitsverzeichnis, Env und globalen Optionen. Fehlt nur die Angabe eines Backlogs und ist mindestens einer registriert, startet die UI ohne Start-Backlog und zeigt den Umschalter. Ein genannter, unbekannter Backlog (`-B`, `BACKE_BACKLOG`, Projekt-Config) ist ein Startfehler wie im CLI. Eine gebundene Arbeitskopie im Startverzeichnis ist Start-Backlog, auch wenn ihr Backlog nicht registriert ist. Ist keins registriert: Fehler wie im CLI (Exit-Code 2, Hinweis `backe init` / `backe backlog use`).
 - **Identität:** je Backlog wie beim CLI aufgelöst, bei jedem Aufruf neu (wie MCP, BK §2.19). Ein Handle ohne Key in der User-Config darf lesen, nicht schreiben; die UI zeigt dann »nur lesen« und blendet Schreibaktionen aus.
 - **Lebensdauer:** läuft bis SIGINT oder SIGTERM. Vor dem Ende warten die Write-Warteschlange, die von ihr angestoßenen Hintergrund-Syncs und laufende synchrone Aufrufe ab (wie BK §2.19, »Ende«). Offene Browser-Tabs zeigen danach »Verbindung getrennt«.
 - **Sprache** der Konsolen-Ausgabe nach BK §2.18.
@@ -82,11 +82,11 @@ Alle Endpunkte liegen unter `/api` und verlangen das Sitzungs-Cookie (§2.15). J
 
 | Methode und Pfad | Inhalt |
 | --- | --- |
-| `GET /api/backlogs` | registrierte Backlogs: `[{name, current, can_write, user}]`, dazu `lang` (Sprache des Servers, §2.14) |
-| `GET /api/b/<b>/state` | Gesamtzustand für den Client: `{rev, head, context, config, issues, projects, sprints, repos, users, problems, sync}`. `issues` enthält alle Frontmatter-Felder jedes Issues, **ohne Body**. `users` enthält Key-Fingerprints, keine Keys. `config` ist der lesbare Teil von `backlog.jsonc` samt deklarierter Properties. `sync` ist das JSON von `sync status`. |
+| `GET /api/backlogs` | `{backlogs:[{name, current, can_write, user}], lang}`: die registrierten Backlogs plus der Start-Backlog; `current` kennzeichnet den Start-Backlog, `user` ist das Handle oder `null`, `lang` die Sprache des Servers (§2.14) |
+| `GET /api/b/<b>/state` | Gesamtzustand für den Client: `{rev, head, context, config, issues, projects, sprints, repos, users, problems, sync}`. `issues` enthält alle Frontmatter-Felder jedes Issues, **ohne Body**. `users` enthält Key-Fingerprints, keine Keys. `config` ist der lesbare Teil von `backlog.jsonc` samt deklarierter Properties. `sync` ist das JSON von `sync status`, `null` ohne eigene Arbeitskopie. Die Listen sind immer vorhanden; Einträge von `projects` sind `{path, …}`, von `sprints` `{slug, …}`, von `repos` `{name, …}`, von `users` wie `user show --json` ohne `body`. |
 | `GET /api/b/<b>/issues/<id>` | wie `issue show --comments all --format json`: Body, Kommentare, `dependents`, `children`, Fortschritt |
-| `GET /api/b/<b>/issues/<id>/attachments/<name>` | Dateibytes eines Anhangs (§2.9.4, Header nach §2.15) |
-| `GET /api/b/<b>/search?q=<text>` | Volltextsuche wie `issue list -q <text> --state all` |
+| `GET /api/b/<b>/issues/<id>/attachments/<name>` | Dateibytes eines Anhangs (§2.9.4, Header nach §2.15); ein URL-Anhang hat keine Bytes → 404 |
+| `GET /api/b/<b>/search?q=<text>` | Volltextsuche wie `issue list -q <text> --state all`; ohne `q` → 400 |
 | `GET /api/b/<b>/events` | Event-Stream (§2.4.3) |
 
 #### 2.3.2 Schreiben
@@ -110,7 +110,7 @@ Alle Endpunkte liegen unter `/api` und verlangen das Sitzungs-Cookie (§2.15). J
 
 #### 2.3.3 Fehler
 
-Fehler kommen als `{"error":{code, message, hint?, details?}}` wie im CLI (BK §2.18). Der HTTP-Status folgt dem Exit-Code: `2` → 400, `3` → 404, `4` → 409, `5` → 422, `6` → 502, `1` → 500. Fehlendes oder falsches Sitzungs-Cookie → 401, falscher `Host` oder `Origin` → 403 (§2.15).
+Fehler kommen als `{"error":{code, message, hint?, details?}}` wie im CLI (BK §2.18). Der HTTP-Status folgt dem Exit-Code: `2` → 400, `3` → 404, `4` → 409, `5` → 422, `6` → 502, `1` → 500. Fehlendes oder falsches Sitzungs-Cookie → 401 mit `code: "unauthorized"`, falscher `Host` oder `Origin` → 403 mit `code: "forbidden"` (§2.15). Ein unbekannter Endpunkt ist 404 `not_found`.
 
 ### 2.4 Live-Updates
 
@@ -234,8 +234,8 @@ Nach `issue-details.png`. Ein Issue-Tab zeigt den Stand von `GET …/issues/<id>
 #### 2.9.4 Anhänge
 
 - **Liste** mit Name, Größe und Art; Hochladen per Dateiauswahl oder Drag auf den Tab; Entfernen (`attachment_rm`).
-- **Bilder** (`png`, `jpg`, `gif`, `webp`, `avif`, `svg`) direkt als Vorschau, per Klick vergrößert. SVG wird nur als `<img>` eingebunden, nie als Dokument.
-- **Text, Code und JSON** bis 262 144 Bytes und gültigem UTF-8 (dieselbe Grenze wie `attachment_get`, BK §2.19) direkt mit Highlighting, einklappbar; Markdown-Anhänge gerendert wie §2.9.2. Größere Dateien und alle anderen Arten: Download.
+- **Bilder** (`png`, `jpg`/`jpeg`, `gif`, `webp`, `avif`, `svg`) direkt als Vorschau, per Klick vergrößert. SVG wird nur als `<img>` eingebunden, nie als Dokument.
+- **Text, Code und JSON** bis 262 144 Bytes und gültigem UTF-8 (dieselbe Grenze wie `attachment_get`, BK §2.19) direkt mit Highlighting, einklappbar; Markdown-Anhänge gerendert wie §2.9.2. Größere Dateien und alle anderen Arten: Download. Der Server liefert nur Bilder und gültiges UTF-8 bis zu dieser Grenze inline (§2.15); HTML-Endungen gehen immer als Download.
 - **URL-Anhänge** als Link mit Hostname.
 - **Nicht geladene LFS-Anhänge** (BK §2.8) zeigen den Hinweis `git -C <wc> lfs pull`.
 
@@ -292,17 +292,18 @@ Die UI ist wie das CLI englisch oder deutsch, nie gemischt. Default ist die Spra
 Die UI kann signierte Commits im Namen des Nutzers erzeugen. Jede Webseite im selben Browser kann Anfragen an `127.0.0.1` schicken; davor schützt Folgendes:
 
 - **Nur lokal:** Bind auf `127.0.0.1`.
-- **Sitzungs-Token:** 32 Zufallsbytes je Serverprozess, nur in der Start-URL auf stdout. Die erste Anfrage mit `?token=` setzt ein Cookie `backe_ui` (`HttpOnly`, `SameSite=Strict`, `Path=/`) und leitet auf dieselbe URL ohne Token um. Jede API-Anfrage braucht das Cookie, sonst 401 mit dem Hinweis, die URL aus der Konsole zu öffnen. Wer das Token hat, schreibt als die Identität der UI.
+- **Sitzungs-Token:** 32 Zufallsbytes je Serverprozess (64 Hex-Zeichen), nur in der Start-URL auf stdout. Die erste Anfrage mit `?token=` setzt ein Cookie `backe_ui_<port>`, z. B. `backe_ui_8002` (`HttpOnly`, `SameSite=Strict`, `Path=/`), und antwortet mit 303 auf dieselbe URL ohne Token. Cookies gelten nicht je Port; der Port im Namen verhindert, dass zwei Instanzen auf verschiedenen Ports sich die Sitzung verdrängen. Jede API-Anfrage braucht das Cookie, sonst 401 mit dem Hinweis, die URL aus der Konsole zu öffnen. Wer das Token hat, schreibt als die Identität der UI.
 - **DNS-Rebinding:** Der `Host`-Header muss `127.0.0.1:<port>` oder `localhost:<port>` sein, sonst 403.
-- **CSRF:** Schreibende Anfragen verlangen einen `Origin`, der dem eigenen entspricht, und `Content-Type: application/json` (Upload: `application/octet-stream`).
+- **CSRF:** Ein vorhandener `Origin` muss bei jeder Anfrage der eigene sein; jede Anfrage außer GET und HEAD braucht ihn. Schreibende Anfragen verlangen zusätzlich `Content-Type: application/json` (Upload: `application/octet-stream`).
+- **Referrer:** Jede Antwort trägt `Referrer-Policy: no-referrer`.
 - **Content-Security-Policy** der App: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`. `unsafe-inline` bei Styles braucht Mermaid.
-- **Anhänge** werden mit `X-Content-Type-Options: nosniff` und `Content-Security-Policy: sandbox` ausgeliefert. Inline (`Content-Disposition: inline`) gehen nur die Bild- und Textarten aus §2.9.4 hinaus, Text immer als `text/plain`; alles andere als `attachment`. HTML-Anhänge werden nie inline ausgeliefert.
+- **Anhänge** werden mit `X-Content-Type-Options: nosniff` und `Content-Security-Policy: sandbox` ausgeliefert. Inline (`Content-Disposition: inline`) gehen nur Bilder (`png`, `jpg`/`jpeg`, `gif`, `webp`, `avif`, `svg`) und gültiges UTF-8 bis 262 144 Bytes hinaus, Letzteres als `text/plain; charset=utf-8`; alles andere als `attachment`. Die HTML-Endungen `html`, `htm`, `xhtml` und `xht` gehen nie inline hinaus. Dateinamen stehen in `Content-Disposition` als `filename*=UTF-8''…` (RFC 8187).
 - **Markdown** wird bereinigt (§2.9.2), Mermaid läuft strikt.
 - **Uploads** bestimmen nie einen Pfad: Der Name ist ein Anhangsname nach BK §2.8, die Bytes landen in einer Temp-Datei des Servers.
 
 ### 2.16 Technik und Paket
 
-- **Server:** `node:http` ohne Framework; SSE ohne Bibliothek; statische Auslieferung von `dist/ui/` mit `Cache-Control: immutable` für gehashte Assets und `index.html` als Fallback für App-Routen. Keine neue Runtime-Abhängigkeit (BK §2.20).
+- **Server:** `node:http` ohne Framework; SSE ohne Bibliothek; statische Auslieferung von `dist/ui/` mit `Cache-Control: public, max-age=31536000, immutable` unter `/assets/` und `no-cache` sonst; `index.html` ist Fallback für Pfade, deren letztes Segment keinen Punkt hat, und fehlt sie, kommt eine eingebaute Platzhalterseite. Keine neue Runtime-Abhängigkeit (BK §2.20).
 - **Frontend** (alles `devDependencies`, gebündelt nach `dist/ui/`): Vite, React, TypeScript strict, Tailwind CSS, shadcn/ui (Radix), `lucide-react`, `@spearwolf/signalize`, `@spearwolf/eventize`, `react-markdown` mit `remark-gfm`, `rehype-raw` und `rehype-sanitize`, Syntax-Highlighting mit Sprachen auf Abruf, `mermaid`, Graph-Darstellung (§3.8: `@xyflow/react` mit `@dagrejs/dagre`), Drag & Drop mit `@dnd-kit`, Listen-Virtualisierung mit `@tanstack/react-virtual`. Versionen pflegt Renovate (BK §2.21).
 - **Code-Splitting:** Mermaid, Graph und Highlighting-Sprachen sind eigene Chunks und laden erst bei Bedarf. Budget für den initialen Chunk: 300 KB gzip.
 - **Build:** `pnpm build` baut CLI (tsdown) und Frontend (`vite build` → `dist/ui/`). Entwicklung: `pnpm dev:ui` startet den Vite-Dev-Server mit Proxy `/api` auf ein laufendes `backe ui`. Dessen `Origin`-Prüfung erlaubt zusätzlich den Ursprung aus `BACKE_UI_DEV_ORIGIN`, sofern gesetzt.
