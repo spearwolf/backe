@@ -60,6 +60,41 @@ test('touched alone makes a patch', () => {
   });
 });
 
+/** `s` mit anderem Body für das Issue `id`; Frontmatter bleibt gleich. */
+function withBody(s: ReturnType<typeof snap>, id: string, body: string) {
+  const issues = new Map(s.issues);
+  const entry = issues.get(id);
+  if (entry === undefined) throw new Error(`no issue ${id}`);
+  issues.set(id, { ...entry, body });
+  return { ...s, issues };
+}
+
+test('a changed body marks the issue touched, without the body in the patch', () => {
+  const a = snap({ issues: [{ id: I(1) }, { id: I(2) }] });
+  const b = withBody(a, I(2), 'Neue Beschreibung\n');
+  const patch = diffTables(entityTable(a), entityTable(b));
+  expect(patch).toEqual({ upsert: {}, remove: {}, touched: [I(2)] });
+  expect(JSON.stringify(patch)).not.toContain('Neue Beschreibung');
+});
+
+test('body and path touched merge sorted without duplicates', () => {
+  const a = snap({ issues: [{ id: I(1) }, { id: I(2) }, { id: I(3) }] });
+  const b = withBody(withBody(a, I(3), 'x'), I(1), 'y');
+  expect(diffTables(entityTable(a), entityTable(b), [I(2), I(3)])?.touched).toEqual([
+    I(1),
+    I(2),
+    I(3),
+  ]);
+});
+
+test('a new or removed issue is no body touch', () => {
+  const a = snap({ issues: [{ id: I(1) }] });
+  const b = withBody(snap({ issues: [{ id: I(2) }] }), I(2), 'Body');
+  const patch = diffTables(entityTable(a), entityTable(b));
+  expect(patch).not.toHaveProperty('touched');
+  expect(patch?.remove).toEqual({ issues: [I(1)] });
+});
+
 test('touchedIssues reads comment and attachment paths', () => {
   expect(
     touchedIssues([

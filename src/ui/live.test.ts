@@ -5,6 +5,7 @@ import { setPullInterval, type TestBacklog, testBacklog } from '../../test/helpe
 import { applyPatch, collect, comparable, fakeTimers, settle } from '../../test/helpers/live.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { git } from '../git/exec.ts';
+import { bodyHash } from '../ops/operation.ts';
 import { addAttachment } from '../services/attachments.ts';
 import { commitEdits } from '../services/commit.ts';
 import { writeSyncState } from '../services/sync-state.ts';
@@ -98,6 +99,20 @@ test('a hand edit is a patch, backe commit after it none', async () => {
   await settle(live);
   expect(c.patches()).toHaveLength(1);
   expect(live.head).toBe((await stateJson(ctx)).head);
+});
+
+test('a body edit is a touch', async () => {
+  const id = await create('Mit Body');
+  const live = await start();
+  const c = collect(live);
+  await writeOp(ctx, {
+    op: 'issue.edit',
+    id,
+    body: { from_hash: bodyHash(''), to: 'Neue Beschreibung\n' },
+  });
+  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
+  await settle(live);
+  expect(c.patches()).toEqual([{ rev: 1, head: live.head, upsert: {}, remove: {}, touched: [id] }]);
 });
 
 test('a deleted issue is a remove', async () => {

@@ -132,7 +132,7 @@ Der Server hält je beobachtetem Backlog den zuletzt ausgelieferten Snapshot (BK
 
 1. Geänderte Pfade bestimmen: `git diff --name-only -z <alt> <neu>` bei bewegtem `HEAD`, dazu die Pfade aus dem Arbeitsbaum-Watcher.
 2. Nur diese Pfade aus dem Arbeitsbaum neu laden und den Snapshot fortschreiben (`snapshotAt`, samt den Pfaden aus `orphanedProjectPaths`). Vollständig neu geladen wird bei einer Änderung an `.backe/backlog.jsonc` (die `snapshotAt` nicht liest), bei einem Pfad, der keine einzelne Entitätsdatei ist (etwa ein gelöschtes Verzeichnis), und wenn das System zu einem Ereignis keinen Pfad nennt. Scheitert das Laden (kaputte Config), bleibt der letzte Stand stehen, und die nächste Runde lädt vollständig.
-3. Je Entitätsart vergleichen: neu oder geändert → `upsert`, verschwunden → `remove`. Pfade unter `comments/` und `attachments/` eines Issues ergeben einen Eintrag in `touched`.
+3. Je Entitätsart vergleichen: neu oder geändert → `upsert`, verschwunden → `remove`. Pfade unter `comments/` und `attachments/` eines Issues ergeben einen Eintrag in `touched`. Ein geänderter Body ergibt ebenfalls einen Eintrag in `touched`; den Body selbst trägt der Patch nicht (§3.4).
 4. Ein Patch mit fortlaufender Nummer `rev` geht an alle Abonnenten des Backlogs. Ändert sich nichts Sichtbares, entsteht kein Patch.
 
 Abgeleitete Werte (`dependents`, `children`, offene Abhängigkeiten, Bereitschaft) stehen nicht im Patch; der Client rechnet sie selbst (§3.5).

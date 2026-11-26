@@ -51,9 +51,13 @@ export type EntityKindKey = (typeof ENTITY_KINDS)[number];
 type Row = { json: unknown; text: string };
 const row = (json: unknown): Row => ({ json, text: JSON.stringify(json) });
 
-/** Sichtbarer Stand eines Snapshots: je Entitätsart Key → JSON, dazu Config und Probleme. */
+/**
+ * Sichtbarer Stand eines Snapshots: je Entitätsart Key → JSON, dazu Config und Probleme. Die
+ * Issue-Bodies stehen nur zum Vergleich darin; der Patch trägt sie nie (ui.md §3.4).
+ */
 export type EntityTable = {
   entities: Record<EntityKindKey, Map<string, Row>>;
+  bodies: Map<string, string>;
   config: Row;
   problems: Row;
 };
@@ -73,19 +77,27 @@ export function entityTable(s: BacklogSnapshot): EntityTable {
     const key = KEY_OF[kind] as (e: unknown) => string;
     entities[kind] = new Map(lists[kind].map((e) => [key(e), row(e)]));
   }
-  return { entities, config: row(lists.config), problems: row(s.problems) };
+  const bodies = new Map([...s.issues].map(([id, e]) => [id, e.body]));
+  return { entities, bodies, config: row(lists.config), problems: row(s.problems) };
 }
 
 /**
  * Patch von `a` nach `b` ohne `rev` und `head`: neue oder geänderte Entitäten in `upsert`,
- * verschwundene in `remove`, `config` und `problems` nur, wenn sie sich ändern. `touched` (Issues mit
- * geänderten Kommentaren oder Anhängen) zählt als sichtbar. Nichts Sichtbares → `undefined`.
+ * verschwundene in `remove`, `config` und `problems` nur, wenn sie sich ändern. `touched` sind die
+ * Issues mit geänderten Kommentaren oder Anhängen (`pathTouched`) und die, die in beiden Ständen
+ * stehen und deren Body sich geändert hat; es zählt als sichtbar. Nichts Sichtbares → `undefined`.
  */
 export function diffTables(
   a: EntityTable,
   b: EntityTable,
-  touched: readonly string[] = [],
+  pathTouched: readonly string[] = [],
 ): Omit<PatchJson, 'rev' | 'head'> | undefined {
+  const touchedSet = new Set(pathTouched);
+  for (const [id, body] of b.bodies) {
+    const before = a.bodies.get(id);
+    if (before !== undefined && before !== body) touchedSet.add(id);
+  }
+  const touched = [...touchedSet].sort(compareCodeUnits);
   const upsert: Record<string, unknown> = {};
   const remove: Record<string, string[]> = {};
   let visible = touched.length > 0;
@@ -109,7 +121,7 @@ export function diffTables(
   return {
     upsert: upsert as PatchJson['upsert'],
     remove: remove as PatchJson['remove'],
-    ...(touched.length === 0 ? {} : { touched: [...touched] }),
+    ...(touched.length === 0 ? {} : { touched }),
     ...(problemsChanged ? { problems: b.problems.json as PatchJson['problems'] } : {}),
   };
 }
