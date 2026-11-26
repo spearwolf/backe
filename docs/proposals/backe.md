@@ -666,7 +666,7 @@ Regeln einzelner Befehle:
 
 - **Kontext:** Aufgelöst wird wie beim CLI, ausgehend vom Arbeitsverzeichnis des Prozesses, dessen Env und den globalen Optionen. Ohne auflösbare Identität mit Key, bei einem fremden Handle oder bei ungültiger Config startet der Server nicht: stderr trägt `Error: …` und `Hint: …` wie beim CLI (nach dem Parsen der Argumente immer englisch, §2.18), Exit-Code `2`, stdout bleibt leer. Danach löst jeder Tool-Aufruf den Kontext mit denselben Eingaben neu auf; Änderungen an Configs gelten ab dem nächsten Aufruf.
 - **stdout** gehört dem Protokoll; Logs und Fehler des Servers gehen nach stderr.
-- Der Server ist ein dünner Adapter über denselben Service-Layer wie das CLI (§2.20); kein Feature existiert nur in einer der beiden Türen, außer den hier genannten Ausnahmen. Jedes Tool liefert dasselbe JSON wie der entsprechende Befehl mit `--format json` (gleiche Keys, gleiche Auslassungen).
+- Der Server ist ein dünner Adapter über denselben Service-Layer wie das CLI (§2.20); kein Feature existiert nur in einer der beiden Türen, außer den hier genannten Ausnahmen. Die Tool-Definitionen liegen adapterneutral in `src/tools/`; MCP registriert die Einträge für die Oberfläche `mcp`. Jedes Tool liefert dasselbe JSON wie der entsprechende Befehl mit `--format json` (gleiche Keys, gleiche Auslassungen).
 - **Ergebnisform:** Erfolg ist ein einzelner Text-Content mit kompaktem JSON, ohne `structuredContent` und ohne `outputSchema`. Ein Fehler hat `isError: true` und denselben Text-Content `{"error":{"code","message","hint?","details?"}}` wie das CLI im JSON-Modus (§2.18); der Server läuft weiter. Prüfungen auf Parameterebene (genau eins von, leer, widersprüchlich) melden `usage` bzw. `validation`. Jedes Tool-Schema ist strikt (`additionalProperties: false`): Ein unbekannter Parameter ist eine Schemaverletzung und fällt nicht still weg. Schemaverletzungen fängt das SDK vor dem Handler ab; sie kommen als Fehler-Ergebnis mit dem Klartext des SDK (`Input validation error: …`, der den Parameter nennt), nicht als JSON.
 - **`notices`:** Im Ergebnis ist jeder Eintrag ein Objekt `{code?, message, ids?}`, auch die Hinweise von `sync_now`.
 - **Hints** nennen CLI-Befehle und -Flags wörtlich. Der Server erklärt das in `instructions`: ein Tool entspricht dem gleichnamigen Befehl (`issue_move` ↔ `backe issue move`), ein Flag dem Parameter in snake_case (`--add-dep` ↔ `add_deps`, `--blocked-by` ↔ `blocked_by`). Server-Identität: Name `backe`, Version aus dem Paket.
@@ -725,7 +725,8 @@ Schichten (Abhängigkeiten nur nach unten):
 ```
 src/
 ├── cli/         Adapter: commander-Befehle, Ausgabeformate, Exit-Codes
-├── mcp/         Adapter: MCP-Server, Tool-Definitionen
+├── mcp/         Adapter: MCP-Server, SDK-Anbindung, Resource
+├── tools/       Adapterneutraler Tool-Katalog: Namen, Schemas, Art, Ausführung; genutzt von mcp/ und ui/
 ├── services/    Use-Cases; erzeugen Operationen, führen sie aus (Schreibpfad), Sync, Verify,
 │                Backlog-Verwaltung, Claim, Next
 ├── ops/         Operationstypen, Vorbedingungen, Apply, Replay
@@ -734,6 +735,8 @@ src/
 ├── context/     Config-Dateien, Kontext-Auflösung, Pfad-Expansion, Locks
 └── core/        Domain-Typen, zod-Schemas, Zustandsmodell, IDs, URL-Normalisierung — rein, ohne I/O
 ```
+
+Die reine Hülle — `src/core/`, `src/ops/graph.ts`, `src/ops/issue-query.ts` und ihre Laufzeit-Imports — kommt ohne `node:`-Module, `Buffer` und ungeschütztes `process` aus, damit das Web-Bundle von `backe ui` sie importieren kann (`ui.md` §2.2); ein Konventionstest prüft das. `sshFingerprint` liegt deshalb in `src/core/fingerprint.ts` außerhalb der Hülle.
 
 ### 2.21 CI/CD (GitHub Actions)
 

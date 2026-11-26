@@ -72,7 +72,7 @@ web/             Frontend: Vite, React, TypeScript, Tailwind, shadcn/ui; baut na
 ```
 
 - `src/ui/` hängt wie `src/mcp/` nur von `services/` und darunter ab.
-- `web/` importiert aus `src/` nur reine Module ohne I/O: die API-Typen aus `src/ui/api.ts` und die Domain-Logik aus `src/core/` und `src/ops/graph.ts` (Bereitschaft, `dependents`, `children`, Zyklen). Abgeleitete Werte rechnet der Client damit selbst (§3.5); die Regeln von BK §2.22 und §2.23 existieren so nur einmal. Ein Test stellt sicher, dass das Web-Bundle kein `node:`-Modul zieht.
+- `web/` importiert aus `src/` nur reine Module ohne I/O: die API-Typen aus `src/ui/api.ts` und die Domain-Logik aus `src/core/`, `src/ops/graph.ts` (Bereitschaft, `dependents`, `children`, Zyklen) und `src/ops/issue-query.ts` (Filter von `issue list`). Abgeleitete Werte rechnet der Client damit selbst (§3.5); die Regeln von BK §2.22 und §2.23 existieren so nur einmal. Ein Test stellt sicher, dass das Web-Bundle kein `node:`-Modul zieht.
 
 ### 2.3 HTTP-API
 
@@ -148,7 +148,7 @@ Abgeleitete Werte (`dependents`, `children`, offene Abhängigkeiten, Bereitschaf
 | `sync` | JSON von `sync status` |
 | `reset` | `{}` — der Client lädt `/state` neu |
 
-- Jedes Ereignis trägt `id: <rev>`. Der Server hält die letzten 200 Patches. Verbindet sich ein Client mit `Last-Event-ID` neu, bekommt er die verpassten Patches; liegt `rev` außerhalb des Puffers oder stammt sie aus einem früheren Serverprozess, bekommt er `reset`.
+- Jedes Ereignis trägt `id: <boot>:<rev>`; `boot` sind 8 Hex-Zeichen Zufall je Serverprozess, `rev` zählt je Backlog ab 0. Der Server hält die letzten 200 Patches. Verbindet sich ein Client mit `Last-Event-ID` neu, bekommt er die verpassten Patches; liegt `rev` außerhalb des Puffers oder stammt die ID aus einem früheren Serverprozess (anderes `boot`), bekommt er `reset`.
 - Alle 15 s ein Kommentar-Heartbeat (`: ping`), damit die Verbindung nicht stillschweigend abreißt.
 
 ### 2.5 Client-Zustand und Reactivity
@@ -279,7 +279,7 @@ Dialog (`c` oder Schaltfläche in Backlog und Board): Titel (Pflicht), Beschreib
 
 - **Basis:** shadcn/ui auf Tailwind mit neutraler Grauskala. Es gibt keine Markenfarbe. Farbe tragen nur Fehler (destruktiv) und der Fokusring.
 - **Zustände** unterscheiden sich über Icon und Beschriftung (Icon-Set `lucide`), nicht über Farbe; `blocked` zusätzlich über eine kräftige Umrandung (Skizze).
-- **Theme:** hell, dunkel oder System; Umschalter in der Kopfzeile, gespeichert im `localStorage`. Ein Inline-Skript setzt das Theme vor dem ersten Rendern, damit nichts aufblitzt.
+- **Theme:** hell, dunkel oder System; Umschalter in der Kopfzeile, gespeichert im `localStorage`. `index.html` lädt vor allen Styles synchron `/theme.js`, das das Theme setzt, damit nichts aufblitzt; ein Inline-Skript verbietet die CSP (§2.15).
 - **Schrift:** System-Schrift, IDs und Code in Monospace.
 - **Zugänglichkeit:** Kontrast WCAG AA in beiden Themes, sichtbarer Fokus, ARIA-Rollen für Tabs und Menüs, Tastaturalternative zu jedem Drag & Drop.
 
@@ -390,7 +390,6 @@ Verbindlich erst, wenn BK sie aufnimmt:
 
 - BK §2.17: `backe ui` in die Befehlsübersicht, sobald gebaut.
 - BK §2.20/§2.21: `dist/ui/**` im Tarball, Pack-Smoke-Test um den UI-Start erweitert.
-- `src/core/` und `src/ops/graph.ts` bleiben frei von I/O und `node:`-Importen, damit das Web-Bundle sie nutzen kann (§3.5).
 - Eine Operation zum Ändern von `.backe/backlog.jsonc` (heute nur Hand-Edit und `backe commit` als `manual`-Commit, BK §2.13), falls die UI die Backlog-Config bearbeiten soll (§4.1).
 
 ### 4.3 Späterer Ausbau
