@@ -131,10 +131,10 @@ function AttachmentItem(props: {
         </p>
       )}
       {kind === 'image' && <ImagePreview name={item.name} src={href} />}
-      {(kind === 'text' || kind === 'markdown') && (
+      {(shown === 'text' || shown === 'markdown') && (
         <TextPreview
           item={item}
-          kind={kind}
+          kind={shown}
           src={href}
           backlog={backlog}
           issue={issue}

@@ -82,9 +82,26 @@ test('binary under the limit is a download', async () => {
   await act(async () => {});
   expect(container.querySelector('code')).toBeNull();
   expect(container.querySelector('details')).toBeNull();
+  expect(screen.queryByText(m.previewLoading)).toBeNull();
   expect(screen.getByRole('link', { name: new RegExp(m.download) }).hasAttribute('download')).toBe(
     true,
   );
+});
+
+test('failed or missing text fetches end in a download only', async () => {
+  // 404: keine Antwort in `replies`; Wurf: Netzwerkfehler.
+  const { container } = show([{ name: 'gone.txt', file: 'gone.txt', size: 2 }]);
+  await waitFor(() => expect(screen.queryByText(m.previewLoading)).toBeNull());
+  expect(container.querySelector('details')).toBeNull();
+  expect(screen.getByRole('link', { name: new RegExp(m.download) })).toBeTruthy();
+  cleanup();
+  vi.stubGlobal('fetch', async () => {
+    throw new Error('offline');
+  });
+  const second = show([{ name: 'x.txt', file: 'x.txt', size: 2 }]);
+  await waitFor(() => expect(screen.queryByText(m.previewLoading)).toBeNull());
+  expect(second.container.querySelector('details')).toBeNull();
+  expect(screen.getByRole('link', { name: new RegExp(m.download) })).toBeTruthy();
 });
 
 test('markdown attachments render', async () => {

@@ -3,6 +3,7 @@ import { attachmentKind } from './attachment-kind.ts';
 
 test('kinds by extension and size', () => {
   expect(attachmentKind({ name: 'a.PNG', file: 'a.PNG', size: 10 })).toBe('image');
+  expect(attachmentKind({ name: 'a.bmp', file: 'a.bmp', size: 10 })).not.toBe('image');
   expect(attachmentKind({ name: 'a.svg', file: 'a.svg', size: 10 })).toBe('image');
   expect(attachmentKind({ name: 'notes.md', file: 'notes.md', size: 10 })).toBe('markdown');
   expect(attachmentKind({ name: 'n.MARKDOWN', file: 'n.MARKDOWN', size: 10 })).toBe('markdown');

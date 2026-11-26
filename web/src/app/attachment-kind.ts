@@ -3,7 +3,7 @@ import type { AttachmentListJson } from '@backe/ui/api.ts';
 
 export type AttachmentKind = 'image' | 'markdown' | 'text' | 'download' | 'url' | 'not-loaded';
 
-const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'svg']);
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg']);
 
 /** Kleingeschriebene Dateiendung ohne Punkt, `''` ohne Endung. */
 export function extensionOf(name: string): string {
