@@ -12,7 +12,10 @@
  * Nachbar, den der erste Durchlauf nicht lesen konnte oder der danach entsteht, ist neu, und sein
  * erster Wert zählt, wenn die eigene Arbeitskopie ihn nicht kennt — eine frische Arbeitskopie
  * pusht oft in derselben Ruhephase, in der sie entsteht. Ein gelöschter und neu angelegter Nachbar
- * ist ebenfalls neu.
+ * ist ebenfalls neu, erkannt an Gerät und Inode seines Verzeichnisses und seines Git-Dirs. Vergibt
+ * das Dateisystem dieselben Inodes neu, bleiben die alten, toten Watches, bis sich die Identität
+ * ändert; das kostet nur Ereignisse, keine Bewegungen, denn jeder Durchlauf liest die Werte über
+ * den Pfad, und das Sicherheitsnetz prüft alle 10 s.
  *
  * Nachbarn sind eine Optimierung: Git- und Dateisystemfehler kosten nur den betroffenen Nachbarn
  * oder Durchlauf. Durch kommen nur Fehler von `onMove` und Programmierfehler, und auch die nur bei
@@ -50,18 +53,22 @@ type Candidate = { hub: boolean; id: string };
 
 type Neighbor = {
   ref: string;
-  /** Identität des Verzeichnisses (Gerät, Inode, Entstehung); ändert sie sich, ist er neu. */
+  /** Gerät und Inode von Verzeichnis und Git-Dir; ändert sich das, ist er neu. */
   id: string;
   handles: Handle[];
   /** Letzter Blick: `undefined` vor dem ersten, `null`, solange der Ref fehlt. */
   last: string | null | undefined;
 };
 
-/** Fehler, die nur einen Nachbarn oder Durchlauf kosten: Git (`BackeError`) und Dateisystem. */
+/**
+ * Fehler, die nur einen Nachbarn oder Durchlauf kosten: Git (`BackeError`) und Systemaufrufe (mit
+ * numerischem `errno`). Fehler wie `ERR_INVALID_ARG_TYPE` haben nur einen `code`; sie sind
+ * Programmierfehler.
+ */
 function skippable(err: unknown): boolean {
   return (
     err instanceof BackeError ||
-    (err instanceof Error && typeof (err as NodeJS.ErrnoException).code === 'string')
+    (err instanceof Error && typeof (err as NodeJS.ErrnoException).errno === 'number')
   );
 }
 
@@ -85,20 +92,27 @@ export class NeighborWatch {
   }
 
   /**
-   * Öffnet die Watches und liest die Grundlinie. Was dabei nicht aufgeht (ein fehlendes
-   * Backlog-Verzeichnis, ein Watch-, Git- oder Dateisystemfehler), versucht der nächste `check`
-   * erneut. Wirft nur, was `check` durchlässt.
+   * Öffnet die Watches und liest die Grundlinie; wirft nie. Was dabei nicht aufgeht (ein
+   * fehlendes Backlog-Verzeichnis, ein Watch-, Git- oder Dateisystemfehler, ein Fehler von
+   * `onMove` in einem Nachlauf), versucht das nächste Ereignis oder der nächste `check` erneut.
    */
   static async start(opts: NeighborOptions): Promise<NeighborWatch> {
     const nw = new NeighborWatch(opts);
-    await nw.#watchDir();
-    await nw.check();
+    try {
+      await nw.#watchDir();
+      await nw.check();
+    } catch {
+      // Ein unerwarteter Fehler kostet nur diese Runde; die Watch bleibt brauchbar, und das
+      // nächste Ereignis prüft erneut. Geloggt wird nicht, weil `backe ui` außer seiner Startzeile
+      // nichts ausgibt.
+    }
     return nw;
   }
 
   /**
    * Nachbarn neu lesen, Refs vergleichen; Single-Flight mit Nachlauf. Git- und
-   * Dateisystemfehler schluckt er; was `onMove` wirft und Programmierfehler lehnt er ab.
+   * Dateisystemfehler schluckt er; was `onMove` wirft und Programmierfehler lehnt er ab, nachdem
+   * ein angeforderter Nachlauf noch gelaufen ist (mit dem ersten Fehler).
    */
   check(): Promise<void> {
     if (this.#closed) return Promise.resolve();
@@ -107,12 +121,19 @@ export class NeighborWatch {
       return this.#running;
     }
     const run = async () => {
+      let failure: { err: unknown } | undefined;
       try {
         do {
           this.#again = false;
-          const moved = await this.#round();
-          if (moved && !this.#closed) this.#opts.onMove();
+          try {
+            const moved = await this.#round();
+            if (moved && !this.#closed) this.#opts.onMove();
+          } catch (err) {
+            // Ein angeforderter Nachlauf läuft trotzdem; abgelehnt wird mit dem ersten Fehler.
+            failure ??= { err };
+          }
         } while (this.#again && !this.#closed);
+        if (failure !== undefined) throw failure.err;
       } finally {
         // Im selben Schritt wie die letzte Prüfung von `#again`: Ein `check` danach startet einen
         // eigenen Lauf statt sich an einen anzuhängen, der schon fertig ist. `#round` wartet immer,
@@ -142,7 +163,8 @@ export class NeighborWatch {
       this.#timer = undefined;
       this.check().catch(() => {
         // Ein unerwarteter Fehler kostet nur diese Runde; das nächste Ereignis prüft erneut. Ohne
-        // Handler beendete die Ablehnung den Prozess und mit ihm den Server.
+        // Handler beendete die Ablehnung den Prozess und mit ihm den Server. Geloggt wird nicht,
+        // weil `backe ui` außer seiner Startzeile nichts ausgibt.
       });
     }, this.#opts.debounceMs);
   }
@@ -184,6 +206,9 @@ export class NeighborWatch {
     }
     const baseline = !this.#baselined;
     let moved = false;
+    // Neue Werte gelten erst, wenn der ganze Durchlauf gelungen ist: Bricht ein Programmierfehler
+    // ihn ab, sieht der nächste dieselben Bewegungen noch einmal.
+    const seen: [Neighbor, string | null][] = [];
     for (const [dir, c] of found) {
       if (this.#closed) return false;
       try {
@@ -191,16 +216,17 @@ export class NeighborWatch {
         if (n === undefined) continue;
         const value = await this.#read(dir, n.ref);
         const before = n.last;
-        n.last = value;
-        if (value === null || value === before) continue;
-        if (before === undefined && baseline) continue;
-        if (!(await this.#known(value))) moved = true;
+        if (value !== null && value !== before && !(before === undefined && baseline)) {
+          if (!(await this.#known(value))) moved = true;
+        }
+        seen.push([n, value]);
       } catch (err) {
         if (!skippable(err)) throw err;
         // Ein verschwundener oder kaputter Nachbar fällt aus diesem Durchlauf; der nächste versucht
         // es erneut.
       }
     }
+    for (const [n, value] of seen) n.last = value;
     this.#baselined = true;
     return moved;
   }
@@ -223,7 +249,8 @@ export class NeighborWatch {
         if (!hub && !(await exists(join(dir, '.git')))) continue;
         if (!this.#neighbors.has(dir) && (await physicalPath(dir)) === own) continue;
         const st = await stat(dir);
-        found.set(dir, { hub, id: `${st.dev}:${st.ino}:${st.birthtimeMs}` });
+        const git = hub ? st : await stat(join(dir, '.git'));
+        found.set(dir, { hub, id: `${st.dev}:${st.ino}:${git.dev}:${git.ino}` });
       } catch (err) {
         if (!skippable(err)) throw err;
         // Unlesbar: kein Nachbar, solange es so bleibt.

@@ -1,4 +1,4 @@
-import { chmod, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { writeOp } from '../../test/helpers/context.ts';
 import {
@@ -116,7 +116,7 @@ async function realGit(): Promise<typeof git> {
   return (await vi.importActual<typeof import('../git/exec.ts')>('../git/exec.ts')).git;
 }
 
-const emfile = () => Object.assign(new Error('EMFILE'), { code: 'EMFILE' });
+const emfile = () => Object.assign(new Error('EMFILE'), { code: 'EMFILE', errno: -24 });
 
 /** spw und `claude-1` mit einem baren Remote außerhalb des Backlog-Verzeichnisses, ohne Hub. */
 async function fromTwoClones(): Promise<{
@@ -343,18 +343,19 @@ test('a neighbour the first round could not read counts with its first value', a
   expect(onMove).toHaveBeenCalledTimes(1);
 });
 
-test('a neighbour that appears in a trailing round of start counts', async () => {
+/**
+ * Startet die Watch so, dass während des ersten Durchlaufs ein Nachbar `other` entsteht und ein
+ * Ereignis einen Nachlauf noch innerhalb von `start` anfordert. Remote, Tracking-Ref des Agenten und
+ * `other` stehen auf einem Commit, den spw nicht hat.
+ */
+async function startWithTrailingNeighbour(onMove: () => void) {
   const { s, agentCtx, remote } = await fromTwoClones();
-  // Remote und Tracking-Ref des Agenten stehen auf einem Commit, den spw nicht hat.
   await agentPush(agentCtx);
   const other = join(s.backlogDir, 'other');
   const rec = recorder();
-  const onMove = vi.fn();
   const real = await realGit();
   let armed = true;
   fakeTimers();
-  // Während der erste Durchlauf den Agenten liest, entsteht ein Nachbar, und ein Ereignis fordert
-  // einen Nachlauf an.
   vi.mocked(git).mockImplementation(async (args, opts) => {
     const r = await real(args, opts);
     if (armed && isVerify(args)) {
@@ -365,14 +366,112 @@ test('a neighbour that appears in a trailing round of start counts', async () =>
     }
     return r;
   });
+  let w: NeighborWatch;
   try {
-    await start(s, onMove, rec.watch);
+    w = await start(s, onMove, rec.watch);
+  } finally {
+    vi.mocked(git).mockImplementation(real);
+  }
+  expect(armed).toBe(false);
+  vi.useRealTimers();
+  return { s, agentCtx, rec, other, w };
+}
+
+test('a neighbour that appears in a trailing round of start counts', async () => {
+  const onMove = vi.fn();
+  const { rec, other } = await startWithTrailingNeighbour(onMove);
+
+  expect(rec.has(await refsOf(other))).toBe(true);
+  expect(onMove).toHaveBeenCalledTimes(1);
+});
+
+test('start resolves even if onMove throws in its trailing round', async () => {
+  const onMove = vi.fn<() => void>().mockImplementationOnce(() => {
+    throw new Error('boom');
+  });
+  const { agentCtx, w } = await startWithTrailingNeighbour(onMove);
+  expect(onMove).toHaveBeenCalledTimes(1);
+
+  await agentPush(agentCtx);
+  await w.check();
+  expect(onMove).toHaveBeenCalledTimes(2);
+});
+
+test('a programming error mid-round keeps the moves already read', async () => {
+  const s = await withHub();
+  const onMove = vi.fn();
+  const w = await start(s, onMove);
+  await agentPush(s.agentCtx);
+  const real = await realGit();
+  // Beide Nachbarn haben sich bewegt; der Vergleich des zweiten scheitert an einem Programmierfehler.
+  let compared = 0;
+  vi.mocked(git).mockImplementation(async (args, opts) => {
+    if (args[0] === 'merge-base' && ++compared === 2) throw new TypeError('bug');
+    return real(args, opts);
+  });
+  try {
+    await expect(w.check()).rejects.toThrow(TypeError);
+  } finally {
+    vi.mocked(git).mockImplementation(real);
+  }
+  expect(onMove).not.toHaveBeenCalled();
+
+  await w.check();
+  expect(onMove).toHaveBeenCalledTimes(1);
+});
+
+test("a programming error later in the round keeps an earlier neighbour's move", async () => {
+  const { s, agentCtx, remote } = await fromTwoClones();
+  // Eigenes Verzeichnis mit zwei Klonen; welcher zuerst gelesen wird, bestimmt `readdir`.
+  const dir = join(s.b.homes.backeHome, 'pair');
+  await mkdir(dir);
+  for (const name of ['a', 'b']) {
+    await git(['clone', '-q', remote, join(dir, name)], { cwd: dir });
+  }
+  const onMove = vi.fn();
+  const w = await start(s, onMove, recorder().watch, { backlogDir: dir });
+  const [first = '', second = ''] = (await readdir(dir)).map((name) => join(dir, name));
+  await agentPush(agentCtx);
+  await git(['fetch', '-q', 'origin'], { cwd: first });
+  const real = await realGit();
+  vi.mocked(git).mockImplementation(async (args, opts) => {
+    if (isVerify(args) && opts.cwd === second) throw new TypeError('bug');
+    return real(args, opts);
+  });
+  try {
+    await expect(w.check()).rejects.toThrow(TypeError);
+  } finally {
+    vi.mocked(git).mockImplementation(real);
+  }
+  expect(onMove).not.toHaveBeenCalled();
+
+  await w.check();
+  expect(onMove).toHaveBeenCalledTimes(1);
+});
+
+test('a throwing onMove keeps a pending trailing round', async () => {
+  const s = await withHub();
+  const onMove = vi.fn<() => void>().mockImplementationOnce(() => {
+    throw new Error('boom');
+  });
+  const w = await start(s, onMove);
+  await agentPush(s.agentCtx);
+  const real = await realGit();
+  let requested: Promise<void> | undefined;
+  vi.mocked(git).mockImplementation(async (args, opts) => {
+    if (requested === undefined && isVerify(args)) requested = w.check();
+    return real(args, opts);
+  });
+  vi.mocked(git).mockClear();
+  try {
+    await expect(w.check()).rejects.toThrow('boom');
+    await expect(requested).rejects.toThrow('boom');
   } finally {
     vi.mocked(git).mockImplementation(real);
   }
 
-  expect(armed).toBe(false);
-  expect(rec.has(await refsOf(other))).toBe(true);
+  // Zwei Nachbarn, zwei Durchläufe: Der angeforderte Nachlauf lief trotz des Fehlers.
+  expect(verifyCalls()).toBe(4);
   expect(onMove).toHaveBeenCalledTimes(1);
 });
 
@@ -394,6 +493,22 @@ test('a recreated neighbour gets fresh watches and counts as new', async () => {
   expect(rec.at(agentRefs)).not.toBe(first);
   expect(rec.has(agentRefs)).toBe(true);
   expect(onMove).toHaveBeenCalledTimes(1);
+});
+
+test('a replaced git dir gets fresh watches', async () => {
+  const s = await withHub();
+  const rec = recorder();
+  const w = await start(s, vi.fn(), rec.watch);
+  const agentRefs = await refsOf(s.wc);
+  const first = rec.at(agentRefs);
+
+  await rename(join(s.wc, '.git'), join(s.wc, '.git-old'));
+  await cp(join(s.wc, '.git-old'), join(s.wc, '.git'), { recursive: true });
+  await w.check();
+
+  expect(first.closed).toBe(true);
+  expect(rec.at(agentRefs)).not.toBe(first);
+  expect(rec.has(agentRefs)).toBe(true);
 });
 
 test('a throwing onMove is not swallowed', async () => {
@@ -457,6 +572,23 @@ test('an unexpected error is not swallowed', async () => {
   fail = false;
   await w.check();
   expect(rec.has(await refsOf(join(s.backlogDir, 'hub.git')))).toBe(true);
+});
+
+test('a Node argument error is not swallowed', async () => {
+  const s = await withAgent();
+  const rec = recorder();
+  let fail = false;
+  const watch: WatchFn = (path, opts, listener) => {
+    if (fail && path !== s.backlogDir) {
+      throw Object.assign(new TypeError('bad argument'), { code: 'ERR_INVALID_ARG_TYPE' });
+    }
+    return rec.watch(path, opts, listener);
+  };
+  const w = await start(s, vi.fn(), watch);
+  await agentCopy(s);
+
+  fail = true;
+  await expect(w.check()).rejects.toMatchObject({ code: 'ERR_INVALID_ARG_TYPE' });
 });
 
 test('neighbours behind a symlinked BACKE_HOME are found, the own copy is not', async () => {
