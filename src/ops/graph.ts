@@ -175,6 +175,29 @@ class OverriddenMap implements ReadonlyMap<string, readonly string[]> {
   }
 }
 
+const blockingCache = new WeakMap<Issues, ReadonlyMap<string, readonly string[]>>();
+
+/**
+ * Issues, die per `blocked_by` an der Schlüssel-ID hängen, nach `compareIssues`; einmal je
+ * Snapshot. Ohne Patch für Drafts wie bei `graphOf`: BK selbst fragt diese Richtung nicht ab, nur
+ * die UI auf ihren Snapshots.
+ */
+export function blocking(s: BacklogSnapshot): ReadonlyMap<string, readonly string[]> {
+  const cached = blockingCache.get(s.issues);
+  if (cached) return cached;
+  const lists = new Map<string, Issue[]>();
+  for (const { data } of s.issues.values()) {
+    for (const blocker of data.blocked_by ?? []) {
+      const list = lists.get(blocker);
+      if (list) list.push(data);
+      else lists.set(blocker, [data]);
+    }
+  }
+  const built = new Map([...lists].map(([k, v]) => [k, v.sort(compareIssues).map((i) => i.id)]));
+  blockingCache.set(s.issues, built);
+  return built;
+}
+
 function lookup(s: BacklogSnapshot, id: string): Issue {
   const found = s.issues.get(id);
   if (!found) throw new BackeError('not_found', m.issueNotFound(id));
