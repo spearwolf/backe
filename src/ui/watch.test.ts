@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { testBacklog } from '../../test/helpers/git.ts';
 import { git } from '../git/exec.ts';
@@ -133,6 +133,31 @@ test('sync dir events signal sync, close closes every handle', async () => {
   expect(s.log).toEqual(['sync', 'sync']);
   watched.close();
   expect(rec.all.every((r) => r.closed)).toBe(true);
+});
+
+test('an event on a watched dir itself counts like one without a name', async () => {
+  // libuv meldet ein Ereignis auf dem beobachteten Verzeichnis unter dessen eigenem Namen: FSEvents,
+  // wenn es Änderungen zum Verzeichnis zusammenfasst, inotify etwa bei geänderten Rechten. Welche
+  // Datei sich geändert hat, sagt das nicht; es zählt wie ein Ereignis ohne Namen.
+  const b = await testBacklog();
+  const { gitDir } = await gitDirs(b.root);
+  const rec = recorder();
+  const s = signals();
+  const syncDir = join(await tempDir(), 'backe');
+  await watchWorkingCopy(b.root, { watch: rec.watch, syncDir }, s.on);
+  const self = (path: string) => rec.at(path).fire(basename(path));
+  self(gitDir);
+  expect(s.log).toEqual(['ref']);
+  self(join(b.root, '.backe'));
+  rec.at(join(b.root, 'issues')).fire('');
+  expect(s.log).toEqual(['ref', 'paths:all', 'paths:all']);
+  const sprints = rec.at(join(b.root, 'sprints'));
+  self(b.root);
+  expect(sprints.closed).toBe(true);
+  expect(s.log).toEqual(['ref', 'paths:all', 'paths:all', 'paths:all']);
+  self(syncDir);
+  self(join(gitDir, 'refs', 'heads'));
+  expect(s.log.slice(-2)).toEqual(['sync', 'ref']);
 });
 
 test('a failing watch closes the handles opened before', async () => {

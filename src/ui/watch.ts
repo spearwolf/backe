@@ -5,7 +5,7 @@
  * Funktion durch, die Ereignisse unterdrückt, um verlorene Ereignisse nachzustellen.
  */
 import { watch } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { git } from '../git/exec.ts';
 import { BACKLOG_DIRS, watchedPath } from './delta.ts';
 
@@ -35,6 +35,20 @@ export const fsWatch: WatchFn = (path, opts, listener) => {
     throw err;
   }
 };
+
+/**
+ * `watch` mit einheitlichen Namen: Ein Ereignis auf dem beobachteten Verzeichnis selbst meldet
+ * libuv unter dessen eigenem Namen (FSEvents, wenn es Änderungen zum Verzeichnis zusammenfasst;
+ * inotify etwa bei geänderten Rechten), Nodes rekursiver Watch unter Linux mit leerem Namen. Beides
+ * sagt nicht, was sich geändert hat, und kommt als `null` an. Ein Eintrag, der so heißt wie sein
+ * Verzeichnis, zählt dadurch ebenfalls als unbekannt; das kostet höchstens ein Neuladen.
+ */
+export function unnamedSelf(watch: WatchFn): WatchFn {
+  return (path, opts, listener) => {
+    const self = basename(path);
+    return watch(path, opts, (name) => listener(name === '' || name === self ? null : name));
+  };
+}
 
 /** Was eine Arbeitskopie meldet: Ref bewegt, Pfade im Arbeitsbaum (`all` = unbekannt), Sync-Zustand. */
 export type WatchSignals = {
@@ -76,7 +90,7 @@ export async function watchWorkingCopy(
   opts: { syncDir?: string; watch?: WatchFn },
   on: WatchSignals,
 ): Promise<Watched> {
-  const w = opts.watch ?? fsWatch;
+  const w = unnamedSelf(opts.watch ?? fsWatch);
   const { gitDir, commonDir } = await gitDirs(root);
   const handles: { close(): void }[] = [];
   const add = (h: { close(): void }) => handles.push(h);

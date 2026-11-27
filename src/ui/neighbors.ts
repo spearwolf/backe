@@ -29,7 +29,7 @@ import { BackeError } from '../core/errors.ts';
 import { git } from '../git/exec.ts';
 import { isAncestor } from '../git/history.ts';
 import { exists } from '../store/files.ts';
-import { fsWatch, gitDirs, PACKED_FILES, slashed, type WatchFn } from './watch.ts';
+import { fsWatch, gitDirs, PACKED_FILES, slashed, unnamedSelf, type WatchFn } from './watch.ts';
 
 export type NeighborOptions = {
   /** `<BACKE_HOME>/backlogs/<backlog>` */
@@ -111,7 +111,7 @@ export class NeighborWatch {
 
   private constructor(opts: NeighborOptions) {
     this.#opts = opts;
-    this.#watch = opts.watch ?? fsWatch;
+    this.#watch = unnamedSelf(opts.watch ?? fsWatch);
   }
 
   /**

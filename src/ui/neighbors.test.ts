@@ -1,5 +1,5 @@
 import { chmod, cp, mkdir, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { writeOp } from '../../test/helpers/context.ts';
 import {
   revParse,
@@ -246,6 +246,22 @@ test('events outside the watched refs start no check', async () => {
   agentCommon.fire('packed-refs.lock');
   await vi.advanceTimersByTimeAsync(debounceMs);
   expect(check).toHaveBeenCalledTimes(4);
+});
+
+test('an event on a watched dir itself starts a check', async () => {
+  // So meldet FSEvents zusammengefasste Änderungen: nur das Verzeichnis, unter seinem eigenen Namen.
+  const s = await withHub();
+  const rec = recorder();
+  const w = await start(s, vi.fn(), rec.watch);
+  const check = vi.spyOn(w, 'check');
+  fakeTimers();
+  const hubRefs = await refsOf(s.hub);
+  const agentCommon = (await gitDirs(s.wc)).commonDir;
+  for (const dir of [hubRefs, (await gitDirs(s.hub)).commonDir, agentCommon]) {
+    rec.at(dir).fire(basename(dir));
+    await vi.advanceTimersByTimeAsync(debounceMs);
+  }
+  expect(check).toHaveBeenCalledTimes(3);
 });
 
 test('a ref the own copy already has is no move', async () => {
