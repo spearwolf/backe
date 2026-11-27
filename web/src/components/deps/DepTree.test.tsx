@@ -21,14 +21,18 @@ afterEach(() => {
   router.dispose();
 });
 
-function treeOf(issues: Issue[], id: string, opts: { toggled?: string[]; limit?: number } = {}) {
+function treeOf(
+  issues: Issue[],
+  id: string,
+  opts: { toggled?: string[]; limit?: number; parents?: boolean } = {},
+) {
   const store = new Store();
   store.load(testState(issues));
   const s = store.toSnapshot();
   store.dispose();
   if (s === undefined) throw new Error('no snapshot');
   return depTree(s, id, {
-    parents: false,
+    parents: opts.parents ?? false,
     toggled: new Set(opts.toggled ?? []),
     limit: opts.limit,
   });
@@ -55,8 +59,8 @@ test('prerequisites and dependents as nested lists', () => {
   show(treeOf(chain(), C));
   const up = screen.getByRole('list', { name: m.prerequisites });
   expect(within(up).getByRole('link', { name: new RegExp(U1) })).toBeTruthy();
-  const nested = within(up).getAllByRole('list');
-  expect(within(nested[0] as HTMLElement).getByRole('link', { name: new RegExp(U2) })).toBeTruthy();
+  const nested = within(up).getByRole('list', { name: m.prerequisitesOf(U1) });
+  expect(within(nested).getByRole('link', { name: new RegExp(U2) })).toBeTruthy();
   const down = screen.getByRole('list', { name: m.dependents });
   expect(within(down).getByRole('link', { name: new RegExp(D1) })).toBeTruthy();
 });
@@ -67,6 +71,13 @@ test('empty groups are left out', () => {
   expect(screen.getByRole('list', { name: m.dependents })).toBeTruthy();
 });
 
+test('nested lists are named by direction and parent', () => {
+  show(treeOf(chain(), C));
+  expect(screen.getByRole('list', { name: m.prerequisitesOf(U1) })).toBeTruthy();
+  show(treeOf(chain(), U2));
+  expect(screen.getByRole('list', { name: m.dependentsOf(U1) })).toBeTruthy();
+});
+
 test('a toggle reports the path key', async () => {
   const onToggle = vi.fn();
   const tree = treeOf(chain(), C);
@@ -74,7 +85,6 @@ test('a toggle reports the path key', async () => {
   const button = screen.getByRole('button', { name: m.hideTree(U1) });
   expect(button.getAttribute('aria-expanded')).toBe('true');
   await userEvent.click(button);
-  expect(onToggle).toHaveBeenCalledWith(tree.up[0]?.key);
   expect(onToggle).toHaveBeenCalledWith(`up:${U1}~depends_on`);
 });
 
@@ -86,13 +96,15 @@ test('a collapsed row offers to show its tree', () => {
 });
 
 test('cycle and missing rows have no toggle and no link', () => {
-  const issues = [testIssue(1, { depends_on: [U1] }), testIssue(2, { depends_on: [U2, tid(9)] })];
-  show(treeOf(issues, U2));
+  // a hängt von b ab, b von a und von einer Nummer, die es nicht gibt: Ab a ist a der Zyklus.
+  const [a, b, gone] = [tid(1), tid(2), tid(9)];
+  const issues = [testIssue(1, { depends_on: [b] }), testIssue(2, { depends_on: [a, gone] })];
+  show(treeOf(issues, a));
   const up = screen.getByRole('list', { name: m.prerequisites });
   const missing = within(up).getByText(m.missing).closest('li') as HTMLElement;
   expect(within(missing).queryByRole('link')).toBeNull();
   expect(within(missing).queryByRole('button')).toBeNull();
-  expect(within(missing).getByText(tid(9))).toBeTruthy();
+  expect(within(missing).getByText(gone)).toBeTruthy();
   const cycle = within(up).getByText(m.cycle).closest('li') as HTMLElement;
   expect(within(cycle).queryByRole('button')).toBeNull();
   expect(within(cycle).queryByRole('link')).toBeNull();
@@ -113,9 +125,45 @@ test('settled rows mute the title instead of fading the row', () => {
   show(treeOf(chain(), C));
   const settled = screen.getByRole('link', { name: new RegExp(U2) });
   expect(settled.querySelector('.truncate')?.className).toContain('text-muted-foreground');
-  expect(settled.closest('li')?.className).not.toContain('opacity');
+  for (let el: HTMLElement | null = settled; el && el.tagName !== 'UL'; el = el.parentElement) {
+    expect(el.className).not.toContain('opacity');
+  }
+  expect(settled.querySelector('.truncate')?.getAttribute('title')).toBe('Issue 1');
   const open = screen.getByRole('link', { name: new RegExp(U1) });
   expect(open.querySelector('.truncate')?.className).not.toContain('text-muted-foreground');
+});
+
+test('open prerequisites carry a screen reader cue, settled ones and dependents do not', () => {
+  show(treeOf(chain(), C));
+  const up = screen.getByRole('list', { name: m.prerequisites });
+  const u1 = within(up)
+    .getByRole('link', { name: new RegExp(U1) })
+    .closest('li') as HTMLElement;
+  expect(within(u1.firstElementChild as HTMLElement).getByText(m.openPrerequisite)).toBeTruthy();
+  const u2 = within(up)
+    .getByRole('link', { name: new RegExp(U2) })
+    .closest('li') as HTMLElement;
+  expect(within(u2).queryByText(m.openPrerequisite)).toBeNull();
+  const down = screen.getByRole('list', { name: m.dependents });
+  expect(within(down).queryByText(m.openPrerequisite)).toBeNull();
+});
+
+test('a missing prerequisite counts as open', () => {
+  show(treeOf([testIssue(1, { depends_on: [tid(9)] })], U2));
+  expect(screen.getByText(m.openPrerequisite)).toBeTruthy();
+});
+
+test('parent rows show the raw kind', () => {
+  show(treeOf([testIssue(1), testIssue(2, { parent: U2 })], U1, { parents: true }));
+  expect(screen.getByText('parent')).toBeTruthy();
+});
+
+test('a limit after a nested list keeps the list and counts the cut rows', () => {
+  show(treeOf(chain(), C, { limit: 2 }));
+  const nested = screen.getByRole('list', { name: m.prerequisitesOf(U1) });
+  expect(within(nested).getByRole('link', { name: new RegExp(U2) })).toBeTruthy();
+  expect(screen.queryByRole('list', { name: m.dependents })).toBeNull();
+  expect(screen.getAllByText(m.more(1)).length).toBe(1);
 });
 
 test('the rest beyond the limit is one row', () => {

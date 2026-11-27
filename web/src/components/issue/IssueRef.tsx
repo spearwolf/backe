@@ -4,6 +4,16 @@ import { routeHref } from '../../app/routes.ts';
 import { m } from '../../views/issue.messages.ts';
 import { StateIcon } from '../StateIcon.tsx';
 
+/** ID ohne Link, dahinter eine Notiz (»fehlt«, »Zyklus«): für Verweise, die nirgends hinführen. */
+export function MissingRef(props: { id: string; note: string }) {
+  return (
+    <span className="inline-flex items-baseline gap-2 text-sm">
+      <span className="font-mono text-xs">{props.id}</span>
+      <span className="italic text-muted-foreground">{props.note}</span>
+    </span>
+  );
+}
+
 /** Verweis auf ein anderes Issue: Link mit State, ID und Titel; eine fehlende ID bleibt Text. */
 export function IssueRef(props: {
   issue: IssueRefJson | { id: string; missing: true };
@@ -12,12 +22,7 @@ export function IssueRef(props: {
   const { issue, backlog } = props;
   const go = useLinkClick();
   if ('missing' in issue) {
-    return (
-      <span className="inline-flex items-baseline gap-2 text-sm">
-        <span className="font-mono text-xs">{issue.id}</span>
-        <span className="italic text-muted-foreground">{m.missing}</span>
-      </span>
-    );
+    return <MissingRef id={issue.id} note={m.missing} />;
   }
   const href = routeHref({ kind: 'issue', backlog, id: issue.id });
   return (

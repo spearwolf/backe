@@ -6,6 +6,7 @@ import { useLinkClick } from '../../app/router.ts';
 import { routeHref } from '../../app/routes.ts';
 import { cn } from '../../lib/utils.ts';
 import { m } from '../../views/deps.messages.ts';
+import { MissingRef } from '../issue/IssueRef.tsx';
 import { StateIcon } from '../StateIcon.tsx';
 
 const SLOT = 'inline-flex size-6 shrink-0 items-center justify-center';
@@ -16,6 +17,9 @@ function Row(props: { item: DepTreeItem; backlog: string; onToggle: (key: string
   const { issue, id } = item;
   const settled = issue !== undefined && isSettled(issue.state);
   const href = routeHref({ kind: 'issue', backlog, id });
+  const up = item.key.startsWith('up:');
+  // Wie im Graphen: Eine Voraussetzung, die nicht erledigt ist (oder fehlt), blockiert noch.
+  const openPrerequisite = up && !settled;
 
   return (
     <li>
@@ -50,21 +54,25 @@ function Row(props: { item: DepTreeItem; backlog: string; onToggle: (key: string
             <StateIcon state={issue.state} className="shrink-0 text-muted-foreground" />
             <span className="font-mono text-xs text-muted-foreground">{id}</span>
             {/* Erledigt: gedämpfter Titel statt Deckkraft; `muted-foreground` hält AA-Kontrast. */}
-            <span className={cn('min-w-0 truncate', settled && 'text-muted-foreground')}>
+            <span
+              className={cn('min-w-0 truncate', settled && 'text-muted-foreground')}
+              title={issue.title}
+            >
               {issue.title}
             </span>
           </a>
         ) : (
-          <span className="inline-flex items-baseline gap-2 text-sm">
-            <span className="font-mono text-xs">{id}</span>
-            <span className="italic text-muted-foreground">
-              {issue === undefined ? m.missing : m.cycle}
-            </span>
-          </span>
+          <MissingRef id={id} note={issue === undefined ? m.missing : m.cycle} />
         )}
+        {openPrerequisite && <span className="sr-only">{m.openPrerequisite}</span>}
       </div>
       {item.children.length > 0 && (
-        <Items items={item.children} backlog={backlog} onToggle={onToggle} nested />
+        <Items
+          items={item.children}
+          backlog={backlog}
+          onToggle={onToggle}
+          label={up ? m.prerequisitesOf(id) : m.dependentsOf(id)}
+        />
       )}
     </li>
   );
@@ -74,12 +82,21 @@ function Items(props: {
   items: DepTreeItem[];
   backlog: string;
   onToggle: (key: string) => void;
+  /** Oberste Liste: ID der Gruppenüberschrift. */
   labelledBy?: string;
-  nested?: boolean;
+  /** Verschachtelte Liste: eigener Name, denn sie hat keine Überschrift. */
+  label?: string;
 }) {
-  const { items, backlog, onToggle, labelledBy, nested } = props;
+  const { items, backlog, onToggle, labelledBy, label } = props;
   return (
-    <ul aria-labelledby={labelledBy} className={cn(nested && 'ml-6 border-l pl-2')}>
+    // `role="list"` explizit: Tailwinds `list-style: none` lässt Safari/VoiceOver die Listensemantik verwerfen.
+    <ul
+      // biome-ignore lint/a11y/noRedundantRoles: siehe Kommentar oben
+      role="list"
+      aria-labelledby={labelledBy}
+      aria-label={label}
+      className={cn(label !== undefined && 'ml-6 border-l pl-2')}
+    >
       {items.map((item) => (
         <Row key={item.key} item={item} backlog={backlog} onToggle={onToggle} />
       ))}
