@@ -44,17 +44,23 @@ export async function issueActors(
     if (handles.length === 0) continue;
     for (const path of paths) {
       const id = issueOfPath(path.replace(/^\n/, ''));
-      if (id !== undefined) mergeActors(out, new Map([[id, new Set(handles)]]));
+      if (id !== undefined) addActors(out, id, handles);
     }
   }
   return out;
 }
 
-/** Fügt die Handles aus `from` je Issue in `into` ein. */
-export function mergeActors(into: Map<string, Set<string>>, from: Map<string, Set<string>>): void {
-  for (const [id, handles] of from) {
-    const set = into.get(id) ?? new Set<string>();
-    for (const h of handles) set.add(h);
+/** Fügt `handles` beim Issue `id` in `into` ein. */
+function addActors(into: Map<string, Set<string>>, id: string, handles: Iterable<string>): void {
+  let set = into.get(id);
+  if (set === undefined) {
+    set = new Set<string>();
     into.set(id, set);
   }
+  for (const h of handles) set.add(h);
+}
+
+/** Fügt die Handles aus `from` je Issue in `into` ein. */
+export function mergeActors(into: Map<string, Set<string>>, from: Map<string, Set<string>>): void {
+  for (const [id, handles] of from) addActors(into, id, handles);
 }

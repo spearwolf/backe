@@ -82,6 +82,8 @@ export function streamRequest(
 ): Promise<Res> {
   return new Promise((resolve, reject) => {
     let answered = false;
+    /** Weckt den Schreiber, der auf `drain` wartet; auch die Antwort tut das. */
+    let wakeWriter: (() => void) | undefined;
     const r = httpRequest(
       {
         host: '127.0.0.1',
@@ -93,6 +95,7 @@ export function streamRequest(
       },
       (res) => {
         answered = true;
+        wakeWriter?.();
         collect(res).then((got) => {
           r.destroy();
           resolve(got);
@@ -106,13 +109,16 @@ export function streamRequest(
       for (const chunk of req.chunks) {
         if (answered || r.destroyed) return;
         if (!r.write(chunk)) {
-          // Nach dem ersten Ereignis beide Listener entfernen, sonst sammeln sie sich pro Gegendruck an.
+          // Nach dem ersten Ereignis beide Listener entfernen, sonst sammeln sie sich pro Gegendruck
+          // an. Eine frühe Antwort weckt ebenfalls: Der Server liest den Rest dann womöglich nie.
           await new Promise<void>((done) => {
             const wake = () => {
+              wakeWriter = undefined;
               r.off('drain', wake);
               r.off('close', wake);
               done();
             };
+            wakeWriter = wake;
             r.on('drain', wake);
             r.on('close', wake);
           });

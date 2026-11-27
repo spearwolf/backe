@@ -148,20 +148,24 @@ export function watchedPath(path: string): boolean {
   return WATCHED_DIRS.some((dir) => path.startsWith(dir) || `${path}/` === dir);
 }
 
-/** `issues/<shard>/<id>/comments|attachments[/…]` → `<id>`, sonst `undefined`. */
-export function touchedIssue(path: string): string | undefined {
-  const id = issueOfPath(path);
-  const sub = path.split('/')[3];
-  return sub === 'comments' || sub === 'attachments' ? id : undefined;
-}
-
-/** `issues/<shard>/<id>/…` → `<id>`, sonst `undefined`. */
-export function issueOfPath(path: string): string | undefined {
+/** `issues/<shard>/<id>/<sub>[/…]` → `<id>` und `<sub>`, sonst `undefined`; ein einziges `split`. */
+function issuePath(path: string): { id: string; sub: string } | undefined {
   const [top, shard, id, sub] = path.split('/');
   if (top !== 'issues' || shard === undefined || id === undefined || sub === undefined) {
     return undefined;
   }
-  return id;
+  return { id, sub };
+}
+
+/** `issues/<shard>/<id>/comments|attachments[/…]` → `<id>`, sonst `undefined`. */
+export function touchedIssue(path: string): string | undefined {
+  const p = issuePath(path);
+  return p !== undefined && (p.sub === 'comments' || p.sub === 'attachments') ? p.id : undefined;
+}
+
+/** `issues/<shard>/<id>/…` → `<id>`, sonst `undefined`. */
+export function issueOfPath(path: string): string | undefined {
+  return issuePath(path)?.id;
 }
 
 /** Issues, deren Kommentare oder Anhänge unter `paths` liegen, sortiert und ohne Doppelte. */
