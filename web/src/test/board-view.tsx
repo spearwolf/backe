@@ -90,3 +90,17 @@ export const cardOf = (id: string, lane?: string): HTMLElement => {
   const scope = lane === undefined ? document.body : laneOf(lane);
   return scope.querySelector(`li[data-card="${id}"]`) as HTMLElement;
 };
+
+/** Der Link einer Karte, in Bahn `lane` (sonst die erste Karte mit dieser ID). */
+export const cardLink = (id: string, lane?: string): HTMLElement =>
+  within(cardOf(id, lane)).getByRole('link');
+
+/** Ohne Antwort bleibt eine Überlagerung stehen; eine Antwort ohne Commit nähme sie sofort zurück. */
+export const answerNever = () => call.mockImplementation(() => new Promise(() => {}));
+
+let commits = 0;
+/** Jede Antwort trägt einen eigenen Commit (`c1`, `c2`, …); der Write endet erst mit dessen Patch. */
+export const answerCommitted = () => {
+  commits = 0;
+  call.mockImplementation(async () => ({ commit: `c${++commits}` }));
+};

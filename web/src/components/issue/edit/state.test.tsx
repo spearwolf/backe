@@ -1,6 +1,11 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Router, RouterContext } from '../../../app/router.ts';
 import { ApiError } from '../../../data/api-client.ts';
+import { Store } from '../../../data/store.ts';
+import { StoreContext } from '../../../data/store-context.tsx';
+import { WriteContext } from '../../../data/write-context.tsx';
+import { Writes } from '../../../data/writes.ts';
 import {
   call,
   deferred,
@@ -8,11 +13,13 @@ import {
   flush,
   ID,
   registerIssueViewHarness,
+  upload,
   view,
 } from '../../../test/issue-view.tsx';
-import { testIssue, tid } from '../../../test/state.ts';
+import { testIssue, testState, tid } from '../../../test/state.ts';
 import { m } from '../../../views/issue.messages.ts';
 import { m as w } from '../../write/write.messages.ts';
+import { StateDialog } from './StateDialog.tsx';
 
 vi.mock('../../../markdown/index.tsx', () => ({
   Markdown: ({ source }: { source: string }) => <div data-testid="markdown">{source}</div>,
@@ -192,4 +199,51 @@ test('a blocker edit clears an old refusal message', async () => {
   expect(await within(dialog).findByText('Kein solches Issue')).toBeTruthy();
   await userEvent.clear(blocker);
   expect(within(dialog).queryByText('Kein solches Issue')).toBeNull();
+});
+
+test('a dialog with submit sends through it', async () => {
+  // Das Board wiederholt seinen ganzen Zug (auch den `batch`) über `submit`, nicht über `runState`.
+  const store = new Store();
+  const issues = [testIssue(1, { state: 'review' }), testIssue(2, { title: 'Kind', parent: ID })];
+  store.load(testState(issues));
+  const writes = new Writes(store, {
+    call: call as never,
+    upload: upload as never,
+    refresh: async () => {},
+  });
+  const submit = vi.fn<(extra: unknown) => Promise<unknown>>();
+  submit.mockRejectedValueOnce(new ApiError(409, 'conflict', 'Schon geändert', 'neu laden'));
+  submit.mockResolvedValueOnce(undefined);
+  const onOpenChange = vi.fn();
+  render(
+    <RouterContext.Provider value={new Router(window)}>
+      <StoreContext.Provider value={store}>
+        <WriteContext.Provider value={{ backlog: 'acme', canWrite: true, me: 'spw', writes }}>
+          <StateDialog
+            issue={issues[0] as (typeof issues)[0]}
+            action={{ to: 'done', tool: 'issue_move', needsBlockedBy: false }}
+            rejected={openChildren()}
+            submit={submit}
+            onOpenChange={onOpenChange}
+          />
+        </WriteContext.Provider>
+      </StoreContext.Provider>
+    </RouterContext.Provider>,
+  );
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByRole('link', { name: /Kind/ })).toBeTruthy();
+  await userEvent.type(within(dialog).getByRole('textbox', { name: m.reason }), 'fertig');
+  await userEvent.click(within(dialog).getByRole('button', { name: m.forceDone }));
+  expect(submit).toHaveBeenCalledExactlyOnceWith({ reason: 'fertig', force: true });
+  // Ein Fehler von `submit` steht im Dialog wie einer von `runState`, der Dialog bleibt offen.
+  expect(await within(dialog).findByText('Schon geändert')).toBeTruthy();
+  expect(onOpenChange).not.toHaveBeenCalled();
+  await userEvent.click(within(dialog).getByRole('button', { name: m.forceDone }));
+  expect(submit).toHaveBeenCalledTimes(2);
+  await flush();
+  expect(onOpenChange).toHaveBeenCalledWith(false);
+  // Weder ein Aufruf noch eine Überlagerung des Dialogs selbst.
+  expect(call).not.toHaveBeenCalled();
+  expect(store.pendingCount(ID).value).toBe(0);
+  writes.dispose();
 });

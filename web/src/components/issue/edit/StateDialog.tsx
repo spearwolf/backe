@@ -1,7 +1,12 @@
 import type { IssueJson } from '@backe/ui/api.ts';
 import { Plus, X } from 'lucide-react';
 import { useId, useState } from 'react';
-import { openChildrenOf, type StateAction, stateCall } from '../../../app/state-actions.ts';
+import {
+  openChildrenOf,
+  type StateAction,
+  type StateExtra,
+  stateCall,
+} from '../../../app/state-actions.ts';
 import type { ApiError } from '../../../data/api-client.ts';
 import { useStore } from '../../../data/store-context.tsx';
 import { useSignal } from '../../../data/use-signal.ts';
@@ -23,6 +28,12 @@ export type StateDialogProps = {
   rejected?: ApiError;
   /** Wohin der Fokus nach dem Schließen geht; `preventDefault` übernimmt ihn (Radix). */
   onCloseAutoFocus?: (event: Event) => void;
+  /**
+   * Schickt den Wechsel statt `runState`, etwa einen ganzen Board-Zug samt Bahn als `batch`. Der
+   * Dialog rechnet dann keine eigene Überlagerung; die bringt der Aufrufer mit. Lehnt das Promise
+   * ab, zeigt der Dialog den Fehler wie sonst.
+   */
+  submit?: (extra: StateExtra) => Promise<unknown>;
 };
 
 /**
@@ -43,7 +54,7 @@ export function StateDialog(props: StateDialogProps) {
 type Blocker = { key: number; value: string };
 
 function OpenStateDialog(props: StateDialogProps & { action: StateAction }) {
-  const { issue, action, onOpenChange, rejected, onCloseAutoFocus } = props;
+  const { issue, action, onOpenChange, rejected, onCloseAutoFocus, submit } = props;
   const { writes } = useWrites();
   const store = useStore();
   const reasonId = useId();
@@ -71,15 +82,18 @@ function OpenStateDialog(props: StateDialogProps & { action: StateAction }) {
   const missing = action.needsBlockedBy && blockedBy.length === 0;
 
   const confirm = async (): Promise<void> => {
-    const extra = {
+    const extra: StateExtra = {
       ...(reason.trim() === '' ? {} : { reason: reason.trim() }),
       ...(action.needsBlockedBy ? { blockedBy } : {}),
       ...(children === undefined ? {} : { force: true }),
     };
-    const call = stateCall(issue.id, action, extra);
-    const overlay = overlayOf(store, issue.id, action, extra.blockedBy);
+    const send = (): Promise<unknown> => {
+      if (submit !== undefined) return submit(extra);
+      const call = stateCall(issue.id, action, extra);
+      return runState(writes, call, overlayOf(store, issue.id, action, extra.blockedBy));
+    };
     const ok = await run(() =>
-      runState(writes, call, overlay).catch((cause: ApiError) => {
+      send().catch((cause: ApiError) => {
         setShown(cause);
         if (openChildrenOf(cause) !== undefined) setRefusal(cause);
         throw cause;

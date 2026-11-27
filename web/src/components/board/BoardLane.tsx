@@ -1,10 +1,24 @@
+import type { State } from '@backe/core/state.ts';
+import { useDroppable } from '@dnd-kit/core';
 import { ChevronRight } from 'lucide-react';
-import { useId } from 'react';
-import { type BoardGroup, type BoardLane as Lane, NO_LANE } from '../../app/board-model.ts';
+import { useId, useMemo } from 'react';
+import {
+  type BoardGroup,
+  type BoardCell as Cell,
+  type BoardLane as Lane,
+  NO_LANE,
+} from '../../app/board-model.ts';
+import { useWrites } from '../../data/write-context.tsx';
 import { cn } from '../../lib/utils.ts';
 import { m } from '../../views/board.messages.ts';
 import { StateIcon } from '../StateIcon.tsx';
 import { BoardCard } from './BoardCard.tsx';
+import type { CellData } from './board-dnd.ts';
+
+/** Markierung beim Ziehen in einer Bahn: Linie an einer Karte, oder eine Zelle hervorgehoben. */
+export type LaneMarker =
+  | { kind: 'line'; id: string; column: State; side: 'before' | 'after' }
+  | { kind: 'cell'; column: State };
 
 /** Mindestbreite einer Spalte; die Abstände in `boardMinWidth` folgen `gap-x-3` und `px-3` des Rasters. */
 const COLUMN_MIN = '16rem';
@@ -52,8 +66,9 @@ export function BoardLane(props: {
   lane: Lane;
   folded: boolean;
   onFold: (folded: boolean) => void;
+  marker?: LaneMarker | undefined;
 }) {
-  const { backlog, group, lane, folded, onFold } = props;
+  const { backlog, group, lane, folded, onFold, marker } = props;
   const id = useId();
   const label = laneLabel(group, lane);
   const headless = group === 'none';
@@ -105,20 +120,60 @@ export function BoardLane(props: {
             </div>
           ))}
           {lane.cells.map((cell) => (
-            <ul
+            <BoardCell
               key={cell.column}
-              aria-label={m.cell(label, cell.column)}
-              data-lane={lane.key}
-              data-column={cell.column}
-              className="flex min-h-16 flex-col gap-2 rounded-md bg-muted/40 p-2"
-            >
-              {cell.cards.map((card) => (
-                <BoardCard key={card.issue.id} backlog={backlog} card={card} lane={lane.key} />
-              ))}
-            </ul>
+              backlog={backlog}
+              label={m.cell(label, cell.column)}
+              lane={lane.key}
+              cell={cell}
+              marker={marker?.column === cell.column ? marker : undefined}
+            />
           ))}
         </div>
       )}
     </section>
+  );
+}
+
+/** Eine Zelle (Bahn × Spalte): Ziel für Karten aus anderen Zellen und für »ans Ende«. */
+function BoardCell(props: {
+  backlog: string;
+  label: string;
+  lane: string;
+  cell: Cell;
+  marker: LaneMarker | undefined;
+}) {
+  const { backlog, label, lane, cell, marker } = props;
+  const { column } = cell;
+  const data = useMemo<CellData>(() => ({ type: 'cell', lane, column }), [lane, column]);
+  const { setNodeRef } = useDroppable({
+    id: `cell:${lane}:${column}`,
+    data,
+    disabled: !useWrites().canWrite,
+  });
+  const over = marker?.kind === 'cell';
+  return (
+    <ul
+      ref={setNodeRef}
+      aria-label={label}
+      data-lane={lane}
+      data-column={column}
+      {...(over ? { 'data-over': 'true' } : {})}
+      className={cn(
+        'flex min-h-16 flex-col gap-2 rounded-md bg-muted/40 p-2',
+        over && 'bg-accent ring-2 ring-primary',
+      )}
+    >
+      {cell.cards.map((card) => (
+        <BoardCard
+          key={card.issue.id}
+          backlog={backlog}
+          card={card}
+          lane={lane}
+          column={column}
+          drop={marker?.kind === 'line' && marker.id === card.issue.id ? marker.side : undefined}
+        />
+      ))}
+    </ul>
   );
 }
