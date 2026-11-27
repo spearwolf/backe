@@ -51,10 +51,16 @@ export const useBoardMoves = (): BoardMoves => useContext(BoardMoveContext);
 
 /**
  * Tastenzüge an der fokussierten Karte und die Id des Hinweises, der sie Hilfsmitteln beschreibt;
- * `undefined` ohne Schreibrecht. Ein eigener Kontext mit stabilem Wert: Die Bahnen ändern sich mit
- * jedem Patch, die Karten (`memo`) sollen deswegen nicht alle neu rendern.
+ * `undefined` ohne Schreibrecht. `drop` ist das Ablegen, das `onKey` senden würde (`undefined` am
+ * Rand) — das Kartenmenü bietet damit dieselben Rangzüge an. Ein eigener Kontext mit stabilem
+ * Wert: Die Bahnen ändern sich mit jedem Patch, die Karten (`memo`) sollen deswegen nicht alle neu
+ * rendern.
  */
-export type BoardKeys = { onKey: (card: CardData, key: BoardKey) => void; hintId: string };
+export type BoardKeys = {
+  onKey: (card: CardData, key: BoardKey) => void;
+  drop: (card: CardData, key: BoardKey) => BoardDrop | undefined;
+  hintId: string;
+};
 export const BoardKeyContext = createContext<BoardKeys | undefined>(undefined);
 
 /**

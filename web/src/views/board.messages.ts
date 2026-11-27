@@ -14,7 +14,11 @@ export const m = catalog({
     allIssues: 'all issues',
     cardCount: (count: number) => `${count} ${count === 1 ? 'card' : 'cards'}`,
     cell: (lane: string, state: string) => `${lane} · ${state}`,
-    dragHint: 'Move a card with Alt and the arrow keys.',
+    dragHint:
+      'Move a card with Alt and the arrow keys; Shift+F10 or the context menu key opens the card menu.',
+    menuLane: 'Lane',
+    rankUp: 'One up',
+    rankDown: 'One down',
   },
   de: {
     lanes: 'Bahnen',
@@ -29,6 +33,10 @@ export const m = catalog({
     allIssues: 'alle Issues',
     cardCount: (count: number) => `${count} ${count === 1 ? 'Karte' : 'Karten'}`,
     cell: (lane: string, state: string) => `${lane} · ${state}`,
-    dragHint: 'Karte mit Alt und den Pfeiltasten verschieben.',
+    dragHint:
+      'Karte mit Alt und den Pfeiltasten verschieben; Umschalt+F10 oder die Kontextmenü-Taste öffnet das Kartenmenü.',
+    menuLane: 'Bahn',
+    rankUp: 'Eine nach oben',
+    rankDown: 'Eine nach unten',
   },
 });

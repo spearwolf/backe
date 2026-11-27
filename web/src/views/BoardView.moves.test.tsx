@@ -308,7 +308,7 @@ test('alt arrows move the card and focus follows it', async () => {
   answerNever();
   board([testIssue(1), testIssue(2)]);
   expect(cardLink(tid(1)).getAttribute('aria-keyshortcuts')).toBe(
-    'Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight',
+    'Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight Shift+F10',
   );
   // Hilfsmittel hören die Tastenzüge als Beschreibung des Links.
   const hint = document.getElementById(cardLink(tid(1)).getAttribute('aria-describedby') ?? '');

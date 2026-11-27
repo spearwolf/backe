@@ -2,7 +2,7 @@ import type { State } from '@backe/core/state.ts';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { Hourglass } from 'lucide-react';
 import { type KeyboardEvent, memo, useCallback, useContext, useMemo } from 'react';
-import type { BoardCard as Card } from '../../app/board-model.ts';
+import type { BoardGroup, BoardCard as Card } from '../../app/board-model.ts';
 import { useLinkClick } from '../../app/router.ts';
 import { routeHref } from '../../app/routes.ts';
 import { useStore } from '../../data/store-context.tsx';
@@ -11,8 +11,10 @@ import { useWrites } from '../../data/write-context.tsx';
 import { cn } from '../../lib/utils.ts';
 import { m as b } from '../../views/backlog.messages.ts';
 import { PendingMark } from '../write/PendingMark.tsx';
+import type { LaneChoice } from './BoardLane.tsx';
 import { type CardData, ownListeners } from './board-dnd.ts';
 import { BOARD_KEYS, type BoardKey } from './board-keys.ts';
+import { CardMenu } from './CardMenu.tsx';
 import { initialsOf } from './initials.ts';
 import { BoardKeyContext } from './use-board-move.tsx';
 
@@ -22,7 +24,8 @@ const MARKS: Partial<Record<Card['issue']['state'], string>> = {
   on_hold: 'ON HOLD',
 };
 
-const KEY_SHORTCUTS = BOARD_KEYS.map((k) => `Alt+${k}`).join(' ');
+/** Die Tastenzüge, dazu das Kartenmenü (die Kontextmenü-Taste nennt `aria-keyshortcuts` nicht). */
+const KEY_SHORTCUTS = [...BOARD_KEYS.map((k) => `Alt+${k}`), 'Shift+F10'].join(' ');
 
 /** Alt+Pfeil ohne weitere Modifier; sonst `undefined`. */
 const boardKey = (e: KeyboardEvent): BoardKey | undefined =>
@@ -42,10 +45,13 @@ export const BoardCard = memo(function BoardCard(props: {
   card: Card;
   lane: string;
   column: State;
+  group: BoardGroup;
+  /** Die Bahnen fürs Kartenmenü; über Patches dasselbe Objekt, sonst rendert jede Karte neu. */
+  choices: readonly LaneChoice[];
   /** Markierung beim Ziehen: Die gezogene Karte landete vor bzw. hinter dieser. */
   drop?: 'before' | 'after' | undefined;
 }) {
-  const { backlog, card, lane, column, drop } = props;
+  const { backlog, card, lane, column, group, choices, drop } = props;
   const { issue } = card;
   const href = routeHref({ kind: 'issue', backlog, id: issue.id });
   const go = useLinkClick();
@@ -93,17 +99,19 @@ export const BoardCard = memo(function BoardCard(props: {
         'data-[drop=before]:before:-top-[5px] data-[drop=after]:before:-bottom-[5px]',
       )}
     >
-      <a
-        href={href}
-        draggable={false}
-        onClick={go(href)}
-        {...(disabled || keys === undefined
-          ? {}
-          : { 'aria-keyshortcuts': KEY_SHORTCUTS, 'aria-describedby': keys.hintId })}
-        className="flex flex-col gap-1.5 rounded-md p-2 text-sm outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <CardFace card={card} />
-      </a>
+      <CardMenu issue={issue} lane={lane} column={column} lanes={choices} group={group}>
+        <a
+          href={href}
+          draggable={false}
+          onClick={go(href)}
+          {...(disabled || keys === undefined
+            ? {}
+            : { 'aria-keyshortcuts': KEY_SHORTCUTS, 'aria-describedby': keys.hintId })}
+          className="flex flex-col gap-1.5 rounded-md p-2 text-sm outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <CardFace card={card} />
+        </a>
+      </CardMenu>
     </li>
   );
 });

@@ -18,7 +18,12 @@ import {
 import type { BoardDrop } from '../app/board-move.ts';
 import { BoardModel, BoardPrefs } from '../app/board-state.ts';
 import { BoardCardCopy } from '../components/board/BoardCard.tsx';
-import { BoardLane, boardMinWidth, type LaneMarker } from '../components/board/BoardLane.tsx';
+import {
+  BoardLane,
+  boardMinWidth,
+  type LaneMarker,
+  useLaneChoices,
+} from '../components/board/BoardLane.tsx';
 import { BoardToolbar } from '../components/board/BoardToolbar.tsx';
 import { boardCollision, type CardData, dropFrom } from '../components/board/board-dnd.ts';
 import { type BoardKey, keyDrop } from '../components/board/board-keys.ts';
@@ -84,16 +89,19 @@ function Loaded({ state, backlog }: { state: BoardViewState; backlog: string }) 
     latest.current = { lanes, columns };
   });
   const hintId = useId();
-  const keys = useMemo(
-    () => ({
+  const keys = useMemo(() => {
+    const drop = (card: CardData, key: BoardKey) =>
+      keyDrop(latest.current.lanes, card, key, latest.current.columns);
+    return {
       hintId,
+      drop,
       onKey: (card: CardData, key: BoardKey) => {
-        const drop = keyDrop(latest.current.lanes, card, key, latest.current.columns);
-        if (drop !== undefined) move(drop, { focus: true });
+        const next = drop(card, key);
+        if (next !== undefined) move(next, { focus: true });
       },
-    }),
-    [move, hintId],
-  );
+    };
+  }, [move, hintId]);
+  const choices = useLaneChoices(group, lanes);
 
   const body = (
     <div style={{ minWidth: boardMinWidth(columns.length) }}>
@@ -106,6 +114,7 @@ function Loaded({ state, backlog }: { state: BoardViewState; backlog: string }) 
           folded={group !== 'none' && state.prefs.isFolded(group, lane)}
           onFold={(folded) => state.prefs.setFolded(group, lane.key, folded)}
           marker={drag.markerIn(lane.key)}
+          choices={choices}
         />
       ))}
     </div>

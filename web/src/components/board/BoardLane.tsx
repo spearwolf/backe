@@ -1,7 +1,7 @@
 import type { State } from '@backe/core/state.ts';
 import { useDroppable } from '@dnd-kit/core';
 import { ChevronRight } from 'lucide-react';
-import { useId, useMemo } from 'react';
+import { useId, useMemo, useState } from 'react';
 import {
   type BoardGroup,
   type BoardCell as Cell,
@@ -51,8 +51,39 @@ const NO_LANE_LABEL: Record<BoardGroup, () => string> = {
 };
 
 /** Sichtbarer Name der Bahn; `NO_LANE` heißt je Gruppierung »ohne …«, bei `none` »alle Issues«. */
-export function laneLabel(group: BoardGroup, lane: Lane): string {
+export function laneLabel(group: BoardGroup, lane: Pick<Lane, 'key' | 'label'>): string {
   return lane.key === NO_LANE ? NO_LANE_LABEL[group]() : lane.label;
+}
+
+/** Ein Eintrag unter »Bahn«: Schlüssel und sichtbarer Name. */
+export type LaneChoice = { key: string; label: string };
+
+/**
+ * Die Bahnen der Gruppierung als Einträge, samt »ohne …« auch dann, wenn darin gerade nichts steht
+ * (das Modell zeigt die Bahn erst mit einer Karte); bei `none` keine — es gibt nur die eine.
+ */
+export function laneChoices(group: BoardGroup, lanes: readonly Lane[]): LaneChoice[] {
+  if (group === 'none') return [];
+  const choices = lanes.map((lane) => ({ key: lane.key, label: laneLabel(group, lane) }));
+  if (!lanes.some((lane) => lane.key === NO_LANE)) {
+    choices.push({ key: NO_LANE, label: laneLabel(group, { key: NO_LANE, label: '' }) });
+  }
+  return choices;
+}
+
+const sameChoices = (a: readonly LaneChoice[], b: readonly LaneChoice[]): boolean =>
+  a.length === b.length && a.every((c, i) => c.key === b[i]?.key && c.label === b[i]?.label);
+
+/**
+ * `laneChoices` als Wert, der über Patches gleich bleibt, solange sich Bahnen und Namen nicht
+ * ändern: Er geht an jede Karte (`memo`), und ein Patch soll nicht alle neu rendern.
+ */
+export function useLaneChoices(group: BoardGroup, lanes: readonly Lane[]): LaneChoice[] {
+  const next = laneChoices(group, lanes);
+  const [held, setHeld] = useState(next);
+  if (sameChoices(held, next)) return held;
+  setHeld(next);
+  return next;
 }
 
 /**
@@ -67,8 +98,10 @@ export function BoardLane(props: {
   folded: boolean;
   onFold: (folded: boolean) => void;
   marker?: LaneMarker | undefined;
+  /** Die Bahnen fürs Kartenmenü (`useLaneChoices`). */
+  choices: readonly LaneChoice[];
 }) {
-  const { backlog, group, lane, folded, onFold, marker } = props;
+  const { backlog, group, lane, folded, onFold, marker, choices } = props;
   const id = useId();
   const label = laneLabel(group, lane);
   const headless = group === 'none';
@@ -127,6 +160,8 @@ export function BoardLane(props: {
               lane={lane.key}
               cell={cell}
               marker={marker?.column === cell.column ? marker : undefined}
+              group={group}
+              choices={choices}
             />
           ))}
         </div>
@@ -142,8 +177,10 @@ function BoardCell(props: {
   lane: string;
   cell: Cell;
   marker: LaneMarker | undefined;
+  group: BoardGroup;
+  choices: readonly LaneChoice[];
 }) {
-  const { backlog, label, lane, cell, marker } = props;
+  const { backlog, label, lane, cell, marker, group, choices } = props;
   const { column } = cell;
   const data = useMemo<CellData>(() => ({ type: 'cell', lane, column }), [lane, column]);
   const { setNodeRef } = useDroppable({
@@ -171,6 +208,8 @@ function BoardCell(props: {
           card={card}
           lane={lane}
           column={column}
+          group={group}
+          choices={choices}
           drop={marker?.kind === 'line' && marker.id === card.issue.id ? marker.side : undefined}
         />
       ))}

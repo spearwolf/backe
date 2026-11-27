@@ -169,6 +169,31 @@ export function openByKey(e: KeyboardEvent<HTMLElement>): (() => void) | undefin
 }
 
 /**
+ * Öffnen per Tastatur für ein Kontextmenü (`openByKey`) samt dem Wächter gegen ein spätes natives
+ * `contextmenu`: `onKeyDown` an den Auslöser, `onOpenChange` an die Wurzel. Der Wächter endet mit
+ * dem Menü und, verschwindet der Auslöser mit offenem Menü, mit der Komponente.
+ */
+export function useMenuKey() {
+  const guard = useRef<(() => void) | undefined>(undefined);
+  const endGuard = useCallback(() => {
+    guard.current?.();
+    guard.current = undefined;
+  }, []);
+  useEffect(() => endGuard, [endGuard]);
+  return {
+    onKeyDown: (e: KeyboardEvent<HTMLElement>) => {
+      const off = openByKey(e);
+      if (off === undefined) return;
+      endGuard();
+      guard.current = off;
+    },
+    onOpenChange: (open: boolean) => {
+      if (!open) endGuard();
+    },
+  };
+}
+
+/**
  * Kontextmenü einer Zeile (ui.md §2.7): Rechtsklick, Kontextmenü-Taste oder Umschalt+F10 an der
  * fokussierten Zeile (`openByKey`, unabhängig von der Sortierung). Ohne Schreibrecht gibt es keins.
  * Der Inhalt entsteht erst beim Öffnen: Nur dann liest die Zeile Config und Users.
@@ -176,29 +201,11 @@ export function openByKey(e: KeyboardEvent<HTMLElement>): (() => void) | undefin
 export function RowMenu({ issue, children }: { issue: IssueJson; children: ReactNode }) {
   const { canWrite } = useWrites();
   const toDialog = useRef(false);
-  const guard = useRef<(() => void) | undefined>(undefined);
-  const endGuard = useCallback(() => {
-    guard.current?.();
-    guard.current = undefined;
-  }, []);
-  // Verschwindet die Zeile mit offenem Menü, endet der Wächter mit ihr.
-  useEffect(() => endGuard, [endGuard]);
+  const key = useMenuKey();
   if (!canWrite) return children;
   return (
-    <ContextMenu
-      onOpenChange={(open) => {
-        if (!open) endGuard();
-      }}
-    >
-      <ContextMenuTrigger
-        asChild
-        onKeyDown={(e) => {
-          const off = openByKey(e);
-          if (off === undefined) return;
-          endGuard();
-          guard.current = off;
-        }}
-      >
+    <ContextMenu onOpenChange={key.onOpenChange}>
+      <ContextMenuTrigger asChild onKeyDown={key.onKeyDown}>
         {children}
       </ContextMenuTrigger>
       <ContextMenuContent
