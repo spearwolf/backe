@@ -7,6 +7,13 @@ export const sectionId = (id: Section) => `settings-${id}`;
 export const toggleId = (id: Section) => `settings-${id}-toggle`;
 
 /**
+ * Was `SettingsView` jedem Abschnitt reicht, der seinen Rahmen selbst setzt (Aktionen im Kopf, die
+ * mit dem Körper einen Zustand teilen): ID und Titel kommen aus der Abschnittsliste, nie aus dem
+ * Abschnitt selbst.
+ */
+export type SectionFrame = { id: Section; title: string; folded: boolean; onToggle: () => void };
+
+/**
  * Ein einklappbarer Abschnitt der Settings (Skizze `settings.png`): Kopf mit Klappknopf und Titel,
  * rechts daneben Aktionen wie »Hinzufügen«. Eingeklappt steht nur der Kopf da.
  */

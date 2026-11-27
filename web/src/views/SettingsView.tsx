@@ -13,12 +13,15 @@ import { type Folded, readFolded, writeFolded } from '../app/settings-prefs.ts';
 import { BacklogSection } from '../components/settings/BacklogSection.tsx';
 import { InterfaceSection } from '../components/settings/InterfaceSection.tsx';
 import { ReposSection } from '../components/settings/ReposSection.tsx';
-import { SettingsSection, sectionId, toggleId } from '../components/settings/SettingsSection.tsx';
+import {
+  type SectionFrame,
+  SettingsSection,
+  sectionId,
+  toggleId,
+} from '../components/settings/SettingsSection.tsx';
 import { useSignal } from '../data/use-signal.ts';
 import { cn } from '../lib/utils.ts';
 import { m } from './settings.messages.ts';
-
-type Frame = { folded: boolean; onToggle: () => void };
 
 /**
  * Titel und Inhalt je Abschnitt, an einer Stelle. Ein Abschnitt ohne `Body` zeigt vorerst nur
@@ -27,7 +30,7 @@ type Frame = { folded: boolean; onToggle: () => void };
  */
 const SECTIONS: Record<
   Section,
-  { title: () => string; Body?: ComponentType; Own?: ComponentType<Frame> }
+  { title: () => string; Body?: ComponentType; Own?: ComponentType<SectionFrame> }
 > = {
   repositories: { title: () => m.sectionRepositories, Own: ReposSection },
   projects: { title: () => m.sectionProjects },
@@ -104,7 +107,15 @@ function Settings({ backlog, section, shown }: Props) {
             const { title, Body, Own } = SECTIONS[id];
             const isFolded = folded[id] === true;
             if (Own !== undefined) {
-              return <Own key={id} folded={isFolded} onToggle={() => setFold(id, !isFolded)} />;
+              return (
+                <Own
+                  key={id}
+                  id={id}
+                  title={title()}
+                  folded={isFolded}
+                  onToggle={() => setFold(id, !isFolded)}
+                />
+              );
             }
             return (
               <SettingsSection

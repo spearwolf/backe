@@ -1,10 +1,11 @@
 import { isGitRef, isRepoName } from '@backe/core/names.ts';
 import type { RepoCheckJson, RepoJson } from '@backe/ui/api.ts';
 import { CircleX, Info, TriangleAlert } from 'lucide-react';
-import { type FormEvent, useEffect, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { EMPTY_FILTER, listFilterSearch } from '../../app/list-filter.ts';
 import { useLinkClick } from '../../app/router.ts';
 import { routeHref } from '../../app/routes.ts';
+import type { SettingsSection as Section } from '../../app/settings-model.ts';
 import { repoReferences } from '../../app/settings-model.ts';
 import { useStore } from '../../data/store-context.tsx';
 import { useSignal } from '../../data/use-signal.ts';
@@ -20,8 +21,8 @@ import { Textarea } from '../ui/textarea.tsx';
 import { ActionError } from '../write/ActionError.tsx';
 import { ConfirmDialog } from '../write/ConfirmDialog.tsx';
 import { useAction } from '../write/use-action.ts';
-import { Field } from './fields.tsx';
-import { SettingsSection } from './SettingsSection.tsx';
+import { Field, FormSubmitShim } from './fields.tsx';
+import { type SectionFrame, SettingsSection, sectionId } from './SettingsSection.tsx';
 
 type Level = RepoCheckJson['repos'][number]['findings'][number]['level'];
 
@@ -32,13 +33,20 @@ const LEVELS: Record<Level, { icon: typeof Info; label: () => string; destructiv
 };
 
 /** Dialog »Hinzufügen«; nur zum Öffnen gemountet, damit jedes Mal leer begonnen wird. */
-function AddDialog({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
+function AddDialog({
+  section,
+  onOpenChange,
+}: {
+  section: Section;
+  onOpenChange: (open: boolean) => void;
+}) {
   const { writes } = useWrites();
   const { busy, error, run } = useAction();
   const [url, setUrl] = useState('');
   const [name, setName] = useState('');
   const [ref, setRef] = useState('');
   const [body, setBody] = useState('');
+  const formId = `${sectionId(section)}-add-form`;
   const nameError = name !== '' && !isRepoName(name) ? m.invalidRepoName : undefined;
   const refError = ref !== '' && !isGitRef(ref) ? m.invalidRepoRef : undefined;
   const blocked = url.trim() === '' || nameError !== undefined || refError !== undefined;
@@ -66,12 +74,11 @@ function AddDialog({ onOpenChange }: { onOpenChange: (open: boolean) => void }) 
       busy={busy}
       confirmDisabled={blocked}
       error={error}
-      formId="repo-add-form"
+      formId={formId}
       onOpenChange={onOpenChange}
     >
-      <form id="repo-add-form" onSubmit={submit} className="space-y-3">
-        {/* Mit mehreren Feldern braucht Enter einen Absende-Knopf im Formular; der echte sitzt im Fuß des Dialogs. */}
-        <button type="submit" hidden disabled={blocked} />
+      <form id={formId} onSubmit={submit} className="space-y-3">
+        <FormSubmitShim disabled={blocked || busy} />
         <Field label={m.repoUrl}>
           {({ id, describedBy, invalid }) => (
             <Input
@@ -143,16 +150,23 @@ function ReferencingIssue({ id }: { id: string }) {
 function RemoveDialog({
   name,
   onOpenChange,
+  onRemoved,
+  onCloseAutoFocus,
 }: {
   name: string;
   onOpenChange: (o: boolean) => void;
+  onRemoved: () => void;
+  onCloseAutoFocus: (event: Event) => void;
 }) {
   const { writes } = useWrites();
   const store = useStore();
-  const issues = useSignal(store.issues.keys);
-  // `issues.keys` hängt den Dialog an Änderungen der Menge; die Werte liest `list()` getrackt.
-  void issues;
-  const references = repoReferences(store.issues.list(), name);
+  // Der Snapshot ist ein Memo über alle Issues (stabil, solange sich nichts ändert): Auch ein Patch
+  // auf `repos` eines bestehenden Issues rechnet ihn neu und rendert den Dialog.
+  const snapshot = useSignal(store.toSnapshot);
+  const references = repoReferences(
+    snapshot === undefined ? [] : [...snapshot.issues.values()].map((e) => e.data),
+    name,
+  );
   const { busy, error, run } = useAction();
   return (
     <ConfirmDialog
@@ -165,10 +179,13 @@ function RemoveDialog({
       error={error}
       onConfirm={() =>
         void run(() => writes.run('repo_rm', { name })).then((ok) => {
-          if (ok) onOpenChange(false);
+          if (!ok) return;
+          onRemoved();
+          onOpenChange(false);
         })
       }
       onOpenChange={onOpenChange}
+      onCloseAutoFocus={onCloseAutoFocus}
     >
       {references.length > 0 && (
         <div className="space-y-2">
@@ -238,6 +255,11 @@ function RepoRow({
   );
 }
 
+function summary(result: RepoCheckJson): string {
+  const findings = result.repos.reduce((n, repo) => n + repo.findings.length, 0);
+  return findings === 0 ? m.checkClean : m.checkFindings(findings);
+}
+
 function CheckResult({ result }: { result: RepoCheckJson }) {
   return (
     <section aria-label={m.checkResults} className="space-y-3">
@@ -300,7 +322,7 @@ function CheckResult({ result }: { result: RepoCheckJson }) {
  * »Hinzufügen«, »Entfernen« und »Prüfen«. Er setzt seinen Rahmen selbst, weil die Aktionen im Kopf
  * stehen und das Prüf-Ergebnis (flüchtig, nur hier im Zustand) im Körper.
  */
-export function ReposSection({ folded, onToggle }: { folded: boolean; onToggle: () => void }) {
+export function ReposSection({ id, title, folded, onToggle }: SectionFrame) {
   const store = useStore();
   const { writes, canWrite } = useWrites();
   const keys = useSignal(store.repos.keys);
@@ -312,8 +334,17 @@ export function ReposSection({ folded, onToggle }: { folded: boolean; onToggle: 
   const check = useAction();
   // Ein Repo, das per Patch verschwand und wiederkommt, öffnet den alten Dialog nicht wieder.
   useEffect(() => {
-    if (removing !== undefined && !names.includes(removing)) setRemoving(undefined);
-  }, [removing, names]);
+    if (removing !== undefined && !keys.includes(removing)) setRemoving(undefined);
+  }, [removing, keys]);
+  // Nach einem Entfernen verschwindet der Auslöser mit der Zeile; der Fokus geht an »Hinzufügen«.
+  const removed = useRef(false);
+  const addId = `${sectionId(id)}-add`;
+  const afterRemove = (event: Event): void => {
+    if (!removed.current) return;
+    removed.current = false;
+    event.preventDefault();
+    document.getElementById(addId)?.focus();
+  };
 
   const runCheck = (): void => {
     void check.run(async () =>
@@ -335,20 +366,14 @@ export function ReposSection({ folded, onToggle }: { folded: boolean; onToggle: 
       <Button type="button" variant="outline" size="sm" disabled={check.busy} onClick={runCheck}>
         {m.checkRepos}
       </Button>
-      <Button type="button" size="sm" onClick={() => setAdding(true)}>
+      <Button id={addId} type="button" size="sm" onClick={() => setAdding(true)}>
         {m.addRepo}
       </Button>
     </div>
   ) : undefined;
 
   return (
-    <SettingsSection
-      id="repositories"
-      title={m.sectionRepositories}
-      folded={folded}
-      onToggle={onToggle}
-      actions={actions}
-    >
+    <SettingsSection id={id} title={title} folded={folded} onToggle={onToggle} actions={actions}>
       <div className="max-w-3xl space-y-4">
         {names.length === 0 ? (
           <p className="text-sm text-muted-foreground">{m.noRepos}</p>
@@ -359,13 +384,24 @@ export function ReposSection({ folded, onToggle }: { folded: boolean; onToggle: 
             ))}
           </ul>
         )}
-        <div role="status">{result !== undefined && <CheckResult result={result} />}</div>
+        {/* Nur die Zusammenfassung ist Live-Region; die Liste liest, wer sie ansteuert. Die Region steht immer da. */}
+        <p role="status" className="text-sm font-medium">
+          {result === undefined ? '' : summary(result)}
+        </p>
+        {result !== undefined && <CheckResult result={result} />}
         <ActionError error={check.error} />
       </div>
-      {adding && <AddDialog onOpenChange={setAdding} />}
+      {adding && <AddDialog section={id} onOpenChange={setAdding} />}
       {/* Verschwindet das Repo per Patch, schließt sich der Dialog mit ihm. */}
-      {removing !== undefined && names.includes(removing) && (
-        <RemoveDialog name={removing} onOpenChange={(open) => !open && setRemoving(undefined)} />
+      {removing !== undefined && keys.includes(removing) && (
+        <RemoveDialog
+          name={removing}
+          onOpenChange={(open) => !open && setRemoving(undefined)}
+          onRemoved={() => {
+            removed.current = true;
+          }}
+          onCloseAutoFocus={afterRemove}
+        />
       )}
     </SettingsSection>
   );

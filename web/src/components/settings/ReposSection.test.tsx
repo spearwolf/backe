@@ -1,4 +1,4 @@
-import { act, screen, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { formatDate } from '../../lib/format.ts';
 import { call, region, registerSettingsHarness, view } from '../../test/settings-view.tsx';
@@ -198,4 +198,90 @@ test('lists follow patches and a dialog of a vanished repo closes', async () => 
   });
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(within(section()).queryByRole('link', { name: 'core' })).toBeNull();
+});
+
+test('the reference list of an open remove dialog follows patches', async () => {
+  const user = userEvent.setup();
+  const { store } = view({ over: { repos } });
+  act(() => {
+    store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(1, { repos: ['web'] })] } }));
+  });
+  await user.click(within(row('core')).getByRole('button', { name: m.removeRepoOf('core') }));
+  const dialog = screen.getByRole('dialog', { name: m.removeRepoTitle('core') });
+  const confirm = () =>
+    within(dialog).getByRole('button', { name: m.removeRepo }) as HTMLButtonElement;
+  expect(confirm().disabled).toBe(false);
+  // Ein bestehendes Issue nennt das Repo jetzt: Der Dialog sperrt.
+  act(() => {
+    store.applyPatch(
+      testPatch(3, { upsert: { issues: [testIssue(1, { repos: ['core@main'] })] } }),
+    );
+  });
+  expect(within(dialog).getByText(m.repoStillReferenced)).toBeTruthy();
+  expect(within(dialog).getByRole('link', { name: new RegExp(tid(1)) })).toBeTruthy();
+  expect(confirm().disabled).toBe(true);
+  // Und wieder frei.
+  act(() => {
+    store.applyPatch(testPatch(4, { upsert: { issues: [testIssue(1, { repos: [] })] } }));
+  });
+  expect(within(dialog).queryByText(m.repoStillReferenced)).toBeNull();
+  expect(confirm().disabled).toBe(false);
+});
+
+test('without write access rows have no path, remove, check or add', () => {
+  view({ canWrite: false, over: { repos } });
+  const buttons = within(section())
+    .queryAllByRole('button')
+    .map((b) => b.textContent);
+  // Nur der Klappknopf des Abschnitts.
+  expect(buttons).toEqual([m.sectionRepositories]);
+  expect(within(section()).queryByRole('checkbox')).toBeNull();
+});
+
+test('the remove dialog closes after repo_rm and focus moves to add', async () => {
+  const user = userEvent.setup();
+  view({ over: { repos } });
+  let finish: (v: unknown) => void = () => {};
+  call.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await user.click(within(row('core')).getByRole('button', { name: m.removeRepoOf('core') }));
+  const dialog = screen.getByRole('dialog', { name: m.removeRepoTitle('core') });
+  await user.click(within(dialog).getByRole('button', { name: m.removeRepo }));
+  // Während der Aufruf läuft, bleibt der Dialog stehen.
+  expect(screen.queryByRole('dialog')).not.toBeNull();
+  await act(async () => finish({ commit: 'c1' }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  // Der Auslöser verschwindet mit dem Repo: Der Fokus geht an »Hinzufügen«.
+  // Radix gibt den Fokus erst im nächsten Tick zurück.
+  await waitFor(() =>
+    expect(document.activeElement).toBe(within(section()).getByRole('button', { name: m.addRepo })),
+  );
+});
+
+test('only a short summary of the check is a live region', async () => {
+  const user = userEvent.setup();
+  view({ over: { repos } });
+  call.mockResolvedValueOnce({
+    repos: [
+      {
+        name: 'core',
+        url: 'u',
+        findings: [
+          { level: 'error', kind: 'local', message: 'Kein lokaler Klon' },
+          { level: 'info', kind: 'network', message: 'Erreichbar' },
+        ],
+      },
+    ],
+  });
+  await user.click(within(section()).getByRole('button', { name: m.checkRepos }));
+  const status = within(section()).getByRole('status');
+  expect(status.textContent).toBe(m.checkFindings(2));
+  expect(within(status).queryByRole('listitem')).toBeNull();
+  call.mockResolvedValueOnce({ repos: [{ name: 'core', url: 'u', findings: [] }] });
+  await user.click(within(section()).getByRole('button', { name: m.checkRepos }));
+  expect(within(section()).getByRole('status').textContent).toBe(m.checkClean);
 });
