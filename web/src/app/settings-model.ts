@@ -1,6 +1,8 @@
-import { parseRepoRef } from '@backe/core/names.ts';
+import { compareCodeUnits } from '@backe/core/compare.ts';
+import { parseRepoRef, projectAncestors } from '@backe/core/names.ts';
+import { isSettled } from '@backe/core/state.ts';
 import { compareIssues } from '@backe/ops/order.ts';
-import type { IssueJson } from '@backe/ui/api.ts';
+import type { IssueJson, ProjectJson, SprintJson } from '@backe/ui/api.ts';
 
 /**
  * Die Abschnitte des Tabs Settings (ui.md §2.10) in der Reihenfolge der Skizze `settings.png`.
@@ -46,4 +48,85 @@ export function repoReferences(issues: readonly IssueJson[], name: string): stri
     .filter(names)
     .sort(compareIssues)
     .map((i) => i.id);
+}
+
+export type ProjectRow = {
+  project: ProjectJson;
+  depth: number;
+  open: number;
+  hasChildren: boolean;
+};
+
+/**
+ * Pfadordnung je Segment (`compareCodeUnits`): Ein Unterprojekt folgt so direkt seinem Elternteil,
+ * auch wenn ein Geschwister mit `-` weitergeht (`web/auth` vor `web-x`; `-` liegt vor `/`).
+ */
+function comparePaths(a: string, b: string): number {
+  const as = a.split('/');
+  const bs = b.split('/');
+  for (let i = 0; i < Math.min(as.length, bs.length); i++) {
+    const c = compareCodeUnits(as[i] as string, bs[i] as string);
+    if (c !== 0) return c;
+  }
+  return as.length - bs.length;
+}
+
+/**
+ * Baum in Pfadordnung. `open` zählt wie `project list` (BK §2.9) rekursiv über die Unterprojekte:
+ * Ein offenes Issue zählt für jedes genannte Projekt und alle Vorfahren, je Projekt einmal.
+ * `depth` zählt die vorhandenen Vorfahren, damit ein verwaister Pfad nicht ins Leere einrückt.
+ */
+export function projectRows(
+  projects: readonly ProjectJson[],
+  issues: readonly IssueJson[],
+): ProjectRow[] {
+  const open = new Map<string, number>();
+  for (const issue of issues) {
+    if (isSettled(issue.state)) continue;
+    const counted = new Set<string>();
+    for (const p of issue.projects ?? []) {
+      counted.add(p);
+      for (const a of projectAncestors(p)) counted.add(a);
+    }
+    for (const path of counted) open.set(path, (open.get(path) ?? 0) + 1);
+  }
+  const paths = new Set(projects.map((p) => p.path));
+  return [...projects]
+    .sort((a, b) => comparePaths(a.path, b.path))
+    .map((project) => ({
+      project,
+      depth: projectAncestors(project.path).filter((a) => paths.has(a)).length,
+      open: open.get(project.path) ?? 0,
+      hasChildren: projects.some((p) => p.path.startsWith(`${project.path}/`)),
+    }));
+}
+
+/** IDs der Issues, die genau diesen Pfad nennen (wie `project rm`), nach Rangfolge. */
+export function projectReferences(issues: readonly IssueJson[], path: string): string[] {
+  return issues
+    .filter((issue) => (issue.projects ?? []).includes(path))
+    .sort(compareIssues)
+    .map((i) => i.id);
+}
+
+/** Jüngster `start` zuerst, ohne `start` zuletzt, dann nach Slug. */
+function compareSprints(a: SprintJson, b: SprintJson): number {
+  if (a.start !== b.start) {
+    if (a.start === undefined) return 1;
+    if (b.start === undefined) return -1;
+    return compareCodeUnits(b.start, a.start);
+  }
+  return compareCodeUnits(a.slug, b.slug);
+}
+
+/** Offene und geschlossene Sprints, je nach `start` absteigend (ohne `start` zuletzt), dann Slug. */
+export function sprintGroups(sprints: readonly SprintJson[]): {
+  open: SprintJson[];
+  closed: SprintJson[];
+} {
+  const sorted = [...sprints].sort(compareSprints);
+  return {
+    open: sorted.filter((s) => s.closed !== true),
+    closed: sorted.filter((s) => s.closed === true),
+  };
 }

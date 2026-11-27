@@ -19,7 +19,7 @@ const cache = new WeakMap<Store, Options>();
  * Ein Memo, das sein voriges Array weitergibt, solange die Einträge gleich sind (`same`): Ein Patch,
  * der nur einen State ändert, rendert so keine Vorschlagsliste neu (Patch-Lokalität, ui.md §2.5).
  */
-function stableList<T>(
+export function stableList<T>(
   store: Store,
   compute: () => T[],
   same: (a: T, b: T) => boolean,
