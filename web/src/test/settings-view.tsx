@@ -20,6 +20,7 @@ import { useSignal } from '../data/use-signal.ts';
 import { WriteContext } from '../data/write-context.tsx';
 import { Writes } from '../data/writes.ts';
 import SettingsView from '../views/SettingsView.tsx';
+import { preload } from './chunks.ts';
 import { testState } from './state.ts';
 
 export const call = vi.fn<(name: string, args: unknown) => Promise<unknown>>();
@@ -29,6 +30,8 @@ export const scrolled = vi.fn<(this: Element, opts?: ScrollIntoViewOptions) => v
 const disposers: Array<() => void> = [];
 
 export function registerSettingsHarness(): void {
+  // Beschreibungen rendern über den Markdown-Chunk.
+  preload(() => import('../markdown/Markdown.tsx'));
   beforeEach(() => {
     call.mockReset();
     scrolled.mockReset();

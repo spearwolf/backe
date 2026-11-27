@@ -2,7 +2,8 @@
  * Lebenszeichen fremder Prozesse für Tests, ohne `kill -0` zu pollen: Ein Prozess öffnet eine FIFO
  * zum Schreiben, schreibt seine PID hinein und hält sie offen, solange er lebt. Der Test liest die
  * PID, sobald sie da ist, und das Dateiende, sobald der letzte Schreiber beendet ist — beides sind
- * Ereignisse, keine Fristen.
+ * Ereignisse, keine Fristen. Jede offene FIFO hält einen Thread des libuv-Pools (Default 4) in
+ * `open` oder `read` fest; ein Test öffnet darum höchstens eine zugleich.
  */
 import { execFileSync } from 'node:child_process';
 import { closeSync, constants, createReadStream, openSync } from 'node:fs';

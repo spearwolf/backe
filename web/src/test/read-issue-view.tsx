@@ -14,6 +14,7 @@ import { StoreContext } from '../data/store-context.tsx';
 import { WriteContext } from '../data/write-context.tsx';
 import { Writes } from '../data/writes.ts';
 import { IssueView } from '../views/IssueView.tsx';
+import { preload } from './chunks.ts';
 import { InertIntersectionObserver } from './intersection-observer.ts';
 import { testIssue, testState, tid } from './state.ts';
 
@@ -25,6 +26,8 @@ export const served: {
 } = { comments: [], body: undefined, lastReason: undefined };
 
 export function registerReadIssueViewHarness(): void {
+  // Beschreibung und Kommentare rendern über den Markdown-Chunk.
+  preload(() => import('../markdown/Markdown.tsx'));
   beforeEach(() => {
     served.comments = [];
     served.body = undefined;

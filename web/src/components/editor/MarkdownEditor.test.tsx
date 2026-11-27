@@ -2,9 +2,12 @@ import { cleanup, createEvent, fireEvent, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import { ApiError } from '../../data/api-client.ts';
+import { preload } from '../../test/chunks.ts';
 import { box, png, setup } from '../../test/markdown-editor.tsx';
 
 afterEach(cleanup);
+// Die Vorschau rendert über den Markdown-Chunk.
+preload(() => import('../../markdown/Markdown.tsx'));
 
 test('typing changes the value', async () => {
   const spy = vi.fn();

@@ -156,12 +156,32 @@ describe('rollbackPaths', () => {
     const blocks = (sub: string) =>
       vi.mocked(git).mock.calls.filter(([args]) => args[0] === sub).length;
     expect(listed.every((paths) => paths.length <= PATH_CHUNK)).toBe(true);
+    const of = (n: number) => Math.ceil(n / PATH_CHUNK);
+    // Alle Pfade für status, ls-tree und reset; checkout nur die zehn, die in HEAD stehen.
     expect([blocks('status'), blocks('ls-tree'), blocks('checkout'), blocks('reset')]).toEqual([
-      5, 5, 3, 5,
+      of(19),
+      of(19),
+      of(10),
+      of(19),
     ]);
     expect(await dirtyPaths(wc, all)).toEqual([]);
     expect((await git(['status', '--porcelain'], { cwd: wc })).stdout).toBe('');
     expect(await readFile(join(wc, tracked[9] as string), 'utf8')).toBe('v1\n');
+  });
+
+  test('one block of the real PATH_CHUNK long paths fits into a single git call', async () => {
+    // Der echte Block: so viele Pfade von je rund 850 Bytes (vier Ebenen zu 210 Zeichen), wie
+    // `PATH_CHUNK` erlaubt, unter dem ARG_MAX von macOS (1 MiB) und Linux. Die Pfade gibt es nicht;
+    // git prüft sie trotzdem als Pathspec.
+    const { PATH_CHUNK: real } = await vi.importActual<typeof import('./exec.ts')>('./exec.ts');
+    const dir = ['a', 'b', 'c', 'd'].map((c) => c.repeat(210)).join('/');
+    const paths = Array.from({ length: real }, (_, i) => `${dir}/x-${String(i).padStart(5, '0')}`);
+    const wc = await repo();
+    const r = await git(['status', '--porcelain', '--', ...paths], {
+      cwd: wc,
+      env: { GIT_LITERAL_PATHSPECS: '1' },
+    });
+    expect(r).toMatchObject({ exitCode: 0, stdout: '' });
   });
 
   test('without HEAD everything is removed', async () => {

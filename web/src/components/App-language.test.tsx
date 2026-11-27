@@ -8,8 +8,15 @@ import { mountApp } from '../app/bootstrap.tsx';
 import { Router } from '../app/router.ts';
 import { Theme } from '../app/theme.ts';
 import { LANG_KEY, UiPrefs } from '../app/ui-prefs.ts';
+import { preload } from '../test/chunks.ts';
 import { fakeEventSources } from '../test/fake-event-source.ts';
 import { App } from './App.tsx';
+
+// Board und Settings sind eigene Chunks; vorgeladen kommen sie ohne Wartezeit.
+preload(
+  () => import('../views/BoardView.tsx'),
+  () => import('../views/SettingsView.tsx'),
+);
 
 afterEach(() => {
   cleanup();

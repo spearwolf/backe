@@ -221,13 +221,16 @@ test('real writes reach the signals', async () => {
   // Ein Ref-Update ergibt irgendwann `ref`, ein Write in einem Backlog-Verzeichnis irgendwann ein
   // Pfad-Signal, das die Datei abdeckt. Welcher Name kommt (inotify: die Datei; FSEvents oft nur
   // das Verzeichnis, sonst `null`), wie viele Ereignisse und in welcher Reihenfolge, bleibt offen.
-  // Unter macOS startet libuv einen Watch asynchron in einem eigenen FSEvents-Stream für alle
-  // Watches; das erste Ereignis zeigt, dass er läuft, darum kommt der Write erst danach.
+  // Unter macOS startet libuv den FSEvents-Stream für alle Watches asynchron; ein Ref-Update,
+  // das davor fällt, meldet niemand. Darum drei Updates nacheinander, getaktet nur vom git-Prozess,
+  // und erst das erste Ereignis zeigt, dass der Stream läuft; der Write kommt danach.
   const b = await testBacklog();
   const s = liveSignals();
   const watched = await watchWorkingCopy(b.root, {}, s.on);
   try {
-    await git(['update-ref', 'refs/heads/other', 'HEAD'], { cwd: b.root });
+    for (const name of ['one', 'two', 'three']) {
+      await git(['update-ref', `refs/heads/${name}`, 'HEAD'], { cwd: b.root });
+    }
     await s.until((signal) => signal === 'ref');
     await writeFile(join(b.root, 'users', 'alice.md'), '---\nname: Alice\n---\n');
     await s.until(covers('users/alice.md'));

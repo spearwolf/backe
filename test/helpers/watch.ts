@@ -37,11 +37,9 @@ export type FakeWatcher = {
   watch: WatchFn;
   /** Alle je geöffneten Watches, in der Reihenfolge des Öffnens. */
   readonly watches: readonly FakeWatch[];
-  /** Ob ein offener Watch auf `path` liegt. */
-  watching(path: string): boolean;
   /**
-   * Meldet `name` an jeden offenen Watch auf `path`, ohne Profil und ohne Stummschaltung; der
-   * gemerkte Stand bleibt. Für Ereignisse, die ein Test genau so haben will.
+   * Meldet `name` an jeden offenen, lebenden Watch auf `path`, ohne Profil und ohne
+   * Stummschaltung; der gemerkte Stand bleibt. Für Ereignisse, die ein Test genau so haben will.
    */
   emit(path: string, name: string | null): void;
   /**
@@ -141,7 +139,7 @@ export function fakeWatcher(profile: WatchProfile = 'inotify'): FakeWatcher {
   const entries: Entry[] = [];
   const muted: ((path: string) => boolean)[] = [];
   const silent = (path: string) => muted.some((m) => m(path));
-  const open = (path: string) => entries.filter((e) => e.path === path && !e.closed);
+  const open = (path: string) => entries.filter((e) => e.path === path && !e.closed && !e.dead);
 
   const watch: WatchFn = (path, opts, listener) => {
     const ino = inode(path);
@@ -176,7 +174,6 @@ export function fakeWatcher(profile: WatchProfile = 'inotify'): FakeWatcher {
     get watches() {
       return entries.map(({ path, recursive, closed }) => ({ path, recursive, closed }));
     },
-    watching: (path) => open(path).length > 0,
     emit(path, name) {
       for (const e of open(path)) e.listener(name);
     },
