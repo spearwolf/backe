@@ -28,17 +28,29 @@ const BOX = 'flex h-full w-full items-stretch rounded-md border bg-card text-car
 const BUTTON =
   'nopan rounded-sm px-1 font-mono text-xs leading-none text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring';
 
-/** Unsichtbare Andockpunkte: Kanten kommen oben an und gehen unten ab. */
+/**
+ * Unsichtbare Andockpunkte ohne Fläche und ohne Verschiebung: So misst xyflow sie genau auf
+ * der Mitte der Ober- bzw. Unterkante, dort, wo `HANDLES` in `DepGraph.tsx` sie vorgibt.
+ * Die Vorgabe von xyflow (6 × 6 px, um die Hälfte über die Kante geschoben) ließe die Kanten
+ * nach jeder Änderung zwischen Vorgabe und Messung um 3 px springen. Inline, weil die Styles
+ * von xyflow in einer eigenen Layer nach Tailwind laden und Utilities überstimmen.
+ */
+export const HANDLE_STYLE: CSSProperties = {
+  width: 0,
+  height: 0,
+  minWidth: 0,
+  minHeight: 0,
+  border: 0,
+  transform: 'none',
+  visibility: 'hidden',
+};
+
+/** Kanten kommen oben an und gehen unten ab. */
 function Handles() {
   return (
     <>
-      <Handle type="target" position={Position.Top} isConnectable={false} className="invisible" />
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        isConnectable={false}
-        className="invisible"
-      />
+      <Handle type="target" position={Position.Top} isConnectable={false} style={HANDLE_STYLE} />
+      <Handle type="source" position={Position.Bottom} isConnectable={false} style={HANDLE_STYLE} />
     </>
   );
 }
@@ -51,6 +63,7 @@ export function DepIssueNode({ data }: NodeProps<IssueFlowNode>) {
   const centre = role === 'center';
   const missing = issue === undefined;
   const canExpand = node.hidden > 0 && more === 0 && !centre && !missing;
+  const settled = issue !== undefined && isSettled(issue.state);
 
   const body = (
     <>
@@ -60,7 +73,10 @@ export function DepIssueNode({ data }: NodeProps<IssueFlowNode>) {
         {centre && <span className="text-xs text-muted-foreground">{m.current}</span>}
       </span>
       {issue ? (
-        <span className="min-w-0 truncate text-sm" title={issue.title}>
+        <span
+          className={cn('min-w-0 truncate text-sm', settled && 'text-muted-foreground')}
+          title={issue.title}
+        >
           {issue.title}
         </span>
       ) : (
@@ -96,8 +112,11 @@ export function DepIssueNode({ data }: NodeProps<IssueFlowNode>) {
       style={POINTER}
       className={cn(
         BOX,
-        centre && 'bg-accent ring-2 ring-ring',
-        issue && isSettled(issue.state) && 'opacity-60',
+        // Mitte: `ring-foreground`, denn `ring-ring` ist der Fokusring.
+        centre && 'bg-accent ring-2 ring-foreground',
+        // Erledigt: gestrichelt und gedämpfter Titel statt Deckkraft; `muted-foreground` hält
+        // auf der Karte AA-Kontrast, eine halbtransparente Karte nicht.
+        settled && 'border-dashed',
         node.open && 'border-2 border-foreground',
       )}
     >

@@ -7,6 +7,7 @@ import { testIssue, testState, tid } from '../../test/state.ts';
 import { installXyflowStubs } from '../../test/xyflow.ts';
 import { m } from '../../views/deps.messages.ts';
 import { DepGraph } from './DepGraph.tsx';
+import { HANDLE_STYLE } from './DepNode.tsx';
 import { layoutDeps } from './dep-layout.ts';
 
 vi.mock('./dep-layout.ts', async (original) => {
@@ -91,6 +92,12 @@ const nodeEl = (container: HTMLElement, id: string) => {
   if (!(el instanceof HTMLElement)) throw new Error(`no node ${id}`);
   return el;
 };
+/** `transform` des xyflow-Wrappers eines Knotens: seine Position auf der Fläche. */
+const placed = (container: HTMLElement, id: string) =>
+  (container.querySelector(`.react-flow__node[data-id="${id}"]`) as HTMLElement | null)?.style
+    .transform;
+const viewport = (container: HTMLElement) =>
+  (container.querySelector('.react-flow__viewport') as HTMLElement | null)?.style.transform;
 const edgePath = (container: HTMLElement, id: string) => {
   const el = container.querySelector(`[data-id="${id}"] path.react-flow__edge-path`);
   if (!(el instanceof SVGElement)) throw new Error(`no edge ${id}`);
@@ -106,6 +113,11 @@ test('nodes show id, title and state, the centre is marked and no link', async (
   expect(within(centre).getByText(m.current)).toBeTruthy();
   expect(within(centre).getByText(C)).toBeTruthy();
   expect(within(centre).getByText('blocked')).toBeTruthy();
+  // Hervorhebung in Vordergrundfarbe; `ring-ring` ist dem Fokus vorbehalten.
+  expect(centre.className).toContain('bg-accent');
+  expect(centre.className).toContain('ring-2');
+  expect(centre.className).toContain('ring-foreground');
+  expect(centre.className).not.toContain('ring-ring');
 
   const u1 = nodeEl(container, U1);
   expect(u1.getAttribute('data-role')).toBe('up');
@@ -130,14 +142,18 @@ test('a click on a node opens its issue tab', async () => {
 
 test('settled nodes are dimmed, open prerequisites strongly bordered', async () => {
   const { container } = await show(graphOf(chain(), C));
+  // Erledigt: gestrichelt, Titel gedämpft, keine Deckkraft (Kontrast).
   const u2 = nodeEl(container, U2);
-  expect(u2.className).toContain('opacity-60');
+  expect(u2.className).toContain('border-dashed');
+  expect(u2.className).not.toContain('opacity');
   expect(u2.className).not.toContain('border-2');
+  expect(within(u2).getByText('Issue 1').className).toContain('text-muted-foreground');
   // b ist erledigt: Voraussetzung, aber nicht offen.
   expect(nodeEl(container, B).className).not.toContain('border-2');
 
   const u1 = nodeEl(container, U1);
-  expect(u1.className).not.toContain('opacity-60');
+  expect(u1.className).not.toContain('border-dashed');
+  expect(within(u1).getByText('Issue 2').className).not.toContain('text-muted-foreground');
   expect(u1.className).toContain('border-2');
   expect(u1.className).toContain('border-foreground');
   const hint = within(u1).getByText(m.openPrerequisite);
@@ -155,6 +171,11 @@ test('edges carry their kind as dash pattern', async () => {
   const depends = edgePath(container, `${U1}>${C}:depends_on`);
   expect(depends.style.strokeDasharray).toBe('');
   expect(container.querySelectorAll('.react-flow__edge')).toHaveLength(5);
+
+  // Beschriftung aus dem Katalog statt »Edge from … to …«, ohne englische Rollenbeschreibung.
+  const group = container.querySelector(`[data-id="${B}>${C}:blocked_by"]`);
+  expect(group?.getAttribute('aria-label')).toBe(m.edge(B, 'blocked_by', C));
+  expect(container.querySelectorAll('.react-flow__edge[aria-roledescription]')).toHaveLength(0);
 
   const legend = screen.getByRole('list', { name: m.legend });
   expect(within(legend).getByText('depends_on')).toBeTruthy();
@@ -176,7 +197,6 @@ test('expand and collapse call onToggle', async () => {
   const onToggle = vi.fn();
   const { container, rerender } = await show(graphOf(chain(), C), onToggle);
   // Nur d2 hat verborgene Nachbarn (d3); die Mitte klappt nie auf.
-  expect(container.querySelectorAll('button[aria-label]').length).toBeGreaterThan(0);
   expect(within(nodeEl(container, C)).queryAllByRole('button')).toHaveLength(0);
   expect(within(nodeEl(container, D1)).queryAllByRole('button')).toHaveLength(0);
   const expand = within(nodeEl(container, D2)).getByRole('button', { name: m.expand(D2, 1) });
@@ -227,16 +247,62 @@ test('the collector shows the rest and no node expands', async () => {
 test('a field change keeps positions, a new edge lays out again', async () => {
   const { container, rerender } = await show(graphOf(chain(), C));
   expect(layoutDeps).toHaveBeenCalledTimes(1);
+  const ids = [U2, U1, B, C, D1, D2];
+  const before = ids.map((id) => placed(container, id));
+  expect(before.every((t) => t?.startsWith('translate('))).toBe(true);
+  expect(new Set(before).size).toBe(ids.length);
 
   await rerender(graphOf(chain({ 4: { title: 'Renamed', state: 'done' } }), C));
   expect(layoutDeps).toHaveBeenCalledTimes(1);
+  expect(ids.map((id) => placed(container, id))).toEqual(before);
   const d1 = nodeEl(container, D1);
   expect(within(d1).getByText('Renamed')).toBeTruthy();
-  expect(d1.className).toContain('opacity-60');
+  expect(d1.className).toContain('border-dashed');
 
   await rerender(graphOf(chain({ 4: { depends_on: [C, B] } }), C));
   expect(layoutDeps).toHaveBeenCalledTimes(2);
   expect(container.querySelector(`[data-id="${B}>${D1}:depends_on"]`)).not.toBeNull();
+});
+
+test('a new structure fits the view again, a field change leaves it', async () => {
+  const { container, rerender } = await show(graphOf(chain(), C));
+  const first = viewport(container);
+  // Eingepasst: fünf Ebenen sind höher als die Fläche (384 px), der Zoom liegt unter 1 und
+  // über `minZoom`.
+  const zoom = Number(/scale\(([\d.]+)\)/.exec(first ?? '')?.[1]);
+  expect(zoom).toBeLessThan(1);
+  expect(zoom).toBeGreaterThan(0.25);
+
+  await rerender(graphOf(chain({ 4: { title: 'Renamed' } }), C));
+  expect(viewport(container)).toBe(first);
+
+  // d2 aufgeklappt: d3 kommt dazu, die Fläche wird höher, die Ansicht passt sich ein.
+  await rerender(graphOf(chain(), C, { expanded: [D2] }));
+  expect(viewport(container)).not.toBe(first);
+});
+
+test('xyflow adds no English descriptions to nodes', async () => {
+  const { container } = await show(graphOf(chain(), C, { limit: 3 }));
+  const wrappers = container.querySelectorAll('.react-flow__node');
+  expect(wrappers.length).toBe(4); // 3 Knoten + Sammelknoten
+  for (const el of wrappers) {
+    expect(el.hasAttribute('aria-roledescription')).toBe(false);
+    expect(el.hasAttribute('aria-describedby')).toBe(false);
+  }
+  expect(container.querySelector('[aria-live]')).toBeNull();
+});
+
+test('dom handles sit where the fixed handles say: no size, no shift', async () => {
+  const { container } = await show(graphOf(chain(), C));
+  const handles = nodeEl(container, C).querySelectorAll<HTMLElement>('.react-flow__handle');
+  expect(handles).toHaveLength(2);
+  for (const h of handles) {
+    expect(h.style.width).toBe('0px');
+    expect(h.style.height).toBe('0px');
+    expect(h.style.transform).toBe('none');
+    expect(h.style.visibility).toBe('hidden');
+  }
+  expect(HANDLE_STYLE.border).toBe(0);
 });
 
 test('the graph follows the dark theme', async () => {

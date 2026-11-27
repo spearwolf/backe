@@ -31,8 +31,11 @@ class DOMMatrixReadOnlyStub {
   }
 }
 
-const size = (el: HTMLElement, key: 'width' | 'height'): number =>
-  Number.parseFloat(el.style[key]) || FALLBACK[key];
+/** Feste Inline-Maße (`224px`, `0`) gelten; ohne oder relativ (`100%`) die feste Fläche. */
+const size = (el: HTMLElement, key: 'width' | 'height'): number => {
+  const value = el.style[key];
+  return /^\d+(\.\d+)?(px)?$/.test(value) ? Number.parseFloat(value) : FALLBACK[key];
+};
 
 /** Installiert die Stubs; die Rückgabe stellt den vorigen Zustand wieder her. */
 export function installXyflowStubs(): () => void {
@@ -53,11 +56,20 @@ export function installXyflowStubs(): () => void {
       return size(this, 'height');
     },
   });
-  vi.stubGlobal('ResizeObserver', ResizeObserverStub);
-  vi.stubGlobal('DOMMatrixReadOnly', DOMMatrixReadOnlyStub);
+  // Nur diese beiden Globals; `vi.unstubAllGlobals` träfe auch Stubs des Testfalls.
+  const g = globalThis as Record<string, unknown>;
+  const globals = {
+    ResizeObserver: Object.getOwnPropertyDescriptor(g, 'ResizeObserver'),
+    DOMMatrixReadOnly: Object.getOwnPropertyDescriptor(g, 'DOMMatrixReadOnly'),
+  };
+  g.ResizeObserver = ResizeObserverStub;
+  g.DOMMatrixReadOnly = DOMMatrixReadOnlyStub;
 
   return () => {
-    vi.unstubAllGlobals();
+    for (const [key, desc] of Object.entries(globals)) {
+      if (desc) Object.defineProperty(g, key, desc);
+      else delete g[key];
+    }
     for (const [key, desc] of Object.entries(saved)) {
       if (desc) Object.defineProperty(proto, key, desc);
       else delete (proto as unknown as Record<string, unknown>)[key];

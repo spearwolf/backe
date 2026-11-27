@@ -3,6 +3,7 @@
  * Abschnitt sichtbar wird; darum steht auch das Stylesheet von xyflow nur hier.
  */
 import '@xyflow/react/dist/style.css';
+import { type Locale, locale } from '@backe/i18n/locale.ts';
 import {
   Controls,
   type Edge,
@@ -12,6 +13,7 @@ import {
   type NodeTypes,
   Position,
   ReactFlow,
+  useOptionsStore,
   useReactFlow,
 } from '@xyflow/react';
 import { type CSSProperties, useEffect, useMemo, useRef } from 'react';
@@ -33,13 +35,13 @@ const DASH: Record<DepEdgeKind, string | undefined> = {
 };
 const MARKER: EdgeMarker = { type: MarkerType.ArrowClosed, color: STROKE };
 
-/** Strg (Windows, Linux) bzw. Cmd (macOS) mit dem Rad zoomt; ohne scrollt das Rad die Seite. */
-const ZOOM_KEYS = ['Control', 'Meta'];
 const FIT = { maxZoom: 1, padding: 0.1 } as const;
 
 /**
  * Feste Maße und Andockpunkte (Mitte oben, Mitte unten) gleich am Knoten: Ohne sie verwirft
  * xyflow bei jedem neuen Knotenobjekt die Messung, und die Kanten fehlen, bis neu gemessen ist.
+ * Die `Handle`s im DOM sind auf dieselben Punkte gebracht (siehe `HANDLE_STYLE` in
+ * `DepNode.tsx`), sonst springen die Kanten zwischen Vorgabe und Messung.
  */
 const SIZE = {
   width: DEP_NODE_WIDTH,
@@ -70,7 +72,6 @@ const HANDLES: NodeHandle[] = [
 /** Farben von xyflow auf die Tokens aus `styles.css`, damit beide Themes AA-Kontrast halten. */
 const THEME = {
   '--xy-background-color': 'var(--background)',
-  '--xy-edge-stroke': STROKE,
   '--xy-controls-button-background-color': 'var(--card)',
   '--xy-controls-button-background-color-hover': 'var(--accent)',
   '--xy-controls-button-color': 'var(--foreground)',
@@ -80,25 +81,46 @@ const THEME = {
 } as CSSProperties;
 
 /**
- * Beschriftungen der Steuerung; je Render gelesen, damit sie der Locale folgen. Nur die
- * Steuerung braucht sie: Knoten und Kanten sind nicht fokussierbar.
+ * xyflow kennzeichnet Knoten und Kanten mit englischem `aria-roledescription`; die Rolle sagt
+ * hier nichts, was Link und Beschriftung nicht schon sagen.
  */
-const ariaLabels = () => ({
-  'controls.ariaLabel': m.controls,
-  'controls.zoomIn.ariaLabel': m.zoomIn,
-  'controls.zoomOut.ariaLabel': m.zoomOut,
-  'controls.fitView.ariaLabel': m.fitView,
-});
+const NO_ROLE_DESCRIPTION = { 'aria-roledescription': undefined };
 
-/** Passt die Ansicht ein, sobald sich die Struktur ändert; Titel und States lassen sie stehen. */
+/**
+ * Beschriftungen der Steuerung je Locale, einmal gebaut: Ein neues Objekt je Render ließe
+ * xyflow die Option jedes Mal neu setzen. Nur die Steuerung braucht sie, Knoten und Kanten
+ * sind nicht fokussierbar.
+ */
+const ariaLabelCache = new Map<Locale, Record<string, string>>();
+function ariaLabels(): Record<string, string> {
+  const l = locale();
+  let labels = ariaLabelCache.get(l);
+  if (labels === undefined) {
+    labels = {
+      'controls.ariaLabel': m.controls,
+      'controls.zoomIn.ariaLabel': m.zoomIn,
+      'controls.zoomOut.ariaLabel': m.zoomOut,
+      'controls.fitView.ariaLabel': m.fitView,
+    };
+    ariaLabelCache.set(l, labels);
+  }
+  return labels;
+}
+
+/**
+ * Passt die Ansicht ein, sobald sich die Struktur ändert; Titel und States lassen sie stehen.
+ * Erst mit `panZoom`: Ein `fitView` davor verwirft xyflow still (`resolveFitView` kehrt ohne
+ * `panZoom` zurück), und beim Einhängen soll nicht die Reihenfolge der Effekte entscheiden.
+ */
 function FitOnNewKey({ graphKey }: { graphKey: string }) {
   const { fitView } = useReactFlow();
+  const ready = useOptionsStore((s) => s.panZoom !== null);
   const fitted = useRef<string | null>(null);
   useEffect(() => {
-    if (fitted.current === graphKey) return;
+    if (!ready || fitted.current === graphKey) return;
     fitted.current = graphKey;
     void fitView(FIT);
-  }, [graphKey, fitView]);
+  }, [ready, graphKey, fitView]);
   return null;
 }
 
@@ -134,7 +156,10 @@ function Legend({ parents }: { parents: boolean }) {
 export function DepGraph(props: {
   graph: Graph;
   backlog: string;
-  /** Klappt einen Knoten auf oder zu. */
+  /**
+   * Klappt einen Knoten auf oder zu. Muss stabil sein (etwa per `useCallback`): Ein neuer
+   * Callback baut alle Knotenobjekte neu.
+   */
   onToggle: (id: string) => void;
 }) {
   const { graph, backlog, onToggle } = props;
@@ -154,6 +179,7 @@ export function DepGraph(props: {
       position: at(node.id),
       ...SIZE,
       handles: HANDLES,
+      domAttributes: NO_ROLE_DESCRIPTION,
       data: { node, backlog, more: graph.more, onToggle },
     }));
     if (graph.more > 0) {
@@ -162,12 +188,15 @@ export function DepGraph(props: {
         type: 'more',
         position: at(DEP_MORE_ID),
         ...SIZE,
+        domAttributes: NO_ROLE_DESCRIPTION,
         data: { count: graph.more },
       });
     }
     return out;
   }, [graph, positions, backlog, onToggle]);
 
+  // `depGraph` baut die Kanten bei jedem Aufruf neu; `key` ändert sich nur mit ihnen.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `graph.key` ist der Auslöser, nicht `graph.edges`.
   const edges = useMemo(
     (): Edge[] =>
       graph.edges.map(({ from, to, kind }) => ({
@@ -177,8 +206,10 @@ export function DepGraph(props: {
         type: 'smoothstep',
         markerEnd: MARKER,
         style: { stroke: STROKE, strokeWidth: 1.5, strokeDasharray: DASH[kind] },
+        ariaLabel: m.edge(from, kind, to),
+        domAttributes: NO_ROLE_DESCRIPTION,
       })),
-    [graph.edges],
+    [graph.key],
   );
 
   return (
@@ -194,9 +225,13 @@ export function DepGraph(props: {
           elementsSelectable={false}
           nodesFocusable={false}
           edgesFocusable={false}
+          // Das Rad scrollt die Seite; gezoomt wird mit Strg und Rad oder per Pinch (beides
+          // `zoomOnPinch`) und über die Steuerung. Eine Zoom-Taste wirkt bei
+          // `preventScrolling={false}` nicht: xyflow zoomt das Rad dann nur mit `ctrlKey`.
           zoomOnScroll={false}
           preventScrolling={false}
-          zoomActivationKeyCode={ZOOM_KEYS}
+          zoomActivationKeyCode={null}
+          disableKeyboardA11y
           minZoom={0.25}
           forceColorMode={theme}
           ariaLabelConfig={ariaLabels()}
