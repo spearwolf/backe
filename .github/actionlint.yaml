@@ -1,0 +1,8 @@
+# actionlint kennt die Eingaben von actions/create-github-app-token@v3 nur in einem älteren Stand:
+# Dort fehlt `client-id`, das v3 statt des veralteten `app-id` vorsieht (action.yml der Action,
+# Tag v3). Gezielt nur diese beiden Meldungen zu release.yml.
+paths:
+  .github/workflows/release.yml:
+    ignore:
+      - 'missing input "app-id" which is required by action "actions/create-github-app-token@v3"'
+      - 'input "client-id" is not defined in action "actions/create-github-app-token@v3"'
