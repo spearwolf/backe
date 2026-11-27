@@ -136,6 +136,10 @@ test('an early answer wakes a writer that waits for drain', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   const stopped = pulled.n;
 
+  // Erst den Rest lesen, dann fertig antworten: Schlösse der Server die Verbindung mit ungelesenen
+  // Bytes, liefe sein Reset gegen das Ende der Antwort, und macOS verliert dieses Rennen oft.
+  seen.request.resume();
+  await new Promise((resolve) => seen.request.once('end', resolve));
   seen.response.end();
   const res = await answer;
   expect(res.status).toBe(413);

@@ -66,9 +66,10 @@ function collect(res: IncomingMessage): Promise<Res> {
 }
 
 /**
- * Request mit chunked Body ohne `Content-Length`: schreibt `chunks` mit Gegendruck und hört auf,
- * sobald die Antwort da ist; `end: false` lässt den Body offen. Nach der Antwort ist die eigene
- * Verbindung zu; ein Schreibfehler danach (der Server hat zugemacht) zählt nicht.
+ * Request mit chunked Body ohne `Content-Length`: schreibt `chunks` mit Gegendruck, hört auf,
+ * sobald die Antwort da ist, und schließt den Body dann ab; `end: false` lässt ihn offen. Nach der
+ * Antwort ist die eigene Verbindung zu; ein Schreibfehler danach (der Server hat zugemacht) zählt
+ * nicht.
  */
 export function streamRequest(
   port: number,
@@ -107,7 +108,7 @@ export function streamRequest(
     });
     void (async () => {
       for (const chunk of req.chunks) {
-        if (answered || r.destroyed) return;
+        if (answered || r.destroyed) break;
         if (!r.write(chunk)) {
           // Nach dem ersten Ereignis beide Listener entfernen, sonst sammeln sie sich pro Gegendruck
           // an. Eine frühe Antwort weckt ebenfalls: Der Server liest den Rest dann womöglich nie.
@@ -124,7 +125,7 @@ export function streamRequest(
           });
         }
       }
-      if (req.end !== false && !answered && !r.destroyed) r.end();
+      if (req.end !== false && !r.destroyed) r.end();
     })();
   });
 }
