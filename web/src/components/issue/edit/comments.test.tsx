@@ -183,3 +183,14 @@ test('a comment edit waits for a running image upload, then sends the link', asy
     body: 'Alt![image.png](attachments/image.png)',
   });
 });
+
+test('cancelling a comment delete returns focus to its button', async () => {
+  served.comments = [testComment(1, { body: 'Meins' })];
+  view([testIssue(1)]);
+  await flush();
+  const del = () => button(m.deleteNamed(commentName()), region(m.timeline));
+  await userEvent.click(del());
+  await userEvent.click(button(w.cancel, screen.getByRole('dialog')));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(del());
+});

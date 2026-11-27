@@ -15,6 +15,7 @@ import {
 } from '../../../test/issue-view.tsx';
 import { testIssue, testPatch, tid } from '../../../test/state.ts';
 import { m } from '../../../views/issue.messages.ts';
+import { m as w } from '../../write/write.messages.ts';
 
 vi.mock('../../../markdown/index.tsx', () => ({
   Markdown: ({ source }: { source: string }) => <div data-testid="markdown">{source}</div>,
@@ -147,4 +148,13 @@ test('delete with references needs force', async () => {
   expect(screen.queryByRole('button', { name: m.deleteNamed(ID) })).toBeNull();
   // Die Bedienelemente sind weg; der Fokus steht auf »Tab schließen«.
   expect(document.activeElement).toBe(button(m.closeTab));
+});
+
+test('cancelling the delete dialog returns focus to its button', async () => {
+  view([testIssue(1)]);
+  await flush();
+  await userEvent.click(button(m.deleteNamed(ID)));
+  await userEvent.click(button(w.cancel, screen.getByRole('dialog')));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(button(m.deleteNamed(ID)));
 });

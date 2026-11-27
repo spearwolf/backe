@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { type ReactNode, useRef } from 'react';
 import type { ApiError } from '../../data/api-client.ts';
 import { Button } from '../ui/button.tsx';
 import {
@@ -23,7 +23,10 @@ type BaseProps = {
   confirmDisabled?: boolean;
   error: ApiError | undefined;
   onOpenChange: (open: boolean) => void;
-  /** Fokus nach dem Schließen; ohne Angabe der Radix-Default (das zuvor fokussierte Element). */
+  /**
+   * Fokus nach dem Schließen. Ohne Angabe geht er an das Element, das beim Öffnen fokussiert war,
+   * sofern es noch im Dokument steht (siehe `ConfirmDialog`).
+   */
   onCloseAutoFocus?: (event: Event) => void;
   children?: ReactNode;
 };
@@ -40,20 +43,38 @@ type Props = BaseProps &
 /**
  * Bestätigung mit eigener Fehlerfläche. Während `busy` läuft der Aufruf schon: Dann bleibt der
  * Dialog offen (Esc, Klick daneben, »Abbrechen« tun nichts), damit ein Fehler nicht ins Leere fällt.
+ *
+ * Radix gibt den Fokus beim Schließen nur an einen `DialogTrigger` zurück; dieser Dialog wird über
+ * `open` gesteuert und hat keinen, der Fokus fiele auf `body`. Darum merkt er sich beim Öffnen das
+ * fokussierte Element (`onOpenAutoFocus` läuft, bevor der Fokus in den Dialog wandert) und gibt
+ * den Fokus beim Schließen dorthin zurück. Wer selbst entscheidet (`onCloseAutoFocus`, etwa weil
+ * der Auslöser mit der Aktion verschwindet), übernimmt das ganz.
  */
 export function ConfirmDialog(props: Props) {
   const { open, title, description, confirmLabel, destructive, busy, error, children } = props;
   const onOpenChange = (next: boolean): void => {
     if (!busy) props.onOpenChange(next);
   };
+  const opener = useRef<HTMLElement | null>(null);
+  const onOpenAutoFocus = (): void => {
+    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  };
+  const onCloseAutoFocus =
+    props.onCloseAutoFocus ??
+    ((event: Event): void => {
+      const from = opener.current;
+      opener.current = null;
+      if (from?.isConnected !== true) return;
+      event.preventDefault();
+      from.focus();
+    });
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
         closeLabel={m.dismiss}
-        {...(props.onCloseAutoFocus === undefined
-          ? {}
-          : { onCloseAutoFocus: props.onCloseAutoFocus })}
+        onOpenAutoFocus={onOpenAutoFocus}
+        onCloseAutoFocus={onCloseAutoFocus}
       >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>

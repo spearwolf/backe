@@ -187,3 +187,14 @@ test('a reserved name is free at the latest when its write settles', async () =>
   await flush();
   expect(upload.mock.calls.map(([, name]) => name)).toEqual(['foo.png', 'foo.png']);
 });
+
+test('cancelling the removal returns focus to its button', async () => {
+  served.attachments = [{ name: 'spec', url: 'https://example.com/spec' }];
+  view([testIssue(1, { attachments: [{ name: 'spec', url: 'https://example.com/spec' }] })]);
+  await flush();
+  const remove = () => button(m.remove('spec'), region(m.attachments));
+  await userEvent.click(remove());
+  await userEvent.click(button(w.cancel, screen.getByRole('dialog')));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(remove());
+});
