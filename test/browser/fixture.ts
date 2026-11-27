@@ -17,6 +17,8 @@ const CLI = fileURLToPath(new URL('../../dist/cli.js', import.meta.url));
 const START = /^backe ui: (http:\/\/127\.0\.0\.1:(\d+))\/\?token=[0-9a-f]{64}$/;
 /** So lange darf `backe ui` nach SIGTERM brauchen, bevor SIGKILL folgt. */
 const STOP_GRACE_MS = 5_000;
+/** So lange darf die Startzeile ausbleiben, wie im Pack-Smoke-Test (`read -t 20`). */
+const START_DEADLINE_MS = 20_000;
 
 export type UiHome = {
   /** Temp-Wurzel; `home/` und `.backe/` darunter. */
@@ -61,24 +63,40 @@ async function stopChild(child: ChildProcess): Promise<void> {
   }
 }
 
-/** Die erste Zeile auf stdout; endet der Prozess vorher, scheitert sie mit seinem stderr. */
+/**
+ * Die erste Zeile auf stdout. Endet der Prozess vorher oder kommt sie nicht binnen
+ * `START_DEADLINE_MS`, scheitert sie mit seinem stderr. Die Listener bleiben danach hängen, damit
+ * beide Pipes weiter abfließen und der Server nie an einer vollen Pipe stehen bleibt.
+ */
 function startLine(child: ChildProcess): Promise<string> {
   return new Promise((resolve, reject) => {
     let stdout = '';
     let stderr = '';
-    child.stderr?.setEncoding('utf8').on('data', (chunk: string) => {
-      stderr += chunk;
-    });
+    let settled = false;
+    const settle = (finish: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      child.off('close', early);
+      finish();
+    };
+    const deadline = setTimeout(() => {
+      settle(() => reject(new Error(`backe ui printed no start line in time: ${stderr}`)));
+    }, START_DEADLINE_MS);
     const early = (code: number | null) => {
-      reject(new Error(`backe ui exited with ${code} before the start line: ${stderr}`));
+      settle(() =>
+        reject(new Error(`backe ui exited with ${code} before the start line: ${stderr}`)),
+      );
     };
     child.once('close', early);
+    child.stderr?.setEncoding('utf8').on('data', (chunk: string) => {
+      if (!settled) stderr += chunk;
+    });
     child.stdout?.setEncoding('utf8').on('data', (chunk: string) => {
+      if (settled) return;
       stdout += chunk;
       const nl = stdout.indexOf('\n');
-      if (nl < 0) return;
-      child.off('close', early);
-      resolve(stdout.slice(0, nl));
+      if (nl >= 0) settle(() => resolve(stdout.slice(0, nl)));
     });
   });
 }

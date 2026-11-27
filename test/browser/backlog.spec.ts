@@ -2,10 +2,10 @@
  * Kernabläufe im Tab Backlog gegen das gebaute `backe ui` (ui.md §2.7, §2.12): anlegen, Titel
  * ändern, Live-Aktualisierung durch einen parallelen CLI-Schreibvorgang, Backlog wechseln.
  */
+import type { Page } from '@playwright/test';
 import { expect, test } from './fixture.ts';
 
-const rowOf = (page: import('@playwright/test').Page, title: string) =>
-  page.locator('li[data-id]').filter({ hasText: title });
+const rowOf = (page: Page, title: string) => page.locator('li[data-id]').filter({ hasText: title });
 
 async function titleOf(cli: (args: string[]) => Promise<string>, id: string): Promise<string> {
   const shown = JSON.parse(await cli(['show', id, '--json', '--fields', 'title'])) as {
