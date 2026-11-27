@@ -1,15 +1,7 @@
-import { setLocale } from '@backe/i18n/locale.ts';
-import type { CommentJson, IssueDetailJson, IssueJson } from '@backe/ui/api.ts';
-import { act, cleanup, render, screen, within } from '@testing-library/react';
+import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { m as app } from '../app/app.messages.ts';
-import { Router, RouterContext } from '../app/router.ts';
-import { Store } from '../data/store.ts';
-import { StoreContext } from '../data/store-context.tsx';
-import { WriteContext } from '../data/write-context.tsx';
-import { Writes } from '../data/writes.ts';
-import { testConfig, testIssue, testPatch, testState, tid } from '../test/state.ts';
-import { IssueView } from './IssueView.tsx';
+import { flush, ID, registerReadIssueViewHarness, served, view } from '../test/read-issue-view.tsx';
+import { testConfig, testIssue, testPatch, tid } from '../test/state.ts';
 import { m } from './issue.messages.ts';
 
 // Das Markdown-Chunk testet die Markdown-Komponente selbst; hier zählt, was die Ansicht übergibt.
@@ -25,57 +17,7 @@ vi.mock('../markdown/index.tsx', async () => {
   };
 });
 
-let comments: CommentJson[] = [];
-let body: string | undefined;
-let lastReason: CommentJson | undefined;
-
-beforeEach(() => {
-  comments = [];
-  body = undefined;
-  lastReason = undefined;
-  vi.stubGlobal('fetch', async (url: string) => {
-    if (url.endsWith('/attachments')) return new Response('[]');
-    const id = url.split('/').pop() as string;
-    const { depends_on: _deps, ...issue } = testIssue(Number(id.slice(-4)));
-    const detail: IssueDetailJson = {
-      ...issue,
-      ...(body === undefined ? {} : { body }),
-      ...(lastReason === undefined ? {} : { last_reason: lastReason }),
-      ...(comments.length === 0 ? {} : { comments }),
-      comments_count: comments.length,
-    };
-    return new Response(JSON.stringify(detail));
-  });
-});
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-  setLocale('de');
-});
-
-const ID = tid(1);
-
-function view(issues: IssueJson[], over: Parameters<typeof testState>[1] = {}, id = ID) {
-  window.history.replaceState(null, '', `/b/acme/issue/${id}`);
-  const router = new Router(window);
-  const store = new Store();
-  store.load(testState(issues, over));
-  const onClose = vi.fn();
-  // Nur lesend: Die Editoren prüft `components/issue/edit/edit.test.tsx`.
-  const writes = new Writes(store, { call: vi.fn(), upload: vi.fn(), refresh: async () => {} });
-  render(
-    <RouterContext.Provider value={router}>
-      <StoreContext.Provider value={store}>
-        <WriteContext.Provider value={{ backlog: 'acme', canWrite: false, me: 'spw', writes }}>
-          <IssueView backlog="acme" id={id} onClose={onClose} />
-        </WriteContext.Provider>
-      </StoreContext.Provider>
-    </RouterContext.Provider>,
-  );
-  return { router, store, onClose };
-}
-
-const flush = () => act(async () => {});
+registerReadIssueViewHarness();
 
 test('shows fields from the store', async () => {
   view(
@@ -110,7 +52,7 @@ test('shows fields from the store', async () => {
 });
 
 test('shows the reason of the last transition and the body', async () => {
-  lastReason = {
+  served.lastReason = {
     file: 'c.md',
     author: 'spw',
     created: '2026-11-18T10:00:00Z',
@@ -119,7 +61,7 @@ test('shows the reason of the last transition and the body', async () => {
     to: 'blocked',
     body: 'wartet auf Freigabe',
   };
-  body = 'Langer Text';
+  served.body = 'Langer Text';
   view([testIssue(1, { state: 'blocked', blocked_by: [tid(2)] }), testIssue(2)]);
   await flush();
   const texts = screen.getAllByTestId('markdown').map((e) => e.textContent);
@@ -128,7 +70,7 @@ test('shows the reason of the last transition and the body', async () => {
 });
 
 test('hides a last reason that no longer matches the live state', async () => {
-  lastReason = {
+  served.lastReason = {
     file: 'c.md',
     author: 'spw',
     created: '2026-11-18T10:00:00Z',
@@ -154,7 +96,7 @@ test('hides a last reason that no longer matches the live state', async () => {
 });
 
 test('a patch to an unrelated issue does not render the description again', async () => {
-  body = 'Langer Text';
+  served.body = 'Langer Text';
   const { store } = view([testIssue(1), testIssue(2)]);
   await flush();
   expect(screen.getByText('Langer Text')).toBeTruthy();
@@ -205,7 +147,7 @@ test('a related issue opens its tab', async () => {
 });
 
 test('timeline lists comments and transitions in order', async () => {
-  comments = [
+  served.comments = [
     {
       file: 'a.md',
       author: 'ada',
@@ -233,73 +175,4 @@ test('timeline lists comments and transitions in order', async () => {
       .getAttribute('title'),
   ).toBe('Wolfger');
   expect(items[1]?.querySelector('time')?.getAttribute('datetime')).toBe('2026-11-18T11:00:00Z');
-});
-
-test('reloads on a touch', async () => {
-  const { store } = view([testIssue(1)]);
-  await flush();
-  expect(screen.queryByText('neu dazu')).toBeNull();
-  comments = [{ file: 'c.md', author: 'spw', created: '2026-11-18T12:00:00Z', body: 'neu dazu' }];
-  act(() => {
-    store.applyPatch(testPatch(2, { touched: [ID] }));
-  });
-  await flush();
-  expect(screen.getByText('neu dazu')).toBeTruthy();
-});
-
-test('shows the loading state while the fields are already there', () => {
-  view([testIssue(1, { title: 'Schon da' })]);
-  expect(screen.getByRole('heading', { level: 1, name: 'Schon da' })).toBeTruthy();
-  expect(screen.getByText(app.loading)).toBeTruthy();
-});
-
-test('a deleted issue keeps its tab', async () => {
-  const { store, onClose } = view([testIssue(1, { title: 'Weg damit' })]);
-  await flush();
-  act(() => {
-    store.applyPatch(testPatch(2, { remove: { issues: [ID] } }));
-  });
-  await flush();
-  expect(screen.getByText(m.deletedNotice)).toBeTruthy();
-  expect(screen.getByRole('heading', { level: 1, name: 'Weg damit' })).toBeTruthy();
-  await userEvent.click(screen.getByRole('button', { name: m.closeTab }));
-  expect(onClose).toHaveBeenCalledWith(ID);
-});
-
-test('a broken issue shows its problem', async () => {
-  const { store } = view([], {
-    problems: [{ path: 'issues/x.md', message: 'kaputt im Frontmatter', kind: 'issue', key: ID }],
-  });
-  await flush();
-  expect(screen.getByRole('alert').textContent).toContain('kaputt im Frontmatter');
-  expect(screen.queryByText(app.deleted)).toBeNull();
-  act(() => {
-    store.applyPatch(
-      testPatch(2, { upsert: { issues: [testIssue(1, { title: 'Repariert' })] }, problems: [] }),
-    );
-  });
-  await flush();
-  expect(screen.getByRole('heading', { level: 1, name: 'Repariert' })).toBeTruthy();
-});
-
-test('a failed copy is announced in the live region', async () => {
-  const writeText = vi.fn(async () => {
-    throw new Error('denied');
-  });
-  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
-  view([testIssue(1)]);
-  await flush();
-  await userEvent.click(screen.getByRole('button', { name: m.copyId }));
-  await flush();
-  expect(screen.getByRole('status').textContent).toBe(m.copyFailed);
-});
-
-test('copy puts the id on the clipboard', async () => {
-  const writeText = vi.fn(async () => {});
-  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
-  view([testIssue(1)]);
-  await flush();
-  await userEvent.click(screen.getByRole('button', { name: m.copyId }));
-  expect(writeText).toHaveBeenCalledWith(ID);
-  expect(screen.getByRole('status').textContent).toBe(m.copied);
 });

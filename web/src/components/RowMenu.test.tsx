@@ -2,8 +2,10 @@ import { act, createEvent, fireEvent, screen, waitFor, within } from '@testing-l
 import userEvent from '@testing-library/user-event';
 import { ApiError } from '../data/api-client.ts';
 import {
+  answerCommitted,
   answerNever,
   call,
+  land,
   linkOf,
   registerBacklogViewHarness,
   rowIds,
@@ -59,11 +61,13 @@ test('blocked from the menu opens the state dialog', async () => {
 });
 
 test('rank top and bottom from the menu', async () => {
-  answerNever();
-  view([testIssue(1), testIssue(2), testIssue(3)]);
+  answerCommitted();
+  const { store } = view([testIssue(1), testIssue(2), testIssue(3)]);
   await pick(tid(3), m.menuRank, m.rankTop);
   expect(rowIds()).toEqual([tid(3), tid(1), tid(2)]);
   expect(call).toHaveBeenCalledExactlyOnceWith('issue_rank', { id: tid(3), top: true });
+  // Der nächste Zug geht erst hinaus, wenn der Patch des ersten da ist.
+  land(store);
   call.mockClear();
   await pick(tid(3), m.menuRank, m.rankBottom);
   expect(rowIds()).toEqual([tid(1), tid(2), tid(3)]);
@@ -81,6 +85,21 @@ test('bottom from the menu lands in the last row, past unranked issues', async (
     ],
   });
   expect(rowIds()).toEqual([tid(2), tid(3), tid(1)]);
+});
+
+test('a move without a reordering preview leaves the focus alone later', async () => {
+  answerNever();
+  // 1 steht schon oben: Die Vorschau ändert nichts, der Server entscheidet allein.
+  const { store } = view([testIssue(1), testIssue(2)]);
+  await pick(tid(1), m.menuRank, m.rankTop);
+  expect(call).toHaveBeenCalledExactlyOnceWith('issue_rank', { id: tid(1), top: true });
+  await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+  (document.activeElement as HTMLElement).blur();
+  act(() => {
+    store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(1, { title: 'neu' })] } }));
+  });
+  expect(rowIds()).toEqual([tid(1), tid(2)]);
+  expect(document.activeElement).toBe(document.body);
 });
 
 test('a rejected rank restores the order and shows in the failures', async () => {
@@ -170,6 +189,19 @@ test('a row the user left does not pull the focus back when it disappears', () =
   expect(document.activeElement).toBe(document.body);
 });
 
+test('a row left for another element does not pull the focus back later', () => {
+  const { store } = view([testIssue(1), testIssue(2), testIssue(3)]);
+  linkOf(tid(2)).focus();
+  // Weiter ins Filterfeld, von dort ins Leere; erst dann verschwindet die Zeile.
+  const filter = screen.getAllByRole('textbox')[0] as HTMLElement;
+  filter.focus();
+  filter.blur();
+  act(() => {
+    store.applyPatch(testPatch(2, { remove: { issues: [tid(2)] } }));
+  });
+  expect(document.activeElement).toBe(document.body);
+});
+
 test('a rejected menu action shows in the failures', async () => {
   call.mockRejectedValue(new ApiError(400, 'invariant', 'Kein Wechsel', 'backe issue show'));
   view([testIssue(1)]);
@@ -222,4 +254,42 @@ test('the keyboard opens the menu when sorted by created too', async () => {
   linkOf(tid(1)).focus();
   await userEvent.keyboard('{Shift>}{F10}{/Shift}');
   await waitFor(() => expect(screen.getAllByRole('menu')).toHaveLength(1));
+});
+
+test('a late native contextmenu of the same key press is swallowed once', async () => {
+  view([testIssue(1), testIssue(2)]);
+  const row = linkOf(tid(1));
+  row.focus();
+  fireEvent.keyDown(row, { key: 'ContextMenu' });
+  fireEvent.keyUp(row, { key: 'ContextMenu' });
+  await waitFor(() => expect(screen.getAllByRole('menu')).toHaveLength(1));
+  // Firefox schickt `contextmenu` erst nach dem Loslassen, an das fokussierte Element im Menü.
+  const late = createEvent.contextMenu(document.activeElement as Element);
+  fireEvent(document.activeElement as Element, late);
+  expect(late.defaultPrevented).toBe(true);
+  expect(screen.getAllByRole('menu')).toHaveLength(1);
+  // Nur einmal: Das nächste gehört wieder dem Browser bzw. dem Rechtsklick.
+  const next = createEvent.contextMenu(document.body);
+  fireEvent(document.body, next);
+  expect(next.defaultPrevented).toBe(false);
+});
+
+test('the guard ends with the menu or a pointer press', async () => {
+  view([testIssue(1), testIssue(2)]);
+  linkOf(tid(1)).focus();
+  fireEvent.keyDown(linkOf(tid(1)), { key: 'F10', shiftKey: true });
+  await waitFor(() => expect(screen.getAllByRole('menu')).toHaveLength(1));
+  await userEvent.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+  const afterClose = createEvent.contextMenu(document.body);
+  fireEvent(document.body, afterClose);
+  expect(afterClose.defaultPrevented).toBe(false);
+
+  linkOf(tid(2)).focus();
+  fireEvent.keyDown(linkOf(tid(2)), { key: 'F10', shiftKey: true });
+  await waitFor(() => expect(screen.getAllByRole('menu')).toHaveLength(1));
+  fireEvent.pointerDown(document.body);
+  const afterPointer = createEvent.contextMenu(document.body);
+  fireEvent(document.body, afterPointer);
+  expect(afterPointer.defaultPrevented).toBe(false);
 });

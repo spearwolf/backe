@@ -23,6 +23,9 @@ type Follow = { id: string; rows: readonly ListRow[]; scrolled: boolean; waited:
 const linkIn = (scope: HTMLElement | null, id: string) =>
   scope?.querySelector<HTMLElement>(`li[data-id="${id}"] a`) ?? null;
 
+/** Wohin der Fokus nur vorübergehend wandert: Menü und Dialoge geben ihn der Zeile zurück. */
+const BORROWERS = '[role="menu"], [role="dialog"], [role="alertdialog"]';
+
 const gone = (row: ListRow | undefined) => row === undefined || row.live === 'leaving';
 
 /** Die Zeile ab `index`, sonst die davor, die nicht `id` ist und nicht ausblendet. */
@@ -110,12 +113,14 @@ export function IssueList(props: { backlog: string; rows: readonly ListRow[]; re
     if (e.type === 'focus' && gone(current.current[index])) toNeighbour(id, index);
   };
   const release = (e: FocusEvent<HTMLElement>) => {
-    // Wer den Fokus aus der Liste nimmt (Klick ins Leere), dem holt ihn später keine Zeile zurück.
-    // Menü und Dialog nehmen ihn mit einem Ziel (`relatedTarget`); eine entfernte Zeile ist weg.
+    // Wer den Fokus aus der Liste nimmt (Klick ins Leere, Tab ins Filterfeld), dem holt ihn später
+    // keine Zeile zurück. Menü und Dialoge der Zeile nehmen ihn nur mit (Portal außerhalb der
+    // Liste); eine entfernte Zeile ist ohnehin weg.
     const from = e.target as Node;
-    if (e.relatedTarget === null && e.currentTarget.contains(from) && from.isConnected) {
-      owner.current = undefined;
-    }
+    if (!e.currentTarget.contains(from) || !from.isConnected) return;
+    const to = e.relatedTarget as Element | null;
+    if (to !== null && (e.currentTarget.contains(to) || to.closest(BORROWERS) !== null)) return;
+    owner.current = undefined;
   };
   const focusRow = useCallback(
     (id: string) => {

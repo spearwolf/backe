@@ -3,7 +3,9 @@ import {
   createContext,
   type KeyboardEvent,
   type ReactNode,
+  useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -109,13 +111,35 @@ const isMenuKey = (e: KeyboardEvent): boolean =>
   (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey));
 
 /**
+ * Schluckt das nächste `contextmenu` im Dokument, einmal: Firefox schickt es zur Kontextmenü-Taste
+ * erst nach dem Loslassen, wenn der Fokus schon im Menü liegt; sonst erschiene das Menü des Browsers
+ * darüber. Nicht beim `keyup` beendet, denn das Ereignis kommt erst danach. Es endet mit dem
+ * geschluckten Ereignis, einem Zeiger-Druck (ein Rechtsklick gehört wieder dem Nutzer) oder dem
+ * Schließen des Menüs. Liefert die Funktion, die es vorzeitig beendet.
+ */
+function swallowNextContextMenu(doc: Document): () => void {
+  const off = () => {
+    doc.removeEventListener('contextmenu', swallow, true);
+    doc.removeEventListener('pointerdown', off, true);
+  };
+  const swallow = (e: Event) => {
+    e.preventDefault();
+    e.stopPropagation();
+    off();
+  };
+  doc.addEventListener('contextmenu', swallow, true);
+  doc.addEventListener('pointerdown', off, true);
+  return off;
+}
+
+/**
  * Öffnet das Menü über die Tastatur: Ob der Browser aus der Taste ein `contextmenu` macht, ist
  * nicht verlässlich (manche nie, manche erst beim Loslassen). Darum geht ein eigenes `contextmenu`
- * an die Zeile, unten links an ihr; `preventDefault` hält das Menü des Browsers fern. Kommt das
- * native Ereignis trotzdem, öffnet Radix dasselbe Menü noch einmal, kein zweites.
+ * an die Zeile, unten links an ihr; `preventDefault` hält das Menü des Browsers fern, und ein
+ * spätes natives Ereignis derselben Taste schluckt `swallowNextContextMenu`. Liefert dessen Ende.
  */
-function openByKey(e: KeyboardEvent<HTMLElement>): void {
-  if (!isMenuKey(e)) return;
+function openByKey(e: KeyboardEvent<HTMLElement>): (() => void) | undefined {
+  if (!isMenuKey(e)) return undefined;
   e.preventDefault();
   const el = e.currentTarget;
   const box = el.getBoundingClientRect();
@@ -127,6 +151,7 @@ function openByKey(e: KeyboardEvent<HTMLElement>): void {
       clientY: box.bottom,
     }),
   );
+  return swallowNextContextMenu(el.ownerDocument);
 }
 
 /**
@@ -137,10 +162,29 @@ function openByKey(e: KeyboardEvent<HTMLElement>): void {
 export function RowMenu({ issue, children }: { issue: IssueJson; children: ReactNode }) {
   const { canWrite } = useWrites();
   const toDialog = useRef(false);
+  const guard = useRef<(() => void) | undefined>(undefined);
+  const endGuard = useCallback(() => {
+    guard.current?.();
+    guard.current = undefined;
+  }, []);
+  // Verschwindet die Zeile mit offenem Menü, endet der Wächter mit ihr.
+  useEffect(() => endGuard, [endGuard]);
   if (!canWrite) return children;
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild onKeyDown={openByKey}>
+    <ContextMenu
+      onOpenChange={(open) => {
+        if (!open) endGuard();
+      }}
+    >
+      <ContextMenuTrigger
+        asChild
+        onKeyDown={(e) => {
+          const off = openByKey(e);
+          if (off === undefined) return;
+          endGuard();
+          guard.current = off;
+        }}
+      >
         {children}
       </ContextMenuTrigger>
       <ContextMenuContent
