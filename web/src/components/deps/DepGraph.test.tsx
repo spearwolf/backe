@@ -143,6 +143,25 @@ test('nodes show id, title and state, the centre is marked and no link', async (
   expect(screen.getByRole('application', { name: m.graphLabel(C) })).toBeTruthy();
 });
 
+test('texts keep AA contrast on the centre and on hovered links', async () => {
+  // Erledigte Mitte: Auch ihr Titel wäre sonst gedämpft.
+  const { container } = await show(graphOf(chain({ 3: { state: 'done' } }), C));
+  const centre = nodeEl(container, C);
+  expect(centre.className).toContain('bg-accent');
+  // `muted-foreground` hält auf `accent` kein AA; in der Mitte steht alles in Vordergrundfarbe.
+  expect(centre.querySelectorAll('.text-muted-foreground')).toHaveLength(0);
+  for (const text of [C, m.current, 'done', 'Issue 3']) {
+    expect(within(centre).getByText(text).closest('.text-foreground')).not.toBeNull();
+  }
+
+  // Hover färbt die Fläche nicht ein, sonst stünde gedämpfter Text auf `accent`; er unterstreicht
+  // den Titel.
+  const link = within(nodeEl(container, U1)).getByRole('link');
+  expect(link.className).not.toContain('hover:bg-accent');
+  expect(link.className).toContain('group');
+  expect(within(link).getByText('Issue 2').className).toContain('group-hover:underline');
+});
+
 test('a click on a node opens its issue tab', async () => {
   const { container } = await show(graphOf(chain(), C));
   // Ohne user-event: Der Link lässt d3-zoom das `mousedown` sehen (siehe `test/xyflow.ts`).

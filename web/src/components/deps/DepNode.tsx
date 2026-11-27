@@ -64,23 +64,25 @@ export function DepIssueNode({ data }: NodeProps<IssueFlowNode>) {
   const missing = issue === undefined;
   const canExpand = node.hidden > 0 && more === 0 && !centre && !missing;
   const settled = issue !== undefined && isSettled(issue.state);
+  // Gedämpfter Text hält auf der Karte AA-Kontrast, auf `accent` (Hintergrund der Mitte) nicht.
+  const dim = centre ? 'text-foreground' : 'text-muted-foreground';
 
   const body = (
     <>
       <span className="flex min-w-0 items-center gap-2">
-        {issue && <StateIcon state={issue.state} className="shrink-0 text-muted-foreground" />}
-        <span className="font-mono text-xs text-muted-foreground">{id}</span>
-        {centre && <span className="text-xs text-muted-foreground">{m.current}</span>}
+        {issue && <StateIcon state={issue.state} className={cn('shrink-0', dim)} />}
+        <span className={cn('font-mono text-xs', dim)}>{id}</span>
+        {centre && <span className={cn('text-xs', dim)}>{m.current}</span>}
       </span>
       {issue ? (
         <span
-          className={cn('min-w-0 truncate text-sm', settled && 'text-muted-foreground')}
+          className={cn('min-w-0 truncate text-sm group-hover:underline', settled && dim)}
           title={issue.title}
         >
           {issue.title}
         </span>
       ) : (
-        <span className="text-sm italic text-muted-foreground">{m.missing}</span>
+        <span className={cn('text-sm italic', dim)}>{m.missing}</span>
       )}
       {node.open && <span className="sr-only">{m.openPrerequisite}</span>}
     </>
@@ -94,9 +96,11 @@ export function DepIssueNode({ data }: NodeProps<IssueFlowNode>) {
       <a
         href={href}
         onClick={go(href)}
+        // Hover unterstreicht den Titel, statt die Fläche einzufärben: Auf `accent` fiele
+        // gedämpfter Text unter AA-Kontrast.
         className={cn(
           bodyClass,
-          'rounded-md outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring',
+          'group rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring',
         )}
       >
         {body}
