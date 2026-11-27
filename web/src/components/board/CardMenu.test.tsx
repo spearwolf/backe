@@ -317,3 +317,44 @@ test('a press inside the open menu does not start a card drag', async () => {
   pressAndMove(screen.getByRole('menuitem', { name: b.menuState }));
   expect(dnd.started).toBe(0);
 });
+
+const plusOf = (lane: string, column: 'todo') =>
+  within(cellOf(lane, column).parentElement as HTMLElement).getByRole('button', {
+    name: m.newIssue(column, lane),
+  });
+
+test('a move into the hidden backlog column hands focus to a neighbour', async () => {
+  answerNever();
+  // In einer Sprint-Bahn: Die bleibt auch leer stehen, »ohne Sprint« ginge mit der letzten Karte.
+  board(
+    [1, 2, 3].map((n) => testIssue(n, { sprints: ['s1'] })),
+    { over: { sprints } },
+  );
+  cardLink(tid(2)).focus();
+  await pick(tid(2), b.menuState, 'backlog');
+  expect(call).toHaveBeenCalledExactlyOnceWith('issue_move', { id: tid(2), to: 'backlog' });
+  expect(cardIds('Sprint 1', 'todo')).toEqual([tid(1), tid(3)]);
+  // Die Spalte `backlog` ist ausgeblendet: Der Fokus geht an die nächste Karte der alten Zelle,
+  await waitFor(() => expect(document.activeElement).toBe(cardLink(tid(3))));
+  // ohne nächste an die vorige,
+  await pick(tid(3), b.menuState, 'backlog');
+  await waitFor(() => expect(document.activeElement).toBe(cardLink(tid(1))));
+  // und ohne Nachbarn an das `+` der Zelle.
+  await pick(tid(1), b.menuState, 'backlog');
+  await waitFor(() => expect(document.activeElement).toBe(plusOf('Sprint 1', 'todo')));
+  // Kein Folgen bleibt offen: Eingeblendet greift keine der Karten nach dem Fokus.
+  const show = screen.getByRole('checkbox', { name: m.showBacklog });
+  await userEvent.click(show);
+  expect(cardIds('Sprint 1', 'backlog')).toEqual([tid(1), tid(2), tid(3)]);
+  expect(document.activeElement).toBe(show);
+});
+
+test('a rejected move into the hidden column gives focus back to the card', async () => {
+  call.mockRejectedValueOnce(new ApiError(400, 'invariant', 'Nicht erlaubt', 'backe issue move'));
+  board([testIssue(1), testIssue(2)]);
+  cardLink(tid(1)).focus();
+  await pick(tid(1), b.menuState, 'backlog');
+  await flush();
+  expect(cardIds(m.noSprint, 'todo')).toEqual([tid(1), tid(2)]);
+  await waitFor(() => expect(document.activeElement).toBe(cardLink(tid(1))));
+});

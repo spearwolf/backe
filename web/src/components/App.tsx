@@ -52,7 +52,7 @@ function View({
     case 'board':
       return (
         <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">{m.loading}</p>}>
-          <BoardView backlog={route.backlog} me={me} />
+          <BoardView backlog={route.backlog} />
         </Suspense>
       );
     case 'issue':

@@ -84,6 +84,29 @@ const laneShown = (lane: string): boolean =>
     (ul) => ul.dataset.lane === lane,
   );
 
+/** Die Zelle `lane` × `column`; `null`, wenn sie nicht zu sehen ist (Bahn eingeklappt, Spalte aus). */
+const cellOf = (lane: string, column: string): HTMLElement | null =>
+  [...document.querySelectorAll<HTMLElement>('ul[data-lane]')].find(
+    (ul) => ul.dataset.lane === lane && ul.dataset.column === column,
+  ) ?? null;
+
+/**
+ * Wer den Fokus bekommt, wenn die Karte `id` in eine Zelle geht, die nicht zu sehen ist: die
+ * nächste Karte der alten Zelle, sonst die vorige, sonst ihr `+`.
+ */
+function standInFor(id: string, lane: string, column: string): HTMLElement | null {
+  const cell = cellOf(lane, column);
+  if (cell === null) return null;
+  const cards = [...cell.querySelectorAll<HTMLElement>(':scope > li[data-card]')];
+  const at = cards.findIndex((li) => li.dataset.card === id);
+  const near = at < 0 ? undefined : (cards[at + 1] ?? cards[at - 1]);
+  return (
+    near?.querySelector<HTMLElement>('a') ??
+    cell.parentElement?.querySelector<HTMLElement>('[data-quick-create]') ??
+    null
+  );
+}
+
 /**
  * Zug senden samt Fehlerweg und Dialogen. `group` ist die Gruppierung der Ansicht: Sie entscheidet,
  * welche Mitgliedschaft ein Bahnwechsel tauscht.
@@ -94,7 +117,16 @@ export function useBoardMove(group: BoardGroup): BoardMoves & { dialogs: ReactNo
   const [dialog, setDialog] = useState<BoardStateDialog>();
   // Wohin der Fokus nach einem Tastenzug geht. Ein State statt einer Ref: Setzen rendert, und der
   // Layout-Effekt danach findet die Karte auch, wenn sie (nach einer Ablehnung) zurückspringt.
-  const [follow, setFollow] = useState<{ id: string; lane: string }>();
+  // Geht die Karte in eine Zelle, die nicht zu sehen ist, nimmt `standIn` den Fokus (`null`: es
+  // gibt keinen Platzhalter, das Folgen endet nur).
+  const [follow, setFollow] = useState<{
+    id: string;
+    lane: string;
+    standIn?: HTMLElement | null;
+  }>();
+  // Der Platzhalter, dem der Fokus zuletzt gegeben wurde: Springt die Karte nach einer Ablehnung
+  // zurück, holt sie ihn sich von dort wieder.
+  const standIn = useRef<HTMLElement | null>(null);
   // Wohin der Fokus nach dem Dialog geht: erst die Bahn aus dem Dialog, nach einem gelungenen
   // `submit` die Zielbahn des Zugs. Eine Ref, denn das Schließen folgt dem `submit` unmittelbar.
   const back = useRef<string | undefined>(undefined);
@@ -115,10 +147,20 @@ export function useBoardMove(group: BoardGroup): BoardMoves & { dialogs: ReactNo
       const strict = store.config.value?.workflow.strict ?? false;
       const plan = planDrop(issue, drop, group, strict);
       if (plan === undefined) return;
+      // Vor dem Senden: Danach steht die Karte (als Vorschau) schon nicht mehr in der alten Zelle.
+      const hidden =
+        opts.focus === true && cellOf(to.lane, to.column) === null
+          ? standInFor(id, from.lane, from.column)
+          : undefined;
       const sent = sendBoardMove(store, writes, id, plan);
       if (sent === undefined) return;
       // Jeder neue Zug ersetzt ein offenes Folgen, auch eines, dessen Karte nie erschien.
-      setFollow(opts.focus === true ? { id, lane: to.lane } : undefined);
+      standIn.current = null;
+      if (opts.focus !== true) setFollow(undefined);
+      else if (hidden === undefined) setFollow({ id, lane: to.lane });
+      // In eine Zelle, die keiner sieht (etwa die ausgeblendete Spalte `backlog`): Der Fokus geht
+      // an einen Nachbarn, statt mit der Karte zu verschwinden.
+      else setFollow({ id, lane: to.lane, standIn: hidden });
       if (plan.kind === 'rank') return;
       sent.catch((cause: ApiError) => {
         // Die Karte springt zurück; der Fokus geht mit, wenn er ihr gefolgt war.
@@ -146,6 +188,14 @@ export function useBoardMove(group: BoardGroup): BoardMoves & { dialogs: ReactNo
 
   useLayoutEffect(() => {
     if (follow === undefined) return;
+    const { standIn: instead } = follow;
+    if (instead !== undefined) {
+      setFollow(undefined);
+      if (instead === null || !instead.isConnected || !holds(follow.id)) return;
+      standIn.current = instead;
+      instead.focus();
+      return;
+    }
     const link = cardLink(follow.id, follow.lane);
     if (link === null) {
       // Bahn eingeklappt oder weg: Das Folgen endet, sonst griffe die Karte beim Aufklappen viel
@@ -154,15 +204,20 @@ export function useBoardMove(group: BoardGroup): BoardMoves & { dialogs: ReactNo
       return;
     }
     setFollow(undefined);
-    // Nur, wenn der Fokus mit der alten Karte verloren ging oder noch bei ihr ist; wer inzwischen
-    // woanders arbeitet, dem nimmt ihn die Karte nicht weg.
+    if (holds(follow.id)) link.focus();
+  });
+
+  // Nur, wenn der Fokus mit der alten Karte verloren ging, noch bei ihr ist oder bei ihrem
+  // Platzhalter; wer inzwischen woanders arbeitet, dem nimmt ihn die Karte nicht weg.
+  const holds = (id: string): boolean => {
     const active = document.activeElement;
-    const held =
+    return (
       active === null ||
       active === document.body ||
-      active.closest<HTMLElement>('li[data-card]')?.dataset.card === follow.id;
-    if (held) link.focus();
-  });
+      (active === standIn.current && standIn.current !== null) ||
+      active.closest<HTMLElement>('li[data-card]')?.dataset.card === id
+    );
+  };
 
   const close = (open: boolean) => {
     if (!open) setDialog(undefined);

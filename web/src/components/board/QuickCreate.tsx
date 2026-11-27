@@ -74,6 +74,8 @@ export function QuickCreate(props: {
           className="size-7 shrink-0"
           aria-label={m.newIssue(column, laneName)}
           aria-expanded={open}
+          // Platzhalter für den Fokus, wenn die letzte Karte der Zelle ins Verborgene geht.
+          data-quick-create=""
           onClick={() => (open ? field.current?.focus() : setOpen(true))}
         >
           <Plus className="size-4" aria-hidden="true" />

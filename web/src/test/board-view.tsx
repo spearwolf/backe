@@ -53,7 +53,7 @@ export function board(
         <WriteContext.Provider value={access}>
           <CreateIssueProvider>
             <WriteFailures writes={writes} />
-            <BoardView backlog="acme" me={me} />
+            <BoardView backlog="acme" />
           </CreateIssueProvider>
         </WriteContext.Provider>
       </StoreContext.Provider>

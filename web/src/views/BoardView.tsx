@@ -59,7 +59,7 @@ class BoardViewState {
  * Tab Board (ui.md §2.8): Werkzeugleiste oben, darunter die Bahnen. Lädt als eigener Chunk
  * (`React.lazy` in `App.tsx`), damit Backlog und Issue-Tab den Board-Code nicht mittragen.
  */
-export function BoardView({ backlog }: { backlog: string; me: string | null }) {
+export function BoardView({ backlog }: { backlog: string }) {
   const store = useStore();
   const create = useCallback(() => new BoardViewState(store, backlog), [store, backlog]);
   const state = useOwned(backlog, create);
