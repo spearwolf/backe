@@ -110,7 +110,9 @@ export function AddUserDialog({
   const formId = `${sectionId(section)}-add-form`;
   const key = keyText.trim();
   const keyMessage = key !== '' && !keyValid(key) ? m.invalidPublicKey : undefined;
-  const agent = kind === 'agent';
+  // Verliere ich die Admin-Rechte bei offenem Dialog, verschwindet die Wahl der Art; ein Mensch
+  // ginge dann sicher abgelehnt hinaus, darum gilt ohne `addHuman` immer Agent.
+  const agent = !rights.addHuman || kind === 'agent';
   // Ein Operator, der per Patch verschwand oder zum Agent wurde, gilt nicht mehr als gewählt.
   const operator =
     rights.addAgent === 'any' ? (humans.some((u) => u.handle === chosen) ? chosen : '') : me;

@@ -3,7 +3,7 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { formatDate } from '../../lib/format.ts';
 import { call, region, registerSettingsHarness, view } from '../../test/settings-view.tsx';
-import { testPatch } from '../../test/state.ts';
+import { testConfig, testPatch } from '../../test/state.ts';
 import { m } from '../../views/settings.messages.ts';
 import { m as w } from '../write/write.messages.ts';
 
@@ -253,4 +253,53 @@ test('removing a user asks first and is hidden where policy refuses', async () =
 test('an agent may only revoke its own keys', () => {
   view({ me: 'bot', over: { users } });
   expect(buttons()).toEqual([m.sectionUsers, m.revokeKeyOf('SHA256:botkey1')]);
+});
+
+test('an agent listed in admins carries no admin mark', () => {
+  // Der Server setzt `admin` nach `admins`; Admin ist aber nur ein Mensch (BK §2.13).
+  view({
+    over: {
+      users: [spw, ana, { ...bot, admin: true }],
+      config: testConfig({ admins: ['spw', 'bot'] }),
+    },
+  });
+  expect(item('bot').textContent).not.toContain(m.adminMark);
+  expect(item('spw').textContent).toContain(m.adminMark);
+});
+
+test('losing admin rights while adding turns the new user into my agent', async () => {
+  const user = userEvent.setup();
+  const { store } = view({ over: { users } });
+  call.mockResolvedValue({ commit: 'c1' });
+  await user.click(within(section()).getByRole('button', { name: m.addUser }));
+  const dialog = screen.getByRole('dialog', { name: m.addUserTitle });
+  expect(within(dialog).getByRole('radio', { name: m.kindHuman })).toBeTruthy();
+  await user.type(within(dialog).getByLabelText(m.userHandle), 'eve');
+  await user.click(within(dialog).getByLabelText(m.publicKey));
+  await user.paste(KEY);
+  act(() => {
+    store.applyPatch(testPatch(2, { upsert: { config: testConfig({ admins: ['ana'] }) } }));
+  });
+  // Ohne Admin-Rechte kein Mensch mehr: fest ein Agent mit mir als Operator.
+  expect(within(dialog).queryByRole('radio')).toBeNull();
+  expect(within(dialog).getByText('spw').tagName).toBe('CODE');
+  await user.click(within(dialog).getByRole('button', { name: m.addUser }));
+  expect(call).toHaveBeenCalledWith('user_add', {
+    handle: 'eve',
+    key: KEY,
+    agent: true,
+    operator: 'spw',
+  });
+});
+
+test('a remove dialog closes when the user is gone by patch', async () => {
+  const user = userEvent.setup();
+  const { store } = view({ over: { users } });
+  await user.click(within(item('bot')).getByRole('button', { name: m.removeUserOf('bot') }));
+  expect(screen.getByRole('dialog', { name: m.removeUserTitle('bot') })).toBeTruthy();
+  act(() => {
+    store.applyPatch(testPatch(2, { remove: { users: ['bot'] } }));
+  });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(within(list()).queryByRole('listitem', { name: 'bot' })).toBeNull();
 });

@@ -1,3 +1,4 @@
+import { isAdmin } from '@backe/ops/admin.ts';
 import type { UserJson } from '@backe/ui/api.ts';
 import { Bot, ShieldCheck, User } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -23,12 +24,14 @@ type Revoking = { handle: string; fingerprint: string };
 
 function UserItem({
   user,
+  admin,
   canRevoke,
   canRemove,
   onRevoke,
   onRemove,
 }: {
   user: UserJson;
+  admin: boolean;
   canRevoke: boolean;
   canRemove: boolean;
   onRevoke: (target: Revoking, trigger: HTMLElement) => void;
@@ -47,7 +50,7 @@ function UserItem({
           <Kind aria-hidden="true" className="size-4" />
           {user.kind === 'agent' ? m.kindAgent : m.kindHuman}
         </span>
-        {user.admin && (
+        {admin && (
           <Badge variant="outline">
             <ShieldCheck aria-hidden="true" />
             {m.adminMark}
@@ -117,7 +120,8 @@ export function UsersSection({ id, title, folded, onToggle }: SectionFrame) {
   const { canWrite, me } = useWrites();
   const users = useSignal(usersOf(store));
   const config = useSignal(store.config);
-  const rights = settingsRights({ canWrite, me, users, config: config ?? { admins: [] } });
+  const admins = config ?? { admins: [] };
+  const rights = settingsRights({ canWrite, me, users, config: admins });
   const canAdd = rights.addHuman || rights.addAgent !== false;
   const [adding, setAdding] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -187,6 +191,8 @@ export function UsersSection({ id, title, folded, onToggle }: SectionFrame) {
               <UserItem
                 key={user.handle}
                 user={user}
+                // `user.admin` folgt nur `admins`; Admin ist aber nur ein Mensch (BK §2.13).
+                admin={isAdmin(admins, user.handle, user)}
                 canRevoke={rights.revokeKey(user)}
                 canRemove={rights.removeUser(user)}
                 onRevoke={(target, trigger) => {
