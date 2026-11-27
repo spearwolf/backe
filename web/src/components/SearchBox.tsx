@@ -237,7 +237,7 @@ export function SearchBox({ backlog }: { backlog: string }) {
           aria-keyshortcuts="Meta+K Control+K"
           autoComplete="off"
           spellCheck={false}
-          placeholder={`${m.placeholder} ${m.shortcut(isMac())}`}
+          placeholder={m.placeholder}
           value={query}
           onChange={(e) => {
             serial.current++;
@@ -248,8 +248,18 @@ export function SearchBox({ backlog }: { backlog: string }) {
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
-          className="h-8 w-40 rounded-md border border-input bg-transparent pr-2 pl-8 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring sm:w-56"
+          className="h-8 w-28 rounded-md border border-input bg-transparent pr-2 pl-8 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring sm:w-56 sm:pr-14"
         />
+        {/* Das Kürzel erst ab `sm`: Auf schmalen Schirmen ließe das Feld sonst den Tabs keinen
+            Platz. Vorgelesen wird es über `aria-keyshortcuts`. */}
+        {query === '' && (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1/2 right-2 hidden -translate-y-1/2 font-sans text-xs text-muted-foreground sm:block"
+          >
+            {m.shortcut(isMac())}
+          </span>
+        )}
       </div>
       {/* Immer eingehängt, damit die Statuszeile als Live-Region ihre Änderungen ansagt. Ist die
           Liste zu, ist der Rahmen nur unsichtbar (`sr-only`), nicht `hidden`: Ein Ergebnis der

@@ -344,6 +344,20 @@ test('a late description result is announced after the list closed', async () =>
   expect(input.value).toBe('zzz');
 });
 
+test('the field stays narrow on small screens and shows the shortcut only from sm', async () => {
+  const input = mount();
+  expect(input.className).toContain('w-28');
+  expect(input.className).toContain('sm:w-56');
+  expect(input.getAttribute('placeholder')).toBe(m.placeholder);
+  const hint = screen.getByText(m.shortcut(false));
+  expect(hint.getAttribute('aria-hidden')).toBe('true');
+  expect(hint.className).toContain('hidden');
+  expect(hint.className).toContain('sm:block');
+  // Mit Text im Feld träte der Hinweis in den Weg.
+  await userEvent.type(input, 'x');
+  expect(screen.queryByText(m.shortcut(false))).toBeNull();
+});
+
 test('the description query is trimmed', async () => {
   const fetch = vi.fn(async () => json({ issues: [] }));
   vi.stubGlobal('fetch', fetch);

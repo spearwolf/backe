@@ -250,6 +250,8 @@ test('the header shows offline', async () => {
 
 test('tabs have tab roles and selection', async () => {
   const { user } = await setup({ path: '/b/main/backlog' });
+  // Die Tab-Leiste ist eine eigene Navigation neben der der Settings und braucht einen Namen.
+  expect(screen.getByRole('navigation', { name: 'Views and search' })).toBeTruthy();
   const list = screen.getByRole('tablist', { name: 'Views' });
   expect(
     within(list)

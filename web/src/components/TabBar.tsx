@@ -112,7 +112,7 @@ export function TabBar({ backlog, route, tabs, onClose }: Props) {
   };
 
   return (
-    <nav className="flex items-end gap-2 border-b px-2">
+    <nav aria-label={m.tabBar} className="flex items-end gap-2 border-b px-2">
       <div
         role="tablist"
         aria-label={m.views}
