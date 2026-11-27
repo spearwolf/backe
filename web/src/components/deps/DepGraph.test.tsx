@@ -410,6 +410,30 @@ test('a patch re-renders only the nodes whose issue changed', async () => {
   }
 });
 
+test('a growing collector re-renders no issue node, only its own count', async () => {
+  // c mit 4 Abhängigen, Limit 3: zwei im Sammelknoten. Ein Store, damit die Issues bleiben.
+  const store = new Store();
+  store.load(testState(fan(4)));
+  const current = () => {
+    const s = store.toSnapshot();
+    if (s === undefined) throw new Error('no snapshot');
+    return depGraph(s, tid(1), { parents: false, expanded: new Set(), limit: 3 });
+  };
+  try {
+    const { container, rerender } = await show(current());
+    expect(nodeEl(container, 'more').textContent).toBe(m.more(2));
+    renders.clear();
+
+    store.issues.upsert([testIssue(6, { depends_on: [tid(1)] })]);
+    await rerender(current());
+    expect(nodeEl(container, 'more').textContent).toBe(m.more(3));
+    // Die Mitte zählt den neuen Nachbarn als verborgen und rendert darum neu; sonst keiner.
+    expect([...renders.keys()]).toEqual([tid(1)]);
+  } finally {
+    store.dispose();
+  }
+});
+
 /** Liegt der Knoten ganz in der Fläche? Rechnet wie xyflow: Position mal Zoom plus Verschiebung. */
 function inPane(container: HTMLElement, id: string): boolean {
   const v = parseTransform(viewport(container));
@@ -498,7 +522,7 @@ test('the graph follows the dark theme', async () => {
 test('the attribution stays and gets a link colour with AA contrast', async () => {
   const { container } = await show(graphOf(chain(), C));
   expect(container.querySelector('.react-flow__attribution a')).not.toBeNull();
-  // xyflow setzt #999 ungeschichtet; nur ein `!important`-Utility kommt darüber.
+  // `@layer xyflow` liegt nach den Layern von Tailwind; nur ein `!important`-Utility schlägt ihr #999.
   expect(container.querySelector('.react-flow')?.className).toContain(
     '[&_.react-flow\\_\\_attribution_a]:text-muted-foreground!',
   );

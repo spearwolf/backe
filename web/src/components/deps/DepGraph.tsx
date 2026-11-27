@@ -192,7 +192,8 @@ function keeps(
     d.node.open === node.open &&
     d.node.hidden === node.hidden &&
     d.node.expanded === node.expanded &&
-    d.more === data.more &&
+    // Der Knoten fragt nur, ob es einen Sammelknoten gibt; dessen Zahl allein rendert keinen neu.
+    d.more > 0 === data.more > 0 &&
     d.backlog === data.backlog &&
     d.onToggle === data.onToggle
   );
@@ -329,7 +330,8 @@ export function DepGraph(props: {
           ariaLabelConfig={ariaLabels()}
           style={THEME}
           // Der Hinweis auf xyflow bleibt; sein Link (#999, etwa 2,85:1) bekommt AA-Kontrast. Die
-          // Regel von xyflow steht ungeschichtet, darum `!`. Als JSX-String, damit Tailwind
+          // Regel steht in `@layer xyflow`, die nach den Layern von Tailwind deklariert wird und
+          // darum Utilities schlägt; nur `!` kommt darüber. Als JSX-String, damit Tailwind
           // denselben Text sieht wie der Browser (`\_` hält den Unterstrich wörtlich).
           className="[&_.react-flow\_\_attribution_a]:text-muted-foreground!"
         >

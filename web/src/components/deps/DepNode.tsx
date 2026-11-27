@@ -19,7 +19,10 @@ import { DEP_NODE_HEIGHT, DEP_NODE_WIDTH } from './dep-layout.ts';
 export type IssueNodeData = {
   node: DepNode;
   backlog: string;
-  /** Knoten im Sammelknoten; mit Sammelknoten klappt nichts weiter auf. */
+  /**
+   * Knoten im Sammelknoten; mit Sammelknoten klappt nichts weiter auf. Zählt nur als `> 0`: Ein
+   * behaltenes Knotenobjekt (siehe `keeps` in `DepGraph.tsx`) kann eine ältere Zahl tragen.
+   */
   more: number;
   onToggle: (id: string) => void;
 };
