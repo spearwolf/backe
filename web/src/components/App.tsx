@@ -10,6 +10,8 @@ import {
   useState,
 } from 'react';
 import { m } from '../app/app.messages.ts';
+import { type ShowNote, showBrowserNote } from '../app/browser-notes.ts';
+import { attachNotifier } from '../app/notifier.ts';
 import { type Router, RouterContext } from '../app/router.ts';
 import { canonicalPath, type Route, routeHref } from '../app/routes.ts';
 import type { ShownNavigation } from '../app/settings-model.ts';
@@ -38,6 +40,8 @@ type Props = {
   theme: Theme;
   prefs: UiPrefs;
   deps: Partial<ConnectionDeps>;
+  /** Zeigt eine Benachrichtigung; Test-Hook, sonst die des Browsers. */
+  notify?: ShowNote;
 };
 
 const createTabs = (backlog: string) => new TabModel(backlog);
@@ -136,7 +140,7 @@ function Notice({ children }: { children: ReactNode }) {
 }
 
 /** Die Hülle (ui.md §2.6): Routing, je Backlog-Route genau eine Sitzung, Kopfzeile, Tabs. */
-export function App({ backlogs, router, theme, prefs, deps }: Props) {
+export function App({ backlogs, router, theme, prefs, deps, notify = showBrowserNote }: Props) {
   const lang = useSignal(prefs.lang);
   const ui = useMemo<UiAccess>(() => ({ theme, prefs }), [theme, prefs]);
   // Über dem Fragment mit `key={lang}`: Settings merkt sich hier, welche Navigation es schon
@@ -183,6 +187,18 @@ export function App({ backlogs, router, theme, prefs, deps }: Props) {
         : routeHref({ kind: 'issue', backlog, id: next }),
     );
   };
+
+  // Ohne Handle gibt es kein »mein«, also keinen Notifier; Schreibrecht braucht er nicht.
+  const notifyMe = current?.user ?? null;
+  const notifyOn = useSignal(prefs.notifications);
+  useEffect(() => {
+    if (session === undefined || notifyMe === null || !notifyOn) return;
+    return attachNotifier(session, {
+      me: notifyMe,
+      show: notify,
+      open: (href) => router.navigate(href),
+    });
+  }, [session, notifyMe, notifyOn, notify, router]);
 
   const backlogName = current?.name;
   const canWrite = current?.can_write;

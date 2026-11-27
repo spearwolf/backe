@@ -1,10 +1,16 @@
 import { BacklogConfigSchema } from '@backe/core/schemas.ts';
 import type { BacklogEntryJson, IssueJson, PatchJson, StateJson } from '@backe/ui/api.ts';
-import { act, fireEvent, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { StrictMode } from 'react';
 import { afterEach, expect, test } from 'vitest';
 import { mountApp } from '../app/bootstrap.tsx';
+import { Router } from '../app/router.ts';
+import { Theme } from '../app/theme.ts';
+import { UiPrefs } from '../app/ui-prefs.ts';
 import { fakeEventSources } from '../test/fake-event-source.ts';
+import { installNotifications } from '../test/notifications.ts';
+import { App } from './App.tsx';
 
 function config() {
   const { $schema: _unused, ...rest } = BacklogConfigSchema.parse({
@@ -607,4 +613,76 @@ test('the backlog tab keeps its filter across an issue tab', async () => {
 test('a bare backlog path keeps its filter', async () => {
   await setup({ path: '/b/main?state=all' });
   expect(window.location.pathname + window.location.search).toBe('/b/main/backlog?state=all');
+});
+
+test('notifications follow the switch', async () => {
+  const fake = installNotifications({ permission: 'granted' });
+  try {
+    window.history.replaceState(null, '', '/b/main/backlog');
+    const backlogs = [entry('main', { current: true })];
+    const sources = fakeEventSources();
+    const fetch = async (url: string): Promise<Response> =>
+      url === '/api/backlogs' ? json({ backlogs, lang: 'en' }) : json(state([issue(1)]));
+    const router = new Router(window);
+    const theme = new Theme(window, document.documentElement);
+    const prefs = new UiPrefs('en', document.documentElement);
+    const flush = async () => {
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    };
+    const view = render(
+      <StrictMode>
+        <App
+          backlogs={backlogs}
+          router={router}
+          theme={theme}
+          prefs={prefs}
+          deps={{ fetch, eventSource: sources.create }}
+        />
+      </StrictMode>,
+    );
+    const live = () => sources.all.filter((es) => !es.closed)[0] as (typeof sources.all)[number];
+    await act(async () => {
+      live().emitOpen();
+      live().emitEvent('hello', { rev: 1, head: 'h1' });
+      await flush();
+    });
+    const foreign = (rev: number, title: string): PatchJson => ({
+      rev,
+      head: `h${rev}`,
+      upsert: { issues: [{ ...issue(1), assignee: 'spw', title }] },
+      remove: {},
+      actors: { 'bk-1': ['claude-1'] },
+    });
+    const emit = async (p: PatchJson) => {
+      await act(async () => {
+        live().emitEvent('patch', p);
+        await flush();
+      });
+    };
+
+    // Schalter aus (Default): nichts.
+    await emit(foreign(2, 'Eins'));
+    expect(fake.shown).toHaveLength(0);
+
+    await act(async () => {
+      prefs.setNotifications(true);
+      await flush();
+    });
+    await emit(foreign(3, 'Zwei'));
+    expect(fake.shown).toHaveLength(1);
+    expect(fake.shown[0]?.title).toBe('bk-1 Zwei');
+
+    await act(async () => {
+      prefs.setNotifications(false);
+      await flush();
+    });
+    await emit(foreign(4, 'Drei'));
+    expect(fake.shown).toHaveLength(1);
+    view.unmount();
+    router.dispose();
+    theme.dispose();
+    prefs.dispose();
+  } finally {
+    fake.uninstall();
+  }
 });
