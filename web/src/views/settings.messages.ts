@@ -15,6 +15,12 @@ export const m = catalog({
     externalImages: 'Load external images in descriptions',
     externalImagesHint:
       'Images from other servers reveal to them that you are reading. Switched off, a link stands in their place.',
+    notifications: 'Browser notifications',
+    notificationsHint:
+      'While this page is open: an issue is assigned to you, someone else changes one of your issues, or a new sync conflict appears.',
+    notificationsDenied:
+      'Blocked by the browser; allow notifications for this site in its settings.',
+    notificationsUnsupported: 'This browser has no notifications.',
     boardGroup: 'Default board grouping',
     boardGroupHint: 'Applies to boards without a choice of their own.',
     // Ein Satz in drei Teilen um Datei und Befehl, die als Code dazwischen stehen.
@@ -200,6 +206,12 @@ export const m = catalog({
     externalImages: 'Externe Bilder in Beschreibungen laden',
     externalImagesHint:
       'Bilder von fremden Servern verraten diesen, dass du liest. Ausgeschaltet steht an ihrer Stelle ein Link.',
+    notifications: 'Browser-Benachrichtigungen',
+    notificationsHint:
+      'Solange diese Seite offen ist: Ein Issue wird dir zugewiesen, jemand anderes ändert eines deiner Issues, oder ein neuer Sync-Konflikt entsteht.',
+    notificationsDenied:
+      'Vom Browser blockiert; erlaube Benachrichtigungen für diese Seite in seinen Einstellungen.',
+    notificationsUnsupported: 'Dieser Browser kann keine Benachrichtigungen.',
     boardGroup: 'Default-Gruppierung des Boards',
     boardGroupHint: 'Gilt für Boards ohne eigene Wahl.',
     configReadOnlyBefore: 'Hier nur lesend: ',

@@ -1,7 +1,8 @@
 import type { Locale } from '@backe/i18n/locale.ts';
-import { useId, useLayoutEffect, useRef } from 'react';
+import { useId, useLayoutEffect, useRef, useState } from 'react';
 import { m as app } from '../../app/app.messages.ts';
 import { BOARD_GROUPS, type BoardGroup } from '../../app/board-groups.ts';
+import { notePermission, requestNotePermission } from '../../app/browser-notes.ts';
 import type { ThemeChoice } from '../../app/theme.ts';
 import { useUi } from '../../app/ui-context.tsx';
 import type { LangChoice } from '../../app/ui-prefs.ts';
@@ -37,6 +38,19 @@ export function InterfaceSection() {
   const group = useSignal(prefs.boardGroup);
   const langSelect = useRef<HTMLSelectElement>(null);
   const imagesHint = useId();
+  const notes = useSignal(prefs.notifications);
+  const notesHint = useId();
+  const notesReason = useId();
+  const [permission, setPermission] = useState(notePermission);
+  const blocked = permission === 'denied' || permission === 'unsupported';
+
+  // Einschalten fragt bei `default` den Browser und gilt nur bei `granted`.
+  const switchNotes = async (on: boolean) => {
+    if (!on) return prefs.setNotifications(false);
+    const answer = await requestNotePermission();
+    setPermission(answer);
+    prefs.setNotifications(answer === 'granted');
+  };
 
   // Ein Sprachwechsel baut die App neu auf (`key={lang}` in `App`); die neue Sprachwahl holt sich
   // den Fokus zurück, bevor der Browser malt.
@@ -96,6 +110,28 @@ export function InterfaceSection() {
         <p id={imagesHint} className="text-xs text-muted-foreground">
           {m.externalImagesHint}
         </p>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label className="flex items-center gap-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            className="size-4 accent-primary"
+            checked={notes && permission === 'granted'}
+            disabled={blocked}
+            aria-describedby={blocked ? `${notesHint} ${notesReason}` : notesHint}
+            onChange={(e) => void switchNotes(e.target.checked)}
+          />
+          {m.notifications}
+        </label>
+        <p id={notesHint} className="text-xs text-muted-foreground">
+          {m.notificationsHint}
+        </p>
+        {blocked && (
+          <p id={notesReason} className="text-xs text-muted-foreground">
+            {permission === 'denied' ? m.notificationsDenied : m.notificationsUnsupported}
+          </p>
+        )}
       </div>
 
       <Field label={m.boardGroup} hint={m.boardGroupHint}>

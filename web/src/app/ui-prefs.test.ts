@@ -1,6 +1,12 @@
 import { locale, setLocale } from '@backe/i18n/locale.ts';
 import { afterEach, expect, test } from 'vitest';
-import { BOARD_GROUP_KEY, EXTERNAL_IMAGES_KEY, LANG_KEY, UiPrefs } from './ui-prefs.ts';
+import {
+  BOARD_GROUP_KEY,
+  EXTERNAL_IMAGES_KEY,
+  LANG_KEY,
+  NOTIFICATIONS_KEY,
+  UiPrefs,
+} from './ui-prefs.ts';
 
 afterEach(() => {
   localStorage.clear();
@@ -106,4 +112,24 @@ test('only off blocks external images', () => {
     expect(prefs.externalImages.value, raw).toBe(allowed);
     prefs.dispose();
   }
+});
+
+test('notifications are off until switched on', () => {
+  const prefs = new UiPrefs('en', document.createElement('html'));
+  expect(prefs.notifications.value).toBe(false);
+  prefs.setNotifications(true);
+  expect(prefs.notifications.value).toBe(true);
+  expect(localStorage.getItem(NOTIFICATIONS_KEY)).toBe('on');
+  prefs.dispose();
+
+  const again = new UiPrefs('en', document.createElement('html'));
+  expect(again.notifications.value).toBe(true);
+  again.setNotifications(false);
+  expect(again.notifications.value).toBe(false);
+  again.dispose();
+
+  localStorage.setItem(NOTIFICATIONS_KEY, 'kaputt');
+  const garbage = new UiPrefs('en', document.createElement('html'));
+  expect(garbage.notifications.value).toBe(false);
+  garbage.dispose();
 });

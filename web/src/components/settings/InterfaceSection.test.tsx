@@ -2,12 +2,29 @@ import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { m as app } from '../../app/app.messages.ts';
 import { THEME_KEY } from '../../app/theme.ts';
-import { BOARD_GROUP_KEY, EXTERNAL_IMAGES_KEY, LANG_KEY } from '../../app/ui-prefs.ts';
+import {
+  BOARD_GROUP_KEY,
+  EXTERNAL_IMAGES_KEY,
+  LANG_KEY,
+  NOTIFICATIONS_KEY,
+} from '../../app/ui-prefs.ts';
+import { installNotifications } from '../../test/notifications.ts';
 import { region, registerSettingsHarness, view } from '../../test/settings-view.tsx';
 import { m as board } from '../../views/board.messages.ts';
 import { m } from '../../views/settings.messages.ts';
 
 registerSettingsHarness();
+
+let fake: ReturnType<typeof installNotifications> | undefined;
+afterEach(() => {
+  fake?.uninstall();
+  fake = undefined;
+});
+
+const notesBox = () =>
+  within(region(m.sectionInterface)).getByRole('checkbox', {
+    name: m.notifications,
+  }) as HTMLInputElement;
 
 const description = (el: HTMLElement) =>
   (el.getAttribute('aria-describedby') ?? '')
@@ -87,4 +104,44 @@ test('the language select keeps the focus after a switch', async () => {
   expect(back).not.toBe(after);
   expect(back.value).toBe('server');
   expect(document.activeElement).toBe(back);
+});
+
+test('switching notifications on asks the browser first', async () => {
+  const user = userEvent.setup();
+  fake = installNotifications({ permission: 'default', answer: 'granted' });
+  const { prefs } = view();
+  const box = notesBox();
+  expect(box.checked).toBe(false);
+  await user.click(box);
+  expect(fake.requests).toBe(1);
+  expect(prefs.notifications.value).toBe(true);
+  expect(box.checked).toBe(true);
+  expect(description(box)).toBe(m.notificationsHint);
+});
+
+test('a refused permission keeps notifications off', async () => {
+  const user = userEvent.setup();
+  fake = installNotifications({ permission: 'default', answer: 'denied' });
+  const { prefs } = view();
+  const box = notesBox();
+  await user.click(box);
+  expect(prefs.notifications.value).toBe(false);
+  expect(box.checked).toBe(false);
+  expect(box.disabled).toBe(true);
+  expect(description(box)).toContain(m.notificationsDenied);
+});
+
+test('without the api the switch is disabled', () => {
+  fake = installNotifications({ permission: 'missing' });
+  view();
+  const box = notesBox();
+  expect(box.disabled).toBe(true);
+  expect(description(box)).toContain(m.notificationsUnsupported);
+});
+
+test('a stored switch without permission shows off', () => {
+  localStorage.setItem(NOTIFICATIONS_KEY, 'on');
+  fake = installNotifications({ permission: 'denied' });
+  view();
+  expect(notesBox().checked).toBe(false);
 });

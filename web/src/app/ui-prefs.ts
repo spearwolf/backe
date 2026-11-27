@@ -19,6 +19,7 @@ export type LangChoice = 'server' | 'en' | 'de';
 export const LANG_KEY = 'backe-ui-lang';
 export const EXTERNAL_IMAGES_KEY = 'backe-ui-external-images';
 export const BOARD_GROUP_KEY = 'backe-ui-board-group';
+export const NOTIFICATIONS_KEY = 'backe-ui-notifications';
 
 // Ein leerer oder fremder Wert heißt »wie der Server«; `writeText` kennt kein Entfernen.
 const parseLang = (raw: string | undefined): LangChoice =>
@@ -37,6 +38,8 @@ export class UiPrefs {
   readonly lang: SignalReader<Locale>;
   readonly externalImages: Signal<boolean>;
   readonly boardGroup: Signal<BoardGroup>;
+  /** Browser-Benachrichtigungen; Default aus, nur ein ausdrückliches `'on'` schaltet ein. */
+  readonly notifications: Signal<boolean>;
   readonly #root: HTMLElement;
   #focusLang = false;
 
@@ -55,6 +58,7 @@ export class UiPrefs {
       attach: this,
     });
     this.boardGroup = createSignal(parseGroup(readText(BOARD_GROUP_KEY)), { attach: this });
+    this.notifications = createSignal(readText(NOTIFICATIONS_KEY) === 'on', { attach: this });
     // Vor dem ersten Rendern: Die Kataloge lesen die Locale bei jedem Zugriff.
     this.#applyLang(this.lang());
   }
@@ -76,6 +80,11 @@ export class UiPrefs {
   setExternalImages(on: boolean): void {
     this.externalImages.set(on);
     writeText(EXTERNAL_IMAGES_KEY, on ? 'on' : 'off');
+  }
+
+  setNotifications(on: boolean): void {
+    this.notifications.set(on);
+    writeText(NOTIFICATIONS_KEY, on ? 'on' : 'off');
   }
 
   setBoardGroup(group: BoardGroup): void {
