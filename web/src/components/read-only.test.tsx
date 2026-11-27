@@ -2,7 +2,8 @@
  * Nur lesen über alle Ansichten: die ganze App über `mountApp` mit `can_write: false`. Das `fetch`
  * schreibt jeden Aufruf mit; am Ende darf kein Tool-Aufruf und kein PUT darunter sein, und im DOM
  * steht keine Schreibaktion (Tab Backlog wie Tab Issue). Ein Gegentest mit `can_write: true` belegt,
- * dass jede gesuchte Schreibaktion sonst da ist: Ein veralteter Name fiele dort auf.
+ * dass jede gesuchte Schreibaktion sonst da ist: Ein veralteter Name fiele dort auf. Das Board lädt
+ * als eigener Chunk (`React.lazy`); seine Abfragen warten darum mit `findBy…`.
  */
 import type { BacklogEntryJson, IssueDetailJson, StateJson } from '@backe/ui/api.ts';
 import { act, fireEvent, screen } from '@testing-library/react';
@@ -11,8 +12,10 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { mountApp } from '../app/bootstrap.tsx';
 import { formatDate } from '../lib/format.ts';
 import { linkOf, registerBacklogViewHarness, rowIds, rowOf } from '../test/backlog-view.tsx';
+import { cardIds, cardLink } from '../test/board-view.tsx';
 import { fakeEventSources } from '../test/fake-event-source.ts';
 import { testIssue, testState, tid } from '../test/state.ts';
+import { m as bm } from '../views/board.messages.ts';
 import { m } from '../views/issue.messages.ts';
 import { m as w } from './write/write.messages.ts';
 
@@ -160,4 +163,44 @@ test('with write access every write action of the list is there', async () => {
   await settle();
   expect(screen.getByText('Mein Kommentar')).toBeTruthy();
   for (const [name, control] of writeControls()) expect(control, name).not.toBeNull();
+});
+
+/** Das `+` des Schnellanlegens in der Zelle `todo` der Bahn »ohne Sprint«. */
+const quickCreate = () => screen.queryByRole('button', { name: bm.newIssue('todo', bm.noSprint) });
+
+test('read-only hides board writes', async () => {
+  const { user } = await mount('/b/acme/board');
+  await screen.findByRole('region', { name: bm.noSprint });
+  expect(cardIds(bm.noSprint, 'todo')).toEqual([tid(1), tid(2), tid(3)]);
+
+  // Weder »Neues Issue« noch `+`, kein Kartenmenü, nichts zum Ziehen, Alt+→ und Umschalt+F10 tun nichts.
+  expect(screen.queryByRole('button', { name: w.newIssue })).toBeNull();
+  expect(quickCreate()).toBeNull();
+  fireEvent.contextMenu(cardLink(tid(1)));
+  expect(screen.queryByRole('menu')).toBeNull();
+  expect(document.querySelector('[aria-roledescription="draggable"]')).toBeNull();
+  expect(cardLink(tid(1)).hasAttribute('aria-keyshortcuts')).toBe(false);
+  cardLink(tid(1)).focus();
+  await user.keyboard('{Alt>}{ArrowRight}{/Alt}');
+  await user.keyboard('{Alt>}{ArrowDown}{/Alt}');
+  await user.keyboard('{Shift>}{F10}{/Shift}');
+  await settle();
+  expect(screen.queryByRole('menu')).toBeNull();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(cardIds(bm.noSprint, 'todo')).toEqual([tid(1), tid(2), tid(3)]);
+  expect(cardIds(bm.noSprint, 'in_progress')).toEqual([]);
+
+  expect(seen.filter((s) => s.url.includes('/tools/'))).toEqual([]);
+  expect(seen.filter((s) => s.method === 'PUT')).toEqual([]);
+});
+
+test('with write access every write action of the board is there', async () => {
+  const { user } = await mount('/b/acme/board', true);
+  await screen.findByRole('region', { name: bm.noSprint });
+  expect(screen.getByRole('button', { name: w.newIssue })).toBeTruthy();
+  expect(quickCreate()).not.toBeNull();
+  expect(cardLink(tid(1)).hasAttribute('aria-keyshortcuts')).toBe(true);
+  fireEvent.contextMenu(cardLink(tid(1)));
+  expect(screen.getByRole('menu')).toBeTruthy();
+  await user.keyboard('{Escape}');
 });

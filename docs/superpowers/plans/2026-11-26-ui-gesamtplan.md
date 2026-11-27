@@ -50,7 +50,7 @@ Abweichungen zwischen Spec und Code, gefunden beim Planen. Eingeordnet nach Schr
 2. **Burst und verlorene Ereignisse** — 50 schnelle CLI-Writes, `git pack-refs --all` (der Ref verschwindet aus `refs/heads/` und steht nur noch in `packed-refs`), ein manuelles `git checkout` auf einen anderen Branch. Erwartet: Nach Ruhe ist der Client-Zustand aus `hello` + allen Patches gleich einem frischen `/state`. → U2 `patches converge to a fresh state after a burst`, `packed refs still move the head`.
 3. **Server-Neustart bei offenem Tab** — der Browser verbindet sich mit `Last-Event-ID` eines beendeten Prozesses neu, dessen `rev` der neue zufällig schon erreicht hat. Erwartet: `reset`, nie fremde Patches. → U2 `an event id from an earlier process gets reset`.
 4. **Kaputter oder fehlender Stand** — Hand-Edit mit kaputtem Frontmatter, ungültige `.backe/backlog.jsonc` im Arbeitsbaum, eine Identität ohne eigene Arbeitskopie. Erwartet: `/state` liefert `problems` bzw. einen Fehler nach §2.3.3, der Server läuft weiter, der nächste gültige Stand kommt als Patch. → U1 `state of a backlog without own working copy`, U2 `a broken hand edit becomes a problem, the fix a patch`.
-5. **Nur-lesen-Identität** — Handle ohne Key in der User-Config. Erwartet: `can_write: false` in `/api/backlogs`, jedes `POST …/tools/*` ist ein Fehler mit `hint` (Status 400), Lesen und Live-Updates funktionieren; das Frontend blendet Schreibaktionen aus. → U3 `a read-only identity cannot write`, U7 `read-only hides write actions`.
+5. **Nur-lesen-Identität** — Handle ohne Key in der User-Config. Erwartet: `can_write: false` in `/api/backlogs`, jedes `POST …/tools/*` ist ein Fehler mit `hint` (Status 400), Lesen und Live-Updates funktionieren; das Frontend blendet Schreibaktionen aus. → U3 `a read-only identity cannot write`, U7 `read-only hides write actions`, U8 `read-only hides board writes`.
 
 ---
 
@@ -116,6 +116,7 @@ Jeder Meilenstein endet mit grünem `mise run check`, `mise run smoke` und einem
 
 - **Spec:** UI §2.8, §3.7.
 - **Inhalt:** Bahnen, Spalten der Hauptlinie, Seitenzustände in der Spalte von `paused_from`; Drag & Drop mit `@dnd-kit` (Spalte → `issue_move`, Reihenfolge → `issue_rank`, Bahn + Spalte → ein `batch`); Rücksprung und `done`-Dialog mit `force`; Kartenmenü als Tastaturalternative; Schnell-Anlegen.
+- **Produziert:** `boardLanes`, `BoardModel`, `BoardPrefs`, `planDrop`, `boardCall`, `boardOverlay`, `serialWrite`, `useBoardMove`/`useBoardMoves`, `draftForCell`, `StateDialog.submit`, `useMenuKey`.
 
 ### U9 — Abhängigkeitsgraph
 

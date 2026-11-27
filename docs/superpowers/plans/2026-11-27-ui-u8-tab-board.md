@@ -87,7 +87,7 @@ export class BoardModel {
 
 Regeln `boardLanes`: Bahnen aus allen bekannten Einträgen (`store.sprints`/`projects`/`repos`, auch leere — sonst ließe sich nichts in eine leere Bahn ziehen) plus jedem Schlüssel, den ein Issue nennt und der Store nicht kennt. Sprint-Label = `title`, sonst Slug; Projekt- und Repo-Label = Pfad bzw. Name. Ordnung Sprints: offene vor geschlossenen (`closed: true`), je Gruppe `start` absteigend, ohne `start` danach, Gleichstand nach Slug; unbekannte Slugs zählen als offen ohne `start`. Projekte nach Pfad, Repos nach Name (`compareCodeUnits`). `NO_LANE` (Label leer, die Ansicht setzt »ohne Sprint« usw.) zuletzt und nur, wenn ein Issue darin steht oder die Gruppierung `none` ist. `count` = Karten der Bahn über alle angezeigten Spalten. `BoardModel.lanes` ist ein Memo über `store.toSnapshot()`, `store.sprints.list()`, `store.projects.list()`, `store.repos.list()` und `view`; der Karten-Cache hält je ID die Karte, solange `issue`, `openDeps` und `progress` gleich bleiben (Muster `#rowCache` in `backlog-list.ts`).
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
 // board-model.test.ts — Issues über testIssue, Snapshot über Store.load(testState(…)).toSnapshot()
@@ -109,10 +109,10 @@ test('closed sprints start folded, a toggle sticks per group', …);
 test('a patch to one issue keeps the other cards identical', …lanes vor/nach applyPatch: unberührte Karte toBe);
 ```
 
-- [ ] **Step 2: Run, verify FAIL** — `pnpm vitest run --project web web/src/app/board-`
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: Run** → PASS; `pnpm vitest run test/conventions.test.ts` → PASS (nur Module der reinen Hülle)
-- [ ] **Step 5: Commit** — `feat: Board-Modell mit Bahnen, Spalten und Karten`
+- [x] **Step 2: Run, verify FAIL** — `pnpm vitest run --project web web/src/app/board-`
+- [x] **Step 3: Implement**
+- [x] **Step 4: Run** → PASS; `pnpm vitest run test/conventions.test.ts` → PASS (nur Module der reinen Hülle)
+- [x] **Step 5: Commit** — `feat: Board-Modell mit Bahnen, Spalten und Karten`
 
 ### Task 2: Züge planen — Rang, State, Bahn; gemeinsame Warteschlange
 
@@ -166,7 +166,7 @@ Regeln:
 - `serialWrite` ist die Warteschlange aus `rank()` unverändert (je `Writes` ein `{open, tail}` in einer `WeakMap`); `rank()` ruft sie und hängt `.catch(writes.report)` an. Alle Rank-Tests aus U7 bleiben grün.
 - `sendBoardMove` mit `change`: ohne `store.issues.server(id)` → `undefined`, nichts geht hinaus. Sonst Vorschau `boardOverlay(store.toSnapshot(), …)` und beim Senden `boardCall(server, …)` mit dem dann aktuellen Serverstand; ist das Issue bis dahin verschwunden, rechnet `plan` mit dem Stand von vorher weiter, und der Server meldet `not_found` wie bei jedem Write.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
 // board-move.test.ts
@@ -189,10 +189,10 @@ test('the overlay merges state and lane', …{state:'review', paused_from:undefi
 test('board moves and ranks share one queue', …rank() offen → sendBoardMove wartet, call erst nach Settle des ersten, plan(replan=true) sieht den neuen Serverstand);
 ```
 
-- [ ] **Step 2: Run, verify FAIL** — `pnpm vitest run --project web web/src/app/board-move web/src/components/serial-write`
-- [ ] **Step 3: Implement**; danach `pnpm vitest run --project web web/src/components` → alle U7-Rank-Tests grün
-- [ ] **Step 4: Run** → PASS
-- [ ] **Step 5: Commit** — `feat: Board-Züge als Plan, gemeinsame Warteschlange mit dem Umsortieren`
+- [x] **Step 2: Run, verify FAIL** — `pnpm vitest run --project web web/src/app/board-move web/src/components/serial-write`
+- [x] **Step 3: Implement**; danach `pnpm vitest run --project web web/src/components` → alle U7-Rank-Tests grün
+- [x] **Step 4: Run** → PASS
+- [x] **Step 5: Commit** — `feat: Board-Züge als Plan, gemeinsame Warteschlange mit dem Umsortieren`
 
 ### Task 3: Tab Board lesend — Bahnen, Spalten, Karten, Ansicht als Lazy-Chunk
 
@@ -221,7 +221,7 @@ Darstellung:
 - Karte (`memo`) als `<li data-card={id} data-lane={lane}>` mit Link auf den Issue-Tab (`draggable={false}`): Titel `line-clamp-2`, ID mono, Marke `BLOCKED`/`ON HOLD` (Text, `blocked` zusätzlich `border-2 border-foreground`), `⧗` (`Hourglass`, `aria-label` »offene Abhängigkeiten«), Fortschritt `n/m`, `PendingMark`, Assignee als Initialen (`initialsOf(handle, store.users.get(handle).name)`, `title`/`aria-label` = Handle).
 - `App.tsx`: `const BoardView = lazy(() => import('../views/BoardView.tsx').then((m) => ({ default: m.BoardView })))`, `<Suspense fallback={Lädt …}>`.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```tsx
 test.each([['Wolfger Schramm', 'spw', 'WS'], [undefined, 'spw', 'SP'], [undefined, 'claude-bot', 'CB'], ['Ada', 'ada', 'AD']])('initials of %s/%s', …);
@@ -235,10 +235,10 @@ test('a patch moves the card live', …applyPatch state review → Karte in Zell
 test('the board tab loads lazily and shows the board', …findByRole region/Bahn »ohne Sprint«);
 ```
 
-- [ ] **Step 2: Run, verify FAIL** — `pnpm vitest run --project web web/src/views/BoardView web/src/components/board web/src/components/App`
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: Run** → PASS; `pnpm build` → Budget gehalten, `BoardView` als eigener Chunk in `dist/ui/assets/`
-- [ ] **Step 5: Commit** — `feat: Tab Board mit Bahnen, Spalten und Karten`
+- [x] **Step 2: Run, verify FAIL** — `pnpm vitest run --project web web/src/views/BoardView web/src/components/board web/src/components/App`
+- [x] **Step 3: Implement**
+- [x] **Step 4: Run** → PASS; `pnpm build` → Budget gehalten, `BoardView` als eigener Chunk in `dist/ui/assets/`
+- [x] **Step 5: Commit** — `feat: Tab Board mit Bahnen, Spalten und Karten`
 
 ### Task 4: Drag & Drop und Tastatur mit Rücksprung und `force`
 
@@ -276,7 +276,7 @@ Regeln:
 - `move`: `planDrop` mit dem aktuellen Issue (`store.issues.get(id).value`; fehlt es oder steht es nicht mehr in `from` → nichts), `strict` aus der Config, dann `sendBoardMove`. Fehler: `openChildrenOf` → `StateDialog` mit `rejected` und `submit = (extra) => sendBoardMove(…, plan, extra)` (wiederholt Bahn **und** Spalte mit `force`); sonst `writes.report`. Mit `focus` folgt der Fokus der Karte in ihre neue Zelle (Layout-Effekt sucht `li[data-card="<id>"][data-lane="<lane>"] a`).
 - Tastatur an der fokussierten Karte (nur Schreibrecht, Ereignis aus dem Kartenknoten selbst, nicht aus Portalen): `Alt+↑/↓/←/→` → `keyDrop` → `move(…, { focus: true })`; `aria-keyshortcuts` nennt sie.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
 // board-dnd.test.ts
@@ -301,10 +301,10 @@ test('alt arrows move the card and focus follows it', …Fokus am Link der Karte
 test('a dialog with submit sends through it', …submit erhält {reason, force:true}, kein issue_move über runState);
 ```
 
-- [ ] **Step 2: Run, verify FAIL**
-- [ ] **Step 3: Install** `pnpm add -D @dnd-kit/core@6.3.1`, **implementieren**
-- [ ] **Step 4: Run** `pnpm vitest run --project web` → PASS
-- [ ] **Step 5: Commit** — `feat: Karten per Drag und Tastatur verschieben, Rücksprung und force im Board` (Body nennt `@dnd-kit/core 6.3.1`)
+- [x] **Step 2: Run, verify FAIL**
+- [x] **Step 3: Install** `pnpm add -D @dnd-kit/core@6.3.1`, **implementieren**
+- [x] **Step 4: Run** `pnpm vitest run --project web` → PASS
+- [x] **Step 5: Commit** — `feat: Karten per Drag und Tastatur verschieben, Rücksprung und force im Board` (Body nennt `@dnd-kit/core 6.3.1`)
 
 ### Task 5: Kartenmenü — jeder Übergang ohne Maus
 
@@ -319,7 +319,7 @@ test('a dialog with submit sends through it', …submit erhält {reason, force:t
 
 Regeln: Rechtsklick, Kontextmenü-Taste, Umschalt+F10 an der Karte (`openByKey`, Wächter wie `RowMenu`). Einträge: »State« (Untermenü aus `stateActions`, sofort über `move` mit `{from: cell, to: {lane, column: to}}` für Hauptlinien-Ziele; `blocked`, `on_hold`, `cancelled`, `rejected` über `runState` wie `RowMenu`, `blocked` öffnet den `StateDialog`), »Mit Begründung …« (dieselben Ziele, je Eintrag `StateDialog`), bei Gruppierung ≠ `none` »Bahn« (alle anderen Bahnen samt »ohne …« → `move` mit `to.lane`), »Rang« (»Ganz oben« `top`, »Eine nach oben«/»Eine nach unten« wie `Alt+↑/↓`, »Ganz unten« `bottom`). Der Inhalt entsteht erst beim Öffnen. Nach einem Dialog geht der Fokus an die Karte zurück.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```tsx
 test('the card menu moves the state optimistically', …contextMenu, »review« → Karte in review, issue_move);
@@ -330,10 +330,10 @@ test('rank entries move within the cell', …»Ganz oben« → issue_rank {top:t
 test('shift+f10 opens the menu at the focused card', …);
 ```
 
-- [ ] **Step 2: Run, verify FAIL**
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: Run** → PASS
-- [ ] **Step 5: Commit** — `feat: Kartenmenü im Board für State, Bahn und Rang`
+- [x] **Step 2: Run, verify FAIL**
+- [x] **Step 3: Implement**
+- [x] **Step 4: Run** → PASS
+- [x] **Step 5: Commit** — `feat: Kartenmenü im Board für State, Bahn und Rang`
 
 ### Task 6: Schnell anlegen mit `+`
 
@@ -353,7 +353,7 @@ export function draftForCell(group: BoardGroup, lane: string, column: State, tit
 
 Regeln: Am Fuß jeder Zelle (nur Schreibrecht) ein Knopf `+` (`aria-label` »Neues Issue in <column> · <lane>«). Er öffnet ein Eingabefeld (`aria-label` »Titel«): Enter mit Titel → `writes.run('issue_create', createArgs(draftForCell(…, title)))`, danach leer, das Feld bleibt offen und fokussiert; leerer Titel sendet nicht; `Esc` schließt, der Fokus geht an `+`. Während des Writes gesperrt, Fehler als `ActionError` mit `hint` unter dem Feld, der Titel bleibt. Daneben »Mehr …« → `useCreateIssue().open(draftForCell(…, title))` (ui.md §2.12: Dialog vorbelegt aus der Bahn). Listen gehen immer ausdrücklich mit (`createArgs`).
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
 test('a sprint cell drafts state and sprint', …draftForCell('sprint','s1','todo','T') → state todo, sprints ['s1'], projects [], repos []);
@@ -365,22 +365,22 @@ test('a create error stays with its hint', …);
 test('more opens the dialog prefilled from the lane', …Dialog mit Titel, State todo, Sprint s1);
 ```
 
-- [ ] **Step 2: Run, verify FAIL**
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: Run** → PASS
-- [ ] **Step 5: Commit** — `feat: Schnell anlegen per + in Spalte und Bahn des Boards`
+- [x] **Step 2: Run, verify FAIL**
+- [x] **Step 3: Implement**
+- [x] **Step 4: Run** → PASS
+- [x] **Step 5: Commit** — `feat: Schnell anlegen per + in Spalte und Bahn des Boards`
 
 ### Task 7: Nur lesen, Sichtprüfung, Docs
 
 **Files:**
 - Modify: `web/src/components/read-only.test.tsx` (Board), `docs/proposals/ui.md` (Status-Satz, Präzisierungen §2.8), `ROADMAP.md`, `docs/superpowers/plans/2026-11-26-ui-gesamtplan.md` (U8 »Produziert«), dieser Plan (Häkchen)
 
-- [ ] **Step 1: Failing test** — `read-only hides board writes`: `can_write: false`, Board mit Karten → kein »Neues Issue«, kein `+`, `contextMenu` an einer Karte öffnet kein `menu`, `Alt+→` an einer Karte sendet nichts, kein Knoten mit `aria-roledescription="draggable"`; `fetch` sieht nie `/tools/`.
-- [ ] **Step 2: Run** → Lücken schließen → PASS
-- [ ] **Step 3: Run** `mise run check` und `mise run smoke` → grün; Chunk-Größen aus `pnpm build` notieren (initial und Board-Chunk)
+- [x] **Step 1: Failing test** — `read-only hides board writes`: `can_write: false`, Board mit Karten → kein »Neues Issue«, kein `+`, `contextMenu` an einer Karte öffnet kein `menu`, `Alt+→` an einer Karte sendet nichts, kein Knoten mit `aria-roledescription="draggable"`; `fetch` sieht nie `/tools/`.
+- [x] **Step 2: Run** → Lücken schließen → PASS
+- [x] **Step 3: Run** `mise run check` und `mise run smoke` → grün; Chunk-Größen aus `pnpm build` notieren (initial und Board-Chunk)
 - [ ] **Step 4: Sichtprüfung** — `backe ui --port 0` gegen ein Test-Backlog unter Temp-`BACKE_HOME` im Browser (Playwright-MCP): Board mit zwei Sprints, eine Karte per Maus in eine andere Spalte, innerhalb der Spalte und in eine andere Bahn ziehen (je ein Commit, `git log`), `done` mit offenem Sub-Issue → Dialog → »Trotzdem abschließen«, Kartenmenü per Umschalt+F10, `Alt+→`, `+` in einer Zelle, Gruppierung wechseln, parallel `backe issue move` im Terminal → Karte wandert live; Nur-lesen-Identität ohne Schreibaktion.
-- [ ] **Step 5: Docs** — ui.md Status: Tab Board gebaut (§2.8); offen bleiben §2.9.5, §2.10, §2.11, §2.4.1 Punkt 3, Sprachwahl, Suche, `⌘K`. Präzisierungen in §2.8 als Gegenwart: Bahnen ohne Eintrag (leere Sprints, Projekte, Repos) stehen da, »ohne …« nur mit Issues; erledigte Karten verlassen `done` per `issue_reopen`; ein Rang ändert sich nur innerhalb derselben Zelle, Spalten- und Bahnwechsel behalten den Rang; ein Repo-Bahnwechsel geht als `batch` (`issue_update` kennt keine Repos); Tastatur `Alt+Pfeile` und Kartenmenü; Gruppierung, `backlog`-Spalte und eingeklappte Bahnen im `localStorage`; das Board lädt als eigener Chunk. ROADMAP »Tab Board« abhaken. Gesamtplan U8 »Produziert«: `boardLanes`, `BoardModel`, `planDrop`, `boardCall`, `serialWrite`, `useBoardMove`, `draftForCell`, `StateDialog.submit`.
-- [ ] **Step 6: Commit** — `feat: Nur-lesen im Board, Tab Board fertig`
+- [x] **Step 5: Docs** — ui.md Status: Tab Board gebaut (§2.8); offen bleiben §2.9.5, §2.10, §2.11, §2.4.1 Punkt 3, Sprachwahl, Suche, `⌘K`. Präzisierungen in §2.8 als Gegenwart: Bahnen ohne Eintrag (leere Sprints, Projekte, Repos) stehen da, »ohne …« nur mit Issues; erledigte Karten verlassen `done` per `issue_reopen`; ein Rang ändert sich nur innerhalb derselben Zelle, Spalten- und Bahnwechsel behalten den Rang; ein Repo-Bahnwechsel geht als `batch` (`issue_update` kennt keine Repos); Tastatur `Alt+Pfeile` und Kartenmenü; Gruppierung, `backlog`-Spalte und eingeklappte Bahnen im `localStorage`; das Board lädt als eigener Chunk. ROADMAP »Tab Board« abhaken. Gesamtplan U8 »Produziert«: `boardLanes`, `BoardModel`, `planDrop`, `boardCall`, `serialWrite`, `useBoardMove`, `draftForCell`, `StateDialog.submit`.
+- [x] **Step 6: Commit** — `feat: Nur-lesen im Board, Tab Board fertig`
 
 ## Festlegungen
 
