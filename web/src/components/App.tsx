@@ -1,5 +1,5 @@
 import type { BacklogEntryJson } from '@backe/ui/api.ts';
-import { type ReactNode, useCallback, useEffect, useMemo } from 'react';
+import { lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo } from 'react';
 import { m } from '../app/app.messages.ts';
 import { type Router, RouterContext } from '../app/router.ts';
 import { canonicalPath, type Route, routeHref } from '../app/routes.ts';
@@ -12,7 +12,6 @@ import { useSignal } from '../data/use-signal.ts';
 import { type WriteAccess, WriteContext } from '../data/write-context.tsx';
 import { useOwned } from '../lib/use-owned.ts';
 import { BacklogView } from '../views/BacklogView.tsx';
-import { BoardView } from '../views/BoardView.tsx';
 import { IssueView } from '../views/IssueView.tsx';
 import { SettingsView } from '../views/SettingsView.tsx';
 import { ErrorAlert } from './ErrorPage.tsx';
@@ -30,6 +29,12 @@ type Props = {
 
 const createTabs = (backlog: string) => new TabModel(backlog);
 
+// Das Board lädt als eigener Chunk: Es bringt Ansichtscode und das Ziehen mit, die Backlog und
+// Issue-Tab nicht brauchen; der initiale Chunk bleibt so im Budget (ui.md §2.16).
+const BoardView = lazy(() =>
+  import('../views/BoardView.tsx').then((mod) => ({ default: mod.BoardView })),
+);
+
 function backlogOf(route: Route): string | undefined {
   return route.kind === 'home' || route.kind === 'not-found' ? undefined : route.backlog;
 }
@@ -45,7 +50,11 @@ function View({
 }) {
   switch (route.kind) {
     case 'board':
-      return <BoardView />;
+      return (
+        <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">{m.loading}</p>}>
+          <BoardView backlog={route.backlog} me={me} />
+        </Suspense>
+      );
     case 'issue':
       return <IssueView backlog={route.backlog} id={route.id} onClose={onClose} />;
     case 'settings':

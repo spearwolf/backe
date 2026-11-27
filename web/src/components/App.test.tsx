@@ -259,7 +259,7 @@ test('tabs have tab roles and selection', async () => {
   await user.click(tab('Board'));
   expect(path()).toBe('/b/main/board');
   expect(tab('Board').getAttribute('aria-selected')).toBe('true');
-  expect(screen.getByRole('heading', { name: 'Board' })).toBeTruthy();
+  expect(await screen.findByRole('tabpanel', { name: 'Board' })).toBeTruthy();
 
   const settings = screen.getByRole('link', { name: 'Settings' });
   expect(settings.getAttribute('href')).toBe('/b/main/settings');
@@ -267,6 +267,16 @@ test('tabs have tab roles and selection', async () => {
   expect(path()).toBe('/b/main/settings');
   expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy();
   expect(tab('Backlog').getAttribute('aria-selected')).toBe('false');
+});
+
+test('the board tab loads lazily and shows the board', async () => {
+  const { connect } = await setup({ path: '/b/main/board' });
+  await connect();
+  const lane = await screen.findByRole('region', { name: 'no sprint' });
+  expect(within(lane).getByRole('list', { name: 'no sprint · todo' }).textContent).toContain(
+    'Issue 1',
+  );
+  expect(screen.getByRole('combobox', { name: 'Lanes' })).toBeTruthy();
 });
 
 test('an issue route opens its tab', async () => {
