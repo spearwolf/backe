@@ -1,7 +1,7 @@
 import { isGitRef, isRepoName } from '@backe/core/names.ts';
 import type { RepoCheckJson, RepoJson } from '@backe/ui/api.ts';
 import { CircleX, Info, TriangleAlert } from 'lucide-react';
-import { type FormEvent, useEffect, useRef, useState } from 'react';
+import { type FormEvent, useEffect, useState } from 'react';
 import { EMPTY_FILTER, listFilterSearch } from '../../app/list-filter.ts';
 import { useLinkClick } from '../../app/router.ts';
 import { routeHref } from '../../app/routes.ts';
@@ -21,6 +21,7 @@ import { Textarea } from '../ui/textarea.tsx';
 import { ActionError } from '../write/ActionError.tsx';
 import { ConfirmDialog } from '../write/ConfirmDialog.tsx';
 import { useAction } from '../write/use-action.ts';
+import { type DialogFocus, useDialogFocus } from './dialog-focus.ts';
 import { Field, FormSubmitShim } from './fields.tsx';
 import { type SectionFrame, SettingsSection, sectionId } from './SettingsSection.tsx';
 
@@ -35,9 +36,11 @@ const LEVELS: Record<Level, { icon: typeof Info; label: () => string; destructiv
 /** Dialog »Hinzufügen«; nur zum Öffnen gemountet, damit jedes Mal leer begonnen wird. */
 function AddDialog({
   section,
+  focus,
   onOpenChange,
 }: {
   section: Section;
+  focus: DialogFocus;
   onOpenChange: (open: boolean) => void;
 }) {
   const { writes } = useWrites();
@@ -76,6 +79,7 @@ function AddDialog({
       error={error}
       formId={formId}
       onOpenChange={onOpenChange}
+      onCloseAutoFocus={focus.onCloseAutoFocus}
     >
       <form id={formId} onSubmit={submit} className="space-y-3">
         <FormSubmitShim disabled={blocked || busy} />
@@ -149,14 +153,12 @@ function ReferencingIssue({ id }: { id: string }) {
 /** Bestätigung zum Entfernen; solange Issues das Repo nennen, bleibt »Entfernen« gesperrt. */
 function RemoveDialog({
   name,
+  focus,
   onOpenChange,
-  onRemoved,
-  onCloseAutoFocus,
 }: {
   name: string;
+  focus: DialogFocus;
   onOpenChange: (o: boolean) => void;
-  onRemoved: () => void;
-  onCloseAutoFocus: (event: Event) => void;
 }) {
   const { writes } = useWrites();
   const store = useStore();
@@ -177,15 +179,16 @@ function RemoveDialog({
       busy={busy}
       confirmDisabled={references.length > 0}
       error={error}
-      onConfirm={() =>
+      onConfirm={() => {
+        // Mit dem Repo verschwindet seine Zeile samt Auslöser (siehe `useDialogFocus`).
+        focus.arm(true);
         void run(() => writes.run('repo_rm', { name })).then((ok) => {
-          if (!ok) return;
-          onRemoved();
-          onOpenChange(false);
-        })
-      }
+          if (ok) onOpenChange(false);
+          else focus.arm(false);
+        });
+      }}
       onOpenChange={onOpenChange}
-      onCloseAutoFocus={onCloseAutoFocus}
+      onCloseAutoFocus={focus.onCloseAutoFocus}
     >
       {references.length > 0 && (
         <div className="space-y-2">
@@ -210,7 +213,7 @@ function RepoRow({
 }: {
   name: string;
   canWrite: boolean;
-  onRemove: (name: string) => void;
+  onRemove: (name: string, trigger: HTMLElement) => void;
 }) {
   const store = useStore();
   const repo: RepoJson | undefined = useSignal(store.repos.get(name));
@@ -241,7 +244,7 @@ function RepoRow({
               variant="outline"
               size="sm"
               aria-label={m.removeRepoOf(name)}
-              onClick={() => onRemove(name)}
+              onClick={(e) => onRemove(name, e.currentTarget)}
             >
               {m.removeRepo}
             </Button>
@@ -337,13 +340,11 @@ export function ReposSection({ id, title, folded, onToggle }: SectionFrame) {
     if (removing !== undefined && !keys.includes(removing)) setRemoving(undefined);
   }, [removing, keys]);
   // Nach einem Entfernen verschwindet der Auslöser mit der Zeile; der Fokus geht an »Hinzufügen«.
-  const removed = useRef(false);
   const addId = `${sectionId(id)}-add`;
-  const afterRemove = (event: Event): void => {
-    if (!removed.current) return;
-    removed.current = false;
-    event.preventDefault();
-    document.getElementById(addId)?.focus();
+  const focus = useDialogFocus(addId);
+  const openRemove = (name: string, trigger: HTMLElement): void => {
+    focus.opened(trigger);
+    setRemoving(name);
   };
 
   const runCheck = (): void => {
@@ -366,7 +367,15 @@ export function ReposSection({ id, title, folded, onToggle }: SectionFrame) {
       <Button type="button" variant="outline" size="sm" disabled={check.busy} onClick={runCheck}>
         {m.checkRepos}
       </Button>
-      <Button id={addId} type="button" size="sm" onClick={() => setAdding(true)}>
+      <Button
+        id={addId}
+        type="button"
+        size="sm"
+        onClick={(e) => {
+          focus.opened(e.currentTarget);
+          setAdding(true);
+        }}
+      >
         {m.addRepo}
       </Button>
     </div>
@@ -380,7 +389,7 @@ export function ReposSection({ id, title, folded, onToggle }: SectionFrame) {
         ) : (
           <ul aria-label={m.repoList} className="space-y-2">
             {names.map((name) => (
-              <RepoRow key={name} name={name} canWrite={canWrite} onRemove={setRemoving} />
+              <RepoRow key={name} name={name} canWrite={canWrite} onRemove={openRemove} />
             ))}
           </ul>
         )}
@@ -391,16 +400,13 @@ export function ReposSection({ id, title, folded, onToggle }: SectionFrame) {
         {result !== undefined && <CheckResult result={result} />}
         <ActionError error={check.error} />
       </div>
-      {adding && <AddDialog section={id} onOpenChange={setAdding} />}
+      {adding && <AddDialog section={id} focus={focus} onOpenChange={setAdding} />}
       {/* Verschwindet das Repo per Patch, schließt sich der Dialog mit ihm. */}
       {removing !== undefined && keys.includes(removing) && (
         <RemoveDialog
           name={removing}
+          focus={focus}
           onOpenChange={(open) => !open && setRemoving(undefined)}
-          onRemoved={() => {
-            removed.current = true;
-          }}
-          onCloseAutoFocus={afterRemove}
         />
       )}
     </SettingsSection>

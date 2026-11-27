@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { call, region, registerSettingsHarness, view } from '../../test/settings-view.tsx';
 import { testIssue, testPatch, tid } from '../../test/state.ts';
 import { m } from '../../views/settings.messages.ts';
+import { m as w } from '../write/write.messages.ts';
 
 registerSettingsHarness();
 
@@ -116,7 +117,13 @@ test('the lead offers nobody and the users', async () => {
   const lead = within(screen.getByRole('dialog')).getByLabelText(
     m.projectLeadLabel,
   ) as HTMLSelectElement;
-  expect([...lead.options].map((o) => o.textContent)).toEqual([m.leadNone, 'ada', 'bob']);
+  // Name und Handle sichtbar, gesendet wird der Handle.
+  expect([...lead.options].map((o) => o.textContent)).toEqual([
+    m.leadNone,
+    'Ada (ada)',
+    'Bob (bob)',
+  ]);
+  expect([...lead.options].map((o) => o.value)).toEqual(['', 'ada', 'bob']);
   expect(lead.value).toBe('');
 });
 
@@ -284,4 +291,49 @@ test('after removing, focus moves to add', async () => {
       within(section()).getByRole('button', { name: m.addProject }),
     ),
   );
+});
+
+test('a cancelled dialog returns focus to its trigger', async () => {
+  const user = userEvent.setup();
+  view({ over: { projects } });
+  // Radix gäbe den Fokus nur an einen DialogTrigger zurück; die Dialoge hier haben keinen.
+  for (const trigger of [
+    within(section()).getByRole('button', { name: m.addProject }),
+    within(row('web')).getByRole('button', { name: m.addSubprojectOf('web') }),
+    within(row('api')).getByRole('button', { name: m.removeProjectOf('api') }),
+  ]) {
+    await user.click(trigger);
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: w.cancel }));
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  }
+});
+
+test('a patch before the answer still moves focus to add, and only once', async () => {
+  const user = userEvent.setup();
+  const { store } = view({ over: { projects } });
+  let finish: (v: unknown) => void = () => {};
+  call.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await user.click(within(row('api')).getByRole('button', { name: m.removeProjectOf('api') }));
+  await user.click(
+    within(screen.getByRole('dialog')).getByRole('button', { name: m.removeProject }),
+  );
+  // Der Patch kommt vor der Antwort: Der Dialog verschwindet mit dem Projekt.
+  act(() => {
+    store.applyPatch(testPatch(2, { remove: { projects: ['api'] } }));
+  });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await act(async () => finish({ commit: 'c1' }));
+  const add = within(section()).getByRole('button', { name: m.addProject });
+  await waitFor(() => expect(document.activeElement).toBe(add));
+  // Ein danach abgebrochener Dialog gibt den Fokus an seinen eigenen Auslöser zurück.
+  const move = within(row('web')).getByRole('button', { name: m.moveProjectOf('web') });
+  await user.click(move);
+  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: w.cancel }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await waitFor(() => expect(document.activeElement).toBe(move));
 });

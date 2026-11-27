@@ -4,6 +4,7 @@ import { formatDate } from '../../lib/format.ts';
 import { call, region, registerSettingsHarness, view } from '../../test/settings-view.tsx';
 import { testIssue, testPatch, tid } from '../../test/state.ts';
 import { m } from '../../views/settings.messages.ts';
+import { m as w } from '../write/write.messages.ts';
 
 registerSettingsHarness();
 
@@ -260,6 +261,34 @@ test('the remove dialog closes after repo_rm and focus moves to add', async () =
   await waitFor(() =>
     expect(document.activeElement).toBe(within(section()).getByRole('button', { name: m.addRepo })),
   );
+});
+
+test('a patch before the answer still moves focus to add, and only once', async () => {
+  const user = userEvent.setup();
+  const { store } = view({ over: { repos } });
+  let finish: (v: unknown) => void = () => {};
+  call.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await user.click(within(row('core')).getByRole('button', { name: m.removeRepoOf('core') }));
+  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: m.removeRepo }));
+  // Der Patch kommt vor der Antwort: Der Dialog verschwindet mit dem Repo.
+  act(() => {
+    store.applyPatch(testPatch(2, { remove: { repos: ['core'] } }));
+  });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await act(async () => finish({ commit: 'c1' }));
+  const add = within(section()).getByRole('button', { name: m.addRepo });
+  await waitFor(() => expect(document.activeElement).toBe(add));
+  // Ein danach abgebrochener Dialog gibt den Fokus an seinen eigenen Auslöser zurück.
+  const remove = within(row('web')).getByRole('button', { name: m.removeRepoOf('web') });
+  await user.click(remove);
+  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: w.cancel }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await waitFor(() => expect(document.activeElement).toBe(remove));
 });
 
 test('only a short summary of the check is a live region', async () => {

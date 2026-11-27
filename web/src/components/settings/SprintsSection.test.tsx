@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { call, region, registerSettingsHarness, view } from '../../test/settings-view.tsx';
 import { testPatch } from '../../test/state.ts';
 import { m } from '../../views/settings.messages.ts';
+import { m as w } from '../write/write.messages.ts';
 
 registerSettingsHarness();
 
@@ -29,8 +30,73 @@ test('open sprints come first with dates and goal', async () => {
   expect(link.getAttribute('href')).toBe('/b/acme/backlog?sprint=w47');
   // Die Daten stehen roh da.
   expect(w47.textContent).toContain('2026-11-16 – 2026-11-22');
-  expect(item('w48').textContent).toContain('2026-11-23');
   expect((await within(w47).findByText('Ziel')).tagName).toBe('STRONG');
+});
+
+test('a single date reads as from or until, without a dangling dash', () => {
+  view({
+    over: {
+      sprints: [
+        { slug: 'a', title: 'A', start: '2026-11-23' },
+        { slug: 'b', title: 'B', end: '2026-12-14' },
+        { slug: 'c', title: 'C' },
+      ],
+    },
+  });
+  expect(item('a').textContent).toContain(m.sprintFrom('2026-11-23'));
+  expect(item('b').textContent).toContain(m.sprintUntil('2026-12-14'));
+  for (const slug of ['a', 'b', 'c']) expect(item(slug).textContent).not.toContain('–');
+});
+
+test('an end before the start blocks creating', async () => {
+  const user = userEvent.setup();
+  view();
+  await user.click(within(section()).getByRole('button', { name: m.addSprint }));
+  const dialog = screen.getByRole('dialog', { name: m.addSprintTitle });
+  await user.type(within(dialog).getByLabelText(m.sprintSlug), 'w50');
+  const add = within(dialog).getByRole('button', { name: m.addSprint }) as HTMLButtonElement;
+  const end = within(dialog).getByLabelText(m.sprintEnd);
+  await user.type(within(dialog).getByLabelText(m.sprintStart), '2026-12-14');
+  await user.type(end, '2026-12-01');
+  expect(end.getAttribute('aria-invalid')).toBe('true');
+  expect(within(dialog).getByText(m.endBeforeStart)).toBeTruthy();
+  expect(add.disabled).toBe(true);
+  // Derselbe Tag ist erlaubt.
+  await user.clear(end);
+  await user.type(end, '2026-12-14');
+  expect(end.getAttribute('aria-invalid')).toBe('false');
+  expect(add.disabled).toBe(false);
+  expect(call).not.toHaveBeenCalled();
+});
+
+test('a patch before the answer still moves focus to add, and only once', async () => {
+  const user = userEvent.setup();
+  const { store } = view({ over: { sprints } });
+  let finish: (v: unknown) => void = () => {};
+  call.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await user.click(within(item('w47')).getByRole('button', { name: m.closeSprintOf('w47') }));
+  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: m.closeSprint }));
+  // Der Patch kommt vor der Antwort: Der Sprint ist geschlossen, der Dialog geht mit.
+  act(() => {
+    store.applyPatch(
+      testPatch(2, { upsert: { sprints: [{ slug: 'w47', title: 'W47', closed: true }] } }),
+    );
+  });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await act(async () => finish({ commit: 'c1' }));
+  const add = within(section()).getByRole('button', { name: m.addSprint });
+  await waitFor(() => expect(document.activeElement).toBe(add));
+  // Ein danach abgebrochener Dialog gibt den Fokus an seinen eigenen Auslöser zurück.
+  const close = within(item('w48')).getByRole('button', { name: m.closeSprintOf('w48') });
+  await user.click(close);
+  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: w.cancel }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await waitFor(() => expect(document.activeElement).toBe(close));
 });
 
 test('closed sprints stay folded until asked', async () => {
