@@ -201,8 +201,11 @@ export class LiveBacklog {
     try {
       await live.#open(opts.deps ?? {});
     } catch (err) {
+      // Wie `stop`: Schon der erste Blick der Nachbar-Watch kann eine Prüfung für einen Sync
+      // angestoßen haben; auch sie überlebt einen gescheiterten Start nicht.
       live.#teardown();
       await live.#neighborsClosed;
+      await live.#starts.settled();
       throw err;
     }
     return live;

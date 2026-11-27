@@ -723,72 +723,76 @@ test('the notifier attaches once, survives a language change and follows the bac
       off();
     };
   });
-  const view = render(
-    <StrictMode>
-      <App
-        backlogs={backlogs}
-        router={router}
-        theme={theme}
-        prefs={prefs}
-        deps={{ fetch, eventSource: sources.create }}
-        notify={notify}
-      />
-    </StrictMode>,
-  );
-  const live = () => sources.all.filter((es) => !es.closed)[0] as (typeof sources.all)[number];
-  const foreign = (rev: number): PatchJson => ({
-    rev,
-    head: `h${rev}`,
-    upsert: { issues: [{ ...issue(1), assignee: 'spw', title: `T${rev}` }] },
-    remove: {},
-    actors: { 'bk-1': ['claude-1'] },
-  });
-  const emitOn = async (es: (typeof sources.all)[number], p: PatchJson) => {
+  try {
+    const view = render(
+      <StrictMode>
+        <App
+          backlogs={backlogs}
+          router={router}
+          theme={theme}
+          prefs={prefs}
+          deps={{ fetch, eventSource: sources.create }}
+          notify={notify}
+        />
+      </StrictMode>,
+    );
+    const live = () => sources.all.filter((es) => !es.closed)[0] as (typeof sources.all)[number];
+    const foreign = (rev: number): PatchJson => ({
+      rev,
+      head: `h${rev}`,
+      upsert: { issues: [{ ...issue(1), assignee: 'spw', title: `T${rev}` }] },
+      remove: {},
+      actors: { 'bk-1': ['claude-1'] },
+    });
+    const emitOn = async (es: (typeof sources.all)[number], p: PatchJson) => {
+      await act(async () => {
+        es.emitEvent('patch', p);
+        await flush();
+      });
+    };
     await act(async () => {
-      es.emitEvent('patch', p);
+      live().emitOpen();
+      live().emitEvent('hello', { rev: 1, head: 'h1' });
       await flush();
     });
-  };
-  await act(async () => {
-    live().emitOpen();
-    live().emitEvent('hello', { rev: 1, head: 'h1' });
-    await flush();
-  });
 
-  // Auch unter StrictMode (doppelter Effect): genau eine Meldung je Patch.
-  await emitOn(live(), foreign(2));
-  expect(notify).toHaveBeenCalledTimes(1);
+    // Auch unter StrictMode (doppelter Effect): genau eine Meldung je Patch.
+    await emitOn(live(), foreign(2));
+    expect(notify).toHaveBeenCalledTimes(1);
 
-  // Auch unter StrictMode hängt jetzt genau einer.
-  expect(attached - detached).toBe(1);
-  const before = { attached, detached };
+    // Auch unter StrictMode hängt jetzt genau einer.
+    expect(attached - detached).toBe(1);
+    const before = { attached, detached };
 
-  // Ein Sprachwechsel mountet die Ansichten neu, die Sitzung und der Notifier bleiben.
-  await act(async () => {
-    prefs.setLang('de');
-    await flush();
-  });
-  expect({ attached, detached }).toEqual(before);
-  await emitOn(live(), foreign(3));
-  expect(notify).toHaveBeenCalledTimes(2);
+    // Ein Sprachwechsel mountet die Ansichten neu, die Sitzung und der Notifier bleiben.
+    await act(async () => {
+      prefs.setLang('de');
+      await flush();
+    });
+    expect({ attached, detached }).toEqual(before);
+    await emitOn(live(), foreign(3));
+    expect(notify).toHaveBeenCalledTimes(2);
 
-  // Der Wechsel des Backlogs baut die alte Sitzung samt Notifier ab.
-  const old = live();
-  await act(async () => {
-    router.navigate('/b/ops/backlog');
-    await flush();
-  });
-  expect(old.closed).toBe(true);
-  expect({ attached, detached }).toEqual({
-    attached: before.attached + 1,
-    detached: before.detached + 1,
-  });
-  await emitOn(old, foreign(4));
-  expect(notify).toHaveBeenCalledTimes(2);
-  vi.mocked(attachNotifier).mockImplementation(real);
+    // Der Wechsel des Backlogs baut die alte Sitzung samt Notifier ab.
+    const old = live();
+    await act(async () => {
+      router.navigate('/b/ops/backlog');
+      await flush();
+    });
+    expect(old.closed).toBe(true);
+    expect({ attached, detached }).toEqual({
+      attached: before.attached + 1,
+      detached: before.detached + 1,
+    });
+    await emitOn(old, foreign(4));
+    expect(notify).toHaveBeenCalledTimes(2);
 
-  view.unmount();
-  router.dispose();
-  theme.dispose();
-  prefs.dispose();
+    view.unmount();
+    router.dispose();
+    theme.dispose();
+    prefs.dispose();
+  } finally {
+    // Auch nach einem Fehlschlag wieder bloß durchgereicht, damit kein Zähler in andere Tests reicht.
+    vi.mocked(attachNotifier).mockImplementation(real);
+  }
 });

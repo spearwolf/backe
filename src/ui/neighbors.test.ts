@@ -1067,3 +1067,48 @@ test('a rejected candidate is not probed again until it changes', async () => {
   expect(probes()).toBe(1);
   expect(rec.has(await refsOf(hub))).toBe(true);
 });
+
+test('a candidate git rejects outright is not probed again until it changes', async () => {
+  const s = await withAgent();
+  // Leer und ohne Repository darüber: `rev-parse` scheitert, statt ein fremdes Repo zu finden.
+  const hub = join(s.backlogDir, 'hub.git');
+  await mkdir(hub);
+  const rec = recorder();
+  const w = await start(s, vi.fn(), rec.watch);
+  const probes = () =>
+    vi.mocked(git).mock.calls.filter(([args]) => args.includes('--git-common-dir')).length;
+  await expect(gitDirs(hub)).rejects.toThrow();
+
+  vi.mocked(git).mockClear();
+  await w.check();
+  expect(probes()).toBe(0);
+  expect(rec.all.map((r) => r.path)).toEqual([s.backlogDir]);
+
+  await git(['init', '--bare', '-q', '-b', 'main', hub], { cwd: s.backlogDir });
+  await w.check();
+  expect(probes()).toBe(1);
+  expect(rec.has(await refsOf(hub))).toBe(true);
+});
+
+test('a system error while probing is not memoised', async () => {
+  const s = await withHub();
+  const hubRefs = await refsOf(s.hub);
+  const rec = recorder();
+  const real = await realGit();
+  let fail = true;
+  vi.mocked(git).mockImplementation(async (args, opts) => {
+    if (fail && args.includes('--git-common-dir') && opts.cwd === s.hub) throw emfile();
+    return real(args, opts);
+  });
+  let w: NeighborWatch;
+  try {
+    w = await start(s, vi.fn(), rec.watch);
+    expect(rec.has(hubRefs)).toBe(false);
+  } finally {
+    fail = false;
+    vi.mocked(git).mockImplementation(real);
+  }
+  // Etwa ein voller Prozess-Tisch beim Start von git: Der nächste Durchlauf prüft erneut.
+  await w.check();
+  expect(rec.has(hubRefs)).toBe(true);
+});

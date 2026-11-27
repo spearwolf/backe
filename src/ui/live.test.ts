@@ -812,6 +812,47 @@ describe('neighbours', () => {
     expect(spawn).toHaveBeenCalledTimes(2);
   });
 
+  test('a failed start waits for a sync check its neighbour watch began', async () => {
+    const { agentCtx } = await withAgent();
+    await agentPush(agentCtx);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // Der Vorsprung des Agenten meldet sich schon beim Start; die Prüfung dazu hängt am Tor.
+    const scheduled = vi
+      .spyOn(scheduleModule, 'scheduleSync')
+      .mockImplementation(() => gate.then(() => false));
+    const load = vi
+      .spyOn(snapshotModule, 'loadSnapshot')
+      .mockRejectedValueOnce(new Error('kaputt'));
+    try {
+      let settled = false;
+      const started = LiveBacklog.start(ctx, {
+        boot: BOOT,
+        rev: 0,
+        deps: { sync: { spawn: vi.fn() } },
+      });
+      const outcome = started.then(
+        () => 'resolved',
+        (err: unknown) => {
+          settled = true;
+          return err;
+        },
+      );
+      await vi.waitFor(() => expect(load).toHaveBeenCalled(), WAIT);
+      expect(scheduled).toHaveBeenCalledTimes(1);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+
+      release();
+      expect(await outcome).toMatchObject({ message: 'kaputt' });
+    } finally {
+      scheduled.mockRestore();
+      load.mockRestore();
+    }
+  });
+
   test('stop waits until the neighbour watch is closed', async () => {
     await withAgent();
     const live = await startWith(ctx, { sync: { spawn: vi.fn() } });
