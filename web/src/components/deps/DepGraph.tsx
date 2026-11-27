@@ -8,6 +8,7 @@ import {
   Controls,
   type Edge,
   type EdgeMarker,
+  getViewportForBounds,
   MarkerType,
   type NodeHandle,
   type NodeTypes,
@@ -15,6 +16,8 @@ import {
   ReactFlow,
   useOptionsStore,
   useReactFlow,
+  useViewportStore,
+  type Viewport,
 } from '@xyflow/react';
 import { type CSSProperties, useEffect, useMemo, useRef } from 'react';
 import type { DepEdgeKind, DepGraph as Graph } from '../../app/dep-graph.ts';
@@ -35,7 +38,11 @@ const DASH: Record<DepEdgeKind, string | undefined> = {
 };
 const MARKER: EdgeMarker = { type: MarkerType.ArrowClosed, color: STROKE };
 
-const FIT = { maxZoom: 1, padding: 0.1 } as const;
+const MIN_ZOOM = 0.25;
+/** Unter diesem Zoom sind die Knotentexte (12–14 px) kaum noch lesbar. */
+export const READABLE_ZOOM = 0.75;
+/** Rand beim Einpassen; eine Zahl nähme xyflow seit Version 13 als Pixel. */
+const FIT = { maxZoom: 1, padding: '10%' } as const;
 
 /**
  * Feste Maße und Andockpunkte (Mitte oben, Mitte unten) gleich am Knoten: Ohne sie verwirft
@@ -107,20 +114,53 @@ function ariaLabels(): Record<string, string> {
   return labels;
 }
 
+type Positions = ReadonlyMap<string, { x: number; y: number }>;
+
 /**
- * Passt die Ansicht ein, sobald sich die Struktur ändert; Titel und States lassen sie stehen.
- * Erst mit `panZoom`: Ein `fitView` davor verwirft xyflow still (`resolveFitView` kehrt ohne
- * `panZoom` zurück), und beim Einhängen soll nicht die Reihenfolge der Effekte entscheiden.
+ * Startansicht: alles eingepasst, solange es lesbar bleibt; sonst `READABLE_ZOOM` mit der
+ * Mitte in der Mitte der Fläche. Ein großer Graph zeigt so das Issue selbst statt eines
+ * unlesbaren Ausschnitts irgendwo in einer langen Reihe.
  */
-function FitOnNewKey({ graphKey }: { graphKey: string }) {
-  const { fitView } = useReactFlow();
+function startViewport(positions: Positions, centre: string, width: number, height: number) {
+  const all = [...positions.values()];
+  if (all.length === 0) return { x: 0, y: 0, zoom: 1 };
+  const x = Math.min(...all.map((p) => p.x));
+  const y = Math.min(...all.map((p) => p.y));
+  const bounds = {
+    x,
+    y,
+    width: Math.max(...all.map((p) => p.x)) + DEP_NODE_WIDTH - x,
+    height: Math.max(...all.map((p) => p.y)) + DEP_NODE_HEIGHT - y,
+  };
+  const fit = getViewportForBounds(bounds, width, height, MIN_ZOOM, FIT.maxZoom, FIT.padding);
+  const c = positions.get(centre);
+  if (fit.zoom >= READABLE_ZOOM || c === undefined) return fit;
+  const zoom = READABLE_ZOOM;
+  return {
+    x: width / 2 - (c.x + DEP_NODE_WIDTH / 2) * zoom,
+    y: height / 2 - (c.y + DEP_NODE_HEIGHT / 2) * zoom,
+    zoom,
+  } satisfies Viewport;
+}
+
+/**
+ * Setzt die Startansicht beim Einhängen und nach jeder neuen Struktur; Titel und States lassen
+ * sie stehen. Erst mit `panZoom` und gemessener Fläche: davor verwirft xyflow die Ansicht, und
+ * beim Einhängen soll nicht die Reihenfolge der Effekte entscheiden. »Graph einpassen« in der
+ * Steuerung passt dagegen immer alles ein; das ist ausdrücklich gewollt.
+ */
+function StartView(props: { graphKey: string; positions: Positions; centre: string }) {
+  const { graphKey, positions, centre } = props;
+  const { setViewport } = useReactFlow();
   const ready = useOptionsStore((s) => s.panZoom !== null);
-  const fitted = useRef<string | null>(null);
+  const width = useViewportStore((s) => s.width);
+  const height = useViewportStore((s) => s.height);
+  const placed = useRef<string | null>(null);
   useEffect(() => {
-    if (!ready || fitted.current === graphKey) return;
-    fitted.current = graphKey;
-    void fitView(FIT);
-  }, [ready, graphKey, fitView]);
+    if (!ready || width === 0 || height === 0 || placed.current === graphKey) return;
+    placed.current = graphKey;
+    void setViewport(startViewport(positions, centre, width, height));
+  }, [ready, width, height, graphKey, positions, centre, setViewport]);
   return null;
 }
 
@@ -232,12 +272,12 @@ export function DepGraph(props: {
           preventScrolling={false}
           zoomActivationKeyCode={null}
           disableKeyboardA11y
-          minZoom={0.25}
+          minZoom={MIN_ZOOM}
           forceColorMode={theme}
           ariaLabelConfig={ariaLabels()}
           style={THEME}
         >
-          <FitOnNewKey graphKey={graph.key} />
+          <StartView graphKey={graph.key} positions={positions} centre={centre} />
           <Controls showInteractive={false} fitViewOptions={FIT} />
         </ReactFlow>
       </div>

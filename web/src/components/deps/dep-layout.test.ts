@@ -102,3 +102,16 @@ test('150 nodes and the collector lay out without overlap', () => {
   expect(pos(m, DEP_MORE_ID).y - pos(m, tid(1)).y).toBeGreaterThanOrEqual(DEP_NODE_HEIGHT);
   expect(overlaps(m)).toBe(false);
 });
+
+test('the collector sits below the first dependents, under the centre', () => {
+  const dependents = Array.from({ length: 400 }, (_, i) =>
+    testIssue(i + 2, { depends_on: [tid(1)] }),
+  );
+  const s = snapshot(testIssue(1), ...dependents);
+  const g = depGraph(s, tid(1), { parents: false, expanded: none });
+  const m = layoutDeps(g);
+  const firstRow = g.nodes.filter((n) => n.role === 'down').map((n) => pos(m, n.id).y);
+  const more = pos(m, DEP_MORE_ID);
+  expect(more.y).toBeGreaterThanOrEqual(Math.max(...firstRow) + DEP_NODE_HEIGHT);
+  expect(Math.abs(more.x - pos(m, tid(1)).x)).toBeLessThanOrEqual(DEP_NODE_WIDTH);
+});

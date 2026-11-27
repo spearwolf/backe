@@ -6,9 +6,9 @@ import { Store } from '../../data/store.ts';
 import { testIssue, testState, tid } from '../../test/state.ts';
 import { flushFrames, installXyflowStubs } from '../../test/xyflow.ts';
 import { m } from '../../views/deps.messages.ts';
-import { DepGraph } from './DepGraph.tsx';
+import { DepGraph, READABLE_ZOOM } from './DepGraph.tsx';
 import { HANDLE_STYLE } from './DepNode.tsx';
-import { layoutDeps } from './dep-layout.ts';
+import { DEP_NODE_HEIGHT, DEP_NODE_WIDTH, layoutDeps } from './dep-layout.ts';
 
 vi.mock('./dep-layout.ts', async (original) => {
   const mod = await original<typeof import('./dep-layout.ts')>();
@@ -131,6 +131,9 @@ test('nodes show id, title and state, the centre is marked and no link', async (
   expect(u1.getAttribute('data-role')).toBe('up');
   const link = within(u1).getByRole('link');
   expect(link.getAttribute('href')).toBe(`/b/acme/issue/${U1}`);
+  // Sichtbarer Fokus für die Tastatur, wie bei `IssueRef`.
+  expect(link.className).toContain('focus-visible:ring-2');
+  expect(link.className).toContain('focus-visible:ring-ring');
   expect(within(u1).getByText(U1)).toBeTruthy();
   expect(within(u1).getByText('todo')).toBeTruthy();
   const title = within(u1).getByText('Issue 2');
@@ -209,13 +212,18 @@ test('expand and collapse call onToggle', async () => {
   expect(within(nodeEl(container, D1)).queryAllByRole('button')).toHaveLength(0);
   const expand = within(nodeEl(container, D2)).getByRole('button', { name: m.expand(D2, 1) });
   expect(expand.textContent).toBe('+1');
+  expect(expand.className).toContain('focus-visible:ring-2');
+  expect(expand.className).toContain('focus-visible:ring-ring');
   await userEvent.click(expand);
   expect(onToggle).toHaveBeenCalledExactlyOnceWith(D2);
 
   await rerender(graphOf(chain(), C, { expanded: [D2] }));
   const d2 = nodeEl(container, D2);
   expect(within(d2).queryByRole('button', { name: m.expand(D2, 1) })).toBeNull();
-  await userEvent.click(within(d2).getByRole('button', { name: m.collapse(D2) }));
+  const collapse = within(d2).getByRole('button', { name: m.collapse(D2) });
+  expect(collapse.className).toContain('focus-visible:ring-2');
+  expect(collapse.className).toContain('focus-visible:ring-ring');
+  await userEvent.click(collapse);
   expect(onToggle).toHaveBeenLastCalledWith(D2);
   expect(onToggle).toHaveBeenCalledTimes(2);
   expect(nodeEl(container, D3)).toBeTruthy();
@@ -272,21 +280,65 @@ test('a field change keeps positions, a new edge lays out again', async () => {
   expect(container.querySelector(`[data-id="${B}>${D1}:depends_on"]`)).not.toBeNull();
 });
 
-test('a new structure fits the view again, a field change leaves it', async () => {
-  const { container, rerender } = await show(graphOf(chain(), C));
-  const first = viewport(container);
-  // Eingepasst: fünf Ebenen sind höher als die Fläche (384 px), der Zoom liegt unter 1 und
-  // über `minZoom`.
-  const zoom = Number(/scale\(([\d.]+)\)/.exec(first ?? '')?.[1]);
-  expect(zoom).toBeLessThan(1);
-  expect(zoom).toBeGreaterThan(0.25);
+/** Zahlen aus `translate(x, y)` und `scale(z)`; jsdom lässt ein `y` von 0 weg (`translate(7px)`). */
+function parseTransform(t: string | undefined) {
+  const tr = /translate\((-?[\d.]+)px(?:,\s*(-?[\d.]+)px)?\)/.exec(t ?? '');
+  const sc = /scale\(([\d.]+)\)/.exec(t ?? '');
+  return {
+    x: Number(tr?.[1] ?? 0),
+    y: Number(tr?.[2] ?? 0),
+    zoom: Number(sc?.[1] ?? 1),
+  };
+}
+// Fläche im Test: Fallback-Maße aus `test/xyflow.ts`.
+const PANE = { width: 800, height: 384 };
 
-  await rerender(graphOf(chain({ 4: { title: 'Renamed' } }), C));
+/** c mit `n` direkten Abhängigen. */
+const fan = (n: number) => [
+  testIssue(1),
+  ...Array.from({ length: n }, (_, i) => testIssue(i + 2, { depends_on: [tid(1)] })),
+];
+
+test('a small graph fits the view with padding at a readable zoom', async () => {
+  const { container } = await show(graphOf(fan(1), tid(1)));
+  const v = parseTransform(viewport(container));
+  expect(v.zoom).toBeGreaterThanOrEqual(READABLE_ZOOM);
+  // Ganz sichtbar, mit Rand: kein Knoten berührt den Rahmen.
+  for (const id of [tid(1), tid(2)]) {
+    const p = parseTransform(placed(container, id));
+    const left = v.x + p.x * v.zoom;
+    const top = v.y + p.y * v.zoom;
+    expect(left).toBeGreaterThan(0);
+    expect(top).toBeGreaterThan(0);
+    expect(left + DEP_NODE_WIDTH * v.zoom).toBeLessThan(PANE.width);
+    expect(top + DEP_NODE_HEIGHT * v.zoom).toBeLessThan(PANE.height);
+  }
+});
+
+test('a wide graph centres the centre node at the readable zoom', async () => {
+  const { container } = await show(graphOf(fan(60), tid(1)));
+  const v = parseTransform(viewport(container));
+  expect(v.zoom).toBe(READABLE_ZOOM);
+  const c = parseTransform(placed(container, tid(1)));
+  expect(v.x + (c.x + DEP_NODE_WIDTH / 2) * v.zoom).toBeCloseTo(PANE.width / 2, 5);
+  expect(v.y + (c.y + DEP_NODE_HEIGHT / 2) * v.zoom).toBeCloseTo(PANE.height / 2, 5);
+});
+
+test('a new structure sets the start view again, a field change leaves it', async () => {
+  const { container, rerender } = await show(graphOf(fan(1), tid(1)));
+  const first = viewport(container);
+  expect(parseTransform(first).zoom).toBe(1);
+
+  await rerender(
+    graphOf(
+      fan(1).map((i) => (i.id === tid(2) ? { ...i, title: 'Renamed' } : i)),
+      tid(1),
+    ),
+  );
   expect(viewport(container)).toBe(first);
 
-  // d2 aufgeklappt: d3 kommt dazu, die Fläche wird höher, die Ansicht passt sich ein.
-  await rerender(graphOf(chain(), C, { expanded: [D2] }));
-  expect(viewport(container)).not.toBe(first);
+  await rerender(graphOf(fan(60), tid(1)));
+  expect(parseTransform(viewport(container)).zoom).toBe(READABLE_ZOOM);
 });
 
 test('xyflow adds no English descriptions to nodes', async () => {
