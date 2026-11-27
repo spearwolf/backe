@@ -122,6 +122,7 @@ Jeder Meilenstein endet mit grünem `mise run check`, `mise run smoke` und einem
 
 - **Spec:** UI §2.9.5, §3.8.
 - **Inhalt:** Graph aus dem Store mit `dagre`-Layout in `@xyflow/react`, Tiefe 2, aufklappbar, Sammelknoten über 150; Baumansicht; beides als Lazy-Chunk.
+- **Produziert:** `blocking` (`src/ops/graph.ts`); `depGraph`, `depTree`, `hasDependencies`, `prerequisitesOf`, `dependentsOf` (`web/src/app/dep-graph.ts`); `layoutDeps` (`web/src/components/deps/dep-layout.ts`); `DepGraph`, `DepTree`, `DepPanel` (Lazy-Chunk); `DependencySection`; `readDepPrefs`/`writeDepPrefs`; Prüfstände `installXyflowStubs`/`flushFrames` (`web/src/test/xyflow.ts`) und der stumme `IntersectionObserver` der IssueView-Prüfstände.
 
 ### U10 — Settings und Suche
 
