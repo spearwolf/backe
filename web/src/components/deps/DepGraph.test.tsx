@@ -4,7 +4,7 @@ import { depGraph, type DepGraph as Graph } from '../../app/dep-graph.ts';
 import { Router, RouterContext } from '../../app/router.ts';
 import { Store } from '../../data/store.ts';
 import { testIssue, testState, tid } from '../../test/state.ts';
-import { installXyflowStubs } from '../../test/xyflow.ts';
+import { flushFrames, installXyflowStubs } from '../../test/xyflow.ts';
 import { m } from '../../views/deps.messages.ts';
 import { DepGraph } from './DepGraph.tsx';
 import { HANDLE_STYLE } from './DepNode.tsx';
@@ -67,6 +67,15 @@ const chain = (extra: Partial<Record<number, Partial<Issue>>> = {}): Issue[] => 
   testIssue(7, { state: 'done', ...extra[7] }),
 ];
 
+/**
+ * xyflow vermisst Knoten und passt die Ansicht in Folge-Updates ein, teils erst im nächsten
+ * Animationsframe; `flushFrames` führt sie aus, statt auf einen echten Frame zu hoffen.
+ */
+async function settle() {
+  await act(async () => {});
+  await act(async () => flushFrames());
+}
+
 async function show(graph: Graph, onToggle: (id: string) => void = () => {}) {
   const props = { graph, backlog: 'acme', onToggle };
   const view = render(
@@ -74,15 +83,14 @@ async function show(graph: Graph, onToggle: (id: string) => void = () => {}) {
       <DepGraph {...props} />
     </RouterContext.Provider>,
   );
-  // xyflow vermisst Knoten und passt die Ansicht in Folge-Updates ein.
-  await act(async () => {});
+  await settle();
   const rerender = async (next: Graph) => {
     view.rerender(
       <RouterContext.Provider value={router}>
         <DepGraph {...props} graph={next} />
       </RouterContext.Provider>,
     );
-    await act(async () => {});
+    await settle();
   };
   return { ...view, rerender };
 }
