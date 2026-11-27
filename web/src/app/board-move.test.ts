@@ -270,6 +270,25 @@ test('lane and column together are one batch with the server state as from', () 
   });
 });
 
+test('repo lane and column together are one batch', () => {
+  const server = testIssue(1, { repos: ['api@main'] });
+  expect(
+    boardCall(server, {
+      kind: 'change',
+      state: { to: 'in_progress', tool: 'issue_move', needsBlockedBy: false },
+      lane: { field: 'repos', remove: ['api@main'], add: ['web'] },
+    }),
+  ).toEqual({
+    name: 'batch',
+    args: {
+      ops: [
+        { op: 'issue.edit', id: tid(1), add: { repos: ['web'] }, remove: { repos: ['api@main'] } },
+        { op: 'issue.move', id: tid(1), from: 'todo', to: 'in_progress' },
+      ],
+    },
+  });
+});
+
 test('the overlay merges state and lane', () => {
   const s = snapshotOf([
     testIssue(1, { state: 'blocked', paused_from: 'todo', blocked_by: [tid(2)], sprints: ['s1'] }),

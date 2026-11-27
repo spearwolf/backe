@@ -91,6 +91,32 @@ test('a write plans at once, a queued one plans again on sending', async () => {
   dispose();
 });
 
+test('a queued board move whose issue vanished goes out with the state from before', async () => {
+  const { store, writes, calls, answer, dispose } = setup();
+  store.load(state(1, 'h1', [issue(1, { sprints: ['s1'] }), issue(2)]));
+  rank(store, writes, iid(2), { top: true });
+  const sent = sendBoardMove(store, writes, iid(1), toReview('s1', 's2'));
+  expect(calls).toHaveLength(1);
+  // Während der Zug wartet, löscht ein Patch das Issue beim Server.
+  store.applyPatch({ rev: 2, head: 'h2', upsert: {}, remove: { issues: [iid(1)] } });
+  await answer({ commit: null });
+  // Der Zug geht trotzdem hinaus, mit dem Stand von vorher; `not_found` meldet der Server.
+  expect(calls.map((c) => [c.name, c.args])).toEqual([
+    [
+      'batch',
+      {
+        ops: [
+          { op: 'issue.edit', id: iid(1), add: { sprints: ['s2'] }, remove: { sprints: ['s1'] } },
+          { op: 'issue.move', id: iid(1), from: 'todo', to: 'review' },
+        ],
+      },
+    ],
+  ]);
+  calls.shift()?.reject(new Error('not_found'));
+  await expect(sent).rejects.toMatchObject({ name: 'ApiError' });
+  dispose();
+});
+
 test('a board move for a vanished issue sends nothing', () => {
   const { store, writes, calls, dispose } = setup();
   expect(sendBoardMove(store, writes, 'bk-gone', toReview('s1', 's2'))).toBeUndefined();

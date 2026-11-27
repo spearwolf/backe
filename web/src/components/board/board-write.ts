@@ -8,9 +8,10 @@ import { serialWrite, serverSnapshot } from '../serial-write.ts';
 
 /**
  * Schickt einen Plan: `rank` über `rank()`, `change` über `serialWrite`. `undefined`, wenn das
- * Issue weg ist (ein Patch hat es während des Ziehens gelöscht); dann geht nichts hinaus. Lehnt ab
- * mit `ApiError`: Ob die Ablehnung in `writes.report` landet oder einen Dialog öffnet (offene
- * Sub-Issues, `force`), entscheidet der Aufrufer. Ein Umsortieren meldet seine Fehler selbst.
+ * Issue weg ist (ein Patch hat es während des Ziehens gelöscht); dann geht nichts hinaus. Bei
+ * `change` lehnt das Promise mit `ApiError` ab: Ob die Ablehnung in `writes.report` landet oder
+ * einen Dialog öffnet (offene Sub-Issues, `force`), entscheidet der Aufrufer. Bei `rank` nie; das
+ * Umsortieren meldet seine Fehler selbst, das Promise erfüllt sich sofort mit `undefined`.
  */
 export function sendBoardMove(
   store: Store,
@@ -35,12 +36,11 @@ export function sendBoardMove(
       // `not_found`, wie bei jedem Write auf ein gelöschtes Issue.
       const server = store.issues.server(id) ?? known;
       const call = boardCall(server, plan, extra);
-      if (!replan) return { call };
-      const s = serverSnapshot(store);
-      return {
-        call,
-        optimistic: (s === undefined ? undefined : boardOverlay(s, id, plan, extra)) ?? new Map(),
-      };
+      // Wie `rankCall`: Ohne Snapshot bleibt die erste Vorschau stehen; lehnt BK die neue
+      // Rechnung ab, fällt sie weg (eine leere Überlagerung).
+      const s = replan ? serverSnapshot(store) : undefined;
+      if (s === undefined) return { call };
+      return { call, optimistic: boardOverlay(s, id, plan, extra) ?? new Map() };
     },
   });
 }
