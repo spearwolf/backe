@@ -14,6 +14,15 @@ export const PENDING_TIMEOUT_MS = 5000;
 
 export type WriteFailure = { id: number; error: ApiError };
 
+/** Ein Tool-Aufruf als Wert: Name und Argumente gehören zusammen. */
+export type ToolCall = { [N in UiToolName]: { name: N; args: ToolArgs[N] } }[UiToolName];
+
+type RunOptions = {
+  optimistic?: ReadonlyMap<string, Partial<IssueJson>>;
+  /** Läuft genau einmal, sobald der Write endet (siehe `upload`). */
+  onSettle?: () => void;
+};
+
 export type WriteDeps = {
   call: <N extends UiToolName>(name: N, args: ToolArgs[N]) => Promise<ToolResults[N]>;
   upload: (id: string, name: string, bytes: Blob) => Promise<WriteResultJson>;
@@ -70,9 +79,25 @@ export class Writes {
   run<N extends UiToolName>(
     name: N,
     args: ToolArgs[N],
-    opts: { optimistic?: ReadonlyMap<string, Partial<IssueJson>> } = {},
+    opts: RunOptions = {},
   ): Promise<ToolResults[N]> {
-    return this.#track(opts.optimistic, () => this.#deps.call(name, args));
+    return this.#track(opts.optimistic, () => this.#deps.call(name, args), opts.onSettle);
+  }
+
+  /**
+   * Wie `run`, nur steht der Aufruf erst fest, wenn `after` erfüllt ist: Die Überlagerung zeigt
+   * sofort, `request` rechnet danach gegen den dann aktuellen Serverstand. Endet `Writes` vorher,
+   * geht nichts hinaus. Ohne `after` wird sofort gerechnet und gesendet.
+   */
+  runCall(
+    request: () => ToolCall,
+    opts: RunOptions & { after?: Promise<unknown> } = {},
+  ): Promise<unknown> {
+    const send = (): Promise<unknown> => {
+      const c = request();
+      return this.#deps.call(c.name as never, c.args as never);
+    };
+    return this.#track(opts.optimistic, send, opts.onSettle, opts.after);
   }
 
   /**
@@ -111,6 +136,7 @@ export class Writes {
     optimistic: ReadonlyMap<string, Partial<IssueJson>> | undefined,
     call: () => Promise<R>,
     onSettle?: () => void,
+    after?: Promise<unknown>,
   ): Promise<R> {
     // Nach dem Ende gehört der Store niemandem mehr: kein Aufruf, keine Überlagerung.
     if (this.#disposed) throw new ApiError(0, 'disposed', 'writes are disposed');
@@ -120,6 +146,11 @@ export class Writes {
     if (optimistic !== undefined && optimistic.size > 0) this.#store.setOverlay(token, optimistic);
     let result: R;
     try {
+      if (after !== undefined) {
+        await after.catch(() => {});
+        // `dispose` hat den Write währenddessen beendet: Dann geht er nicht mehr hinaus.
+        if (!this.#pending.has(token)) throw new ApiError(0, 'disposed', 'writes are disposed');
+      }
       result = await call();
     } catch (cause) {
       this.#settle(token);

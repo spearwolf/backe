@@ -3,7 +3,7 @@
  * (dessen `call` ein Mock ist) und der globalen Fehleranzeige, wie sie die App darüber zeigt.
  */
 import type { IssueJson } from '@backe/ui/api.ts';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import { vi } from 'vitest';
 import { Router, RouterContext } from '../app/router.ts';
 import { WriteFailures } from '../components/write/WriteFailures.tsx';
@@ -120,3 +120,21 @@ export const scroller = () =>
   screen.getByRole('list', { name: m.issues }).parentElement as HTMLElement;
 /** Ohne Antwort bleibt eine Überlagerung stehen; eine Antwort ohne Commit nähme sie sofort zurück. */
 export const answerNever = () => call.mockImplementation(() => new Promise(() => {}));
+
+let commits = 0;
+/** Jede Antwort trägt einen eigenen Commit; erst `land` bringt den Patch dazu, wie der Server. */
+export const answerCommitted = () => {
+  commits = 0;
+  call.mockImplementation(async () => ({ commit: `c${++commits}` }));
+};
+/** Der Patch zum letzten Commit, mit dem Stand, den die Ansicht gerade zeigt: Der Server schrieb die Vorschau. */
+export function land(store: Store): void {
+  act(() => {
+    store.applyPatch({
+      rev: store.rev.value + 1,
+      head: `c${commits}`,
+      upsert: { issues: [...store.issues.list()] },
+      remove: {},
+    });
+  });
+}

@@ -109,6 +109,54 @@ describe('Writes: errors and lifecycle', () => {
     expect(settled).toEqual(['a', 'b', 'c', 'd']);
   });
 
+  it('runCall shows its overlay at once and asks for the call only after `after`', async () => {
+    const { store, writes, calls, dispose } = setup();
+    let open!: () => void;
+    const after = new Promise<void>((r) => {
+      open = r;
+    });
+    const settled: string[] = [];
+    const asked: number[] = [];
+    const done = writes.runCall(
+      () => {
+        asked.push(store.rev.value);
+        return { name: 'issue_move', args: { id: id(1), to: 'in_progress' } };
+      },
+      { optimistic: move, after, onSettle: () => settled.push('one') },
+    );
+    expect(store.issues.get(id(1)).value?.state).toBe('in_progress');
+    await flush();
+    expect(calls).toHaveLength(0);
+    store.applyPatch(patch(2, 'h2'));
+    open();
+    await flush();
+    // Erst nach dem Tor gerechnet: Es sieht schon den neueren Serverstand.
+    expect(asked).toEqual([2]);
+    expect(calls.map((c) => [c.name, c.args])).toEqual([
+      ['issue_move', { id: id(1), to: 'in_progress' }],
+    ]);
+    calls[0]?.resolve(committed(null));
+    await done;
+    expect(settled).toEqual(['one']);
+    dispose();
+  });
+
+  it('a runCall still waiting when writes end is never sent', async () => {
+    const { writes, calls, store } = setup();
+    let open!: () => void;
+    const after = new Promise<void>((r) => {
+      open = r;
+    });
+    const request = vi.fn(() => ({ name: 'issue_claim' as const, args: { id: id(1) } }));
+    const done = writes.runCall(request, { after });
+    writes.dispose();
+    open();
+    await expect(done).rejects.toMatchObject({ code: 'disposed' });
+    expect(request).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
+    store.dispose();
+  });
+
   it('report collects failures, dismiss removes them', () => {
     const { writes, dispose } = setup();
     const { report } = writes;

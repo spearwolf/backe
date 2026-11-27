@@ -2,8 +2,10 @@ import { act, createEvent, fireEvent, screen, within } from '@testing-library/re
 import userEvent from '@testing-library/user-event';
 import { ApiError } from '../data/api-client.ts';
 import {
+  answerCommitted,
   answerNever,
   call,
+  land,
   linkOf,
   registerBacklogViewHarness,
   rowIds,
@@ -11,7 +13,7 @@ import {
   scroller,
   view,
 } from '../test/backlog-view.tsx';
-import { testIssue, tid } from '../test/state.ts';
+import { testIssue, testPatch, tid } from '../test/state.ts';
 import { m } from '../views/backlog.messages.ts';
 import { DRAG_TYPE } from './row-drag.ts';
 import { m as w } from './write/write.messages.ts';
@@ -51,6 +53,13 @@ function dragOnto(id: string, target: string, clientY: number) {
   drag('drop', rowOf(target), dt, clientY);
   drag('dragEnd', rowOf(id), dt);
   return marked.filter(([, side]) => side !== undefined);
+}
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
 }
 const alt = (key: 'ArrowUp' | 'ArrowDown') => userEvent.keyboard(`{Alt>}{${key}}{/Alt}`);
 
@@ -143,13 +152,15 @@ describe('in the tree', () => {
 });
 
 test('alt+arrow reranks with the keyboard', async () => {
-  answerNever();
-  three();
+  answerCommitted();
+  const { store } = three();
   linkOf(tid(2)).focus();
   await alt('ArrowUp');
   expect(rowIds()).toEqual([tid(2), tid(1), tid(3)]);
   expect(call).toHaveBeenCalledExactlyOnceWith('issue_rank', { id: tid(2), before: tid(1) });
   expect(document.activeElement).toBe(linkOf(tid(2)));
+  await act(async () => {});
+  land(store);
   call.mockClear();
   await alt('ArrowUp');
   expect(call).not.toHaveBeenCalled();
@@ -184,7 +195,7 @@ const unranked = () =>
 
 test('alt+arrow past an unranked anchor ranks the issues up to it in one batch', async () => {
   answerNever();
-  const { store } = unranked();
+  unranked();
   linkOf(tid(1)).focus();
   await alt('ArrowDown');
   expect(call).toHaveBeenCalledExactlyOnceWith('batch', {
@@ -195,16 +206,39 @@ test('alt+arrow past an unranked anchor ranks the issues up to it in one batch',
   });
   expect(rowIds()).toEqual([tid(2), tid(1), tid(3), tid(4)]);
   expect(document.activeElement).toBe(linkOf(tid(1)));
-  call.mockClear();
-  // Noch überlagert: `from` ist trotzdem der Rang des Servers, nicht der angezeigte.
-  expect(store.issues.get(tid(1)).value?.rank).not.toBe(1000);
+});
+
+test('a second quick move waits for the first to settle and starts from its server state', async () => {
+  answerNever();
+  const first = deferred<unknown>();
+  call.mockImplementationOnce(() => first.promise);
+  const { store } = unranked();
+  linkOf(tid(1)).focus();
   await alt('ArrowDown');
-  expect(call).toHaveBeenCalledExactlyOnceWith('batch', {
+  await alt('ArrowDown');
+  // Die Vorschau zeigt beide Züge sofort, gesendet ist erst der erste.
+  expect(rowIds()).toEqual([tid(2), tid(3), tid(1), tid(4)]);
+  expect(call).toHaveBeenCalledTimes(1);
+  await act(async () => first.resolve({ commit: 'c1' }));
+  expect(call).toHaveBeenCalledTimes(1);
+  // Der Patch des ersten Batches: 2 und 1 haben jetzt Ränge beim Server.
+  act(() => {
+    store.applyPatch(
+      testPatch(2, {
+        head: 'c1',
+        upsert: { issues: [testIssue(1, { rank: 3000 }), testIssue(2, { rank: 2000 })] },
+      }),
+    );
+  });
+  await act(async () => {});
+  expect(call).toHaveBeenCalledTimes(2);
+  expect(call).toHaveBeenLastCalledWith('batch', {
     ops: [
       { op: 'issue.rank', id: tid(3), from: null, bottom: true },
-      { op: 'issue.rank', id: tid(1), from: 1000, after: tid(3) },
+      { op: 'issue.rank', id: tid(1), from: 3000, after: tid(3) },
     ],
   });
+  expect(rowIds()).toEqual([tid(2), tid(3), tid(1), tid(4)]);
 });
 
 test('a drop on an unranked row sends the same batch', () => {
