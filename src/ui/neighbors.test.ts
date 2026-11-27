@@ -409,6 +409,38 @@ test('a throwing onMove is not swallowed', async () => {
   expect(onMove).toHaveBeenCalledTimes(1);
 });
 
+test('a throwing onMove behind the debounce does not reject unhandled', async () => {
+  const s = await withHub();
+  const rec = recorder();
+  const onMove = vi.fn<() => void>().mockImplementationOnce(() => {
+    throw new Error('boom');
+  });
+  await start(s, onMove, rec.watch);
+  const hubRefs = await refsOf(s.hub);
+  const unhandled = vi.fn();
+  process.on('unhandledRejection', unhandled);
+  try {
+    await agentPush(s.agentCtx);
+    fakeTimers();
+    rec.at(hubRefs).fire('heads/main');
+    await vi.advanceTimersByTimeAsync(debounceMs);
+    await vi.waitFor(() => expect(onMove).toHaveBeenCalledTimes(1));
+    // `unhandledRejection` kommt erst nach dem Leeren der Mikrotasks.
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(unhandled).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+    await agentPush(s.agentCtx);
+    fakeTimers();
+    rec.at(hubRefs).fire('heads/main');
+    await vi.advanceTimersByTimeAsync(debounceMs);
+    await vi.waitFor(() => expect(onMove).toHaveBeenCalledTimes(2));
+  } finally {
+    process.off('unhandledRejection', unhandled);
+  }
+});
+
 test('an unexpected error is not swallowed', async () => {
   const s = await withAgent();
   const rec = recorder();

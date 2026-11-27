@@ -15,7 +15,8 @@
  * ist ebenfalls neu.
  *
  * Nachbarn sind eine Optimierung: Git- und Dateisystemfehler kosten nur den betroffenen Nachbarn
- * oder Durchlauf. Durch kommen nur Fehler von `onMove` und Programmierfehler.
+ * oder Durchlauf. Durch kommen nur Fehler von `onMove` und Programmierfehler, und auch die nur bei
+ * einem direkten Aufruf von `check`; bei einem selbst gestarteten verwirft die Watch sie.
  */
 import type { Dirent } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
@@ -139,7 +140,10 @@ export class NeighborWatch {
     clearTimeout(this.#timer);
     this.#timer = setTimeout(() => {
       this.#timer = undefined;
-      void this.check();
+      this.check().catch(() => {
+        // Ein unerwarteter Fehler kostet nur diese Runde; das nächste Ereignis prüft erneut. Ohne
+        // Handler beendete die Ablehnung den Prozess und mit ihm den Server.
+      });
     }, this.#opts.debounceMs);
   }
 
