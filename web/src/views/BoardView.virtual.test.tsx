@@ -19,6 +19,8 @@ import { testIssue, testPatch, tid } from '../test/state.ts';
 import { m } from './board.messages.ts';
 
 const CARD = 66;
+/** Höhe jeder Karte im Stub; ein Test setzt sie höher als die Schätzung des Virtualizers. */
+let cardHeight = CARD;
 const keys = ['clientHeight', 'clientWidth', 'scrollTo', 'scrollHeight', 'offsetHeight'] as const;
 const saved = keys.map(
   (k) => [k, Object.getOwnPropertyDescriptor(HTMLElement.prototype, k)] as const,
@@ -40,13 +42,14 @@ beforeAll(() => {
   Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
     configurable: true,
     get(this: HTMLElement) {
-      return this instanceof HTMLLIElement && this.dataset.card !== undefined ? CARD : 0;
+      return this instanceof HTMLLIElement && this.dataset.card !== undefined ? cardHeight : 0;
     },
   });
   Object.defineProperty(Element.prototype, 'getBoundingClientRect', {
     configurable: true,
     value(this: Element) {
-      const height = this instanceof HTMLLIElement && this.dataset.card !== undefined ? CARD : 0;
+      const height =
+        this instanceof HTMLLIElement && this.dataset.card !== undefined ? cardHeight : 0;
       // Eine Zelle wandert wie im Browser mit dem Scrollstand nach oben; der Scrollbereich steht.
       const cell = this instanceof HTMLUListElement && this.dataset.column !== undefined;
       const top = cell ? -(this.closest<HTMLElement>('[data-board-scroller]')?.scrollTop ?? 0) : 0;
@@ -74,6 +77,9 @@ afterAll(() => {
 });
 
 registerBoardViewHarness();
+afterEach(() => {
+  cardHeight = CARD;
+});
 
 const many = (count: number) => Array.from({ length: count }, (_, i) => testIssue(i + 1));
 
@@ -140,4 +146,54 @@ test('a focused card scrolled out of sight leaves the focus with its cell', () =
   act(() => scroller.scrollTo({ top: CARD * 120 }));
   expect(cardIds(m.noSprint, 'todo')).not.toContain(tid(1));
   expect(document.activeElement).toBe(document.querySelector('ul[data-column="todo"]'));
+});
+
+const scrollerOf = () =>
+  document.querySelector<HTMLElement>('[data-board-scroller]') as HTMLElement;
+const todoCell = () => document.querySelector('ul[data-column="todo"]');
+
+test('a card moved out of a big cell and back still takes the focus', async () => {
+  answerNever();
+  // Karte 120 tief in `todo`, `in_progress` leer und klein.
+  board([...many(VIRTUAL_FROM + 50)]);
+  act(() => scrollerOf().scrollTo({ top: (CARD + 8) * 119 }));
+  cardLink(tid(120)).focus();
+  await act(async () => {
+    fireEvent.keyDown(cardLink(tid(120)), { key: 'ArrowRight', altKey: true });
+  });
+  await waitFor(() => expect(document.activeElement).toBe(cardLink(tid(120))));
+  // Oben in der Nachbarzelle; `todo` zeigt wieder ihren Anfang.
+  act(() => scrollerOf().scrollTo({ top: 0 }));
+  await act(async () => {
+    fireEvent.keyDown(cardLink(tid(120)), { key: 'ArrowLeft', altKey: true });
+  });
+  // Zurück an ihren Rang, weit unter den gerenderten: Der Fokus folgt der Karte, nicht der Zelle.
+  await waitFor(() => expect(document.activeElement).toBe(cardLink(tid(120))));
+  expect(document.activeElement).not.toBe(todoCell());
+});
+
+test('crossing the threshold keeps a focused card deep in the cell, even when cards are taller', () => {
+  // Echte Karten 86 px statt der geschätzten 66: Mit der Schätzung läge Karte 60 weit oberhalb.
+  cardHeight = 86;
+  const { store } = board(many(VIRTUAL_FROM - 1));
+  act(() => scrollerOf().scrollTo({ top: (86 + 8) * 59 }));
+  const li = cardOf(tid(60));
+  cardLink(tid(60)).focus();
+  act(() => {
+    store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(VIRTUAL_FROM)] } }));
+  });
+  expect(cardOf(tid(60))).toBe(li);
+  expect(document.activeElement).toBe(cardLink(tid(60)));
+});
+
+test('a focused cell keeps the focus when it falls below the threshold', () => {
+  const { store } = board(many(VIRTUAL_FROM));
+  const cell = todoCell() as HTMLElement;
+  cell.focus();
+  expect(document.activeElement).toBe(cell);
+  act(() => {
+    store.applyPatch(testPatch(2, { remove: { issues: [tid(VIRTUAL_FROM)] } }));
+  });
+  expect(todoCell()).toBe(cell);
+  expect(document.activeElement).toBe(cell);
 });

@@ -5,6 +5,7 @@ import {
   type PointerEvent,
   type RefObject,
   useContext,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -71,10 +72,16 @@ export function CardDragSource({ press }: { press: CardPress }) {
     ...(pressed === undefined ? {} : { data: pressed.data }),
   });
   const busy = useRef(false);
+  // Frei wird die Quelle mit Ende, Abbruch oder Abbruch vor den 5 px — und spätestens, wenn der
+  // Zeiger des Drucks hochgeht oder abbricht: Kommt `pointerup`, bevor React den Start des Zugs
+  // gerendert hat (schneller Wisch im selben Frame), meldet dnd-kit weder Ende noch Abbruch.
+  const release = useRef<(() => void) | undefined>(undefined);
   const free = () => {
     busy.current = false;
+    release.current?.();
   };
   useDndMonitor({ onDragEnd: free, onDragCancel: free, onDragAbort: free });
+  useEffect(() => () => release.current?.(), []);
   // Nach jedem Render der aktuelle Handler: `listeners` kommen von dnd-kit und ändern sich mit ihm.
   useLayoutEffect(() => {
     press.current = (e) => {
@@ -88,6 +95,19 @@ export function CardDragSource({ press }: { press: CardPress }) {
       setPressed(card);
       (listeners?.onPointerDown as ((e: PointerEvent) => void) | undefined)?.(e);
       busy.current = native.dndKit !== undefined;
+      if (!busy.current) return;
+      const { pointerId } = e;
+      const up = (ev: globalThis.PointerEvent) => {
+        if (ev.pointerId === pointerId) free();
+      };
+      release.current?.();
+      window.addEventListener('pointerup', up, true);
+      window.addEventListener('pointercancel', up, true);
+      release.current = () => {
+        window.removeEventListener('pointerup', up, true);
+        window.removeEventListener('pointercancel', up, true);
+        release.current = undefined;
+      };
     };
     return () => {
       press.current = undefined;

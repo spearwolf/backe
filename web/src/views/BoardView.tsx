@@ -101,9 +101,18 @@ function Loaded({ state, backlog }: { state: BoardViewState; backlog: string }) 
   // Virtualisierte Zellen melden sich hier an; das Fokus-Folgen holt über sie eine Karte ins Bild.
   const [cells] = useState(() => new VirtualCells());
   const { move, openState, dialogs } = useBoardMove(group, cells.reveal);
-  // Nach jedem Render: Bahnen können sich umordnen, ohne dass sich die Höhe des Inhalts ändert, und
-  // virtualisierte Zellen messen dann nach, wo sie beginnen.
+  // Virtualisierte Zellen messen nach, wo sie beginnen: nach jedem Render (Bahnen können sich
+  // umordnen, ohne dass sich die Höhe des Inhalts ändert) und bei jeder Größenänderung des Inhalts,
+  // über einen gemeinsamen `ResizeObserver` statt einem je Zelle.
   useLayoutEffect(() => cells.relayout());
+  const content = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const node = content.current;
+    if (node === null || typeof ResizeObserver === 'undefined') return;
+    const watch = new ResizeObserver(() => cells.relayout());
+    watch.observe(node);
+    return () => watch.disconnect();
+  }, [cells]);
   const moves = useMemo(() => ({ move, openState }), [move, openState]);
   const drag = useBoardDrag(lanes, move);
   const press = useRef<CardPress['current']>(undefined);
@@ -135,7 +144,7 @@ function Loaded({ state, backlog }: { state: BoardViewState; backlog: string }) 
   );
 
   const body = (
-    <div style={{ minWidth: boardMinWidth(columns.length) }}>
+    <div ref={content} style={{ minWidth: boardMinWidth(columns.length) }}>
       {lanes.map((lane) => (
         <BoardLane
           key={`${group}\n${lane.key}`}

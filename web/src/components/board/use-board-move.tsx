@@ -227,13 +227,15 @@ export function useBoardMove(
   });
 
   // Nur, wenn der Fokus mit der alten Karte verloren ging, noch bei ihr ist oder bei ihrem
-  // Platzhalter; wer inzwischen woanders arbeitet, dem nimmt ihn die Karte nicht weg.
+  // Platzhalter; wer inzwischen woanders arbeitet, dem nimmt ihn die Karte nicht weg. Eine Zelle
+  // selbst hält ihn nur stellvertretend (`CellCards`, die Karte fiel aus dem gerenderten Bereich).
   const holds = (id: string): boolean => {
     const active = document.activeElement;
     return (
       active === null ||
       active === document.body ||
       (active === standIn.current && standIn.current !== null) ||
+      active.matches('ul[data-lane][data-column]') ||
       active.closest<HTMLElement>('li[data-card]')?.dataset.card === id
     );
   };
