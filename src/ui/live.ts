@@ -6,7 +6,7 @@
  * überholt einen anderen.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { compareCodeUnits } from '../core/compare.ts';
@@ -465,19 +465,38 @@ export class LiveBacklog {
     return sigs;
   }
 
-  /** Was sich im Arbeitsbaum seit dem letzten Blick geändert hat, kommt als Pfad in die Runde. */
-  async #scan(): Promise<void> {
+  /** Dateien im Arbeitsbaum, die sich seit dem letzten Blick geändert haben. */
+  async #scan(): Promise<string[]> {
     const now = await this.#dirtyFiles();
-    for (const [path, sig] of now) if (this.#dirtySigs.get(path) !== sig) this.#paths.add(path);
+    const changed: string[] = [];
+    for (const [path, sig] of now) if (this.#dirtySigs.get(path) !== sig) changed.push(path);
     // Nicht mehr geändert heißt: wieder gleich `HEAD`; auch das kann sichtbar sein.
-    for (const path of this.#dirtySigs.keys()) if (!now.has(path)) this.#paths.add(path);
+    for (const path of this.#dirtySigs.keys()) if (!now.has(path)) changed.push(path);
     this.#dirtySigs = now;
+    return changed;
+  }
+
+  /**
+   * Ob ein Pfad aus dem Arbeitsbaum keine Datei nennt: ein Verzeichnis (FSEvents fasst Änderungen
+   * so zusammen, inotify meldet ein neues) oder einen verschwundenen Pfad, der eines gewesen sein
+   * kann. Welche Dateien darunter sich geändert haben, sagt erst der Blick des Sicherheitsnetzes.
+   */
+  async #vague(paths: Iterable<string>): Promise<boolean> {
+    for (const p of paths) {
+      try {
+        if ((await stat(join(this.#root, p))).isDirectory()) return true;
+      } catch (err) {
+        if (MISSING.has((err as NodeJS.ErrnoException).code ?? '')) return true;
+        throw err;
+      }
+    }
+    return false;
   }
 
   async #round(): Promise<void> {
     if (this.#scanDue) {
       this.#scanDue = false;
-      await this.#scan();
+      for (const p of await this.#scan()) this.#paths.add(p);
     }
     const tree = this.#refDirty || this.#treeReady;
     this.#refDirty = false;
@@ -488,13 +507,18 @@ export class LiveBacklog {
     if (syncDue) await this.#refreshSync();
   }
 
-  /** Issues, deren Kommentar- oder Anhangspfade sich seit dem letzten Blick geändert haben. */
+  /**
+   * Issues, deren Kommentar- oder Anhangspfade sich seit dem letzten Blick geändert haben. Ein
+   * Verzeichnis zählt nicht selbst; seine geänderten Dateien kommen aus dem Diff oder dem Blick auf
+   * den Arbeitsbaum.
+   */
   async #touched(paths: Iterable<string>): Promise<string[]> {
     const ids = new Set<string>();
     for (const p of paths) {
       const id = touchedIssue(p);
       if (id === undefined) continue;
       const sig = await signature(this.#root, p);
+      if (sig === 'dir') continue;
       if (this.#touchSigs.get(p) !== sig) ids.add(id);
       this.#touchSigs.set(p, sig);
     }
@@ -508,6 +532,13 @@ export class LiveBacklog {
     let full = this.#full;
     this.#full = false;
     let head: string;
+    try {
+      // Nennt ein Ereignis keine Datei, findet der Blick auf den Arbeitsbaum die geänderten;
+      // sonst gingen Kommentare und Anhänge ohne Commit bis zum Sicherheitsnetz verloren.
+      if (full || (await this.#vague(paths))) for (const p of await this.#scan()) paths.add(p);
+    } catch {
+      full = true;
+    }
     try {
       head = await resolveCommit(this.#root, 'HEAD');
     } catch {

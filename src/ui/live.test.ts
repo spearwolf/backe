@@ -11,6 +11,7 @@ import {
   testKey,
 } from '../../test/helpers/git.ts';
 import { applyPatch, collect, comparable, fakeTimers, settle } from '../../test/helpers/live.ts';
+import { fakeWatcher } from '../../test/helpers/watch.ts';
 import { setIdentity } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { git } from '../git/exec.ts';
@@ -32,7 +33,7 @@ import { NeighborWatch } from './neighbors.ts';
 import * as stateModule from './state.ts';
 import { stateJson } from './state.ts';
 import type { WatchFn } from './watch.ts';
-import { fsWatch, slashed } from './watch.ts';
+import { fsWatch, gitDirs, slashed } from './watch.ts';
 
 const BOOT = '0123abcd';
 const WAIT = { timeout: 10_000 };
@@ -266,6 +267,58 @@ test('a hand written comment is touched once, backe commit after it adds nothing
   await commitEdits(ctx, {});
   await settle(live);
   expect(c.patches().slice(1)).toEqual([]);
+});
+
+describe('events that name no single file', () => {
+  /** Kommentar per Hand zur Stunde `hour` (UTC), wie ihn `backe commit` danach übernimmt. */
+  async function handComment(id: string, hour: string, tag: string) {
+    const dir = join(b.root, commentsDir(id));
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, `20261126T${hour}0000Z-spw-${tag}.md`),
+      `---\nauthor: spw\ncreated: 2026-11-26T${hour}:00:00Z\n---\nHand\n`,
+    );
+  }
+
+  test.each(['fsevents', 'null'] as const)(
+    'a hand written comment reported like %s is touched once',
+    async (profile) => {
+      // FSEvents nennt nur ein Verzeichnis, manche Systeme gar keinen Namen: Der Kommentar kommt
+      // trotzdem sofort an, nicht erst über das Sicherheitsnetz, und `backe commit` fügt nichts hinzu.
+      const fw = fakeWatcher(profile);
+      const id = await create('Kommentar per Hand');
+      const live = await start({ watch: fw.watch });
+      const c = collect(live);
+      await handComment(id, '10', 'a1b');
+      fw.flush();
+      await settle(live);
+      expect(c.patches().map((p) => p.touched)).toEqual([[id]]);
+      await handComment(id, '11', 'c2d');
+      fw.flush();
+      await settle(live);
+      expect(c.patches().map((p) => p.touched)).toEqual([[id], [id]]);
+      await commitEdits(ctx, {});
+      fw.flush();
+      await settle(live);
+      expect(c.patches()).toHaveLength(2);
+    },
+  );
+
+  test('a new comments dir reported after the ref round adds no touch', async () => {
+    // inotify meldet das neue Verzeichnis `comments/` mit; kommt es erst nach der Ref-Runde an,
+    // zählt es nicht noch einmal.
+    const fw = fakeWatcher('inotify');
+    const id = await create('Mit Kommentar');
+    const live = await start({ watch: fw.watch });
+    const c = collect(live);
+    await writeOp(ctx, { op: 'comment.add', id, body: 'Hallo\n' });
+    const { gitDir } = await gitDirs(b.root);
+    fw.flush((path) => path.startsWith(gitDir));
+    await settle(live);
+    fw.flush();
+    await settle(live);
+    expect(c.patches().map((p) => p.touched)).toEqual([[id]]);
+  });
 });
 
 test('an atomic write reloads by delta, a temp file is no event', async () => {
