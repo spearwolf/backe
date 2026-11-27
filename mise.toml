@@ -18,6 +18,10 @@ run = "pnpm run build"
 description = "lint, build, test"
 run = [{ task = "lint" }, { task = "build" }, { task = "test" }]
 
+[tasks.e2e]
+description = "Playwright-E2E gegen das gebaute backe ui (chromium, firefox, webkit)"
+run = [{ task = "build" }, "pnpm run test:e2e"]
+
 [tasks.smoke]
 description = "Tarball packen und per Pack-Smoke-Test prüfen"
 run = '''

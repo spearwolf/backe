@@ -56,7 +56,8 @@ export default defineConfig({
     projects: [
       {
         extends: true,
-        test: { name: 'node', exclude: [...configDefaults.exclude, 'web/**'] },
+        // Die Browser-E2E unter `test/browser/` laufen mit Playwright (`pnpm run test:e2e`).
+        test: { name: 'node', exclude: [...configDefaults.exclude, 'web/**', 'test/browser/**'] },
       },
       {
         extends: true,
