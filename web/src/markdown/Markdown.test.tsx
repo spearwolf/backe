@@ -186,6 +186,16 @@ test('a blocked image inside a link stays a single link', () => {
   expect(links[0]?.textContent).toContain('External image blocked: build');
 });
 
+test('a blocked image in a link whose target fell away keeps its own link', () => {
+  // `other.md` ist ein relativer Pfad ohne Anhang: Der URL-Filter nimmt dem Link sein Ziel.
+  const { container } = setup('[![build](https://img.shields.io/badge/ci-green)](other.md)', {
+    externalImages: false,
+  });
+  expect(container.querySelector('img')).toBeNull();
+  const link = screen.getByRole('link', { name: 'External image blocked: build' });
+  expect(link.getAttribute('href')).toBe('https://img.shields.io/badge/ci-green');
+});
+
 test('a blocked image without alt text reads naturally', () => {
   setup('![](https://example.com/logo.png)', { externalImages: false });
   expect(screen.getByRole('link', { name: 'External image blocked' })).toBeTruthy();

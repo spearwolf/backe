@@ -48,7 +48,10 @@ function Anchor({
   ...rest
 }: ComponentProps<'a'> & { node?: unknown }) {
   const click = useLinkClick();
-  const inner = <InLink.Provider value={true}>{children}</InLink.Provider>;
+  // Nahm der URL-Filter dem Link sein Ziel, ist er keiner mehr: Ein gesperrtes Bild darin behält
+  // dann seinen eigenen Link, statt nur als Hinweis ohne Ziel dazustehen.
+  const inner =
+    href === undefined ? children : <InLink.Provider value={true}>{children}</InLink.Provider>;
   if (href?.startsWith('/b/')) {
     return (
       <a {...rest} href={href} onClick={click(href)}>
