@@ -432,9 +432,17 @@ export class LiveBacklog {
     });
   }
 
-  /** Wartet, bis keine Runde mehr läuft. */
+  /**
+   * Wartet, bis nichts mehr läuft: keine Runde, kein Blick der Nachbar-Watch und keine Prüfung für
+   * einen Sync nach einer Bewegung der Nachbarn. Den Sync selbst startet `spawn`; auf ihn wartet es
+   * nicht.
+   */
   async idle(): Promise<void> {
-    while (this.#running !== undefined) await this.#running;
+    do {
+      while (this.#running !== undefined) await this.#running;
+      await this.#neighbors?.idle();
+      await this.#starts.settled();
+    } while (this.#running !== undefined);
   }
 
   /**

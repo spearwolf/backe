@@ -178,7 +178,8 @@ test('a hub move starts one check after 250 ms', async () => {
   expect(onMove).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(1);
   expect(check).toHaveBeenCalledTimes(1);
-  await vi.waitFor(() => expect(onMove).toHaveBeenCalledTimes(1));
+  await w.idle();
+  expect(onMove).toHaveBeenCalledTimes(1);
 
   await w.check();
   expect(onMove).toHaveBeenCalledTimes(1);
@@ -202,21 +203,23 @@ test('events during the debounce collapse into one move', async () => {
   await vi.advanceTimersByTimeAsync(debounceMs);
 
   expect(check).toHaveBeenCalledTimes(1);
-  await vi.waitFor(() => expect(onMove).toHaveBeenCalledTimes(1));
+  await w.idle();
+  expect(onMove).toHaveBeenCalledTimes(1);
 });
 
 test('a tracking ref of a neighbour counts as a move', async () => {
   const { s, agentCtx, wc } = await fromTwoClones();
   const rec = recorder();
   const onMove = vi.fn();
-  await start(s, onMove, rec.watch);
+  const w = await start(s, onMove, rec.watch);
   await agentPush(agentCtx);
   fakeTimers();
 
   rec.at(await refsOf(wc)).fire('remotes/origin/main');
   await vi.advanceTimersByTimeAsync(debounceMs);
 
-  await vi.waitFor(() => expect(onMove).toHaveBeenCalledTimes(1));
+  await w.idle();
+  expect(onMove).toHaveBeenCalledTimes(1);
 });
 
 test('events outside the watched refs start no check', async () => {
@@ -295,7 +298,7 @@ test('a neighbour that appears later is watched', async () => {
   const s = await withAgent();
   const rec = recorder();
   const onMove = vi.fn();
-  await start(s, onMove, rec.watch);
+  const w = await start(s, onMove, rec.watch);
   expect(rec.all.map((r) => [r.path, r.recursive])).toEqual([[s.backlogDir, false]]);
 
   // Eine frische Arbeitskopie pusht in derselben Ruhephase, in der sie entsteht.
@@ -306,7 +309,8 @@ test('a neighbour that appears later is watched', async () => {
   rec.at(s.backlogDir).fire('claude-1');
   await vi.advanceTimersByTimeAsync(debounceMs);
 
-  await vi.waitFor(() => expect(onMove).toHaveBeenCalledTimes(1));
+  await w.idle();
+  expect(onMove).toHaveBeenCalledTimes(1);
   const hubRefs = await refsOf(hub);
   expect(rec.has(hubRefs)).toBe(true);
   expect(rec.has(await refsOf(wc))).toBe(true);
@@ -585,7 +589,7 @@ test('a throwing onMove behind the debounce does not reject unhandled', async ()
   const onMove = vi.fn<() => void>().mockImplementationOnce(() => {
     throw new Error('boom');
   });
-  await start(s, onMove, rec.watch);
+  const w = await start(s, onMove, rec.watch);
   const hubRefs = await refsOf(s.hub);
   const unhandled = vi.fn();
   process.on('unhandledRejection', unhandled);
@@ -594,7 +598,8 @@ test('a throwing onMove behind the debounce does not reject unhandled', async ()
     fakeTimers();
     rec.at(hubRefs).fire('heads/main');
     await vi.advanceTimersByTimeAsync(debounceMs);
-    await vi.waitFor(() => expect(onMove).toHaveBeenCalledTimes(1));
+    await w.idle();
+    expect(onMove).toHaveBeenCalledTimes(1);
     // `unhandledRejection` kommt erst nach dem Leeren der Mikrotasks.
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
@@ -605,7 +610,8 @@ test('a throwing onMove behind the debounce does not reject unhandled', async ()
     fakeTimers();
     rec.at(hubRefs).fire('heads/main');
     await vi.advanceTimersByTimeAsync(debounceMs);
-    await vi.waitFor(() => expect(onMove).toHaveBeenCalledTimes(2));
+    await w.idle();
+    expect(onMove).toHaveBeenCalledTimes(2);
   } finally {
     process.off('unhandledRejection', unhandled);
   }
@@ -741,7 +747,6 @@ test('a missing backlog dir is no error', async () => {
     remote: 'origin',
     branch: 'main',
     debounceMs,
-    watch: fsWatch,
     onMove,
   });
   open.push(w);
@@ -857,7 +862,10 @@ test('a check requested right after a round ends gets its own round', async () =
     for (let depth = 0; depth < 12; depth++) {
       let seen = 0;
       let at = -1;
-      let requested: Promise<void> | undefined;
+      let request!: (check: Promise<void>) => void;
+      const requested = new Promise<Promise<void>>((resolve) => {
+        request = resolve;
+      });
       vi.mocked(git).mockImplementation(async (args, opts) => {
         const r = await real(args, opts);
         if (isVerify(args) && ++seen === 2) {
@@ -865,14 +873,13 @@ test('a check requested right after a round ends gets its own round', async () =
           for (let i = 0; i < depth; i++) p = p.then(() => {});
           void p.then(() => {
             at = verifyCalls();
-            requested = w.check();
+            request(w.check());
           });
         }
         return r;
       });
       await w.check();
-      await vi.waitFor(() => expect(requested).toBeDefined());
-      await requested;
+      await await requested;
       expect({ depth, after: verifyCalls() > at }).toEqual({ depth, after: true });
     }
   } finally {
@@ -900,20 +907,38 @@ test('a round running during close does not reopen the dir watch', async () => {
 });
 
 test('a real push in the hub reaches onMove', async () => {
+  // Vertragstest mit echtem `fs.watch`: Ein Push in den Hub löst Ereignisse aus, von denen eines
+  // einen Durchlauf anstößt. Welche und unter welchem Namen, entscheidet das System (inotify meldet
+  // `heads/main.lock` und `heads/main`, FSEvents oft nur ein Verzeichnis); verlangt wird keines
+  // davon. Gewartet wird je Runde auf das nächste echte Ereignis, nie auf Zeit, und erst nach dem
+  // Push: Der Durchlauf liest dann schon den neuen Wert.
   const s = await withHub();
   const onMove = vi.fn();
-  await start(s, onMove, fsWatch);
+  const waiting: (() => void)[] = [];
+  let unseen = 0;
+  const watch: WatchFn = (path, opts, listener) =>
+    fsWatch(path, opts, (name) => {
+      listener(name);
+      const wake = waiting.shift();
+      if (wake === undefined) unseen += 1;
+      else wake();
+    });
+  const nextEvent = (): Promise<void> => {
+    if (unseen === 0) return new Promise((resolve) => waiting.push(resolve));
+    unseen -= 1;
+    return Promise.resolve();
+  };
+  const w = await start(s, onMove, watch);
+  const check = vi.spyOn(w, 'check');
   // Vor dem Push, damit die Entprellung des ersten Ereignisses schon auf dem Fake-Timer läuft.
   fakeTimers();
   await agentPush(s.agentCtx);
-
-  await vi.waitFor(
-    async () => {
-      await vi.advanceTimersByTimeAsync(debounceMs);
-      expect(onMove).toHaveBeenCalled();
-    },
-    { timeout: 10_000, interval: 50 },
-  );
+  while (check.mock.calls.length === 0) {
+    await nextEvent();
+    await vi.advanceTimersByTimeAsync(debounceMs);
+  }
+  await w.idle();
+  expect(onMove).toHaveBeenCalledTimes(1);
 });
 
 test('close leaves no watch and no timer', async () => {
@@ -1039,6 +1064,10 @@ test('a round reads its neighbours in parallel', async () => {
   const w = await start(s, vi.fn());
   const real = await realGit();
   let reading = 0;
+  let bothReading!: () => void;
+  const both = new Promise<void>((resolve) => {
+    bothReading = resolve;
+  });
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -1046,14 +1075,17 @@ test('a round reads its neighbours in parallel', async () => {
   vi.mocked(git).mockImplementation(async (args, opts) => {
     if (isVerify(args)) {
       reading += 1;
+      if (reading === 2) bothReading();
       await gate;
     }
     return real(args, opts);
   });
   try {
     const running = w.check();
-    // Hub und Agent: Beide Blicke laufen, bevor einer fertig ist.
-    await vi.waitFor(() => expect(reading).toBe(2));
+    // Hub und Agent: Beide Blicke laufen, bevor einer fertig ist; nacheinander käme der zweite nie
+    // am Tor an.
+    await both;
+    expect(reading).toBe(2);
     release();
     await running;
   } finally {

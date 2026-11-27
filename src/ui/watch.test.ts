@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { testBacklog } from '../../test/helpers/git.ts';
@@ -181,29 +181,56 @@ test('fsWatch rethrows other errors', () => {
   expect(() => fsWatch('\0', { recursive: false }, () => {})).toThrow();
 });
 
-test('real writes reach the signals, .git stays quiet', async () => {
+/**
+ * Signale mit echtem `fs.watch`; `until` erfüllt sich mit dem ersten Signal, das `match` erfüllt —
+ * gewartet wird auf das Ereignis selbst, nicht auf Zeit.
+ */
+function liveSignals() {
+  const log: string[] = [];
+  const waiting: { match: (signal: string) => boolean; resolve(): void }[] = [];
+  const push = (signal: string) => {
+    log.push(signal);
+    for (const w of waiting.filter((x) => x.match(signal))) {
+      waiting.splice(waiting.indexOf(w), 1);
+      w.resolve();
+    }
+  };
+  return {
+    log,
+    on: {
+      ref: () => push('ref'),
+      paths: (p: string[] | 'all') => {
+        for (const path of p === 'all' ? ['*'] : p) push(`paths:${path}`);
+      },
+      sync: () => push('sync'),
+    },
+    until: (match: (signal: string) => boolean) =>
+      log.some(match)
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => waiting.push({ match, resolve })),
+  };
+}
+
+/** Ein Pfad-Signal, das `path` abdeckt: der Pfad selbst, ein Verzeichnis darüber oder alles. */
+const covers = (path: string) => (signal: string) =>
+  signal === 'paths:*' ||
+  (signal.startsWith('paths:') && `${path}/`.startsWith(`${signal.slice('paths:'.length)}/`));
+
+test('real writes reach the signals', async () => {
+  // Vertragstest des Adapters mit echtem `fs.watch`. Verlangt wird nur, was jedes System liefert:
+  // Ein Ref-Update ergibt irgendwann `ref`, ein Write in einem Backlog-Verzeichnis irgendwann ein
+  // Pfad-Signal, das die Datei abdeckt. Welcher Name kommt (inotify: die Datei; FSEvents oft nur
+  // das Verzeichnis, sonst `null`), wie viele Ereignisse und in welcher Reihenfolge, bleibt offen.
+  // Unter macOS startet libuv einen Watch asynchron in einem eigenen FSEvents-Stream für alle
+  // Watches; das erste Ereignis zeigt, dass er läuft, darum kommt der Write erst danach.
   const b = await testBacklog();
-  const s = signals();
+  const s = liveSignals();
   const watched = await watchWorkingCopy(b.root, {}, s.on);
   try {
     await git(['update-ref', 'refs/heads/other', 'HEAD'], { cwd: b.root });
+    await s.until((signal) => signal === 'ref');
     await writeFile(join(b.root, 'users', 'alice.md'), '---\nname: Alice\n---\n');
-    await vi.waitFor(() => {
-      expect(s.log).toContain('ref');
-      expect(s.log).toContain('paths:users/alice.md');
-    });
-    // Ein Backlog-Verzeichnis, das erst jetzt entsteht, meldet sich und wird danach beobachtet.
-    await mkdir(join(b.root, 'projects'));
-    await vi.waitFor(() => expect(s.log).toContain('paths:projects'));
-    await writeFile(join(b.root, 'projects', 'web.md'), '---\ntitle: Web\n---\n');
-    await vi.waitFor(() => expect(s.log).toContain('paths:projects/web.md'));
-    // `.git/` meldet nichts außer Refs.
-    const before = s.log.length;
-    await writeFile(join(b.root, '.git', 'description'), 'x');
-    await writeFile(join(b.root, 'README.md'), 'x');
-    await writeFile(join(b.root, 'users', 'bob.md'), '---\nname: Bob\n---\n');
-    await vi.waitFor(() => expect(s.log).toContain('paths:users/bob.md'));
-    expect(new Set(s.log.slice(before))).toEqual(new Set(['paths:users/bob.md']));
+    await s.until(covers('users/alice.md'));
   } finally {
     watched.close();
   }

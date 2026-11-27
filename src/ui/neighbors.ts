@@ -174,6 +174,11 @@ export class NeighborWatch {
     return this.#running;
   }
 
+  /** Erfüllt sich, sobald kein `check` mehr läuft, auch kein Nachlauf; Fehler gehören dem Aufrufer. */
+  async idle(): Promise<void> {
+    while (this.#running !== undefined) await this.#running.catch(() => {});
+  }
+
   /**
    * Watches und Debounce-Timer abbauen; danach meldet `onMove` nie mehr. Erfüllt sich, sobald ein
    * laufender `check` fertig ist — dessen Fehler gehören seinem Aufrufer —, damit nach dem Ende

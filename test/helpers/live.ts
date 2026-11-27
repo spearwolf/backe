@@ -58,18 +58,17 @@ export function comparable(state: StateJson): Keyed {
 }
 
 /**
- * Lässt ausstehende `fs.watch`-Ereignisse ankommen, spult die Entprellung vor und wartet die
- * Runden ab. Ereignisse, die später kommen, würden nichts Neues mehr zeigen.
+ * Lässt den Live-Kern zur Ruhe kommen: wartet die laufende Arbeit ab, spult die Entprellung des
+ * Arbeitsbaums vor und wartet die Runde danach ab. Die Ereignisse dafür hat der Test vorher selbst
+ * gemeldet (`FakeWatcher.flush` oder `emit`); gewartet wird auf Promises, nie auf Zeit.
  */
 export async function settle(live: LiveBacklog): Promise<void> {
-  for (let i = 0; i < 3; i++) {
-    await new Promise((resolve) => setImmediate(resolve));
-    await vi.advanceTimersByTimeAsync(LIVE_TIMING.debounceMs);
-    await live.idle();
-  }
+  await live.idle();
+  await vi.advanceTimersByTimeAsync(LIVE_TIMING.debounceMs);
+  await live.idle();
 }
 
-/** Fake-Timer für die Live-Tests: Timer sind fake, Git und `fs.watch` laufen echt. */
+/** Fake-Timer für die Live-Tests: Timer sind fake, Git läuft echt. */
 export function fakeTimers(): void {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
 }

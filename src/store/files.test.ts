@@ -1,6 +1,6 @@
-import { existsSync, watch } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { chmod, lstat, mkdir, readdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { copyFixture, tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { BackeError } from '../core/errors.ts';
@@ -16,6 +16,8 @@ import {
 import { issueFile } from './layout.ts';
 
 const rmFails = vi.hoisted(() => ({ on: false }));
+/** Jedes `rename` als `[von, nach]`, damit Tests die Temp-Datei von `writeFileAtomic` sehen. */
+const renames = vi.hoisted((): [string, string][] => []);
 vi.mock('node:fs/promises', async (orig) => {
   const actual = await orig<typeof import('node:fs/promises')>();
   return {
@@ -23,6 +25,10 @@ vi.mock('node:fs/promises', async (orig) => {
     rm: async (...args: Parameters<typeof actual.rm>) => {
       if (rmFails.on) throw new Error('cleanup kaputt');
       return actual.rm(...args);
+    },
+    rename: async (from: string, to: string) => {
+      renames.push([String(from), String(to)]);
+      return actual.rename(from, to);
     },
   };
 });
@@ -221,24 +227,20 @@ test('writeFileAtomic replaces the target of a symlink and keeps the link', asyn
 
 test('isAtomicTemp recognizes the temp files of writeFileAtomic', async () => {
   expect(isAtomicTemp(atomicTempPath('/b/issues/t0/x/issue.md'))).toBe(true);
+  expect(isAtomicTemp(atomicTempPath('issue.md'))).toBe(true);
   expect(isAtomicTemp('issues/t0/x/issue.md')).toBe(false);
-  // Was `fs.watch` beim Schreiben meldet, wird richtig eingeordnet. Ob der Temp-Name dabei
-  // auftaucht, hängt vom System ab: inotify meldet ihn, FSEvents auf macOS fasst ihn oft weg.
-  const dir = await tempDir();
-  const names = new Set<string>();
-  const w = watch(dir, (_e, name) => {
-    if (name !== null) names.add(String(name));
-  });
-  try {
-    await writeFileAtomic(join(dir, 'issue.md'), 'x');
-    await vi.waitFor(() => expect(names.has('issue.md')).toBe(true));
-  } finally {
-    w.close();
-  }
-  for (const n of names)
-    expect([n, isAtomicTemp(`issues/t0/x/${n}`)]).toEqual([n, n !== 'issue.md']);
   expect(isAtomicTemp('issues/t0/x/.issue.md.swp')).toBe(false);
   expect(isAtomicTemp('.tmp-1-deadbeef')).toBe(false);
+  expect(isAtomicTemp('.issue.md.tmp-1-DEADBEEF')).toBe(false);
+  // `writeFileAtomic` schreibt genau über einen solchen Namen neben dem Ziel.
+  const target = join(await tempDir(), 'issue.md');
+  renames.length = 0;
+  await writeFileAtomic(target, 'x');
+  expect(renames).toHaveLength(1);
+  const [[tmp, to] = ['', '']] = renames;
+  expect(to).toBe(target);
+  expect(dirname(tmp)).toBe(dirname(target));
+  expect(isAtomicTemp(tmp)).toBe(true);
 });
 
 test('writeFileAtomic keeps the mode of an existing file', async () => {

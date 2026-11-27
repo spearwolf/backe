@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join, relative, sep } from 'node:path';
+import { basename, join, relative } from 'node:path';
 import { writeOp } from '../../test/helpers/context.ts';
 import {
   rawCommit,
@@ -11,12 +11,13 @@ import {
   testKey,
 } from '../../test/helpers/git.ts';
 import { applyPatch, collect, comparable, fakeTimers, settle } from '../../test/helpers/live.ts';
-import { fakeWatcher } from '../../test/helpers/watch.ts';
+import { type FakeWatcher, fakeWatcher, PROFILES } from '../../test/helpers/watch.ts';
 import { setIdentity } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { git } from '../git/exec.ts';
 import { bodyHash } from '../ops/operation.ts';
 import { addAttachment } from '../services/attachments.ts';
+import * as backgroundModule from '../services/background.ts';
 import { runBackground } from '../services/background.ts';
 import { commitEdits } from '../services/commit.ts';
 import * as scheduleModule from '../services/schedule.ts';
@@ -24,24 +25,23 @@ import { syncNow } from '../services/sync.ts';
 import { writeSyncState } from '../services/sync-state.ts';
 import { ensureWorkingCopy } from '../services/working-copy.ts';
 import { executeWrite } from '../services/write.ts';
-import { writeFileAtomic } from '../store/files.ts';
+import { atomicTempPath, writeFileAtomic } from '../store/files.ts';
 import { BACKLOG_CONFIG, commentsDir, issueFile } from '../store/layout.ts';
 import * as snapshotModule from '../store/snapshot.ts';
+import * as actorsModule from './actors.ts';
 import type { StateJson } from './api.ts';
 import { LIVE_TIMING, LiveBacklog, type LiveDeps, LiveHub, parseEventId } from './live.ts';
 import { NeighborWatch } from './neighbors.ts';
 import * as stateModule from './state.ts';
 import { stateJson } from './state.ts';
-import type { WatchFn } from './watch.ts';
-import { fsWatch, gitDirs, slashed } from './watch.ts';
+import { gitDirs, type WatchFn } from './watch.ts';
 
 const BOOT = '0123abcd';
-const WAIT = { timeout: 10_000 };
-/** 50 echte Git-Writes: lokal rund 13 s, auf den macOS-Runnern der CI über eine Minute. */
-const BURST_TIMEOUT = 180_000;
 
 let b: TestBacklog;
 let ctx: ResolvedContext;
+/** Quelle aller Datei-Ereignisse; Tests unter einem Profil ersetzen ihn in ihrem `beforeEach`. */
+let fw: FakeWatcher;
 const running: LiveBacklog[] = [];
 /** Hintergrund-Syncs, die ein Test in-process gestartet hat; das Aufräumen wartet sie ab. */
 const syncs: Promise<unknown>[] = [];
@@ -49,6 +49,7 @@ const syncs: Promise<unknown>[] = [];
 beforeEach(async () => {
   b = await testBacklog();
   ctx = await b.context();
+  fw = fakeWatcher();
   fakeTimers();
 });
 afterEach(async () => {
@@ -57,18 +58,39 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
+/** Ein Watch, der nie etwas meldet: Es läuft nur das Sicherheitsnetz. */
+const deaf: WatchFn = () => ({ close() {} });
+
 async function start(opts: { watch?: WatchFn; rev?: number; onStop?: (rev: number) => void } = {}) {
   const live = await LiveBacklog.start(ctx, {
     boot: BOOT,
     rev: opts.rev ?? 0,
-    deps: opts.watch === undefined ? {} : { watch: opts.watch },
+    deps: { watch: opts.watch ?? fw.watch },
     ...(opts.onStop === undefined ? {} : { onStop: opts.onStop }),
   });
   running.push(live);
   return live;
 }
 
+/** Meldet, was sich auf der Platte geändert hat, und lässt den Live-Kern zur Ruhe kommen. */
+async function tick(live: LiveBacklog): Promise<void> {
+  fw.flush();
+  await settle(live);
+}
+
+/** Lässt das Sicherheitsnetz einmal laufen und wartet seine Runde ab. */
+async function safetyNet(live: LiveBacklog): Promise<void> {
+  await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
+  await live.idle();
+}
+
 const create = (title: string) => writeOp(ctx, { op: 'issue.create', title, state: 'todo' });
+
+/** Ersetzt im Issue-File von `id` den Titel `from` durch `to`, per Hand und ohne Commit. */
+async function retitle(id: string, from: string, to: string): Promise<void> {
+  const file = join(b.root, issueFile(id));
+  await writeFile(file, (await readFile(file, 'utf8')).replace(`title: ${from}`, `title: ${to}`));
+}
 
 test('parseEventId takes boot:rev only', () => {
   expect(parseEventId('0123abcd:5')).toEqual({ boot: '0123abcd', rev: 5 });
@@ -97,63 +119,259 @@ test('a subscriber gets hello first, then sync', async () => {
   });
 });
 
-test('a cli write is exactly one patch', async () => {
-  const live = await start();
-  const c = collect(live);
-  const id = await create('Live');
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
-  await settle(live);
-  const [patch] = c.patches();
-  expect(patch?.rev).toBe(1);
-  expect(patch?.head).toBe((await stateJson(ctx)).head);
-  expect(patch?.upsert.issues?.map((i) => i.id)).toEqual([id]);
-  expect(patch?.remove).toEqual({});
-  expect(c.patches()).toHaveLength(1);
-  expect(c.events.at(-1)?.id).toBe(`${BOOT}:1`);
-});
-
-test('a hand edit is a patch, backe commit after it none', async () => {
-  const id = await create('Vorher');
-  const live = await start();
-  const c = collect(live);
-  const file = join(b.root, issueFile(id));
-  await writeFile(file, (await readFile(file, 'utf8')).replace('title: Vorher', 'title: Nachher'));
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
-  expect(c.patches()[0]?.upsert.issues?.[0]?.title).toBe('Nachher');
-  await commitEdits(ctx, {});
-  await settle(live);
-  expect(c.patches()).toHaveLength(1);
-  expect(live.head).toBe((await stateJson(ctx)).head);
-});
-
-test('a body edit is a touch', async () => {
-  const id = await create('Mit Body');
-  const live = await start();
-  const c = collect(live);
-  await writeOp(ctx, {
-    op: 'issue.edit',
-    id,
-    body: { from_hash: bodyHash(''), to: 'Neue Beschreibung\n' },
+/**
+ * Was ein System meldet, unterscheidet sich (Namen, Zusammenfassung, Reihenfolge); der Live-Kern
+ * kommt unter jedem Profil zum selben Ergebnis.
+ */
+describe.each(PROFILES)('events reported like %s', (profile) => {
+  beforeEach(() => {
+    fw = fakeWatcher(profile);
   });
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
-  await settle(live);
-  expect(c.patches()).toEqual([
-    { rev: 1, head: live.head, upsert: {}, remove: {}, touched: [id], actors: { [id]: ['spw'] } },
-  ]);
+
+  test('a cli write is exactly one patch', async () => {
+    const live = await start();
+    const c = collect(live);
+    const id = await create('Live');
+    await tick(live);
+    const [patch] = c.patches();
+    expect(c.patches()).toHaveLength(1);
+    expect(patch?.rev).toBe(1);
+    expect(patch?.head).toBe((await stateJson(ctx)).head);
+    expect(patch?.upsert.issues?.map((i) => i.id)).toEqual([id]);
+    expect(patch?.remove).toEqual({});
+    expect(c.events.at(-1)?.id).toBe(`${BOOT}:1`);
+  });
+
+  test('a hand edit is a patch, backe commit after it none', async () => {
+    const id = await create('Vorher');
+    const live = await start();
+    const c = collect(live);
+    await retitle(id, 'Vorher', 'Nachher');
+    await tick(live);
+    expect(c.patches()).toHaveLength(1);
+    expect(c.patches()[0]?.upsert.issues?.[0]?.title).toBe('Nachher');
+    expect(c.patches()[0]).not.toHaveProperty('actors');
+    await commitEdits(ctx, {});
+    await tick(live);
+    expect(c.patches()).toHaveLength(1);
+    expect(live.head).toBe((await stateJson(ctx)).head);
+  });
+
+  test('a body edit is a touch', async () => {
+    const id = await create('Mit Body');
+    const live = await start();
+    const c = collect(live);
+    await writeOp(ctx, {
+      op: 'issue.edit',
+      id,
+      body: { from_hash: bodyHash(''), to: 'Neue Beschreibung\n' },
+    });
+    await tick(live);
+    expect(c.patches()).toEqual([
+      { rev: 1, head: live.head, upsert: {}, remove: {}, touched: [id], actors: { [id]: ['spw'] } },
+    ]);
+  });
+
+  test('a patch names the actors of its issues', async () => {
+    const live = await start();
+    const c = collect(live);
+    const id = await create('Von spw');
+    await tick(live);
+    expect(c.patches()[0]?.actors).toEqual({ [id]: ['spw'] });
+  });
+
+  test('a deleted issue is a remove', async () => {
+    const id = await create('Weg damit');
+    const live = await start();
+    const c = collect(live);
+    await writeOp(ctx, { op: 'issue.delete', id });
+    await tick(live);
+    expect(c.patches()).toHaveLength(1);
+    expect(c.patches()[0]?.remove).toEqual({ issues: [id] });
+  });
+
+  test('comments and attachments mark the issue touched', async () => {
+    const id = await create('Mit Kommentar');
+    const live = await start();
+    const c = collect(live);
+    await writeOp(ctx, { op: 'comment.add', id, body: 'Hallo\n' });
+    await tick(live);
+    // Ref-Runde und Arbeitsbaum-Runde sehen denselben Kommentar; gemeldet wird er einmal.
+    expect(c.patches().map((p) => p.touched)).toEqual([[id]]);
+    await writeOp(ctx, { op: 'comment.add', id, body: 'Noch einer\n' });
+    await tick(live);
+    await addAttachment(ctx, id, {
+      name: 'a.txt',
+      source: { kind: 'file', fileName: 'a.txt', content: Buffer.from('x') },
+    });
+    await tick(live);
+    expect(c.patches().map((p) => p.touched)).toEqual([[id], [id], [id]]);
+  });
+
+  test('a hand written comment is touched once, backe commit after it adds nothing', async () => {
+    const id = await create('Kommentar per Hand');
+    const live = await start();
+    const c = collect(live);
+    const dir = join(b.root, commentsDir(id));
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, '20261126T100000Z-spw-a1b.md'),
+      '---\nauthor: spw\ncreated: 2026-11-26T10:00:00Z\n---\nPer Hand\n',
+    );
+    await tick(live);
+    expect(c.patches().map((p) => p.touched)).toEqual([[id]]);
+    // Ein zweiter in dasselbe, nun schon bestehende Verzeichnis.
+    await writeFile(
+      join(dir, '20261126T110000Z-spw-c2d.md'),
+      '---\nauthor: spw\ncreated: 2026-11-26T11:00:00Z\n---\nNoch einer\n',
+    );
+    await tick(live);
+    expect(c.patches().map((p) => p.touched)).toEqual([[id], [id]]);
+    await commitEdits(ctx, {});
+    await tick(live);
+    expect(c.patches()).toHaveLength(2);
+  });
+
+  test('a broken hand edit becomes a problem, the fix a patch', async () => {
+    const id = await create('Heil');
+    const live = await start();
+    const c = collect(live);
+    const file = join(b.root, issueFile(id));
+    const good = await readFile(file, 'utf8');
+    await writeFile(file, '---\ntitle: [kaputt\n---\n');
+    await tick(live);
+    expect(c.patches()).toHaveLength(1);
+    expect(c.patches()[0]?.remove).toEqual({ issues: [id] });
+    expect(c.patches()[0]?.problems?.map((p) => p.path)).toEqual([issueFile(id)]);
+    await writeFile(file, good.replace('title: Heil', 'title: Wieder heil'));
+    await tick(live);
+    expect(c.patches()).toHaveLength(2);
+    expect(c.patches()[1]?.upsert.issues?.[0]?.title).toBe('Wieder heil');
+    expect(c.patches()[1]?.problems).toEqual([]);
+  });
+
+  test('a broken config keeps the last state until it is fixed', async () => {
+    const id = await create('Bleibt');
+    const live = await start();
+    const c = collect(live);
+    const config = join(b.root, BACKLOG_CONFIG);
+    const good = await readFile(config, 'utf8');
+    await writeFile(config, '{ kaputt');
+    await retitle(id, 'Bleibt', 'Neu');
+    await tick(live);
+    expect(c.patches()).toEqual([]);
+    await writeFile(config, good);
+    await tick(live);
+    expect(c.patches()).toHaveLength(1);
+    expect(c.patches()[0]?.upsert.issues?.[0]?.title).toBe('Neu');
+  });
+
+  test('sync state changes become sync events', async () => {
+    const live = await start();
+    const c = collect(live);
+    const syncEvents = () => c.events.filter((e) => e.event === 'sync');
+    const error = { code: 'sync', message: 'Netz weg', at: '2026-11-26T10:00:00Z' } as const;
+    await writeSyncState(b.root, { last_error: error });
+    await tick(live);
+    expect(syncEvents()).toHaveLength(2);
+    expect(c.events.at(-1)?.data).toMatchObject({ last_error: { message: 'Netz weg' } });
+    const count = c.events.length;
+    await writeSyncState(b.root, { last_error: error });
+    await tick(live);
+    expect(c.events).toHaveLength(count);
+  });
+
+  test('patches converge to a fresh state after a burst', async () => {
+    // Mehrere Ref-Bewegungen zwischen zwei Blicken, gepackte Refs, zuletzt ein Wechsel des Branches
+    // per Hand: Der Client-Zustand aus `hello` und allen Patches ist danach ein frischer `/state`.
+    await create('Vorlauf');
+    const live = await start();
+    const initial = await stateJson(ctx, live.rev);
+    const c = collect(live);
+    const ids: string[] = [];
+    for (let i = 0; i < 8; i++) {
+      if (i % 3 === 2) {
+        const id = ids.at(-1) as string;
+        await writeOp(ctx, { op: 'issue.move', id, from: 'todo', to: 'in_progress' });
+      } else {
+        ids.push(await create(`Burst ${i}`));
+      }
+      if (i === 3) await git(['pack-refs', '--all'], { cwd: b.root });
+      if (i % 3 === 2) await tick(live);
+    }
+    await tick(live);
+    expect(c.patches().length).toBeGreaterThan(1);
+    expect(c.patches().length).toBeLessThan(8);
+    const folded = () => comparable(c.patches().reduce(applyPatch, initial));
+    expect(folded()).toEqual(comparable(await stateJson(ctx)));
+    await git(['checkout', '-q', '-b', 'seitlich', 'HEAD~3'], { cwd: b.root });
+    await tick(live);
+    const fresh = await stateJson(ctx);
+    expect(live.head).toBe(fresh.head);
+    expect(folded()).toEqual(comparable(fresh));
+  });
+
+  test('reconnect with a last event id replays missed patches', async () => {
+    const live = await start();
+    const first = collect(live);
+    await create('Eins');
+    await tick(live);
+    expect(first.patches()).toHaveLength(1);
+    first.off();
+    await create('Zwei');
+    await tick(live);
+    await create('Drei');
+    await tick(live);
+    expect(live.rev).toBe(3);
+    const again = collect(live, `${BOOT}:1`);
+    expect(again.names()).toEqual(['hello', 'patch', 'patch', 'sync']);
+    expect(again.patches().map((p) => p.rev)).toEqual([2, 3]);
+    expect(collect(live, `${BOOT}:3`).names()).toEqual(['hello', 'sync']);
+  });
 });
 
-test('a patch names the actors of its issues', async () => {
+test('events that arrive late add nothing', async () => {
+  // Kommt das Ref-Ereignis eines Writes erst nach dem Arbeitsbaum (oder umgekehrt), entsteht der
+  // Patch aus dem ersten; das zweite zeigt nichts Neues mehr.
   const live = await start();
   const c = collect(live);
-  const id = await create('Von spw');
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
-  expect(c.patches()[0]?.actors).toEqual({ [id]: ['spw'] });
+  const { gitDir } = await gitDirs(b.root);
+  const inGit = (path: string) => path === gitDir || path.startsWith(`${gitDir}/`);
+  await create('Ref zuerst');
+  fw.flush(inGit);
+  await settle(live);
+  expect(c.patches()).toHaveLength(1);
+  expect(c.patches()[0]?.head).toBe(await revParse(b.root, 'HEAD'));
+  await tick(live);
+  expect(c.patches()).toHaveLength(1);
+
+  const id = await create('Baum zuerst');
+  fw.flush((path) => !inGit(path));
+  await settle(live);
+  expect(c.patches()).toHaveLength(2);
+  expect(c.patches()[1]?.upsert.issues?.map((i) => i.id)).toEqual([id]);
+  await tick(live);
+  expect(c.patches()).toHaveLength(2);
+  expect(live.head).toBe(await revParse(b.root, 'HEAD'));
+});
+
+test('a new comments dir reported after the ref round adds no touch', async () => {
+  // inotify meldet das neue Verzeichnis `comments/` mit; kommt es erst nach der Ref-Runde an,
+  // zählt es nicht noch einmal.
+  const id = await create('Mit Kommentar');
+  const live = await start();
+  const c = collect(live);
+  await writeOp(ctx, { op: 'comment.add', id, body: 'Hallo\n' });
+  const { gitDir } = await gitDirs(b.root);
+  fw.flush((path) => path.startsWith(gitDir));
+  await settle(live);
+  await tick(live);
+  expect(c.patches().map((p) => p.touched)).toEqual([[id]]);
 });
 
 test('actors travel along when a round fails after head moved', async () => {
   const id = await create('Vorher');
-  // Ohne Watcher läuft nur das Sicherheitsnetz: Die Runden sind genau die, die der Test auslöst.
-  const live = await start({ watch: () => ({ close() {} }) });
+  const live = await start({ watch: deaf });
   const c = collect(live);
   const file = join(b.root, issueFile(id));
   const config = join(b.root, BACKLOG_CONFIG);
@@ -168,23 +386,21 @@ test('actors travel along when a round fails after head moved', async () => {
     actor: 'claude-1',
     op: 'issue.edit',
   });
-  await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
-  await live.idle();
+  await safetyNet(live);
   // Die Runde hat den neuen HEAD gesehen, das Neuladen scheiterte an der kaputten Config.
-  const moved = (await git(['rev-parse', 'HEAD'], { cwd: b.root })).stdout.trim();
-  expect(live.head).toBe(moved);
+  expect(live.head).toBe(await revParse(b.root, 'HEAD'));
   expect(c.patches()).toEqual([]);
   // Der Fix-Commit fasst kein Issue an; die Actors des gescheiterten Commits kommen mit.
   await rawCommit(b.root, { files: { [BACKLOG_CONFIG]: good }, actor: 'spw', op: 'config.edit' });
-  await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
+  await safetyNet(live);
+  expect(c.patches()).toHaveLength(1);
   expect(c.patches()[0]?.upsert.issues?.[0]?.title).toBe('Nachher');
   expect(c.patches()[0]?.actors).toEqual({ [id]: ['claude-1'] });
 });
 
 test('actors are cleared after a comparison without a patch', async () => {
   const id = await create('Vorher');
-  const live = await start({ watch: () => ({ close() {} }) });
+  const live = await start({ watch: deaf });
   const c = collect(live);
   const file = join(b.root, issueFile(id));
   const issue = await readFile(file, 'utf8');
@@ -199,126 +415,15 @@ test('actors are cleared after a comparison without a patch', async () => {
     actor: 'claude-1',
     op: 'issue.edit',
   });
-  await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
-  await live.idle();
+  await safetyNet(live);
   // Die Runde hat den neuen HEAD gesehen (und seine Actors gesammelt), aber keinen Patch ergeben.
   expect(live.head).toBe((await stateJson(ctx)).head);
   expect(c.patches()).toEqual([]);
   await writeFile(file, issue.replace('title: Vorher', 'title: Handgemacht'));
-  await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
+  await safetyNet(live);
+  expect(c.patches()).toHaveLength(1);
   expect(c.patches()[0]?.upsert.issues?.[0]?.title).toBe('Handgemacht');
   expect(c.patches()[0]).not.toHaveProperty('actors');
-});
-
-test('a hand edit has no actors', async () => {
-  const id = await create('Vorher');
-  const live = await start();
-  const c = collect(live);
-  const file = join(b.root, issueFile(id));
-  await writeFile(file, (await readFile(file, 'utf8')).replace('title: Vorher', 'title: Nachher'));
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
-  await settle(live);
-  expect(c.patches()[0]).not.toHaveProperty('actors');
-});
-
-test('a deleted issue is a remove', async () => {
-  const id = await create('Weg damit');
-  const live = await start();
-  const c = collect(live);
-  await writeOp(ctx, { op: 'issue.delete', id });
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
-  expect(c.patches()[0]?.remove).toEqual({ issues: [id] });
-});
-
-test('comments and attachments mark the issue touched', async () => {
-  const id = await create('Mit Kommentar');
-  const live = await start();
-  const c = collect(live);
-  await writeOp(ctx, { op: 'comment.add', id, body: 'Hallo\n' });
-  await vi.waitFor(() => expect(c.patches().at(-1)?.touched).toEqual([id]), WAIT);
-  await settle(live);
-  // Ref-Runde und Arbeitsbaum-Runde sehen denselben Kommentar; gemeldet wird er einmal.
-  expect(c.patches()).toHaveLength(1);
-  const before = c.patches().length;
-  await addAttachment(ctx, id, {
-    name: 'a.txt',
-    source: { kind: 'file', fileName: 'a.txt', content: Buffer.from('x') },
-  });
-  await vi.waitFor(() => expect(c.patches().length).toBeGreaterThan(before), WAIT);
-  await settle(live);
-  expect(c.patches()).toHaveLength(before + 1);
-  expect(c.patches().at(-1)?.touched).toEqual([id]);
-});
-
-test('a hand written comment is touched once, backe commit after it adds nothing', async () => {
-  const id = await create('Kommentar per Hand');
-  const live = await start();
-  const c = collect(live);
-  const dir = join(b.root, commentsDir(id));
-  await mkdir(dir, { recursive: true });
-  await writeFile(
-    join(dir, '20261126T100000Z-spw-a1b.md'),
-    '---\nauthor: spw\ncreated: 2026-11-26T10:00:00Z\n---\nPer Hand\n',
-  );
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
-  expect(c.patches()[0]?.touched).toEqual([id]);
-  await settle(live);
-  await commitEdits(ctx, {});
-  await settle(live);
-  expect(c.patches().slice(1)).toEqual([]);
-});
-
-describe('events that name no single file', () => {
-  /** Kommentar per Hand zur Stunde `hour` (UTC), wie ihn `backe commit` danach übernimmt. */
-  async function handComment(id: string, hour: string, tag: string) {
-    const dir = join(b.root, commentsDir(id));
-    await mkdir(dir, { recursive: true });
-    await writeFile(
-      join(dir, `20261126T${hour}0000Z-spw-${tag}.md`),
-      `---\nauthor: spw\ncreated: 2026-11-26T${hour}:00:00Z\n---\nHand\n`,
-    );
-  }
-
-  test.each(['fsevents', 'null'] as const)(
-    'a hand written comment reported like %s is touched once',
-    async (profile) => {
-      // FSEvents nennt nur ein Verzeichnis, manche Systeme gar keinen Namen: Der Kommentar kommt
-      // trotzdem sofort an, nicht erst über das Sicherheitsnetz, und `backe commit` fügt nichts hinzu.
-      const fw = fakeWatcher(profile);
-      const id = await create('Kommentar per Hand');
-      const live = await start({ watch: fw.watch });
-      const c = collect(live);
-      await handComment(id, '10', 'a1b');
-      fw.flush();
-      await settle(live);
-      expect(c.patches().map((p) => p.touched)).toEqual([[id]]);
-      await handComment(id, '11', 'c2d');
-      fw.flush();
-      await settle(live);
-      expect(c.patches().map((p) => p.touched)).toEqual([[id], [id]]);
-      await commitEdits(ctx, {});
-      fw.flush();
-      await settle(live);
-      expect(c.patches()).toHaveLength(2);
-    },
-  );
-
-  test('a new comments dir reported after the ref round adds no touch', async () => {
-    // inotify meldet das neue Verzeichnis `comments/` mit; kommt es erst nach der Ref-Runde an,
-    // zählt es nicht noch einmal.
-    const fw = fakeWatcher('inotify');
-    const id = await create('Mit Kommentar');
-    const live = await start({ watch: fw.watch });
-    const c = collect(live);
-    await writeOp(ctx, { op: 'comment.add', id, body: 'Hallo\n' });
-    const { gitDir } = await gitDirs(b.root);
-    fw.flush((path) => path.startsWith(gitDir));
-    await settle(live);
-    fw.flush();
-    await settle(live);
-    expect(c.patches().map((p) => p.touched)).toEqual([[id]]);
-  });
 });
 
 test('an atomic write reloads by delta, a temp file is no event', async () => {
@@ -328,12 +433,17 @@ test('an atomic write reloads by delta, a temp file is no event', async () => {
   const full = vi.spyOn(snapshotModule, 'loadSnapshot');
   try {
     const file = join(b.root, issueFile(id));
+    const issues = join(b.root, 'issues');
+    // inotify meldet auch die Temp-Datei, über die `writeFileAtomic` schreibt; sie zählt nicht.
+    fw.emit(issues, relative(issues, atomicTempPath(file)));
+    await settle(live);
+    expect(c.patches()).toEqual([]);
     await writeFileAtomic(
       file,
       (await readFile(file, 'utf8')).replace('title: Atomar', 'title: Neu'),
     );
-    await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
-    await settle(live);
+    await tick(live);
+    expect(c.patches()).toHaveLength(1);
     expect(full).not.toHaveBeenCalled();
   } finally {
     full.mockRestore();
@@ -348,13 +458,14 @@ test('a change before the watchers stand is not lost', async () => {
   const live = await start({
     watch: (path, opts, listener) => {
       if (path === b.root) writeFileSync(file, original.replace('title: Vorher', 'title: Fenster'));
-      return fsWatch(path, opts, listener);
+      return fw.watch(path, opts, listener);
     },
   });
-  await settle(live);
+  await tick(live);
   const c = collect(live);
   await writeFile(file, original);
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
+  await tick(live);
+  expect(c.patches()).toHaveLength(1);
   expect(c.patches()[0]?.upsert.issues?.[0]?.title).toBe('Vorher');
 });
 
@@ -387,166 +498,63 @@ test('the initial sync state is read after HEAD', async () => {
 
 test('a failed start leaves no watcher or timer', async () => {
   await writeFile(join(b.root, BACKLOG_CONFIG), '{ kaputt');
-  const handles: { closed: boolean }[] = [];
-  const watch: WatchFn = () => {
-    const h = { closed: false };
-    handles.push(h);
-    return {
-      close() {
-        h.closed = true;
-      },
-    };
-  };
-  await expect(LiveBacklog.start(ctx, { boot: BOOT, rev: 0, deps: { watch } })).rejects.toThrow();
-  expect(handles.length).toBeGreaterThan(0);
-  expect(handles.every((h) => h.closed)).toBe(true);
+  await expect(
+    LiveBacklog.start(ctx, { boot: BOOT, rev: 0, deps: { watch: fw.watch } }),
+  ).rejects.toThrow();
+  expect(fw.watches.length).toBeGreaterThan(0);
+  expect(fw.watches.every((w) => w.closed)).toBe(true);
   expect(vi.getTimerCount()).toBe(0);
 });
 
-test('a broken hand edit becomes a problem, the fix a patch', async () => {
-  const id = await create('Heil');
+test.each([
+  ['its own name', 'packed-refs'],
+  ['the name of the git dir', 'git dir'],
+  ['no name', null],
+])('packed refs still move the head when the git dir reports %s', async (_what, reported) => {
+  // Nur das Git-Dir meldet sich, wenn `pack-refs` den Ref aus `refs/heads/` nimmt.
   const live = await start();
-  const c = collect(live);
-  const file = join(b.root, issueFile(id));
-  const good = await readFile(file, 'utf8');
-  await writeFile(file, '---\ntitle: [kaputt\n---\n');
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
-  expect(c.patches()[0]?.remove).toEqual({ issues: [id] });
-  expect(c.patches()[0]?.problems?.map((p) => p.path)).toEqual([issueFile(id)]);
-  await writeFile(file, good.replace('title: Heil', 'title: Wieder heil'));
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(2), WAIT);
-  expect(c.patches()[1]?.upsert.issues?.[0]?.title).toBe('Wieder heil');
-  expect(c.patches()[1]?.problems).toEqual([]);
-});
-
-test('a broken config keeps the last state until it is fixed', async () => {
-  const id = await create('Bleibt');
-  const live = await start();
-  const c = collect(live);
-  const config = join(b.root, BACKLOG_CONFIG);
-  const good = await readFile(config, 'utf8');
-  await writeFile(config, '{ kaputt');
-  const file = join(b.root, issueFile(id));
-  await writeFile(file, (await readFile(file, 'utf8')).replace('title: Bleibt', 'title: Neu'));
-  await settle(live);
-  expect(c.patches()).toEqual([]);
-  await writeFile(config, good);
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
-  expect(c.patches()[0]?.upsert.issues?.[0]?.title).toBe('Neu');
-});
-
-test(
-  'patches converge to a fresh state after a burst',
-  async () => {
-    await create('Vorlauf');
-    const live = await start();
-    const initial = await stateJson(ctx, live.rev);
-    const c = collect(live);
-    const ids: string[] = [];
-    for (let i = 0; i < 50; i++) {
-      if (i % 3 === 2) {
-        await writeOp(ctx, {
-          op: 'issue.move',
-          id: ids.at(-1) as string,
-          from: 'todo',
-          to: 'in_progress',
-        });
-      } else {
-        ids.push(await create(`Burst ${i}`));
-      }
-    }
-    await git(['pack-refs', '--all'], { cwd: b.root });
-    await vi.waitFor(() => expect(c.patches().at(-1)?.head).toBe(live.head), WAIT);
-    await settle(live);
-    const fresh = await stateJson(ctx);
-    expect(live.head).toBe(fresh.head);
-    const folded = c.patches().reduce(applyPatch, initial);
-    expect(comparable(folded)).toEqual(comparable(fresh));
-  },
-  BURST_TIMEOUT,
-);
-
-test('packed refs still move the head', async () => {
-  // Nur `packed-refs` im Git-Dir meldet sich; Ref-Verzeichnis, `HEAD.lock` und Arbeitsbaum sind stumm.
-  const live = await start({
-    watch: (path, opts, listener) => {
-      if (path.endsWith(join('refs', 'heads')) || path === b.root) return { close() {} };
-      return fsWatch(path, opts, (name) => {
-        if (name?.startsWith('packed-refs')) listener(name);
-      });
-    },
-  });
+  fw.mute(() => true);
   const c = collect(live);
   await create('Gepackt');
-  await settle(live);
+  await tick(live);
   expect(c.patches()).toEqual([]);
   await git(['pack-refs', '--all'], { cwd: b.root });
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
+  const { commonDir } = await gitDirs(b.root);
+  fw.emit(commonDir, reported === 'git dir' ? basename(commonDir) : reported);
+  await settle(live);
+  expect(c.patches()).toHaveLength(1);
+  expect(live.head).toBe(await revParse(b.root, 'HEAD'));
 });
 
 test('the safety net catches a lost event', async () => {
-  const live = await start({ watch: () => ({ close() {} }) });
+  const live = await start({ watch: deaf });
   const c = collect(live);
   await create('Verloren');
   await settle(live);
   expect(c.patches()).toEqual([]);
-  await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
+  await safetyNet(live);
+  expect(c.patches()).toHaveLength(1);
 });
 
 test('the safety net catches a lost hand edit and its revert', async () => {
   const id = await create('Original');
-  const live = await start({ watch: () => ({ close() {} }) });
+  const live = await start({ watch: deaf });
   const c = collect(live);
   const file = join(b.root, issueFile(id));
   const original = await readFile(file, 'utf8');
   await writeFile(file, original.replace('title: Original', 'title: Verloren'));
   await settle(live);
   expect(c.patches()).toEqual([]);
-  await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
+  await safetyNet(live);
+  expect(c.patches()).toHaveLength(1);
   expect(c.patches()[0]?.upsert.issues?.[0]?.title).toBe('Verloren');
   await writeFile(file, original);
-  await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(2), WAIT);
+  await safetyNet(live);
+  expect(c.patches()).toHaveLength(2);
   expect(c.patches()[1]?.upsert.issues?.[0]?.title).toBe('Original');
   // Ohne Änderung findet das Netz nichts.
-  await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
-  await settle(live);
+  await safetyNet(live);
   expect(c.patches()).toHaveLength(2);
-});
-
-test('sync state changes become sync events', async () => {
-  const live = await start();
-  const c = collect(live);
-  await writeSyncState(b.root, {
-    last_error: { code: 'sync', message: 'Netz weg', at: '2026-11-26T10:00:00Z' },
-  });
-  const syncs = () => c.events.filter((e) => e.event === 'sync');
-  await vi.waitFor(() => expect(syncs()).toHaveLength(2), WAIT);
-  expect(c.events.at(-1)?.data).toMatchObject({ last_error: { message: 'Netz weg' } });
-  const count = c.events.length;
-  await writeSyncState(b.root, {
-    last_error: { code: 'sync', message: 'Netz weg', at: '2026-11-26T10:00:00Z' },
-  });
-  await settle(live);
-  expect(c.events).toHaveLength(count);
-});
-
-test('reconnect with a last event id replays missed patches', async () => {
-  const live = await start();
-  const first = collect(live);
-  await create('Eins');
-  await vi.waitFor(() => expect(first.patches()).toHaveLength(1), WAIT);
-  first.off();
-  await create('Zwei');
-  await create('Drei');
-  await vi.waitFor(() => expect(live.rev).toBeGreaterThanOrEqual(3), WAIT);
-  await settle(live);
-  const again = collect(live, `${BOOT}:1`);
-  expect(again.names()).toEqual(['hello', 'patch', 'patch', 'sync']);
-  expect(again.patches().map((p) => p.rev)).toEqual([2, 3]);
-  expect(collect(live, `${BOOT}:3`).names()).toEqual(['hello', 'sync']);
 });
 
 test('a foreign, future or broken event id gets reset', async () => {
@@ -558,27 +566,18 @@ test('a foreign, future or broken event id gets reset', async () => {
 
 test('an event id outside the buffer gets reset', async () => {
   const id = await create('Oft');
-  // Der Test meldet jede Änderung selbst: Es geht um den Puffer, nicht um `fs.watch`. Echte
-  // Ereignisse kämen auf macOS (FSEvents) mit Latenz, und 201 Runden sprengten die Frist.
-  let tree: ((name: string | null) => void) | undefined;
-  const live = await start({
-    rev: 5,
-    watch: (path, _opts, listener) => {
-      if (path === join(b.root, 'issues')) tree = listener;
-      return { close() {} };
-    },
-  });
-  expect(tree).toBeDefined();
+  const live = await start({ rev: 5 });
   expect(collect(live, `${BOOT}:4`).names()).toEqual(['hello', 'reset', 'sync']);
   const c = collect(live);
+  const issues = join(b.root, 'issues');
   const file = join(b.root, issueFile(id));
   const text = await readFile(file, 'utf8');
   for (let i = 0; i <= LIVE_TIMING.buffer; i++) {
     await writeFile(file, text.replace('title: Oft', `title: Oft ${i}`));
-    tree?.(relative('issues', issueFile(id)));
+    fw.emit(issues, relative(issues, file));
     await settle(live);
-    await vi.waitFor(() => expect(c.patches()).toHaveLength(i + 1), WAIT);
   }
+  expect(c.patches()).toHaveLength(LIVE_TIMING.buffer + 1);
   expect(live.rev).toBe(5 + LIVE_TIMING.buffer + 1);
   expect(collect(live, `${BOOT}:5`).names()).toEqual(['hello', 'reset', 'sync']);
   expect(collect(live, `${BOOT}:6`).patches()).toHaveLength(LIVE_TIMING.buffer);
@@ -598,8 +597,9 @@ test('the watcher ends 30 s after the last subscriber', async () => {
   await vi.advanceTimersByTimeAsync(LIVE_TIMING.lingerMs);
   expect(onStop).toHaveBeenCalledWith(3);
   expect(live.stopped).toBe(true);
+  expect(fw.watches.every((w) => w.closed)).toBe(true);
   await create('Niemand schaut');
-  await settle(live);
+  await tick(live);
   expect(live.rev).toBe(3);
 });
 
@@ -610,7 +610,8 @@ test('a throwing subscriber loses only itself', async () => {
   });
   const c = collect(live);
   await create('Eins');
-  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
+  await tick(live);
+  expect(c.patches()).toHaveLength(1);
   expect(live.subscribers()).toBe(1);
 });
 
@@ -618,15 +619,26 @@ test('periodic sync runs at pull_interval while watched', async () => {
   b = await testBacklog({ remote: true });
   await setPullInterval(b, 60);
   ctx = await b.context();
-  const spawn = vi.fn();
-  const live = await LiveBacklog.start(ctx, { boot: BOOT, rev: 0, deps: { sync: { spawn } } });
-  running.push(live);
-  collect(live);
-  await vi.advanceTimersByTimeAsync(60_000);
-  await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1), WAIT);
-  await live.stop();
-  await vi.advanceTimersByTimeAsync(120_000);
-  expect(spawn).toHaveBeenCalledTimes(1);
+  const scheduled = vi.spyOn(backgroundModule, 'scheduleSync');
+  try {
+    const spawn = vi.fn();
+    const live = await LiveBacklog.start(ctx, {
+      boot: BOOT,
+      rev: 0,
+      deps: { watch: fw.watch, sync: { spawn } },
+    });
+    running.push(live);
+    collect(live);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(scheduled).toHaveBeenCalledTimes(1);
+    expect(await scheduled.mock.results[0]?.value).toBe(true);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    await live.stop();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(spawn).toHaveBeenCalledTimes(1);
+  } finally {
+    scheduled.mockRestore();
+  }
 });
 
 describe('neighbours', () => {
@@ -677,17 +689,34 @@ describe('neighbours', () => {
   }
 
   async function startWith(c: ResolvedContext, deps: LiveDeps): Promise<LiveBacklog> {
-    const live = await LiveBacklog.start(c, { boot: BOOT, rev: 0, deps });
+    const live = await LiveBacklog.start(c, {
+      boot: BOOT,
+      rev: 0,
+      deps: { watch: fw.watch, ...deps },
+    });
     running.push(live);
     return live;
   }
 
-  /** Spult je Versuch die Nachbar-Entprellung vor, bis `check` gilt. */
-  const advancing = (check: () => void | Promise<void>) =>
-    vi.waitFor(async () => {
-      await vi.advanceTimersByTimeAsync(LIVE_TIMING.neighborMs);
-      await check();
-    }, WAIT);
+  /**
+   * Meldet die Änderungen, lässt die Nachbar-Entprellung ablaufen und wartet Blick und
+   * Sync-Prüfung ab, dann die in-process gestarteten Syncs; danach meldet es, was die in der eigenen
+   * Arbeitskopie bewegt haben.
+   */
+  async function quiet(live: LiveBacklog): Promise<void> {
+    fw.flush();
+    await vi.advanceTimersByTimeAsync(LIVE_TIMING.neighborMs);
+    await live.idle();
+    await Promise.all(syncs);
+    await tick(live);
+  }
+
+  /** Faltet die Patches auf den Anfangsstand und vergleicht mit einem frischen Stand. */
+  async function converged(live: LiveBacklog, initial: StateJson, c: ReturnType<typeof collect>) {
+    const fresh = await stateJson(ctx);
+    expect(live.head).toBe(fresh.head);
+    expect(comparable(c.patches().reduce(applyPatch, initial))).toEqual(comparable(fresh));
+  }
 
   test('a neighbour write arrives as a patch without waiting for pull_interval', async () => {
     const { agentCtx } = await withAgent(3600);
@@ -695,9 +724,7 @@ describe('neighbours', () => {
     const live = await startWith(ctx, { sync: { spawn } });
     const c = collect(live);
     const id = await agentPush(agentCtx);
-    await advancing(() => expect(c.patches()).toHaveLength(1));
-    await Promise.all(syncs);
-    await settle(live);
+    await quiet(live);
     const [patch] = c.patches();
     expect(c.patches()).toHaveLength(1);
     expect(patch?.upsert.issues?.map((i) => [i.id, i.title])).toEqual([[id, 'Vom Agent']]);
@@ -713,13 +740,13 @@ describe('neighbours', () => {
     const live = await startWith(ctx, { sync: { spawn } });
     const c = collect(live);
     // Schon der erste Blick der Nachbar-Watch beim Start meldet den Vorsprung, ohne Entprellung.
-    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1), WAIT);
+    await live.idle();
+    expect(spawn).toHaveBeenCalledTimes(1);
     expect(c.patches()).toEqual([]);
 
     // Der Sync, den `spawn` gestartet hätte, läuft hier in-process.
     await runBackground(ctx, { spawn: () => {} });
-    await advancing(() => expect(c.patches()).toHaveLength(1));
-    await settle(live);
+    await quiet(live);
     const [patch] = c.patches();
     expect(c.patches()).toHaveLength(1);
     expect(patch?.upsert.issues?.map((i) => [i.id, i.title])).toEqual([[id, 'Vom Agent']]);
@@ -735,105 +762,62 @@ describe('neighbours', () => {
       const spawn = vi.fn();
       const live = await startWith(manual(ctx), { sync: { spawn } });
       await agentPush(agentCtx);
+      await quiet(live);
       // Die Bewegung kommt an; ob sie einen Sync startet, entscheidet `scheduleSync`.
-      await advancing(() =>
-        expect(scheduled).toHaveBeenCalledWith(expect.anything(), 'periodic', expect.anything()),
-      );
+      expect(scheduled).toHaveBeenCalledWith(expect.anything(), 'periodic', expect.anything());
       expect(await scheduled.mock.results[0]?.value).toBe(false);
-      await vi.advanceTimersByTimeAsync(LIVE_TIMING.neighborMs);
-      await settle(live);
       expect(spawn).not.toHaveBeenCalled();
     } finally {
       scheduled.mockRestore();
     }
   });
 
-  test(
-    'neighbour pushes converge to a fresh state after a burst',
-    async () => {
+  test.each(PROFILES)(
+    'neighbour pushes converge to a fresh state after a burst, reported like %s',
+    async (profile) => {
+      fw = fakeWatcher(profile);
       const { agentCtx } = await withAgent(3600);
       const agentWc = agentCtx.backlog.workingCopy as string;
       const spawn = inProcess(() => ctx);
       const live = await startWith(ctx, { sync: { spawn } });
       const initial = await stateJson(ctx, live.rev);
       const c = collect(live);
-      /** Ruhephasen von `neighborMs`, die der Test schafft; je Phase höchstens eine Runde. */
-      let phases = 0;
-      const quiet = (check: () => void | Promise<void>) =>
-        vi.waitFor(async () => {
-          phases += 1;
-          await vi.advanceTimersByTimeAsync(LIVE_TIMING.neighborMs);
-          await check();
-        }, WAIT);
-      const ids: string[] = [];
-      let pushes = 0;
-      for (let i = 0; i < 30; i++) {
-        if (i % 3 !== 2) {
-          ids.push(
-            await writeOp(agentCtx, { op: 'issue.create', title: `Burst ${i}`, state: 'todo' }),
-          );
-          continue;
-        }
-        await writeOp(agentCtx, {
-          op: 'issue.move',
-          id: ids.at(-1) as string,
-          from: 'todo',
-          to: 'in_progress',
+      // Je Phase zwei Pushes, ohne dass dazwischen ein Ereignis ankommt: Der Blick danach sieht nur
+      // den letzten Stand und startet genau einen Sync. Gepusht wird direkt per `git push`, der Ref
+      // im Hub bewegt sich wie nach einem Sync des Agenten.
+      for (let phase = 1; phase <= 3; phase++) {
+        const id = await writeOp(agentCtx, {
+          op: 'issue.create',
+          title: `Burst ${phase}`,
+          state: 'todo',
         });
-        await syncNow(agentCtx, { spawn: () => {} });
-        pushes += 1;
-        // Jeder Push ist eine eigene Runde: genau ein Sync, dann holt spw den Stand und sendet ihn.
-        await quiet(() => expect(spawn).toHaveBeenCalledTimes(pushes));
-        await Promise.all(syncs);
-        const agentHead = await revParse(agentWc, 'HEAD');
-        await quiet(() => {
-          expect(live.head).toBe(agentHead);
-          expect(c.patches().at(-1)?.head).toBe(agentHead);
-        });
-        if (pushes === 5) {
-          // Zwischen zwei Runden: Der Hub packt seine Refs, der Wert bleibt, ein Sync folgt nicht.
-          // Eine eigene Ruhephase, damit ein Sync daraus nicht in der Entprellung des nächsten
-          // Pushes verschwindet.
+        await git(['push', '-q', 'origin', 'HEAD:main'], { cwd: agentWc });
+        await writeOp(agentCtx, { op: 'issue.move', id, from: 'todo', to: 'in_progress' });
+        await git(['push', '-q', 'origin', 'HEAD:main'], { cwd: agentWc });
+        await quiet(live);
+        expect(spawn).toHaveBeenCalledTimes(phase);
+        expect(live.head).toBe(await revParse(agentWc, 'HEAD'));
+        if (phase === 1) {
+          // Zwischen zwei Phasen packt der Hub seine Refs: Der Wert bleibt, ein Sync folgt nicht.
           await git(['pack-refs', '--all'], { cwd: join(backlogDir(), 'hub.git') });
-          await quiet(() => expect(spawn).toHaveBeenCalledTimes(pushes));
+          await quiet(live);
+          expect(spawn).toHaveBeenCalledTimes(phase);
         }
       }
-      await quiet(() => {});
-      await Promise.all(syncs);
-      await settle(live);
-      const fresh = await stateJson(ctx);
-      expect(live.head).toBe(fresh.head);
-      expect(live.head).toBe(await revParse(agentWc, 'HEAD'));
-      expect(c.patches().length).toBeGreaterThan(1);
-      const folded = c.patches().reduce(applyPatch, initial);
-      expect(comparable(folded)).toEqual(comparable(fresh));
-      expect(spawn).toHaveBeenCalledTimes(pushes);
-      expect(spawn.mock.calls.length).toBeLessThanOrEqual(phases);
+      expect(c.patches()).toHaveLength(3);
+      await converged(live, initial, c);
     },
-    BURST_TIMEOUT,
   );
-
-  /** Faltet die Patches auf den Anfangsstand und vergleicht mit einem frischen Stand. */
-  async function converged(live: LiveBacklog, initial: StateJson, c: ReturnType<typeof collect>) {
-    await Promise.all(syncs);
-    await settle(live);
-    const fresh = await stateJson(ctx);
-    expect(live.head).toBe(fresh.head);
-    expect(comparable(c.patches().reduce(applyPatch, initial))).toEqual(comparable(fresh));
-  }
 
   test('two neighbour pushes before a quiet phase start one sync', async () => {
     const { agentCtx } = await withAgent(3600);
-    const agentWc = agentCtx.backlog.workingCopy as string;
     const spawn = inProcess(() => ctx);
     const live = await startWith(ctx, { sync: { spawn } });
     const initial = await stateJson(ctx, live.rev);
     const c = collect(live);
     // Beide Pushes sind fertig, bevor die Zeit läuft: Der erste Blick sieht schon den zweiten Stand.
     const ids = [await agentPush(agentCtx, 'Erster'), await agentPush(agentCtx, 'Zweiter')];
-    await advancing(() => expect(spawn).toHaveBeenCalledTimes(1));
-    const agentHead = await revParse(agentWc, 'HEAD');
-    await advancing(() => expect(live.head).toBe(agentHead));
+    await quiet(live);
     await converged(live, initial, c);
     const arrived = c.patches().flatMap((p) => p.upsert.issues?.map((i) => i.id) ?? []);
     expect(arrived).toEqual(expect.arrayContaining(ids));
@@ -842,7 +826,6 @@ describe('neighbours', () => {
 
   test('a neighbour push during a running sync is fetched by its dirty re-run', async () => {
     const { agentCtx } = await withAgent(3600);
-    const agentWc = agentCtx.backlog.workingCopy as string;
     let fetched!: () => void;
     const paused = new Promise<void>((resolve) => {
       fetched = resolve;
@@ -872,16 +855,21 @@ describe('neighbours', () => {
     const c = collect(live);
 
     await agentPush(agentCtx, 'Vor dem Sync');
-    await advancing(() => expect(spawn).toHaveBeenCalledTimes(1));
+    fw.flush();
+    await vi.advanceTimersByTimeAsync(LIVE_TIMING.neighborMs);
+    await live.idle();
+    expect(spawn).toHaveBeenCalledTimes(1);
     await paused;
     await agentPush(agentCtx, 'Während des Syncs');
-    await advancing(() => expect(spawn).toHaveBeenCalledTimes(2));
+    fw.flush();
+    await vi.advanceTimersByTimeAsync(LIVE_TIMING.neighborMs);
+    await live.idle();
+    expect(spawn).toHaveBeenCalledTimes(2);
     expect(await runs[1]).toEqual({ rounds: 0, deferred: true });
 
     release();
     expect(await runs[0]).toEqual({ rounds: 2, deferred: false });
-    const agentHead = await revParse(agentWc, 'HEAD');
-    await advancing(() => expect(live.head).toBe(agentHead));
+    await quiet(live);
     await converged(live, initial, c);
     expect(spawn).toHaveBeenCalledTimes(2);
   });
@@ -893,19 +881,29 @@ describe('neighbours', () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
+    let checking!: () => void;
+    const checked = new Promise<void>((resolve) => {
+      checking = resolve;
+    });
     // Der Vorsprung des Agenten meldet sich schon beim Start; die Prüfung dazu hängt am Tor.
-    const scheduled = vi
-      .spyOn(scheduleModule, 'scheduleSync')
-      .mockImplementation(() => gate.then(() => false));
-    const load = vi
-      .spyOn(snapshotModule, 'loadSnapshot')
-      .mockRejectedValueOnce(new Error('kaputt'));
+    const scheduled = vi.spyOn(scheduleModule, 'scheduleSync').mockImplementation(() => {
+      checking();
+      return gate.then(() => false);
+    });
+    let loading!: () => void;
+    const loaded = new Promise<void>((resolve) => {
+      loading = resolve;
+    });
+    const load = vi.spyOn(snapshotModule, 'loadSnapshot').mockImplementationOnce(async () => {
+      loading();
+      throw new Error('kaputt');
+    });
     try {
       let settled = false;
       const started = LiveBacklog.start(ctx, {
         boot: BOOT,
         rev: 0,
-        deps: { sync: { spawn: vi.fn() } },
+        deps: { watch: fw.watch, sync: { spawn: vi.fn() } },
       });
       const outcome = started.then(
         () => 'resolved',
@@ -914,8 +912,10 @@ describe('neighbours', () => {
           return err;
         },
       );
-      await vi.waitFor(() => expect(load).toHaveBeenCalled(), WAIT);
+      await checked;
       expect(scheduled).toHaveBeenCalledTimes(1);
+      // Die Prüfung hängt; der Start lädt weiter, scheitert am Snapshot und wartet dann auf sie.
+      await loaded;
       await new Promise((resolve) => setImmediate(resolve));
       expect(settled).toBe(false);
 
@@ -961,40 +961,26 @@ describe('neighbours', () => {
     const dir = backlogDir();
     const spawn = vi.fn();
     // Alles unter dem Backlog-Verzeichnis bleibt stumm: Nachbarn, Hub und die eigene Arbeitskopie.
-    const watch: WatchFn = (path, opts, listener) =>
-      path === dir || path.startsWith(`${dir}${sep}`)
-        ? { close() {} }
-        : fsWatch(path, opts, listener);
-    const live = await startWith(ctx, { watch, sync: { spawn } });
+    fw.mute((path) => path === dir || path.startsWith(`${dir}/`));
+    const live = await startWith(ctx, { sync: { spawn } });
     await agentPush(agentCtx);
-    await vi.advanceTimersByTimeAsync(LIVE_TIMING.neighborMs);
-    await settle(live);
+    await quiet(live);
     expect(spawn).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
-    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1), WAIT);
+    await safetyNet(live);
+    expect(spawn).toHaveBeenCalledTimes(1);
   });
 
   test('a stopped watcher starts no neighbour sync', async () => {
     const { agentCtx } = await withAgent();
     const spawn = vi.fn();
-    const hubRefs = join(backlogDir(), 'hub.git', 'refs');
-    const hubEvents: string[] = [];
-    // Meldet, wann ein Ereignis aus den Refs des Hubs bei der Nachbar-Watch angekommen ist.
-    const watch: WatchFn = (path, opts, listener) =>
-      fsWatch(path, opts, (name) => {
-        listener(name);
-        if (path === hubRefs && name !== null && slashed(name).startsWith('heads/')) {
-          hubEvents.push(name);
-        }
-      });
     const scheduled = vi.spyOn(scheduleModule, 'scheduleSync');
     try {
-      const live = await startWith(ctx, { watch, sync: { spawn } });
+      const live = await startWith(ctx, { sync: { spawn } });
       collect(live);
       const timers = vi.getTimerCount();
       await agentPush(agentCtx);
-      // Der Push ist bei der Nachbar-Watch angekommen; ihre Entprellung läuft, wenn der Watcher endet.
-      await vi.waitFor(() => expect(hubEvents.length).toBeGreaterThan(0), WAIT);
+      // Der Push kommt bei der Nachbar-Watch an; ihre Entprellung läuft, wenn der Watcher endet.
+      fw.flush();
       expect(vi.getTimerCount()).toBe(timers + 1);
       await live.stop();
       expect(vi.getTimerCount()).toBe(0);
@@ -1022,7 +1008,8 @@ describe('neighbours', () => {
     });
     try {
       await agentPush(agentCtx);
-      await advancing(() => expect(stopped).toBeDefined());
+      await quiet(live);
+      expect(stopped).toBeDefined();
       await stopped;
       // Fällig war der Start; erst der beendete Watcher hält ihn zurück.
       expect(await started).toBe(true);
@@ -1034,8 +1021,10 @@ describe('neighbours', () => {
 });
 
 describe('LiveHub', () => {
+  const hubOf = () => new LiveHub({ boot: BOOT, deps: { watch: fw.watch } });
+
   test('acquire shares one watcher, a restart continues after the last rev', async () => {
-    const hub = new LiveHub({ boot: BOOT });
+    const hub = hubOf();
     expect(hub.boot).toBe(BOOT);
     expect(new LiveHub().boot).toMatch(/^[0-9a-f]{8}$/);
     const ctxFn = () => b.context();
@@ -1043,22 +1032,46 @@ describe('LiveHub', () => {
     expect(l1).toBe(l2);
     const c = collect(l1);
     await create('Eins');
-    await vi.waitFor(() => expect(hub.revOf('acme')).toBe(1), WAIT);
+    await tick(l1);
+    expect(hub.revOf('acme')).toBe(1);
     c.off();
     // Eine Runde läuft, wenn die Frist abläuft: Der Watcher verlässt den Hub trotzdem sofort.
-    await create('Während des Endes');
-    await vi.advanceTimersByTimeAsync(LIVE_TIMING.lingerMs);
-    expect(l1.stopped).toBe(true);
-    const l3 = await hub.acquire('acme', ctxFn);
-    expect(l3).not.toBe(l1);
-    expect(l3.rev).toBe(2);
-    expect(hub.revOf('acme')).toBe(2);
-    expect(collect(l3, `${BOOT}:1`).names()).toEqual(['hello', 'reset', 'sync']);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const real = actorsModule.issueActors;
+    let entered!: () => void;
+    const inRound = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const held = vi.spyOn(actorsModule, 'issueActors').mockImplementationOnce(async (...args) => {
+      entered();
+      await gate;
+      return real(...args);
+    });
+    try {
+      await create('Während des Endes');
+      fw.flush();
+      await inRound;
+      await vi.advanceTimersByTimeAsync(LIVE_TIMING.lingerMs);
+      expect(l1.stopped).toBe(true);
+      const l3 = await hub.acquire('acme', ctxFn);
+      expect(l3).not.toBe(l1);
+      expect(l3.rev).toBe(2);
+      expect(hub.revOf('acme')).toBe(2);
+      expect(collect(l3, `${BOOT}:1`).names()).toEqual(['hello', 'reset', 'sync']);
+    } finally {
+      release();
+      held.mockRestore();
+    }
+    await l1.idle();
+    expect(l1.rev).toBe(1);
     await hub.close();
   });
 
   test('revOf is 0 for an unknown backlog, a failed start is not kept', async () => {
-    const hub = new LiveHub({ boot: BOOT });
+    const hub = hubOf();
     expect(hub.revOf('acme')).toBe(0);
     await expect(
       hub.acquire('acme', () => Promise.reject(new Error('kein Kontext'))),
@@ -1069,12 +1082,12 @@ describe('LiveHub', () => {
   });
 
   test('a watcher started after close stops at once', async () => {
-    const hub = new LiveHub({ boot: BOOT });
+    const hub = hubOf();
     await hub.close();
     const live = await hub.acquire('acme', () => b.context());
     collect(live);
     await create('Zu spät');
-    await settle(live);
+    await tick(live);
     expect(live.rev).toBe(0);
     expect(live.subscribers()).toBe(1);
   });
