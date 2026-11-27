@@ -20,10 +20,16 @@ import {
   type Viewport,
 } from '@xyflow/react';
 import { type CSSProperties, useEffect, useMemo, useRef } from 'react';
-import type { DepEdgeKind, DepGraph as Graph } from '../../app/dep-graph.ts';
+import type { DepEdgeKind, DepNode, DepGraph as Graph } from '../../app/dep-graph.ts';
 import { useResolvedTheme } from '../../lib/use-resolved-theme.ts';
 import { m } from '../../views/deps.messages.ts';
-import { DepIssueNode, DepMoreNode, type IssueFlowNode, type MoreFlowNode } from './DepNode.tsx';
+import {
+  DepIssueNode,
+  DepMoreNode,
+  type IssueFlowNode,
+  type IssueNodeData,
+  type MoreFlowNode,
+} from './DepNode.tsx';
 import { DEP_MORE_ID, DEP_NODE_HEIGHT, DEP_NODE_WIDTH, layoutDeps } from './dep-layout.ts';
 
 // Außerhalb der Komponente: xyflow warnt, wenn sich `nodeTypes` je Render ändert.
@@ -164,6 +170,34 @@ function StartView(props: { graphKey: string; positions: Positions; centre: stri
   return null;
 }
 
+type FlowNode = IssueFlowNode | MoreFlowNode;
+type Point = { x: number; y: number };
+
+/**
+ * Darf das Knotenobjekt der letzten Runde bleiben? Nur dann behält xyflow seinen internen Knoten
+ * und rendert ihn nicht neu. Das Issue zählt nach Identität: Der Store hält sie für unveränderte
+ * Issues, ein Patch ersetzt nur die Objekte der geänderten.
+ */
+function keeps(
+  old: FlowNode | undefined,
+  node: DepNode,
+  position: Point,
+  data: Omit<IssueNodeData, 'node'>,
+): old is IssueFlowNode {
+  if (old?.type !== 'issue' || old.position !== position) return false;
+  const d = old.data;
+  return (
+    d.node.issue === node.issue &&
+    d.node.role === node.role &&
+    d.node.open === node.open &&
+    d.node.hidden === node.hidden &&
+    d.node.expanded === node.expanded &&
+    d.more === data.more &&
+    d.backlog === data.backlog &&
+    d.onToggle === data.onToggle
+  );
+}
+
 function Legend({ parents }: { parents: boolean }) {
   const kinds: DepEdgeKind[] = parents
     ? ['depends_on', 'blocked_by', 'parent']
@@ -198,7 +232,7 @@ export function DepGraph(props: {
   backlog: string;
   /**
    * Klappt einen Knoten auf oder zu. Muss stabil sein (etwa per `useCallback`): Ein neuer
-   * Callback baut alle Knotenobjekte neu.
+   * Callback baut alle Knotenobjekte neu, und xyflow rendert jeden Knoten neu.
    */
   onToggle: (id: string) => void;
 }) {
@@ -211,27 +245,45 @@ export function DepGraph(props: {
   // biome-ignore lint/correctness/useExhaustiveDependencies: `graph.key` ist der Auslöser, nicht `graph`.
   const positions = useMemo(() => layoutDeps(graph), [graph.key]);
 
+  // Knotenobjekte der letzten Runde je ID: `depGraph` baut bei jedem Patch alle `DepNode`s neu,
+  // auch für Issues, die er nicht berührt. Ein unverändertes Knotenobjekt bleibt, sonst renderte
+  // xyflow bei jedem Patch alle (bis zu 150) Knoten neu.
+  const previous = useRef<ReadonlyMap<string, FlowNode>>(new Map());
   const nodes = useMemo(() => {
     const at = (id: string) => positions.get(id) ?? { x: 0, y: 0 };
-    const out: (IssueFlowNode | MoreFlowNode)[] = graph.nodes.map((node) => ({
-      id: node.id,
-      type: 'issue',
-      position: at(node.id),
-      ...SIZE,
-      handles: HANDLES,
-      domAttributes: NO_ROLE_DESCRIPTION,
-      data: { node, backlog, more: graph.more, onToggle },
-    }));
-    if (graph.more > 0) {
-      out.push({
-        id: DEP_MORE_ID,
-        type: 'more',
-        position: at(DEP_MORE_ID),
+    const last = previous.current;
+    const data = { backlog, more: graph.more, onToggle };
+    const out: FlowNode[] = graph.nodes.map((node) => {
+      const position = at(node.id);
+      const old = last.get(node.id);
+      if (keeps(old, node, position, data)) return old;
+      return {
+        id: node.id,
+        type: 'issue',
+        position,
         ...SIZE,
+        handles: HANDLES,
         domAttributes: NO_ROLE_DESCRIPTION,
-        data: { count: graph.more },
-      });
+        data: { node, ...data },
+      };
+    });
+    if (graph.more > 0) {
+      const position = at(DEP_MORE_ID);
+      const old = last.get(DEP_MORE_ID);
+      out.push(
+        old?.type === 'more' && old.position === position && old.data.count === graph.more
+          ? old
+          : {
+              id: DEP_MORE_ID,
+              type: 'more',
+              position,
+              ...SIZE,
+              domAttributes: NO_ROLE_DESCRIPTION,
+              data: { count: graph.more },
+            },
+      );
     }
+    previous.current = new Map(out.map((n) => [n.id, n]));
     return out;
   }, [graph, positions, backlog, onToggle]);
 

@@ -15,6 +15,17 @@ vi.mock('./dep-layout.ts', async (original) => {
   return { ...mod, layoutDeps: vi.fn(mod.layoutDeps) };
 });
 
+/** Renders je Issue-Knoten, gezählt an der Komponente, die xyflow je Knoten aufruft. */
+const renders = vi.hoisted(() => new Map<string, number>());
+vi.mock('./DepNode.tsx', async (original) => {
+  const mod = await original<typeof import('./DepNode.tsx')>();
+  function CountingIssueNode(props: Parameters<typeof mod.DepIssueNode>[0]) {
+    renders.set(props.id, (renders.get(props.id) ?? 0) + 1);
+    return <mod.DepIssueNode {...props} />;
+  }
+  return { ...mod, DepIssueNode: CountingIssueNode };
+});
+
 type Issue = ReturnType<typeof testIssue>;
 
 let uninstall: () => void;
@@ -370,6 +381,33 @@ test('a growing collector updates its count and keeps layout and view', async ()
   expect(nodeEl(container, 'more').textContent).toBe(m.more(3));
   expect(layoutDeps).toHaveBeenCalledTimes(1);
   expect(viewport(container)).toBe(view);
+});
+
+test('a patch re-renders only the nodes whose issue changed', async () => {
+  // Ein Store über alle Schritte: Unveränderte Issues behalten so ihre Objektidentität.
+  const store = new Store();
+  store.load(testState([...chain(), testIssue(50)]));
+  const current = () => {
+    const s = store.toSnapshot();
+    if (s === undefined) throw new Error('no snapshot');
+    return depGraph(s, C, { parents: false, expanded: new Set() });
+  };
+  try {
+    const { container, rerender } = await show(current());
+    renders.clear();
+
+    // Das Issue außerhalb des Graphen ändert sich: Kein Knoten rendert neu.
+    store.issues.upsert([testIssue(50, { title: 'Elsewhere' })]);
+    await rerender(current());
+    expect([...renders.keys()]).toEqual([]);
+
+    store.issues.upsert([testIssue(4, { depends_on: [C], title: 'Renamed' })]);
+    await rerender(current());
+    expect([...renders.keys()]).toEqual([D1]);
+    expect(within(nodeEl(container, D1)).getByText('Renamed')).toBeTruthy();
+  } finally {
+    store.dispose();
+  }
 });
 
 test('xyflow adds no English descriptions to nodes', async () => {
