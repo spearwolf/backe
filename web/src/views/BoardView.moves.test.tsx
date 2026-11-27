@@ -407,3 +407,38 @@ test('the click that ends a drag does not open the card', async () => {
   await userEvent.click(cardLink(tid(1)));
   expect(router.location.value.pathname).toBe(`/b/acme/issue/${tid(1)}`);
 });
+
+/** Ein Ziehen von Karte 1, das ohne Ziel endet; danach wartet der Wächter auf den Klick. */
+function dragAndRelease(): void {
+  const card = active(1, '', 'todo');
+  start(card);
+  act(() => handlers().onDragEnd?.(event(card, null)));
+}
+
+test('the click guard ends with the next pointer press or key', () => {
+  const { router } = board([testIssue(1)]);
+  dragAndRelease();
+  // Kein Klick nach dem Loslassen (der Zeiger kam woanders hoch): Der nächste Druck gehört dem Nutzer.
+  fireEvent.pointerDown(cardLink(tid(1)));
+  fireEvent.click(cardLink(tid(1)));
+  expect(router.location.value.pathname).toBe(`/b/acme/issue/${tid(1)}`);
+
+  act(() => router.navigate('/b/acme/board'));
+  dragAndRelease();
+  // Mit Esc abgebrochen folgt kein Klick; Enter am Link danach öffnet das Issue wieder.
+  fireEvent.keyDown(cardLink(tid(1)), { key: 'Escape' });
+  fireEvent.click(cardLink(tid(1)));
+  expect(router.location.value.pathname).toBe(`/b/acme/issue/${tid(1)}`);
+});
+
+test('the click guard goes with the view', () => {
+  const { unmount } = board([testIssue(1)]);
+  dragAndRelease();
+  unmount();
+  // Kein Wächter bleibt am `window` zurück: Ein Klick anderswo behält seine Wirkung.
+  const link = document.createElement('a');
+  link.href = '#elsewhere';
+  document.body.append(link);
+  expect(fireEvent.click(link)).toBe(true);
+  link.remove();
+});
