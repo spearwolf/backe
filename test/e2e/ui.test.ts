@@ -3,16 +3,17 @@
  * API mit dem CLI und der Tools mit MCP.
  */
 import { type ChildProcess, spawn } from 'node:child_process';
-import { chmod, readFile, writeFile } from 'node:fs/promises';
+import { chmod, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, expect, test } from 'vitest';
 import type { Env } from '../../src/context/paths.ts';
 import { cookieName } from '../../src/ui/security.ts';
 import { tempDir } from '../helpers/backlog.ts';
 import { writeOp } from '../helpers/context.ts';
 import { revParse, testBacklog } from '../helpers/git.ts';
 import { connectMcp } from '../helpers/mcp.ts';
+import { fifoText } from '../helpers/process.ts';
 import { rawRequest } from '../helpers/ui.ts';
 import { CLI, childEnv, cli } from './cli.ts';
 
@@ -24,6 +25,8 @@ type Ui = {
   token: string;
   stdout(): string;
   stderr(): string;
+  /** Erfüllt sich, sobald stderr `part` enthält. */
+  stderrHas(part: string): Promise<void>;
   stop(signal: NodeJS.Signals): Promise<number | null>;
   /** Tauscht das Token und gibt den Cookie-Header zurück. */
   cookie(): Promise<string>;
@@ -44,8 +47,13 @@ async function spawnUi(args: string[], opts: { env: Env; cwd: string }): Promise
   running.push(child);
   let stdout = '';
   let stderr = '';
+  const waiting: { part: string; found(): void }[] = [];
   child.stderr.setEncoding('utf8').on('data', (c: string) => {
     stderr += c;
+    for (const w of waiting.filter((x) => stderr.includes(x.part))) {
+      waiting.splice(waiting.indexOf(w), 1);
+      w.found();
+    }
   });
   const exit = new Promise<number | null>((resolve) => child.on('close', (code) => resolve(code)));
   const line = await new Promise<string>((resolve, reject) => {
@@ -73,6 +81,10 @@ async function spawnUi(args: string[], opts: { env: Env; cwd: string }): Promise
     token,
     stdout: () => stdout,
     stderr: () => stderr,
+    stderrHas: (part) =>
+      stderr.includes(part)
+        ? Promise.resolve()
+        : new Promise((found) => waiting.push({ part, found })),
     stop: (signal) => {
       child.kill(signal);
       return exit;
@@ -187,13 +199,14 @@ test('an invalid port is a validation error', async () => {
   }
 });
 
-async function fakeOpener(script: string): Promise<{ env: Env; out: string }> {
+/** Ein `xdg-open` aus `script`; `$OUT` ist eine FIFO, deren Inhalt `opened` liefert. */
+async function fakeOpener(script: string): Promise<{ env: Env; opened: Promise<string> }> {
   const dir = await tempDir();
-  const out = join(dir, 'opened.txt');
+  const out = fifoText(dir, 'opened');
   const bin = join(dir, 'xdg-open');
   await writeFile(bin, `#!/bin/sh\n${script}\n`);
   await chmod(bin, 0o755);
-  return { env: { PATH: `${dir}:${process.env.PATH}`, OUT: out }, out };
+  return { env: { PATH: `${dir}:${process.env.PATH}`, OUT: out.path }, opened: out.text };
 }
 
 test.runIf(process.platform === 'linux')('--open hands the url to xdg-open', async () => {
@@ -203,9 +216,7 @@ test.runIf(process.platform === 'linux')('--open hands the url to xdg-open', asy
     env: env(b, fake.env),
     cwd: b.root,
   });
-  await vi.waitFor(async () => {
-    expect(await readFile(fake.out, 'utf8')).toBe(ui.line.slice('backe ui: '.length));
-  });
+  expect(await fake.opened).toBe(ui.line.slice('backe ui: '.length));
   expect(await ui.stop('SIGTERM')).toBe(0);
 });
 
@@ -216,7 +227,7 @@ test.runIf(process.platform === 'linux')('a failing browser start is only a hint
     env: env(b, fake.env),
     cwd: b.root,
   });
-  await vi.waitFor(() => expect(ui.stderr()).toContain('xdg-open'));
+  await ui.stderrHas('xdg-open');
   const cookie = await ui.cookie();
   expect((await rawRequest(ui.port, { path: '/api/backlogs', headers: { cookie } })).status).toBe(
     200,

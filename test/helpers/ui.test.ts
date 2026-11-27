@@ -24,10 +24,17 @@ async function serve(handle: (seen: Seen) => void) {
   };
 }
 
-/** Die Requests des Helfers und die höchste Zahl ihrer `drain`- und `close`-Listener. */
+/**
+ * Die Requests des Helfers und die höchste Zahl ihrer `drain`- und `close`-Listener;
+ * `waiting` erfüllt sich mit dem ersten Request, der auf `drain` wartet.
+ */
 function watchRequests() {
   const requests: ClientRequest[] = [];
   const most = { drain: 0, close: 0 };
+  let found!: (req: ClientRequest) => void;
+  const waiting = new Promise<ClientRequest>((resolve) => {
+    found = resolve;
+  });
   const on = ClientRequest.prototype.on;
   const spy = vi.spyOn(ClientRequest.prototype, 'on').mockImplementation(function (
     this: ClientRequest,
@@ -38,9 +45,10 @@ function watchRequests() {
     const out = on.call(this, event, listener);
     most.drain = Math.max(most.drain, this.listenerCount('drain'));
     most.close = Math.max(most.close, this.listenerCount('close'));
+    if (event === 'drain') found(this);
     return out;
   });
-  return { requests, most, restore: () => spy.mockRestore() };
+  return { requests, most, waiting, restore: () => spy.mockRestore() };
 }
 
 function* chunks(n: number, size: number, pulled = { n: 0 }): Generator<Uint8Array> {
@@ -90,11 +98,12 @@ test('streaming under back-pressure keeps one wake listener and no leak warning'
 });
 
 test('an early answer wakes a writer that waits for drain', async () => {
-  let seen: Seen | undefined;
-  // Der Server liest den Body nie: Der Schreiber bleibt im Gegendruck hängen.
-  const s = await serve((x) => {
-    seen = x;
+  let arrived!: (seen: Seen) => void;
+  const request = new Promise<Seen>((resolve) => {
+    arrived = resolve;
   });
+  // Der Server liest den Body nie: Der Schreiber bleibt im Gegendruck hängen.
+  const s = await serve(arrived);
   cleanup.push(s.close);
   const watched = watchRequests();
   cleanup.push(watched.restore);
@@ -105,26 +114,29 @@ test('an early answer wakes a writer that waits for drain', async () => {
     path: '/',
     chunks: chunks(256, MB, pulled),
   });
-  // Hängt, sobald zwei Blicke denselben Stand sehen und ein `drain`-Listener wartet.
-  let last = -1;
-  await vi.waitFor(
-    () => {
-      const now = pulled.n;
-      const still = now === last;
-      last = now;
-      expect(seen).toBeDefined();
-      expect(still && watched.requests[0]?.listenerCount('drain') === 1).toBe(true);
-    },
-    { timeout: 10_000, interval: 50 },
-  );
+  // Hängt, sobald der Server den Request hat und der Schreiber auf `drain` wartet.
+  const [seen, req] = await Promise.all([request, watched.waiting]);
+  expect(req.listenerCount('drain')).toBe(1);
+  const woken = new Promise<void>((resolve) => {
+    const gone = (event: string | symbol) => {
+      if (event !== 'drain') return;
+      req.off('removeListener', gone);
+      resolve();
+    };
+    req.on('removeListener', gone);
+  });
 
   // Kopf und erstes Stück der Antwort, die Verbindung bleibt offen: Nur die Antwort weckt ihn.
-  seen?.response.writeHead(413);
-  seen?.response.write('zu groß');
-  await vi.waitFor(() => expect(watched.requests[0]?.listenerCount('drain')).toBe(0));
+  seen.response.writeHead(413);
+  seen.response.write('zu groß');
+  await woken;
+  expect(req.listenerCount('drain')).toBe(0);
+  // Geweckt läuft der Schreiber ohne I/O zu Ende: Er zieht noch einen Chunk, sieht die Antwort und
+  // hört auf; das sind nur Mikrotasks, die vor dem nächsten Makrotask fertig sind.
+  await new Promise((resolve) => setImmediate(resolve));
   const stopped = pulled.n;
 
-  seen?.response.end();
+  seen.response.end();
   const res = await answer;
   expect(res.status).toBe(413);
   expect(res.text()).toBe('zu groß');

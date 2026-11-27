@@ -384,4 +384,4 @@ test('close does not wait for a client that stopped reading a download', async (
   // Den Rest nicht über Loopback auslesen: Der Client schließt selbst.
   socket.destroy();
   await closed;
-}, 5000);
+});

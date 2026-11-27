@@ -19,15 +19,21 @@ test('a second holder waits until the first releases', async () => {
   const lock = join(await tempDir(), 'x.lock');
   const order: string[] = [];
   let release!: () => void;
+  let entered!: () => void;
+  const holding = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
   const first = withFileLock(
     lock,
     () =>
       new Promise<void>((r) => {
         order.push('a');
         release = r;
+        entered();
       }),
   );
-  await vi.waitFor(() => expect(order).toEqual(['a']));
+  await holding;
+  expect(order).toEqual(['a']);
   const second = withFileLock(
     lock,
     async () => {

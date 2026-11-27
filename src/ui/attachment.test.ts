@@ -116,4 +116,4 @@ test('a file that shrinks after the fstat aborts the response instead of hanging
   } finally {
     await new Promise((r) => server.close(r));
   }
-}, 3000);
+});

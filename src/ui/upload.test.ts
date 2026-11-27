@@ -53,9 +53,19 @@ test('receive stops at the first byte over max', async () => {
 async function listening(max: number | null = null) {
   const path = join(await tempDir(), 'upload');
   const body = new PassThrough();
+  // `newListener` kommt, bevor der Listener hängt; die Fortsetzung nach `await` sieht ihn schon.
+  const attached = new Promise<void>((resolve) => {
+    const onNew = (event: string | symbol) => {
+      if (event !== 'data') return;
+      body.off('newListener', onNew);
+      resolve();
+    };
+    body.on('newListener', onNew);
+  });
   const received = receiveUpload(request(body), path, max);
   received.catch(() => {});
-  await vi.waitFor(() => expect(body.listenerCount('data')).toBe(1));
+  await attached;
+  expect(body.listenerCount('data')).toBe(1);
   return { body, received };
 }
 

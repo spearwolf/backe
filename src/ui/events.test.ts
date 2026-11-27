@@ -5,24 +5,32 @@ import { tempDir } from '../../test/helpers/backlog.ts';
 import { writeOp } from '../../test/helpers/context.ts';
 import { type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
 import { fakeTimers } from '../../test/helpers/live.ts';
-import { rawRequest, startUi, type UiHarness } from '../../test/helpers/ui.ts';
+import { rawRequest, type SseFrame, startUi, type UiHarness } from '../../test/helpers/ui.ts';
+import { type FakeWatcher, fakeWatcher } from '../../test/helpers/watch.ts';
 import { registerBacklog } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { serveEvents, sseFrame } from './events.ts';
 import { LIVE_TIMING, LiveBacklog } from './live.ts';
 import { CSP } from './security.ts';
 
-const WAIT = { timeout: 10_000 };
-
 let b: TestBacklog;
 let ctx: ResolvedContext;
 let ui: UiHarness;
+/** Quelle der Datei-Ereignisse des Servers: Der Test meldet einen Write selbst per `flush`. */
+let fw: FakeWatcher;
 
 beforeEach(async () => {
   b = await testBacklog();
   ctx = await b.context();
+  fw = fakeWatcher();
   fakeTimers();
-  ui = await startUi({ cwd: await tempDir(), env: b.env, flags: { as: 'spw' }, start: 'acme' });
+  ui = await startUi({
+    cwd: await tempDir(),
+    env: b.env,
+    flags: { as: 'spw' },
+    start: 'acme',
+    live: { watch: fw.watch },
+  });
 });
 afterEach(async () => {
   await ui.close();
@@ -31,6 +39,13 @@ afterEach(async () => {
 
 const create = (title: string) => writeOp(ctx, { op: 'issue.create', title, state: 'todo' });
 const EVENTS = '/api/b/acme/events';
+
+/** Mindestens `n` Ereignisse (ohne Kommentare) sind da. */
+const events = (n: number) => (frames: SseFrame[]) =>
+  frames.filter((f) => f.comment === undefined).length >= n;
+/** Mindestens `n` Patches sind da. */
+const patches = (n: number) => (frames: SseFrame[]) =>
+  frames.filter((f) => f.event === 'patch').length >= n;
 
 test('sseFrame writes id, event and one line of data', () => {
   expect(sseFrame({ event: 'hello', data: { rev: 2, head: 'abc' } }, '0123abcd:2')).toBe(
@@ -45,7 +60,8 @@ test('events stream hello first', async () => {
     expect(s.headers['content-type']).toBe('text/event-stream; charset=utf-8');
     expect(s.headers['cache-control']).toBe('no-store');
     expect(s.headers['content-security-policy']).toBe(CSP);
-    await vi.waitFor(() => expect(s.events().map((f) => f.event)).toEqual(['hello', 'sync']), WAIT);
+    await s.until(events(2));
+    expect(s.events().map((f) => f.event)).toEqual(['hello', 'sync']);
     const [hello] = s.events();
     expect(hello?.id).toMatch(/^[0-9a-f]{8}:0$/);
     expect(hello?.data).toEqual({ rev: 0, head: (await ui.get('/api/b/acme/state')).json().head });
@@ -57,10 +73,11 @@ test('events stream hello first', async () => {
 test('a write arrives as a patch event with id boot:rev', async () => {
   const s = await ui.events(EVENTS);
   try {
-    await vi.waitFor(() => expect(s.events()).toHaveLength(2), WAIT);
+    await s.until(events(2));
     const boot = s.events()[0]?.id?.split(':')[0];
     const id = await create('Live');
-    await vi.waitFor(() => expect(s.events().at(-1)?.event).toBe('patch'), WAIT);
+    fw.flush();
+    await s.until(patches(1));
     const patch = s.events().at(-1);
     expect(patch?.id).toBe(`${boot}:1`);
     expect(patch?.data).toMatchObject({ rev: 1, upsert: { issues: [{ id, title: 'Live' }] } });
@@ -72,27 +89,31 @@ test('a write arrives as a patch event with id boot:rev', async () => {
 
 test('reconnect with last-event-id replays missed patches, a foreign one gets reset', async () => {
   const first = await ui.events(EVENTS);
-  await vi.waitFor(() => expect(first.events()).toHaveLength(2), WAIT);
+  // Ein zweiter Abonnent bleibt verbunden und zeigt, wann die Patches heraus sind.
+  const observer = await ui.events(EVENTS);
+  await first.until(events(2));
   const boot = first.events()[0]?.id?.split(':')[0] as string;
   first.close();
   await create('Eins');
+  fw.flush();
+  await observer.until(patches(1));
   await create('Zwei');
-  await vi.waitFor(
-    async () => expect((await ui.get('/api/b/acme/state')).json().rev).toBe(2),
-    WAIT,
-  );
+  fw.flush();
+  await observer.until(patches(2));
+  observer.close();
+  expect((await ui.get('/api/b/acme/state')).json().rev).toBe(2);
   const again = await ui.events(EVENTS, { 'last-event-id': `${boot}:0` });
   const other = boot === 'ffffffff' ? '00000000' : 'ffffffff';
   const foreign = await ui.events(EVENTS, { 'last-event-id': `${other}:2` });
   try {
-    await vi.waitFor(() => expect(again.events()).toHaveLength(4), WAIT);
+    await again.until(events(4));
     expect(again.events().map((f) => [f.event, f.id])).toEqual([
       ['hello', `${boot}:2`],
       ['patch', `${boot}:1`],
       ['patch', `${boot}:2`],
       ['sync', `${boot}:2`],
     ]);
-    await vi.waitFor(() => expect(foreign.events()).toHaveLength(3), WAIT);
+    await foreign.until(events(3));
     expect(foreign.events().map((f) => f.event)).toEqual(['hello', 'reset', 'sync']);
   } finally {
     again.close();
@@ -103,9 +124,10 @@ test('reconnect with last-event-id replays missed patches, a foreign one gets re
 test('heartbeat every 15 s', async () => {
   const s = await ui.events(EVENTS);
   try {
-    await vi.waitFor(() => expect(s.events()).toHaveLength(2), WAIT);
+    await s.until(events(2));
     await vi.advanceTimersByTimeAsync(LIVE_TIMING.heartbeatMs);
-    await vi.waitFor(() => expect(s.frames.at(-1)).toEqual({ comment: 'ping' }), WAIT);
+    await s.until((frames) => frames.length > 2);
+    expect(s.frames.at(-1)).toEqual({ comment: 'ping' });
   } finally {
     s.close();
   }
@@ -133,7 +155,11 @@ test('head gets only the headers and starts no watcher', async () => {
 });
 
 test('a client gone before the watcher stands is no subscriber', async () => {
-  const live = await LiveBacklog.start(ctx, { boot: '0123abcd', rev: 0 });
+  const live = await LiveBacklog.start(ctx, {
+    boot: '0123abcd',
+    rev: 0,
+    deps: { watch: fw.watch },
+  });
   let served!: () => void;
   const done = new Promise<void>((resolve) => {
     served = resolve;
@@ -168,7 +194,7 @@ test('a client gone before the watcher stands is no subscriber', async () => {
 
 test('close ends open event streams', async () => {
   const s = await ui.events(EVENTS);
-  await vi.waitFor(() => expect(s.events()).toHaveLength(2), WAIT);
+  await s.until(events(2));
   await ui.close();
   await s.ended;
 });
@@ -200,7 +226,11 @@ class SlowResponse extends EventEmitter {
 }
 
 test('a client that does not read gets reset instead of a growing buffer', async () => {
-  const live = await LiveBacklog.start(ctx, { boot: '0123abcd', rev: 0 });
+  const live = await LiveBacklog.start(ctx, {
+    boot: '0123abcd',
+    rev: 0,
+    deps: { watch: fw.watch },
+  });
   const res = new SlowResponse();
   try {
     serveEvents(res as unknown as ServerResponse, live);
@@ -216,9 +246,13 @@ test('a client that does not read gets reset instead of a growing buffer', async
     // Ein Patch staut, der nächste wird übersprungen; nach drain kommt reset mit dem neuesten Stand.
     res.full = true;
     await create('Eins');
-    await vi.waitFor(() => expect(live.rev).toBe(1), WAIT);
+    fw.flush();
+    await live.idle();
+    expect(live.rev).toBe(1);
     await create('Zwei');
-    await vi.waitFor(() => expect(live.rev).toBe(2), WAIT);
+    fw.flush();
+    await live.idle();
+    expect(live.rev).toBe(2);
     expect(kinds()).toEqual(['event: hello', 'event: sync', 'ping', 'event: patch']);
     res.full = false;
     res.emit('drain');

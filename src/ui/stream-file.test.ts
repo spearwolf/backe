@@ -1,5 +1,5 @@
 import { appendFileSync, truncateSync } from 'node:fs';
-import { chmod, mkdir, readdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readlink, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
@@ -11,15 +11,22 @@ type Outcome = { sent: boolean; headersSent: boolean } | { error: unknown };
 
 /**
  * Server, der jede Anfrage mit `sendFile(path, opts(req))` beantwortet. `outcome` ist das Ergebnis
- * des letzten Aufrufs; antwortet `sendFile` nicht, schickt der Server 204.
+ * des letzten Aufrufs; antwortet `sendFile` nicht, schickt der Server 204. `settled` erfüllt sich,
+ * sobald der letzte Aufruf ganz fertig ist, samt dem Schließen seines Handles.
  */
 async function serve(
   path: string,
   opts: (req: IncomingMessage) => SendFileOptions,
-): Promise<{ port: number; outcome(): Outcome | undefined; close(): Promise<void> }> {
+): Promise<{
+  port: number;
+  outcome(): Outcome | undefined;
+  settled(): Promise<void>;
+  close(): Promise<void>;
+}> {
   let last: Outcome | undefined;
+  let running: Promise<void> = Promise.resolve();
   const server = createServer((req, res: ServerResponse) => {
-    sendFile(res, path, opts(req)).then(
+    running = sendFile(res, path, opts(req)).then(
       (sent) => {
         last = { sent, headersSent: res.headersSent };
         if (!sent) res.writeHead(204).end();
@@ -34,6 +41,7 @@ async function serve(
   return {
     port: (server.address() as AddressInfo).port,
     outcome: () => last,
+    settled: () => running,
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };
 }
@@ -43,9 +51,12 @@ const plain = (req: IncomingMessage): SendFileOptions => ({
   headers: () => ({ 'Content-Type': 'application/octet-stream' }),
 });
 
-/** Offene Deskriptoren dieses Prozesses (nur Linux). */
-async function openFds(): Promise<number> {
-  return (await readdir('/proc/self/fd')).length;
+/** Deskriptoren dieses Prozesses, die auf `target` zeigen (nur Linux). */
+async function fdsOn(target: string): Promise<number> {
+  const links = await Promise.all(
+    (await readdir('/proc/self/fd')).map((fd) => readlink(`/proc/self/fd/${fd}`).catch(() => '')),
+  );
+  return links.filter((link) => link === target).length;
 }
 
 let dir: string;
@@ -188,7 +199,7 @@ test('a file that shrinks after the fstat aborts the response instead of hanging
   } finally {
     await s.close();
   }
-}, 3000);
+});
 
 test.runIf(process.platform === 'linux')('the handle is closed on every path', async () => {
   const path = join(dir, 'a.bin');
@@ -219,14 +230,14 @@ test.runIf(process.platform === 'linux')('the handle is closed on every path', a
     ],
   ];
   for (const [name, target, opts] of cases) {
-    const before = await openFds();
     const s = await serve(target, opts);
     await rawRequest(s.port, { path: '/', method: name === 'head' ? 'HEAD' : 'GET' }).catch(
       () => undefined,
     );
-    await s.close();
     // `sendFile` schließt das Handle im `finally` (der Stream läuft mit `autoClose: false`);
-    // `rawRequest` löst schon bei `res.end` auf, bevor `fh.close()` fertig ist. Darum `waitFor`.
-    await vi.waitFor(async () => expect(await openFds(), name).toBeLessThanOrEqual(before));
+    // `rawRequest` löst schon bei `res.end` auf, bevor `fh.close()` fertig ist.
+    await s.settled();
+    expect(await fdsOn(target), name).toBe(0);
+    await s.close();
   }
 });

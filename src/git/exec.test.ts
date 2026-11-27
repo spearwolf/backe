@@ -1,8 +1,9 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fixture, tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
+import { type Lifeline, lifeline } from '../../test/helpers/process.ts';
 import { descendantsOf, forChunks, git, killOpenChildren, sshKeygen } from './exec.ts';
 
 /** PATH mit den Fake-Binaries aus `test/fixtures/bin` vorn. */
@@ -21,26 +22,18 @@ const alive = (pid: number): boolean => {
 /** PIDs von Enkelprozessen, die ein Test womöglich überleben ließ. */
 const strays: number[] = [];
 afterEach(() => {
+  vi.useRealTimers();
   for (const pid of strays.splice(0)) {
     if (alive(pid)) process.kill(pid, 'SIGKILL');
   }
 });
 
-/** PID aus der Datei, die das Fake-git `hang` schreibt, sobald sie vollständig ist. */
-async function grandchild(pidFile: string): Promise<number> {
-  let pid = Number.NaN;
-  await vi.waitFor(async () => {
-    pid = Number((await readFile(pidFile, 'utf8')).trim());
-    expect(pid).toBeGreaterThan(0);
-  });
+/** PID des Enkels, den das Fake-git `hang` startet, sobald er läuft. */
+async function grandchild(line: Lifeline): Promise<number> {
+  const pid = await line.pid;
+  expect(pid).toBeGreaterThan(0);
   strays.push(pid);
   return pid;
-}
-
-/** Ein gekillter Prozess verschwindet erst, wenn init ihn eingesammelt hat. */
-async function expectGone(pid: number): Promise<void> {
-  await vi.waitFor(() => expect(alive(pid)).toBe(false), { timeout: 2000 });
-  expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }));
 }
 
 describe('git', () => {
@@ -53,9 +46,12 @@ describe('git', () => {
 
   test('timeoutMs kills a command that runs too long', async () => {
     const cwd = await tempDir();
-    const err = await catchErrAsync(() =>
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const call = catchErrAsync(() =>
       git(['-c', 'alias.hang=!sleep 2', 'hang'], { cwd, timeoutMs: 200 }),
     );
+    vi.advanceTimersByTime(200);
+    const err = await call;
     expect(err.code).toBe('unexpected');
     expect(err.message).toBe('git hang: Zeitüberschreitung nach 200 ms');
     const ok = await git(['--version'], { cwd, timeoutMs: 20_000 });
@@ -64,25 +60,30 @@ describe('git', () => {
 
   test('timeout kills grandchildren', async () => {
     const cwd = await tempDir();
-    const pidFile = join(cwd, 'pid');
-    const err = await catchErrAsync(() =>
-      git(['hang', pidFile], { cwd, env: { PATH: FAKE_PATH }, timeoutMs: 2000 }),
+    const line = lifeline(cwd);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const call = catchErrAsync(() =>
+      git(['hang', line.path], { cwd, env: { PATH: FAKE_PATH }, timeoutMs: 2000 }),
     );
+    // Erst wenn der Enkel läuft, ist die Frist um: Sonst gäbe es keinen Baum zu beenden.
+    await grandchild(line);
+    vi.advanceTimersByTime(2000);
+    const err = await call;
     expect(err.code).toBe('unexpected');
     expect(err.message).toBe('git hang: Zeitüberschreitung nach 2000 ms');
-    await expectGone(await grandchild(pidFile));
+    await line.gone;
   });
 
   test('the exit hook kills the process trees of calls still running', async () => {
     const cwd = await tempDir();
-    const pidFile = join(cwd, 'pid');
+    const line = lifeline(cwd);
     const call = catchErrAsync(() =>
-      git(['hang', pidFile], { cwd, env: { PATH: FAKE_PATH }, timeoutMs: 60_000 }),
+      git(['hang', line.path], { cwd, env: { PATH: FAKE_PATH }, timeoutMs: 60_000 }),
     );
-    const pid = await grandchild(pidFile);
+    await grandchild(line);
     killOpenChildren();
     expect((await call).message).toBe('git hang durch Signal beendet (SIGKILL)');
-    await expectGone(pid);
+    await line.gone;
     // Ein zweiter Lauf findet nichts mehr offen.
     killOpenChildren();
   });

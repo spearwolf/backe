@@ -17,6 +17,7 @@ import {
   testKey,
   twoClones,
 } from '../../test/helpers/git.ts';
+import { lifeline } from '../../test/helpers/process.ts';
 import { seqBytes } from '../../test/helpers/snapshot.ts';
 import { managedClonePath, setIdentity } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
@@ -335,10 +336,10 @@ describe('a hanging push', () => {
     await create(agent(), 'B');
     const head = await revParse(agentWc(), 'HEAD');
     const dir = await tempDir();
-    const pidFile = join(dir, 'pid');
+    const line = lifeline(dir);
     const hang = join(dir, 'receive-pack');
-    // Statt git-receive-pack: PID merken und warten, ohne je zu antworten.
-    await writeFile(hang, `#!/bin/sh\necho $$ > ${pidFile}\nexec sleep 300\n`);
+    // Statt git-receive-pack: PID in die FIFO, die offen bleibt, und warten, ohne je zu antworten.
+    await writeFile(hang, `#!/bin/sh\nexec 3>'${line.path}'\necho $$ >&3\nexec sleep 300\n`);
     await chmod(hang, 0o755);
     await git(['config', 'remote.origin.receivepack', hang], { cwd: agentWc() });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -355,14 +356,8 @@ describe('a hanging push', () => {
     expect(
       await Promise.race([atPush.then(() => 'push'), running.then(() => 'vorher zu Ende')]),
     ).toBe('push');
-    let pid = Number.NaN;
-    await vi.waitFor(
-      async () => {
-        pid = Number((await readFile(pidFile, 'utf8')).trim());
-        expect(pid).toBeGreaterThan(0);
-      },
-      { timeout: 20_000 },
-    );
+    const pid = await line.pid;
+    expect(pid).toBeGreaterThan(0);
     stray = pid;
     // Die Frist des Push ist der einzige offene Timer; ohne sie hinge die Runde.
     expect(vi.getTimerCount()).toBe(1);
@@ -376,8 +371,9 @@ describe('a hanging push', () => {
     expect(sleeps).toEqual([]);
     expect(await revParse(agentWc(), 'HEAD')).toBe(head);
     vi.useRealTimers();
-    await vi.waitFor(() => expect(alive(pid)).toBe(false), { timeout: 20_000 });
-  }, 60_000);
+    // Das Dateiende der FIFO: Der Prozess, der sie offen hielt, ist beendet.
+    await line.gone;
+  });
 });
 
 test('a failed push keeps the replayed commits for the next round', async () => {

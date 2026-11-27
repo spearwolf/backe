@@ -15,6 +15,7 @@ import {
 } from '../../test/helpers/git.ts';
 import { fakeTimers } from '../../test/helpers/live.ts';
 import { rawRequest, startUi, streamRequest, type UiHarness } from '../../test/helpers/ui.ts';
+import { fakeWatcher } from '../../test/helpers/watch.ts';
 import { git } from '../git/exec.ts';
 import { setLocale } from '../i18n/locale.ts';
 import { attachmentTooLarge } from '../ops/comment-ops.ts';
@@ -24,7 +25,9 @@ import * as catalog from '../tools/catalog.ts';
 import type { ToolDeps } from '../tools/run.ts';
 import { TOOL_BODY_LIMIT } from './body.ts';
 import type { StartInput } from './context.ts';
+import type { LiveDeps } from './live.ts';
 import { UiTools } from './tools.ts';
+import { type UploadDir, uploadDir } from './upload.ts';
 import { tooLarge } from './write-api.ts';
 
 vi.mock('../services/background.ts', async (orig) => {
@@ -32,8 +35,6 @@ vi.mock('../services/background.ts', async (orig) => {
   return { ...actual, scheduleSync: vi.fn(actual.scheduleSync) };
 });
 const schedule = vi.mocked(scheduleSync);
-
-const WAIT = { timeout: 10_000 };
 
 let b: TestBacklog;
 let input: StartInput;
@@ -66,15 +67,48 @@ const syncDeps = (): ToolDeps => ({
 });
 
 async function start(
-  opts: { flags?: StartInput['flags']; tools?: ToolDeps } = {},
+  opts: {
+    flags?: StartInput['flags'];
+    tools?: ToolDeps;
+    live?: LiveDeps;
+    uploads?: UploadDir;
+  } = {},
 ): Promise<UiHarness> {
   ui = await startUi({
     ...input,
     flags: opts.flags ?? input.flags,
     start: 'acme',
     tools: opts.tools ?? syncDeps(),
+    ...(opts.live === undefined ? {} : { live: opts.live }),
+    ...(opts.uploads === undefined ? {} : { uploads: opts.uploads }),
   });
   return ui;
+}
+
+/** Ein Versprechen, das der Test selbst erfüllt, sobald ein Ereignis eingetreten ist. */
+function latch(): { reached: Promise<void>; open(): void } {
+  let open!: () => void;
+  const reached = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { reached, open };
+}
+
+/** Das echte Upload-Verzeichnis; `allocated` erfüllt sich, sobald ein Upload seine Datei bekommt. */
+function watchedUploads(): { uploads: UploadDir; allocated: Promise<void> } {
+  const real = uploadDir();
+  const first = latch();
+  return {
+    uploads: {
+      async file() {
+        const path = await real.file();
+        first.open();
+        return path;
+      },
+      remove: () => real.remove(),
+    },
+    allocated: first.reached,
+  };
 }
 
 const tool = (name: string) => `/api/b/acme/tools/${name}`;
@@ -102,13 +136,15 @@ test('issue_create answers with the write json', async () => {
 
 test('a write arrives as a patch on the event stream', async () => {
   fakeTimers();
-  const u = await start();
+  const fw = fakeWatcher();
+  const u = await start({ live: { watch: fw.watch } });
   const s = await u.events('/api/b/acme/events');
   try {
-    await vi.waitFor(() => expect(s.events()).toHaveLength(2), WAIT);
+    await s.until((frames) => frames.length >= 2);
     const id = await create(u, 'Live');
+    fw.flush();
     const patch = () => s.events().find((e) => e.event === 'patch');
-    await vi.waitFor(() => expect(patch()).toBeDefined(), WAIT);
+    await s.until(() => patch() !== undefined);
     expect(patch()?.data).toMatchObject({
       upsert: { issues: [{ id, title: 'Live' }] },
     });
@@ -353,6 +389,7 @@ test('a background sync follows a commit', async () => {
 
 test('close waits for queued writes and their background sync', async () => {
   let entered = 0;
+  const first = latch();
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -364,6 +401,7 @@ test('close waits for queued writes and their background sync', async () => {
         hooks: {
           beforeLock: async () => {
             entered += 1;
+            first.open();
             await gate;
           },
         },
@@ -371,12 +409,19 @@ test('close waits for queued writes and their background sync', async () => {
     },
   });
   const before = await count();
-  const envFor = vi.spyOn(UiTools.prototype, 'envFor');
+  const all = latch();
+  const real = UiTools.prototype.envFor;
+  const envFor = vi.spyOn(UiTools.prototype, 'envFor').mockImplementation(function (
+    this: UiTools,
+    ...args: Parameters<UiTools['envFor']>
+  ) {
+    if (envFor.mock.calls.length === 3) all.open();
+    return real.apply(this, args);
+  });
   const posts = [1, 2, 3].map((i) => u.post(tool('issue_create'), { title: `Ende ${i}` }));
-  await vi.waitFor(() => {
-    expect(envFor).toHaveBeenCalledTimes(3);
-    expect(entered).toBe(1);
-  }, WAIT);
+  // Alle drei sind beim Server angekommen, der erste steht im Lock-Hook.
+  await Promise.all([all.reached, first.reached]);
+  expect(entered).toBe(1);
   let closed = false;
   const closing = u.close().then(() => {
     closed = true;
@@ -478,7 +523,8 @@ test('an upload over max_bytes is cut off while streaming', async () => {
   expect(r.json().error.message).toMatch(/^Anhang »gross\.bin« hat \d+ Bytes, erlaubt sind 1024$/);
   expect(r.json().error.hint).toBe(expected?.hint);
   expect(await count()).toBe(before);
-  await vi.waitFor(async () => expect(await uploadFiles()).toEqual([]), WAIT);
+  await u.idle();
+  expect(await uploadFiles()).toEqual([]);
 });
 
 test('a content-length over max_bytes is refused before reading', async () => {
@@ -554,7 +600,8 @@ test('the temp file is gone after success and failure', async () => {
 });
 
 test('the temp file is gone after the client goes away', async () => {
-  const u = await start();
+  const { uploads, allocated } = watchedUploads();
+  const u = await start({ uploads });
   const id = await create(u);
   const before = await count();
   const r = httpRequest({
@@ -572,9 +619,11 @@ test('the temp file is gone after the client goes away', async () => {
   });
   r.on('error', () => {});
   r.write(new Uint8Array(100));
-  await vi.waitFor(async () => expect(await uploadFiles()).toHaveLength(1), WAIT);
+  // Der Handler hat den Upload angenommen und liest in seine Temp-Datei.
+  await allocated;
   r.destroy();
-  await vi.waitFor(async () => expect(await uploadFiles()).toEqual([]), WAIT);
+  await u.idle();
+  expect(await uploadFiles()).toEqual([]);
   expect(await count()).toBe(before);
 });
 
@@ -590,13 +639,17 @@ test('a reader cannot upload', async () => {
 test('uploads share the queue with tools', async () => {
   let entered = 0;
   let hold: Promise<void> | undefined;
+  let first = latch();
+  const { uploads, allocated } = watchedUploads();
   const u = await start({
+    uploads,
     tools: {
       ...syncDeps(),
       write: {
         hooks: {
           beforeLock: async () => {
             entered += 1;
+            first.open();
             await hold;
           },
         },
@@ -610,15 +663,14 @@ test('uploads share the queue with tools', async () => {
     release = resolve;
   });
   entered = 0;
+  first = latch();
   const upload = u.put(attachment(id, 'a.txt'), 'hallo');
   const update = u.post(tool('issue_update'), { id, title: 'Parallel' });
   try {
     // Beide sind angekommen (die Temp-Datei des Uploads liegt bereit), aber nur einer steht im
     // Lock-Hook: Der andere wartet in derselben Warteschlange.
-    await vi.waitFor(async () => {
-      expect(entered).toBe(1);
-      expect(await uploadFiles()).toHaveLength(1);
-    }, WAIT);
+    await Promise.all([first.reached, allocated]);
+    expect(entered).toBe(1);
     for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setImmediate(resolve));
     expect(entered).toBe(1);
   } finally {
@@ -633,7 +685,8 @@ test('uploads share the queue with tools', async () => {
 });
 
 test('close waits for an upload that is still reading its body', async () => {
-  const u = await start();
+  const { uploads, allocated } = watchedUploads();
+  const u = await start({ uploads });
   const id = await create(u);
   const before = await count();
   const socket = connect(u.port, '127.0.0.1');
@@ -653,8 +706,9 @@ test('close waits for an upload that is still reading its body', async () => {
       chunk('erste '),
     ].join('\r\n'),
   );
-  // Das Temp-Verzeichnis steht, sobald der Handler den Upload angenommen hat.
-  await vi.waitFor(async () => expect(await uploadDirs()).toHaveLength(1), WAIT);
+  // Der Handler hat den Upload angenommen.
+  await allocated;
+  expect(await uploadDirs()).toHaveLength(1);
   let closed = false;
   const closing = u.close().then(() => {
     closed = true;
@@ -735,6 +789,7 @@ test('a request on a kept-alive connection after close started neither writes no
     release = resolve;
   });
   let entered = 0;
+  const first = latch();
   const u = await start({
     tools: {
       ...syncDeps(),
@@ -742,6 +797,7 @@ test('a request on a kept-alive connection after close started neither writes no
         hooks: {
           beforeLock: async () => {
             entered += 1;
+            first.open();
             await gate;
           },
         },
@@ -754,15 +810,23 @@ test('a request on a kept-alive connection after close started neither writes no
   socket.on('data', (chunk: Buffer) => received.push(chunk));
   const ended = new Promise<void>((resolve) => socket.on('close', () => resolve()));
   socket.write(rawPost(u, tool('issue_create'), '{"title":"Vorher"}'));
-  await vi.waitFor(() => expect(entered).toBe(1), WAIT);
-  const writeHead = vi.spyOn(ServerResponse.prototype, 'writeHead');
+  await first.reached;
+  const refused = latch();
+  const realWriteHead = ServerResponse.prototype.writeHead;
+  vi.spyOn(ServerResponse.prototype, 'writeHead').mockImplementation(function (
+    this: ServerResponse,
+    ...args: Parameters<ServerResponse['writeHead']>
+  ) {
+    if (args[0] === 503) refused.open();
+    return realWriteHead.apply(this, args as never);
+  });
   const closing = u.close();
   ui = undefined;
   // Dieselbe Verbindung, nach dem Beginn des Endes: Die Antwort steht fest, bevor der erste
   // Write fertig ist.
   socket.write(rawPost(u, tool('issue_create'), '{"title":"Danach"}'));
   try {
-    await vi.waitFor(() => expect(writeHead).toHaveBeenCalledWith(503, expect.anything()), WAIT);
+    await refused.reached;
   } finally {
     release();
   }

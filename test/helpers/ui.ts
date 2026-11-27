@@ -140,6 +140,11 @@ export type SseStream = {
   events(): SseFrame[];
   /** Erfüllt, sobald der Server den Stream beendet. */
   ended: Promise<void>;
+  /**
+   * Erfüllt sich, sobald die bisher empfangenen Blöcke `done` erfüllen, geprüft bei jedem neuen
+   * Block; endet der Stream vorher, scheitert es mit den Blöcken bis dahin.
+   */
+  until(done: (frames: SseFrame[]) => boolean): Promise<void>;
   close(): void;
 };
 
@@ -171,6 +176,15 @@ export function openEvents(
       },
       (res) => {
         const frames: SseFrame[] = [];
+        const waiting: { done(frames: SseFrame[]): boolean; settle(err?: Error): void }[] = [];
+        let open = true;
+        const wake = (err?: Error) => {
+          for (const w of [...waiting]) {
+            if (err === undefined && !w.done(frames)) continue;
+            waiting.splice(waiting.indexOf(w), 1);
+            w.settle(err);
+          }
+        };
         let buffer = '';
         res.setEncoding('utf8');
         res.on('data', (chunk: string) => {
@@ -181,10 +195,16 @@ export function openEvents(
             buffer = buffer.slice(at + 2);
             at = buffer.indexOf('\n\n');
           }
+          wake();
         });
         const ended = new Promise<void>((done) => {
-          res.on('close', () => done());
-          res.on('error', () => done());
+          const end = () => {
+            open = false;
+            wake(new Error(`event stream ended after ${JSON.stringify(frames)}`));
+            done();
+          };
+          res.on('close', end);
+          res.on('error', end);
         });
         resolve({
           status: res.statusCode ?? 0,
@@ -192,6 +212,16 @@ export function openEvents(
           frames,
           events: () => frames.filter((f) => f.comment === undefined),
           ended,
+          until: (done) => {
+            if (done(frames)) return Promise.resolve();
+            if (!open)
+              return Promise.reject(
+                new Error(`event stream ended after ${JSON.stringify(frames)}`),
+              );
+            return new Promise<void>((ok, fail) => {
+              waiting.push({ done, settle: (err) => (err === undefined ? ok() : fail(err)) });
+            });
+          },
           close: () => r.destroy(),
         });
       },
@@ -215,6 +245,8 @@ export type UiHarness = {
   /** PUT mit eigenem `Origin` und `Content-Type: application/octet-stream`. */
   put(path: string, bytes: string | Uint8Array, headers?: OutgoingHttpHeaders): Promise<Res>;
   events(path: string, headers?: OutgoingHttpHeaders): Promise<SseStream>;
+  /** Wartet, bis kein Handler des Servers mehr arbeitet (`UiServer.idle`). */
+  idle(): Promise<void>;
   close(): Promise<void>;
 };
 
@@ -251,6 +283,7 @@ export async function startUi(opts: Omit<UiOptions, 'port'>): Promise<UiHarness>
         body: bytes,
       }),
     events: (path, headers = {}) => openEvents(port, path, { cookie, ...headers }),
+    idle: () => server.idle(),
     close: () => server.close(),
   };
 }

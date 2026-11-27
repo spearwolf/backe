@@ -60,6 +60,12 @@ export type UiServer = {
    * bekommen 503. Idempotent.
    */
   close(): Promise<void>;
+  /**
+   * Test-Hook: erfüllt sich, sobald kein Handler mehr in seiner Arbeitsphase ist (`phase.ts`), samt
+   * dem Aufräumen seiner Upload-Datei. Nimmt weiter an; ein Event-Stream, der nur noch streamt,
+   * zählt nicht.
+   */
+  idle(): Promise<void>;
 };
 
 const HOST = '127.0.0.1';
@@ -220,6 +226,9 @@ export function createUiServer(opts: UiOptions): UiServer {
           resolve({ port, url: `http://${HOST}:${port}/?token=${token}` });
         });
       });
+    },
+    async idle() {
+      while (working.size > 0) await Promise.all(working);
     },
     close() {
       closing ??= (async () => {

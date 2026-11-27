@@ -2,8 +2,14 @@ import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises
 import { join } from 'node:path';
 import { tempDir } from '../../test/helpers/backlog.ts';
 import { catchErrAsync } from '../../test/helpers/catch.ts';
-import { git } from './exec.ts';
+import { git, PATH_CHUNK } from './exec.ts';
 import { assertOnBranch, dirtyPaths, headState, rollbackPaths } from './repo.ts';
+
+// Kleine Blöcke: Eine Pfadliste über mehrere Blöcke braucht so ein paar Dateien statt Tausender.
+vi.mock('./exec.ts', async (original) => {
+  const real = await original<typeof import('./exec.ts')>();
+  return { ...real, PATH_CHUNK: 4, git: vi.fn(real.git) };
+});
 
 const IDENT = ['-c', 'user.name=t', '-c', 'user.email=t@example.test'];
 
@@ -123,34 +129,40 @@ describe('rollbackPaths', () => {
     expect(await stat(join(wc, 'issues/7f/notes.txt')).catch(() => null)).toBeNull();
   });
 
-  // 7 500 Dateien und je fünf Blöcke pro git-Aufruf: mit Coverage weit über den 5 s des Standards.
-  test('rollbackPaths handles 5000 paths', async () => {
-    // Lang genug, dass alle Pfade zusammen jedes übliche ARG_MAX sprengen (Linux 2–4 MiB, macOS 1 MiB).
-    const dir = ['a', 'b', 'c', 'd'].map((c) => c.repeat(210)).join('/');
-    const tracked = Array.from(
-      { length: 2500 },
-      (_, i) => `${dir}/old-${String(i).padStart(5, '0')}`,
-    );
-    const fresh = Array.from(
-      { length: 2500 },
-      (_, i) => `${dir}/new-${String(i).padStart(5, '0')}`,
-    );
+  test('rollbackPaths and dirtyPaths hand long path lists to git in blocks', async () => {
+    // Lange Listen gehen in Blöcken von `PATH_CHUNK` Pfaden an git, damit kein Aufruf ARG_MAX
+    // sprengt; mit 4 je Block ergeben 19 Pfade mehrere Blöcke samt einem Rest.
+    expect(PATH_CHUNK).toBe(4);
+    const tracked = Array.from({ length: 10 }, (_, i) => `d/old-${String(i).padStart(2, '0')}`);
+    const fresh = Array.from({ length: 9 }, (_, i) => `d/new-${String(i).padStart(2, '0')}`);
     const wc = await repo();
-    await mkdir(join(wc, dir), { recursive: true });
+    await mkdir(join(wc, 'd'), { recursive: true });
     for (const path of tracked) await writeFile(join(wc, path), 'v1\n');
     await git(['add', '.'], { cwd: wc });
     await commit(wc);
     for (const path of tracked) await writeFile(join(wc, path), 'v2\n');
     for (const path of fresh) await writeFile(join(wc, path), 'n\n');
     const all = [...tracked, ...fresh];
-    expect(await dirtyPaths(wc, all)).toHaveLength(5000);
+    vi.mocked(git).mockClear();
+    expect(await dirtyPaths(wc, all)).toHaveLength(19);
 
     await rollbackPaths(wc, all);
 
+    // Jeder Aufruf mit Pfadliste hatte höchstens einen Block.
+    const listed = vi
+      .mocked(git)
+      .mock.calls.filter(([args]) => args.includes('--'))
+      .map(([args]) => args.slice(args.indexOf('--') + 1));
+    const blocks = (sub: string) =>
+      vi.mocked(git).mock.calls.filter(([args]) => args[0] === sub).length;
+    expect(listed.every((paths) => paths.length <= PATH_CHUNK)).toBe(true);
+    expect([blocks('status'), blocks('ls-tree'), blocks('checkout'), blocks('reset')]).toEqual([
+      5, 5, 3, 5,
+    ]);
     expect(await dirtyPaths(wc, all)).toEqual([]);
     expect((await git(['status', '--porcelain'], { cwd: wc })).stdout).toBe('');
-    expect(await readFile(join(wc, tracked[2499] as string), 'utf8')).toBe('v1\n');
-  }, 60_000);
+    expect(await readFile(join(wc, tracked[9] as string), 'utf8')).toBe('v1\n');
+  });
 
   test('without HEAD everything is removed', async () => {
     const wc = await repo();

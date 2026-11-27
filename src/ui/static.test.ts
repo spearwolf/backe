@@ -145,7 +145,7 @@ test('a file that shrinks before it is opened is sent with the length of the ope
   Object.assign(onStat, { path: await realpath(path), action: 'shrink' });
   const r = await ui.get('/assets/shrink-1a2b.js', { connection: 'keep-alive' });
   expect([r.status, r.headers['content-length'], r.body.length]).toEqual([200, '1000', 1000]);
-}, 3000);
+});
 
 test('an index.html that vanishes before it is opened leaves the placeholder', async () => {
   const own = join(base, 'vanishing');
