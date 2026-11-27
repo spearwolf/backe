@@ -148,6 +148,24 @@ test('open prerequisites carry a screen reader cue, settled ones and dependents 
   expect(within(down).queryByText(m.openPrerequisite)).toBeNull();
 });
 
+test('an unsettled cycle row is an open prerequisite, a settled one is not', () => {
+  // a und b hängen voneinander ab; ab a ist a selbst die Zyklus-Zeile unter b.
+  const [a, b] = [tid(1), tid(2)];
+  const pair = (aState: 'done' | 'todo') => [
+    testIssue(1, { depends_on: [b], state: aState }),
+    testIssue(2, { depends_on: [a] }),
+  ];
+  const cycleRow = () => {
+    const up = screen.getByRole('list', { name: m.prerequisites });
+    return within(up).getByText(m.cycle).closest('li') as HTMLElement;
+  };
+  show(treeOf(pair('todo'), a));
+  expect(within(cycleRow()).getByText(m.openPrerequisite)).toBeTruthy();
+  cleanup();
+  show(treeOf(pair('done'), a));
+  expect(within(cycleRow()).queryByText(m.openPrerequisite)).toBeNull();
+});
+
 test('a missing prerequisite counts as open', () => {
   show(treeOf([testIssue(1, { depends_on: [tid(9)] })], U2));
   expect(screen.getByText(m.openPrerequisite)).toBeTruthy();

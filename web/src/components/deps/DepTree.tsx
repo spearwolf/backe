@@ -11,13 +11,17 @@ import { StateIcon } from '../StateIcon.tsx';
 
 const SLOT = 'inline-flex size-6 shrink-0 items-center justify-center';
 
-function Row(props: { item: DepTreeItem; backlog: string; onToggle: (key: string) => void }) {
-  const { item, backlog, onToggle } = props;
+function Row(props: {
+  item: DepTreeItem;
+  up: boolean;
+  backlog: string;
+  onToggle: (key: string) => void;
+}) {
+  const { item, up, backlog, onToggle } = props;
   const go = useLinkClick();
   const { issue, id } = item;
   const settled = issue !== undefined && isSettled(issue.state);
   const href = routeHref({ kind: 'issue', backlog, id });
-  const up = item.key.startsWith('up:');
   // Wie im Graphen: Eine Voraussetzung, die nicht erledigt ist (oder fehlt), blockiert noch.
   const openPrerequisite = up && !settled;
 
@@ -69,6 +73,7 @@ function Row(props: { item: DepTreeItem; backlog: string; onToggle: (key: string
       {item.children.length > 0 && (
         <Items
           items={item.children}
+          up={up}
           backlog={backlog}
           onToggle={onToggle}
           label={up ? m.prerequisitesOf(id) : m.dependentsOf(id)}
@@ -80,6 +85,8 @@ function Row(props: { item: DepTreeItem; backlog: string; onToggle: (key: string
 
 function Items(props: {
   items: DepTreeItem[];
+  /** Richtung der Gruppe: Voraussetzungen (`true`) oder Abhängige. */
+  up: boolean;
   backlog: string;
   onToggle: (key: string) => void;
   /** Oberste Liste: ID der Gruppenüberschrift. */
@@ -87,7 +94,7 @@ function Items(props: {
   /** Verschachtelte Liste: eigener Name, denn sie hat keine Überschrift. */
   label?: string;
 }) {
-  const { items, backlog, onToggle, labelledBy, label } = props;
+  const { items, up, backlog, onToggle, labelledBy, label } = props;
   return (
     // `role="list"` explizit: Tailwinds `list-style: none` lässt Safari/VoiceOver die Listensemantik verwerfen.
     <ul
@@ -98,7 +105,7 @@ function Items(props: {
       className={cn(label !== undefined && 'ml-6 border-l pl-2')}
     >
       {items.map((item) => (
-        <Row key={item.key} item={item} backlog={backlog} onToggle={onToggle} />
+        <Row key={item.key} item={item} up={up} backlog={backlog} onToggle={onToggle} />
       ))}
     </ul>
   );
@@ -119,7 +126,7 @@ export function DepTree(props: { tree: Tree; backlog: string; onToggle: (key: st
           <h3 id={upId} className="mb-1 text-sm font-medium">
             {m.prerequisites}
           </h3>
-          <Items items={tree.up} backlog={backlog} onToggle={onToggle} labelledBy={upId} />
+          <Items items={tree.up} up backlog={backlog} onToggle={onToggle} labelledBy={upId} />
         </section>
       )}
       {tree.down.length > 0 && (
@@ -127,7 +134,13 @@ export function DepTree(props: { tree: Tree; backlog: string; onToggle: (key: st
           <h3 id={downId} className="mb-1 text-sm font-medium">
             {m.dependents}
           </h3>
-          <Items items={tree.down} backlog={backlog} onToggle={onToggle} labelledBy={downId} />
+          <Items
+            items={tree.down}
+            up={false}
+            backlog={backlog}
+            onToggle={onToggle}
+            labelledBy={downId}
+          />
         </section>
       )}
       {tree.more > 0 && <p className="text-sm text-muted-foreground">{m.more(tree.more)}</p>}
