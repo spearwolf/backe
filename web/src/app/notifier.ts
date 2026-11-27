@@ -7,7 +7,7 @@ import { createEffect, SignalGroup } from '@spearwolf/signalize';
 import type { Session } from '../data/session.ts';
 import type { ShowNote } from './browser-notes.ts';
 import { m } from './notes.messages.ts';
-import { conflictNotes, issueNotes } from './notes.ts';
+import { conflictNotes, isIssueNote, issueNotes } from './notes.ts';
 import { routeHref } from './routes.ts';
 
 /** Bis hierher zeigt jede Issue-Meldung eines Patches für sich; darüber eine Sammelmeldung. */
@@ -22,9 +22,7 @@ export function attachNotifier(session: Session, opts: Opts): () => void {
   const tag = (id: string) => `backe:${backlog}:${id}`;
 
   const offApplied = session.onApplied((patch, before) => {
-    const notes = issueNotes(patch, (id) => before.get(id), me).flatMap((n) =>
-      n.kind === 'conflict' ? [] : [n],
-    );
+    const notes = issueNotes(patch, (id) => before.get(id), me).filter(isIssueNote);
     if (notes.length > NOTE_SUMMARY_AFTER) {
       const by = [...new Set(notes.flatMap((n) => n.by))].sort();
       show({
@@ -38,8 +36,9 @@ export function attachNotifier(session: Session, opts: Opts): () => void {
     }
     for (const n of notes) {
       show({
-        // Ein leerer Titel fällt auf die ID zurück, ohne Leerzeichen am Ende.
-        title: n.title === '' ? n.id : `${n.id} ${n.title}`,
+        // Zeilenumbrüche und Leerzeichenfolgen im Titel werden zu einem Leerzeichen; ein leerer
+        // Titel lässt die ID allein stehen.
+        title: `${n.id} ${n.title}`.replace(/\s+/g, ' ').trim(),
         body: m[n.kind](n.by.join(', ')),
         tag: tag(n.id),
         onClick: () => open(routeHref({ kind: 'issue', backlog, id: n.id })),
@@ -63,6 +62,7 @@ export function attachNotifier(session: Session, opts: Opts): () => void {
       for (const n of next.notes) {
         show({
           title: m.syncConflict,
+          // Bei Konflikten trägt `title` das Subject des Konflikt-Commits.
           body: n.title,
           tag: tag(n.id),
           onClick: () => open(routeHref({ kind: 'settings', backlog, section: 'backlog' })),

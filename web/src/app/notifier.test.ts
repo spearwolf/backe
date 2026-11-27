@@ -65,6 +65,12 @@ test('an empty title falls back to the bare id', async () => {
   expect(r.show.mock.calls[0]?.[0].title).toBe('bk-t0001');
 });
 
+test('line breaks and space runs in the title collapse to single spaces', async () => {
+  const r = await rig();
+  await r.emit('patch', actorsPatch(2, [assigned(1, '  Zeile\neins   und\r\n zwei  ')]));
+  expect(r.show.mock.calls[0]?.[0].title).toBe('bk-t0001 Zeile eins und zwei');
+});
+
 test('three notes stay single, more become one summary', async () => {
   expect(NOTE_SUMMARY_AFTER).toBe(3);
   const r = await rig();

@@ -686,3 +686,77 @@ test('notifications follow the switch', async () => {
     fake.uninstall();
   }
 });
+
+test('the notifier attaches once, survives a language change and follows the backlog', async () => {
+  window.history.replaceState(null, '', '/b/main/backlog');
+  const backlogs = [entry('main', { current: true }), entry('ops', { prefix: 'op' })];
+  const sources = fakeEventSources();
+  const fetch = async (url: string): Promise<Response> =>
+    url === '/api/backlogs' ? json({ backlogs, lang: 'en' }) : json(state([issue(1)]));
+  const router = new Router(window);
+  const theme = new Theme(window, document.documentElement);
+  const prefs = new UiPrefs('en', document.documentElement);
+  prefs.setNotifications(true);
+  const notify = vi.fn();
+  const flush = async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  };
+  const view = render(
+    <StrictMode>
+      <App
+        backlogs={backlogs}
+        router={router}
+        theme={theme}
+        prefs={prefs}
+        deps={{ fetch, eventSource: sources.create }}
+        notify={notify}
+      />
+    </StrictMode>,
+  );
+  const live = () => sources.all.filter((es) => !es.closed)[0] as (typeof sources.all)[number];
+  const foreign = (rev: number): PatchJson => ({
+    rev,
+    head: `h${rev}`,
+    upsert: { issues: [{ ...issue(1), assignee: 'spw', title: `T${rev}` }] },
+    remove: {},
+    actors: { 'bk-1': ['claude-1'] },
+  });
+  const emitOn = async (es: (typeof sources.all)[number], p: PatchJson) => {
+    await act(async () => {
+      es.emitEvent('patch', p);
+      await flush();
+    });
+  };
+  await act(async () => {
+    live().emitOpen();
+    live().emitEvent('hello', { rev: 1, head: 'h1' });
+    await flush();
+  });
+
+  // Auch unter StrictMode (doppelter Effect): genau eine Meldung je Patch.
+  await emitOn(live(), foreign(2));
+  expect(notify).toHaveBeenCalledTimes(1);
+
+  // Ein Sprachwechsel mountet die Ansichten neu, die Sitzung und der Notifier bleiben.
+  await act(async () => {
+    prefs.setLang('de');
+    await flush();
+  });
+  await emitOn(live(), foreign(3));
+  expect(notify).toHaveBeenCalledTimes(2);
+
+  // Der Wechsel des Backlogs baut die alte Sitzung samt Notifier ab.
+  const old = live();
+  await act(async () => {
+    router.navigate('/b/ops/backlog');
+    await flush();
+  });
+  expect(old.closed).toBe(true);
+  await emitOn(old, foreign(4));
+  expect(notify).toHaveBeenCalledTimes(2);
+
+  view.unmount();
+  router.dispose();
+  theme.dispose();
+  prefs.dispose();
+});

@@ -9,6 +9,10 @@ export type Note =
   | { kind: 'assigned' | 'changed' | 'deleted'; id: string; title: string; by: string[] }
   | { kind: 'conflict'; id: string; title: string };
 
+export const isIssueNote = (
+  n: Note,
+): n is Extract<Note, { kind: 'assigned' | 'changed' | 'deleted' }> => n.kind !== 'conflict';
+
 /** Meldungen eines Patches für `me`; `before` liefert den Serverstand vor dem Patch. */
 export function issueNotes(
   patch: PatchJson,
