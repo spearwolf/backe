@@ -56,9 +56,11 @@ export async function gitDirs(root: string): Promise<{ gitDir: string; commonDir
 }
 
 const HEAD_FILES = new Set(['HEAD', 'HEAD.lock']);
-const PACKED_FILES = new Set(['packed-refs', 'packed-refs.lock']);
+/** Dateien im Common-Dir, deren Änderung gepackte Refs bewegt. */
+export const PACKED_FILES: ReadonlySet<string> = new Set(['packed-refs', 'packed-refs.lock']);
 
-const slashed = (name: string): string => name.replaceAll('\\', '/');
+/** Dateiname aus `fs.watch` mit `/` als Trenner, auch unter Windows. */
+export const slashed = (name: string): string => name.replaceAll('\\', '/');
 
 /**
  * Beobachtet `root`: `refs/heads/` (rekursiv) und `packed-refs` unter dem Common-Dir, `HEAD` unter

@@ -39,6 +39,7 @@ import { type Watched, type WatchFn, watchWorkingCopy } from './watch.ts';
 /** Zeitkonstanten und Puffergröße aus ui.md §2.4.1 und §2.4.3. */
 export const LIVE_TIMING = {
   debounceMs: 150,
+  neighborMs: 250,
   safetyMs: 10_000,
   heartbeatMs: 15_000,
   lingerMs: 30_000,
