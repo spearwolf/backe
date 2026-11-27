@@ -14,7 +14,7 @@ import { Textarea } from '../ui/textarea.tsx';
 import { ConfirmDialog } from '../write/ConfirmDialog.tsx';
 import { useAction } from '../write/use-action.ts';
 import type { DialogFocus } from './dialog-focus.ts';
-import { Field, FormSubmitShim, SELECT_CLASS } from './fields.tsx';
+import { Field, SELECT_CLASS } from './fields.tsx';
 import { sectionId } from './SettingsSection.tsx';
 import { usersOf } from './settings-memos.ts';
 
@@ -77,7 +77,6 @@ export function AddProjectDialog({
       onCloseAutoFocus={focus.onCloseAutoFocus}
     >
       <form id={formId} onSubmit={submit} className="space-y-3">
-        <FormSubmitShim disabled={blocked || busy} />
         <Field
           label={m.projectPath}
           hint={m.projectPathHint}
@@ -196,7 +195,6 @@ export function MoveProjectDialog({
       onCloseAutoFocus={focus.onCloseAutoFocus}
     >
       <form id={formId} onSubmit={submit} className="space-y-3">
-        <FormSubmitShim disabled={blocked || busy} />
         <Field
           label={m.moveTo}
           hint={m.moveToHint}

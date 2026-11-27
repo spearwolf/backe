@@ -22,7 +22,7 @@ import { ActionError } from '../write/ActionError.tsx';
 import { ConfirmDialog } from '../write/ConfirmDialog.tsx';
 import { useAction } from '../write/use-action.ts';
 import { type DialogFocus, useDialogFocus } from './dialog-focus.ts';
-import { Field, FormSubmitShim } from './fields.tsx';
+import { Field } from './fields.tsx';
 import { type SectionFrame, SettingsSection, sectionId } from './SettingsSection.tsx';
 
 type Level = RepoCheckJson['repos'][number]['findings'][number]['level'];
@@ -82,7 +82,6 @@ function AddDialog({
       onCloseAutoFocus={focus.onCloseAutoFocus}
     >
       <form id={formId} onSubmit={submit} className="space-y-3">
-        <FormSubmitShim disabled={blocked || busy} />
         <Field label={m.repoUrl}>
           {({ id, describedBy, invalid }) => (
             <Input

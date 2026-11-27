@@ -1,5 +1,5 @@
 import type { UserJson } from '@backe/ui/api.ts';
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { formatDate } from '../../lib/format.ts';
 import { call, region, registerSettingsHarness, view } from '../../test/settings-view.tsx';
@@ -178,7 +178,10 @@ test('creating an agent shows where the key lies', async () => {
   const dialog = screen.getByRole('dialog', { name: m.createAgentTitle });
   expect(dialog.textContent).toContain(m.createAgentHint);
   await user.type(within(dialog).getByLabelText(m.userHandle), 'claude-1');
-  await user.type(within(dialog).getByLabelText(m.userName), 'Claude{Enter}');
+  await user.type(within(dialog).getByLabelText(m.userName), 'Claude');
+  // Enter sendet im Browser über den Absende-Knopf im Fuß (`form=`); jsdom kennt diesen
+  // Standardknopf nicht, darum geht das Formular hier direkt ab.
+  fireEvent.submit(dialog.querySelector('form') as HTMLFormElement);
   expect(call).toHaveBeenCalledWith('user_create_agent', { handle: 'claude-1', name: 'Claude' });
   // Der Dialog bleibt offen und zeigt den Pfad des Keys.
   const done = await screen.findByText(m.keyPathCreated);

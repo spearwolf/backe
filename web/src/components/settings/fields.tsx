@@ -6,16 +6,6 @@ export const SELECT_CLASS =
   'h-8 rounded-md border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50 dark:bg-input/30';
 
 /**
- * Verborgener Absende-Knopf für Formulare, deren sichtbarer Knopf im Fuß eines `ConfirmDialog`
- * sitzt (`form=`-Zuordnung). Browser nehmen diesen Knopf schon als Standardknopf, jsdom aber nur
- * Knöpfe im Formular: Dort löste Enter in einem von mehreren Feldern sonst nichts aus. Für den
- * Browser ist er redundant, und er sperrt wie der sichtbare Knopf.
- */
-export function FormSubmitShim({ disabled }: { disabled: boolean }) {
-  return <button type="submit" hidden tabIndex={-1} disabled={disabled} />;
-}
-
-/**
  * Ein beschriftetes Feld mit Hinweis und Fehler. Das Eingabeelement baut der Aufrufer selbst und
  * bekommt dafür `id`, `aria-describedby` (Hinweis und Fehler) und `aria-invalid` gereicht; so
  * passt dasselbe Gerüst um `<input>`, `<select>` und `<textarea>`.

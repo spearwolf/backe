@@ -22,7 +22,7 @@ import { ConfirmDialog } from '../write/ConfirmDialog.tsx';
 import { useAction } from '../write/use-action.ts';
 import { m as w } from '../write/write.messages.ts';
 import type { DialogFocus } from './dialog-focus.ts';
-import { Field, FormSubmitShim, SELECT_CLASS } from './fields.tsx';
+import { Field, SELECT_CLASS } from './fields.tsx';
 import { sectionId } from './SettingsSection.tsx';
 
 const KEY_PREFIX = 'ssh-ed25519 ';
@@ -145,7 +145,6 @@ export function AddUserDialog({
       onCloseAutoFocus={focus.onCloseAutoFocus}
     >
       <form id={formId} onSubmit={submit} className="space-y-3">
-        <FormSubmitShim disabled={blocked || busy} />
         <HandleField value={handle} set={setHandle} busy={busy} />
         <NameField value={name} set={setName} busy={busy} />
         <Field
@@ -273,7 +272,6 @@ export function CreateAgentDialog({
         {keyPath === undefined ? (
           <>
             <form id={formId} onSubmit={submit} className="space-y-3">
-              <FormSubmitShim disabled={blocked || busy} />
               <HandleField value={handle} set={setHandle} busy={busy} />
               <NameField value={name} set={setName} busy={busy} />
               <p className="text-sm text-muted-foreground">{m.createAgentHint}</p>

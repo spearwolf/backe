@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { formatDate } from '../../lib/format.ts';
 import { call, region, registerSettingsHarness, view } from '../../test/settings-view.tsx';
@@ -62,7 +62,7 @@ test('adding a repo sends only filled fields', async () => {
   expect(screen.queryByRole('dialog')).toBeNull();
 });
 
-test('adding sends ref and description when filled, Enter confirms', async () => {
+test('the add form sends ref and description when filled', async () => {
   const user = userEvent.setup();
   view();
   call.mockResolvedValue({ commit: 'c1' });
@@ -71,7 +71,9 @@ test('adding sends ref and description when filled, Enter confirms', async () =>
   await user.type(within(dialog).getByLabelText(m.repoRef), 'release/1.0');
   await user.type(within(dialog).getByLabelText(m.repoDescription), 'Text');
   await user.type(within(dialog).getByLabelText(m.repoUrl), 'https://example.com/a.git');
-  await user.keyboard('{Enter}');
+  // Enter sendet im Browser über den Absende-Knopf im Fuß (`form=`); jsdom kennt diesen
+  // Standardknopf nicht, darum geht das Formular hier direkt ab.
+  fireEvent.submit(dialog.querySelector('form') as HTMLFormElement);
   expect(call).toHaveBeenCalledWith('repo_add', {
     url: 'https://example.com/a.git',
     ref: 'release/1.0',

@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { call, region, registerSettingsHarness, view } from '../../test/settings-view.tsx';
 import { testIssue, testPatch, tid } from '../../test/state.ts';
@@ -139,7 +139,9 @@ test('creating a sub-project prefills its parent path', async () => {
   expect(path.getAttribute('aria-invalid')).toBe('false');
   await user.type(path, 'ui');
   await user.type(within(dialog).getByLabelText(m.fieldTitle), 'UI');
-  await user.keyboard('{Enter}');
+  // Enter sendet im Browser über den Absende-Knopf im Fuß (`form=`); jsdom kennt diesen
+  // Standardknopf nicht, darum geht das Formular hier direkt ab.
+  fireEvent.submit(dialog.querySelector('form') as HTMLFormElement);
   // Leere optionale Felder gehen nicht mit.
   expect(call).toHaveBeenCalledWith('project_create', { path: 'web/ui', title: 'UI' });
 });

@@ -10,7 +10,7 @@ import { Textarea } from '../ui/textarea.tsx';
 import { ConfirmDialog } from '../write/ConfirmDialog.tsx';
 import { useAction } from '../write/use-action.ts';
 import type { DialogFocus } from './dialog-focus.ts';
-import { Field, FormSubmitShim, SELECT_CLASS } from './fields.tsx';
+import { Field, SELECT_CLASS } from './fields.tsx';
 import { sectionId } from './SettingsSection.tsx';
 
 /** Dialog »Hinzufügen«; nur zum Öffnen gemountet, damit jedes Mal leer begonnen wird. */
@@ -113,7 +113,6 @@ export function AddSprintDialog({
       onCloseAutoFocus={focus.onCloseAutoFocus}
     >
       <form id={formId} onSubmit={submit} className="space-y-3">
-        <FormSubmitShim disabled={blocked || busy} />
         {text(m.sprintSlug, slug, setSlug, {
           ...(slugMessage === undefined ? {} : { error: slugMessage }),
           mono: true,
