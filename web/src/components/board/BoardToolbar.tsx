@@ -45,7 +45,7 @@ export function BoardToolbar({
       <label className="flex items-center gap-2">
         <input
           type="checkbox"
-          className="size-4 accent-foreground"
+          className="size-4 accent-primary"
           checked={view.showBacklog}
           onChange={(e) => onView({ ...view, showBacklog: e.target.checked })}
         />

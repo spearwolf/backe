@@ -181,24 +181,22 @@ export function ProjectsSection({ id, title, folded, onToggle }: SectionFrame) {
       actions={actions}
       overlays={overlays}
     >
-      <div>
-        {rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{m.noProjects}</p>
-        ) : (
-          <ul aria-label={m.projectList} className="space-y-2">
-            {rows.map((row) => (
-              <ProjectItem
-                key={row.project.path}
-                row={row}
-                canWrite={canWrite}
-                onAddChild={openAdd}
-                onMove={openMove}
-                onRemove={openRemove}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
+      {rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{m.noProjects}</p>
+      ) : (
+        <ul aria-label={m.projectList} className="space-y-2">
+          {rows.map((row) => (
+            <ProjectItem
+              key={row.project.path}
+              row={row}
+              canWrite={canWrite}
+              onAddChild={openAdd}
+              onMove={openMove}
+              onRemove={openRemove}
+            />
+          ))}
+        </ul>
+      )}
     </SettingsSection>
   );
 }

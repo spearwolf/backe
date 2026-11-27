@@ -1,6 +1,12 @@
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { call, region, registerSettingsHarness, view } from '../../test/settings-view.tsx';
+import {
+  call,
+  region,
+  registerSettingsHarness,
+  submitForm,
+  view,
+} from '../../test/settings-view.tsx';
 import { testPatch } from '../../test/state.ts';
 import { m } from '../../views/settings.messages.ts';
 import { m as w } from '../write/write.messages.ts';
@@ -168,9 +174,7 @@ test('a sprint with only a slug sends only the slug', async () => {
   await user.click(within(section()).getByRole('button', { name: m.addSprint }));
   const dialog = screen.getByRole('dialog', { name: m.addSprintTitle });
   await user.type(within(dialog).getByLabelText(m.sprintSlug), 'auth');
-  // Enter sendet im Browser über den Absende-Knopf im Fuß (`form=`); jsdom kennt diesen
-  // Standardknopf nicht, darum geht das Formular hier direkt ab.
-  fireEvent.submit(dialog.querySelector('form') as HTMLFormElement);
+  submitForm(dialog);
   expect(call).toHaveBeenCalledWith('sprint_create', { slug: 'auth' });
 });
 

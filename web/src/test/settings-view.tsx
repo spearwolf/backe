@@ -5,7 +5,7 @@
  */
 import { type Locale, setLocale } from '@backe/i18n/locale.ts';
 import type { StateJson } from '@backe/ui/api.ts';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { Fragment, useState } from 'react';
 import { vi } from 'vitest';
 import { Router, RouterContext } from '../app/router.ts';
@@ -119,4 +119,13 @@ export const region = (name: string) => screen.getByRole('region', { name });
 export function described(within: HTMLElement, term: string): string | undefined {
   const dt = [...within.querySelectorAll('dt')].find((d) => d.textContent === term);
   return dt?.nextElementSibling?.textContent ?? undefined;
+}
+
+/**
+ * Schickt das Formular eines Settings-Dialogs ab, wie Enter in einem seiner Felder. Im Browser ist
+ * der über `form=` zugeordnete Absende-Knopf im Fuß der Standardknopf; jsdom kennt diesen
+ * Standardknopf nicht, darum geht das Formular hier direkt ab.
+ */
+export function submitForm(dialog: HTMLElement): void {
+  fireEvent.submit(dialog.querySelector('form') as HTMLFormElement);
 }
