@@ -255,14 +255,13 @@ export function CreateAgentDialog({
       >
         <DialogHeader>
           <DialogTitle>{m.createAgentTitle}</DialogTitle>
-          <DialogDescription className="sr-only">{m.createAgentTitle}</DialogDescription>
+          <DialogDescription>{m.createAgentHint}</DialogDescription>
         </DialogHeader>
         {keyPath === undefined ? (
           <>
             <form id={formId} onSubmit={submit} className="space-y-3">
               <HandleField value={handle} set={setHandle} busy={busy} />
               <NameField value={name} set={setName} busy={busy} />
-              <p className="text-sm text-muted-foreground">{m.createAgentHint}</p>
             </form>
             <ActionError error={error} />
             <DialogFooter>

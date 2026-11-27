@@ -316,3 +316,16 @@ test('only a short summary of the check is a live region', async () => {
   await user.click(within(section()).getByRole('button', { name: m.checkRepos }));
   expect(within(section()).getByRole('status').textContent).toBe(m.checkClean);
 });
+
+test('a check with only notices says so in its summary', async () => {
+  const user = userEvent.setup();
+  view({ over: { repos } });
+  call.mockResolvedValueOnce({
+    repos: [{ name: 'core', url: 'u', findings: [] }],
+    notices: [{ message: 'GitHub nicht erreichbar' }, { message: 'Cache alt' }],
+  });
+  await user.click(within(section()).getByRole('button', { name: m.checkRepos }));
+  expect(within(section()).getByRole('status').textContent).toBe(m.checkOnlyNotices(2));
+  expect(m.checkOnlyNotices(2)).toBe('Keine Befunde, 2 Hinweise.');
+  expect(m.checkOnlyNotices(1)).toBe('Keine Befunde, 1 Hinweis.');
+});

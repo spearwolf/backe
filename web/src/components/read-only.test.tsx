@@ -266,20 +266,22 @@ test('read-only hides settings writes', async () => {
   const { user } = await mount('/b/acme/settings', false, true);
   // Der Chunk lädt nach; erst wenn die letzte Liste steht, ist alles da.
   await screen.findByRole('region', { name: st.sectionInterface });
+  expect(screen.getByRole('list', { name: st.repoList })).toBeTruthy();
   expect(screen.getByRole('list', { name: st.userList })).toBeTruthy();
   expect(screen.getByRole('list', { name: st.projectList })).toBeTruthy();
   expect(screen.getByRole('list', { name: st.sprintList })).toBeTruthy();
   expect(screen.getByRole('region', { name: st.sectionBacklog })).toBeTruthy();
   for (const [name, count] of settingsWrites()) expect(count, name).toBe(0);
 
-  // Die Oberfläche bleibt bedienbar: Theme-Radio und Sprachwahl.
+  // Die Oberfläche bleibt bedienbar: Theme-Radio und Sprachwahl. Die Texte folgen der Sprache.
   const dark = screen.getByRole('radio', { name: app.themeDark }) as HTMLInputElement;
   await user.click(dark);
   expect(dark.checked).toBe(true);
   const lang = screen.getByRole('combobox', { name: st.language }) as HTMLSelectElement;
   await user.selectOptions(lang, 'en');
   await settle();
-  expect((screen.getByRole('combobox', { name: 'Language' }) as HTMLSelectElement).value).toBe(
+  expect(st.language).toBe('Language');
+  expect((screen.getByRole('combobox', { name: st.language }) as HTMLSelectElement).value).toBe(
     'en',
   );
 

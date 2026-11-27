@@ -175,8 +175,11 @@ test('creating an agent shows where the key lies', async () => {
   call.mockResolvedValue({ handle: 'claude-1', key_path: path, commit: 'c1' });
   const create = within(section()).getByRole('button', { name: m.createAgent });
   await user.click(create);
-  const dialog = screen.getByRole('dialog', { name: m.createAgentTitle });
-  expect(dialog.textContent).toContain(m.createAgentHint);
+  // Der Hinweis, wo das Schlüsselpaar entsteht, beschreibt den Dialog.
+  const dialog = screen.getByRole('dialog', {
+    name: m.createAgentTitle,
+    description: m.createAgentHint,
+  });
   await user.type(within(dialog).getByLabelText(m.userHandle), 'claude-1');
   await user.type(within(dialog).getByLabelText(m.userName), 'Claude');
   // Enter sendet im Browser über den Absende-Knopf im Fuß (`form=`); jsdom kennt diesen

@@ -81,6 +81,8 @@ export const m = catalog({
     checkResults: 'Check results',
     checkClean: 'No findings.',
     checkFindings: (n: number) => (n === 1 ? '1 finding.' : `${n} findings.`),
+    checkOnlyNotices: (n: number) =>
+      n === 1 ? 'No findings, 1 notice.' : `No findings, ${n} notices.`,
     checkNotices: 'Notices',
     levelError: 'Error',
     levelWarning: 'Warning',
@@ -262,6 +264,8 @@ export const m = catalog({
     checkResults: 'Ergebnis der Prüfung',
     checkClean: 'Keine Befunde.',
     checkFindings: (n: number) => (n === 1 ? '1 Befund.' : `${n} Befunde.`),
+    checkOnlyNotices: (n: number) =>
+      n === 1 ? 'Keine Befunde, 1 Hinweis.' : `Keine Befunde, ${n} Hinweise.`,
     checkNotices: 'Hinweise',
     levelError: 'Fehler',
     levelWarning: 'Warnung',

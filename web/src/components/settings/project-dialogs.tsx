@@ -259,7 +259,7 @@ export function RemoveProjectDialog({
                 <input
                   type="radio"
                   name={groupName}
-                  className="size-4 accent-foreground"
+                  className="size-4 accent-primary"
                   checked={choice === 'reassign'}
                   disabled={busy || others.length === 0}
                   onChange={() => setChoice('reassign')}
@@ -289,7 +289,7 @@ export function RemoveProjectDialog({
               <input
                 type="radio"
                 name={groupName}
-                className="size-4 accent-foreground"
+                className="size-4 accent-primary"
                 checked={choice === 'detach'}
                 disabled={busy}
                 onChange={() => setChoice('detach')}

@@ -54,7 +54,7 @@ export function InterfaceSection() {
               <input
                 type="radio"
                 name="settings-theme"
-                className="size-4 accent-foreground"
+                className="size-4 accent-primary"
                 value={value}
                 checked={choice === value}
                 onChange={() => theme.set(value)}
@@ -86,7 +86,7 @@ export function InterfaceSection() {
         <label className="flex items-center gap-2 text-sm font-medium">
           <input
             type="checkbox"
-            className="size-4 accent-foreground"
+            className="size-4 accent-primary"
             checked={images}
             aria-describedby={imagesHint}
             onChange={(e) => prefs.setExternalImages(e.target.checked)}

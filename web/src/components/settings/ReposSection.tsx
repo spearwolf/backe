@@ -202,7 +202,10 @@ function RepoRow({
 
 function summary(result: RepoCheckJson): string {
   const findings = result.repos.reduce((n, repo) => n + repo.findings.length, 0);
-  return findings === 0 ? m.checkClean : m.checkFindings(findings);
+  if (findings > 0) return m.checkFindings(findings);
+  // Ohne Befunde sagt die Zusammenfassung, dass unten trotzdem Hinweise stehen.
+  const notices = result.notices?.length ?? 0;
+  return notices === 0 ? m.checkClean : m.checkOnlyNotices(notices);
 }
 
 function CheckResult({ result }: { result: RepoCheckJson }) {
