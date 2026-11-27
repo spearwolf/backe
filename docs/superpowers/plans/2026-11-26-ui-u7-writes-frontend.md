@@ -85,7 +85,7 @@ export function uploadAttachment(backlog: string, id: string, name: string, byte
 
 `U8` ergänzt `batch` in `ToolArgs`, U10 die Verwaltungs-Tools; der Paritätstest wächst mit.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
 // src/ui/tool-args.test.ts — jeder Key des Client-Typs ist ein Parameter des Katalogs
@@ -104,10 +104,10 @@ test('callTool posts to the tool endpoint', …'/api/b/a%20b/tools/issue_move');
 test('uploadAttachment puts to the attachment endpoint', …'/api/b/acme/issues/bk-7f3k2/attachments/shot.png');
 ```
 
-- [ ] **Step 2: Run, verify FAIL** — `pnpm vitest run src/ui/tool-args.test.ts && pnpm vitest run --project web web/src/data`
-- [ ] **Step 3: Implement** — `getJson`, `postJson`, `putBytes` teilen eine Funktion für »kein Response → offline, nicht `ok` → `ApiError` aus dem Fehler-JSON«. `credentials` bleibt Default (same-origin). Pfadsegmente einzeln per `encodeURIComponent`.
-- [ ] **Step 4: Run** → PASS; `pnpm vitest run test/conventions.test.ts` → PASS (api.ts bleibt `import type`-only)
-- [ ] **Step 5: Commit** — `feat: Tool-Aufrufe und Upload im Client von backe ui`
+- [x] **Step 2: Run, verify FAIL** — `pnpm vitest run src/ui/tool-args.test.ts && pnpm vitest run --project web web/src/data`
+- [x] **Step 3: Implement** — `getJson`, `postJson`, `putBytes` teilen eine Funktion für »kein Response → offline, nicht `ok` → `ApiError` aus dem Fehler-JSON«. `credentials` bleibt Default (same-origin). Pfadsegmente einzeln per `encodeURIComponent`.
+- [x] **Step 4: Run** → PASS; `pnpm vitest run test/conventions.test.ts` → PASS (api.ts bleibt `import type`-only)
+- [x] **Step 5: Commit** — `feat: Tool-Aufrufe und Upload im Client von backe ui`
 
 ### Task 2: Ausstehend-Überlagerung im Store, `Writes` mit 5-s-Rückfall
 
@@ -165,7 +165,7 @@ Regeln:
 - `upload` wie `run` ohne Überlagerung.
 - `Session.refresh()` nutzt das vorhandene Laden samt `reloadPending`; alle Wartenden werden erfüllt, wenn das letzte Laden fertig ist. `dispose` der Sitzung ruft `writes.dispose()` (Timer weg, Überlagerungen weg).
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
 // store.test.ts
@@ -189,10 +189,10 @@ test('refresh resolves after the reload, also on failure', …);
 test('dispose of the session disposes its writes', …);
 ```
 
-- [ ] **Step 2: Run, verify FAIL** — `pnpm vitest run --project web web/src/data`
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: Run** → PASS; Coverage für `web/src/data/**` ≥ 90/85 (`pnpm vitest run --coverage --project web`)
-- [ ] **Step 5: Commit** — `feat: Ausstehend-Überlagerung im Store und Writes mit Rückfall auf /state`
+- [x] **Step 2: Run, verify FAIL** — `pnpm vitest run --project web web/src/data`
+- [x] **Step 3: Implement**
+- [x] **Step 4: Run** → PASS; Coverage für `web/src/data/**` ≥ 90/85 (`pnpm vitest run --coverage --project web`)
+- [x] **Step 5: Commit** — `feat: Ausstehend-Überlagerung im Store und Writes mit Rückfall auf /state`
 
 ### Task 3: Optimistische Werte und erlaubte Aktionen aus dem Code von BK
 
@@ -231,7 +231,7 @@ export function deletePlan(s: BacklogSnapshot, id: string, children?: 'orphan' |
 
 Regeln: erledigte Issues (`isSettled`) bieten nur `issue_reopen` auf `backlog`, `todo`, `in_progress`, `review`; pausierte bieten `issue_resume` auf `paused_from` und alle `issue_move`-Ziele, die `planTransition(…, 'move')` zulässt (für `blocked` mit Platzhalter-`blockedBy`); sonst alle zulässigen `issue_move`. Die Überlagerung eines Wechsels ist das Ergebnis von `planTransition`: `state`, `paused_from` und `blocked_by`, fehlende Felder als `undefined`. `rankOverlay` setzt `rank` aller Issues aus `rankPlacement`. `updateOverlay` legt `title`, `body` (nicht im Store, entfällt), `assignee` (`null` → `undefined`), `parent`, Listen (`add_*` anhängen ohne Dubletten, `rm_*` entfernen, leer → `undefined`) und `props` (`null` entfernt den Key) über. `deletePlan` folgt `issueDelete` in `src/ops/delete-op.ts`: `referencing` ohne die gelöschten Issues, sortiert; `recursive` zählt alle Nachfahren zum Gelöschten.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
 test('settled issues only reopen', …done → [backlog,todo,in_progress,review] alle issue_reopen);
@@ -246,10 +246,10 @@ test('update overlay adds, removes and unsets', …);
 test('delete plan names children and references', …orphan vs recursive);
 ```
 
-- [ ] **Step 2: Run, verify FAIL**
-- [ ] **Step 3: Implement**; `src/ops/rank.ts` in `WEB_ENTRIES`
-- [ ] **Step 4: Run** → PASS; `pnpm vitest run test/conventions.test.ts` → PASS (Hülle ohne `node:`)
-- [ ] **Step 5: Commit** — `feat: Optimistische Werte und erlaubte State-Wechsel aus dem Code von BK`
+- [x] **Step 2: Run, verify FAIL**
+- [x] **Step 3: Implement**; `src/ops/rank.ts` in `WEB_ENTRIES`
+- [x] **Step 4: Run** → PASS; `pnpm vitest run test/conventions.test.ts` → PASS (Hülle ohne `node:`)
+- [x] **Step 5: Commit** — `feat: Optimistische Werte und erlaubte State-Wechsel aus dem Code von BK`
 
 ### Task 4: Write-Kontext, Dialog-Bausteine, globale Fehler
 
@@ -279,7 +279,7 @@ export function useAction(): { busy: boolean; error: ApiError | undefined;
 
 `useAction.run` liefert `true` bei Erfolg, setzt `busy` während des Laufs, fängt jeden Wurf als `ApiError` in `error`; ein neuer Lauf löscht den alten Fehler. `ConfirmDialog` sperrt Knöpfe bei `busy`, zeigt `ActionError` im Dialog; `Esc` und »Abbrechen« schließen nur, wenn nicht `busy`.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```tsx
 test('useWrites needs a provider', …);
@@ -290,10 +290,10 @@ test('write failures are listed and dismissable', …);
 test('pending mark follows pendingCount', …);
 ```
 
-- [ ] **Step 2: Run, verify FAIL**
-- [ ] **Step 3: Install und implementieren**
-- [ ] **Step 4: Run** `pnpm vitest run --project web` → PASS
-- [ ] **Step 5: Commit** — `feat: Write-Kontext, Dialog-Bausteine und Fehleranzeige im Frontend`
+- [x] **Step 2: Run, verify FAIL**
+- [x] **Step 3: Install und implementieren**
+- [x] **Step 4: Run** `pnpm vitest run --project web` → PASS
+- [x] **Step 5: Commit** — `feat: Write-Kontext, Dialog-Bausteine und Fehleranzeige im Frontend`
 
 ### Task 5: Markdown-Editor mit Vorschau und Bild-Upload
 
@@ -328,7 +328,7 @@ Regeln `attachmentNameFor`: klein schreiben, NFKD und Diakritika weg, jedes Zeic
 
 Editor: Umschalter Text/Vorschau als zwei Knöpfe mit `aria-pressed`; Vorschau über `<Markdown>` mit `issue` und `local`. Einfügen (`paste`) und Ablegen (`drop`, `stopPropagation`) von Dateien mit `image/*` ruft `onImage` je Datei nacheinander und fügt an der Cursorstelle `![<name>](attachments/<name>)` ein; während des Uploads eine Statuszeile (`role="status"`), ein Fehler erscheint als `ActionError` unter dem Feld, der Text bleibt unverändert. Andere Dateien ignoriert der Editor (kein `preventDefault`).
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
 test.each([
@@ -349,10 +349,10 @@ test('a failed upload shows the error and keeps the text', …);
 test('without onImage images are not taken', …);
 ```
 
-- [ ] **Step 2: Run, verify FAIL**
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: Run** → PASS
-- [ ] **Step 5: Commit** — `feat: Markdown-Editor mit Vorschau und Bild-Upload`
+- [x] **Step 2: Run, verify FAIL**
+- [x] **Step 3: Implement**
+- [x] **Step 4: Run** → PASS
+- [x] **Step 5: Commit** — `feat: Markdown-Editor mit Vorschau und Bild-Upload`
 
 ### Task 6: Felder im Tab Issue bearbeiten, lokaler Repo-Pfad
 
@@ -384,7 +384,7 @@ Regeln:
 - `RepoPath`: je Repo-Zeile Knopf »Lokaler Pfad« → `writes.run('repo_locate', {name})`; Erfolg zeigt `path` in Monospace mit Kopier-Knopf (Muster `CopyId`), Fehler `message` und `hint` inline.
 - Während eines Writes ist der Editor gesperrt (`busy`); `PendingMark` am State zeigt die Überlagerung.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```tsx
 test('title edits save on enter and cancel on escape', …issue_update {id, title:'Neu'}; Esc → kein fetch);
@@ -401,10 +401,10 @@ test('repo path comes from repo_locate and can be copied', …);
 test('a repo without local path shows the hint', …404 not_found mit hint);
 ```
 
-- [ ] **Step 2: Run, verify FAIL**
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: Run** `pnpm vitest run --project web` → PASS
-- [ ] **Step 5: Commit** — `feat: Felder im Issue-Tab bearbeiten, lokaler Repo-Pfad über repo_locate`
+- [x] **Step 2: Run, verify FAIL**
+- [x] **Step 3: Implement**
+- [x] **Step 4: Run** `pnpm vitest run --project web` → PASS
+- [x] **Step 5: Commit** — `feat: Felder im Issue-Tab bearbeiten, lokaler Repo-Pfad über repo_locate`
 
 ### Task 7: Beschreibung, Kommentare, Anhänge und Aktionen im Tab Issue
 
@@ -431,7 +431,7 @@ Regeln:
 - **Anhänge:** »Hochladen« (verstecktes `<input type="file" multiple>`) und Ablegen von Dateien auf den Tab (`dragover` mit `Files` → sichtbare Drop-Fläche, `drop` → `uploadFiles`); je Datei-Anhang und URL-Anhang »Entfernen« (`ConfirmDialog` → `attachment_rm`). Fehler erscheinen über der Liste.
 - **Aktionen:** »Übernehmen« bei `backlog`/`todo` oder `in_progress` mit anderem Assignee (`issue_claim`; Knopf gesperrt mit Lade-Icon und `role="status"` »Übernehme …«, Fehler samt `hint`, etwa `conflict`); »Wiedereröffnen« bei erledigten Issues (Dialog mit Ziel aus `stateActions` und `reason`); »Löschen« öffnet `DeleteDialog`: mit Sub-Issues Pflichtwahl `orphan`/`recursive`, mit Verweisen die Liste der Issues und die Checkbox »Verweise entfernen und trotzdem löschen« (`force`); ohne Wahl bzw. ohne Häkchen bleibt »Löschen« gesperrt. Nach dem Löschen zeigt der Tab »gelöscht« (U6).
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```tsx
 test('the description saves with issue_update body', …);
@@ -447,10 +447,10 @@ test('delete asks orphan or recursive for sub-issues', …);
 test('delete with references needs force', …);
 ```
 
-- [ ] **Step 2: Run, verify FAIL**
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: Run** → PASS
-- [ ] **Step 5: Commit** — `feat: Beschreibung, Kommentare, Anhänge und Aktionen im Issue-Tab schreiben`
+- [x] **Step 2: Run, verify FAIL**
+- [x] **Step 3: Implement**
+- [x] **Step 4: Run** → PASS
+- [x] **Step 5: Commit** — `feat: Beschreibung, Kommentare, Anhänge und Aktionen im Issue-Tab schreiben`
 
 ### Task 8: Issue anlegen (`c` und Schaltfläche)
 
@@ -483,7 +483,7 @@ Regeln:
 - Dialog: Titel Pflicht (Absenden gesperrt, solange leer), Beschreibung mit `MarkdownEditor` — Bilder bleiben bis zum Anlegen lokal (`URL.createObjectURL`, Vorschau über `local`) und werden nach dem `issue_create` unter ihren Namen hochgeladen (`uploadFiles` mit der neuen ID); State aus `MAIN_LINE`; Projekte, Sprints, Repos (`MultiPick`), Assignee, Parent (`IssuePick`; Auswahl → `withParent`), Abhängigkeiten, deklarierte Properties (leer = nicht gesetzt). »Nach dem Anlegen öffnen« (Default an) navigiert zu `routeHref({kind: 'issue', backlog, id})`. Ein Fehler beim Anlegen bleibt im Dialog; scheitert danach ein Upload, schließt der Dialog nicht, nennt die angelegte ID und den Fehler. Blob-URLs werden beim Schließen freigegeben.
 - `c` in `App`: nur mit `canWrite`, ohne Modifier, nicht in Eingabefeldern, nicht bei offenem Dialog (`document.querySelector('[role="dialog"]')`); im Tab Backlog mit `draftFromFilter(parseListFilter(location.search), me)`, sonst `EMPTY_DRAFT`.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
 test('draft from filter', …{projects:['web'], sprints:['s1'], repos:['api'], assignee:'me', states:['todo']} → passend);
@@ -498,10 +498,10 @@ test('a create error stays in the dialog with its hint', …);
 test('the title is required', …);
 ```
 
-- [ ] **Step 2: Run, verify FAIL**
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: Run** → PASS
-- [ ] **Step 5: Commit** — `feat: Issue anlegen per Dialog und Tastenkürzel c`
+- [x] **Step 2: Run, verify FAIL**
+- [x] **Step 3: Implement**
+- [x] **Step 4: Run** → PASS
+- [x] **Step 5: Commit** — `feat: Issue anlegen per Dialog und Tastenkürzel c`
 
 ### Task 9: Tab Backlog — Kontextmenü, Zeilen-Drag, Ausstehend
 
@@ -528,7 +528,7 @@ Regeln:
 - Ziehen nur mit `canWrite` und `view.sort === 'rank'`: `draggable` an der Zeile, `DRAG_TYPE` mit der ID, Markierung der Einfügestelle (`data-drop="before|after"`), Ablegen → `issue_rank` mit `dropPosition` und `rankOverlay`. Tastatur: `Alt+ArrowUp`/`Alt+ArrowDown` an der fokussierten Zeile mit `keyboardPosition`, der Fokus bleibt an der Zeile.
 - `PendingMark` in jeder Zeile mit Überlagerung; Live-Hervorhebung und Scrollposition wie U5.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
 test('drop position by half', …);
@@ -544,10 +544,10 @@ test('alt+arrow reranks with the keyboard', …);
 test('no drag when sorted by created', …kein draggable);
 ```
 
-- [ ] **Step 2: Run, verify FAIL**
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: Run** → PASS
-- [ ] **Step 5: Commit** — `feat: Kontextmenü und Umsortieren per Drag und Tastatur im Tab Backlog`
+- [x] **Step 2: Run, verify FAIL**
+- [x] **Step 3: Implement**
+- [x] **Step 4: Run** → PASS
+- [x] **Step 5: Commit** — `feat: Kontextmenü und Umsortieren per Drag und Tastatur im Tab Backlog`
 
 ### Task 10: Nur lesen über alle Ansichten, Sichtprüfung, Docs
 
@@ -558,7 +558,7 @@ test('no drag when sorted by created', …kein draggable);
 **Interfaces:**
 - Consumes: alle Tasks.
 
-- [ ] **Step 1: Failing test** (fällt, wo eine Ansicht noch eine Schreibaktion zeigt)
+- [x] **Step 1: Failing test** (fällt, wo eine Ansicht noch eine Schreibaktion zeigt)
 
 ```tsx
 test('read-only hides write actions', async () => {
@@ -570,11 +570,11 @@ test('read-only hides write actions', async () => {
 });
 ```
 
-- [ ] **Step 2: Run** → bei Lücken FAIL, Lücke in der betroffenen Komponente schließen → PASS
-- [ ] **Step 3: Run** `mise run check` und `mise run smoke` → grün; `pnpm build` hält das Chunk-Budget (`scripts/check-ui-build.ts`)
-- [ ] **Step 4: Sichtprüfung** — `backe ui --port 0` gegen ein Test-Backlog unter einem Temp-`BACKE_HOME` im Browser (Playwright-MCP): Issue anlegen mit `c` samt eingefügtem Bild, Titel und State ändern, Kommentar schreiben und bearbeiten, Anhang hochladen und entfernen, Zeile per Drag umsortieren, Kontextmenü; parallel `backe issue move` im Terminal → Live-Update; Nur-lesen-Identität (`--as` ohne Key) zeigt keine Schreibaktion.
-- [ ] **Step 5: Docs** — ui.md Status-Satz: Tab Backlog vollständig (§2.7), Tab Issue ohne §2.9.5, Issue anlegen (§2.12), optimistische Anzeige (§2.5); offen bleiben §2.8, §2.9.5, §2.10, §2.11, §2.4.1 Punkt 3, Sprachwahl, Suche, `⌘K`. Präzisierungen als Gegenwart: §2.5 — die Überlagerung fällt auch, wenn der Serverstand die überlagerten Felder zeigt, und der 5-s-Rückfall gilt für jeden Write mit `commit`; §2.9.2 — der Client wählt den Anhangsnamen (gültig, eindeutig, mit Endung), beim Anlegen laden eingefügte Bilder nach dem `issue_create` hoch; §2.9.3 — Transitionen sind keine bearbeitbaren Kommentare; §2.12 — Projekte, Sprints und Repos gehen immer ausdrücklich mit, ohne Kontext-Default des Servers. ROADMAP »Writes im Frontend« abhaken. Gesamtplan U7 »Produziert« um `Writes`, `WriteContext`, `MarkdownEditor`, `useCreateIssue`, `stateActions`, `DeleteDialog` ergänzen.
-- [ ] **Step 6: Commit** — `feat: Nur-lesen blendet Schreibaktionen aus, Writes im Frontend fertig`
+- [x] **Step 2: Run** → bei Lücken FAIL, Lücke in der betroffenen Komponente schließen → PASS
+- [x] **Step 3: Run** `mise run check` und `mise run smoke` → grün; `pnpm build` hält das Chunk-Budget (`scripts/check-ui-build.ts`)
+- [x] **Step 4: Sichtprüfung** — `backe ui --port 0` gegen ein Test-Backlog unter einem Temp-`BACKE_HOME` im Browser (Playwright-MCP): Issue anlegen mit `c` samt eingefügtem Bild, Titel und State ändern, Kommentar schreiben und bearbeiten, Anhang hochladen und entfernen, Zeile per Drag umsortieren, Kontextmenü; parallel `backe issue move` im Terminal → Live-Update; Nur-lesen-Identität (`--as` ohne Key) zeigt keine Schreibaktion.
+- [x] **Step 5: Docs** — ui.md Status-Satz: Tab Backlog vollständig (§2.7), Tab Issue ohne §2.9.5, Issue anlegen (§2.12), optimistische Anzeige (§2.5); offen bleiben §2.8, §2.9.5, §2.10, §2.11, §2.4.1 Punkt 3, Sprachwahl, Suche, `⌘K`. Präzisierungen als Gegenwart: §2.5 — die Überlagerung fällt auch, wenn der Serverstand die überlagerten Felder zeigt, und der 5-s-Rückfall gilt für jeden Write mit `commit`; §2.9.2 — der Client wählt den Anhangsnamen (gültig, eindeutig, mit Endung), beim Anlegen laden eingefügte Bilder nach dem `issue_create` hoch; §2.9.3 — Transitionen sind keine bearbeitbaren Kommentare; §2.12 — Projekte, Sprints und Repos gehen immer ausdrücklich mit, ohne Kontext-Default des Servers. ROADMAP »Writes im Frontend« abhaken. Gesamtplan U7 »Produziert« um `Writes`, `WriteContext`, `MarkdownEditor`, `useCreateIssue`, `stateActions`, `DeleteDialog` ergänzen.
+- [x] **Step 6: Commit** — `feat: Nur-lesen blendet Schreibaktionen aus, Writes im Frontend fertig`
 
 ## Festlegungen
 
