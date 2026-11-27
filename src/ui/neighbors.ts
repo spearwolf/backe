@@ -5,7 +5,9 @@
  * Arbeitskopie `refs/remotes/<remote>/<branch>` — der Stand, den sie zuletzt gepusht oder geholt
  * hat. Eine Bewegung meldet nur, wer auf einen Commit zeigt, den die eigene Arbeitskopie noch nicht
  * hat; der eigene Push in den Hub zählt so nicht. Ein Watch-Ereignis ist nur der Anlass zum
- * Vergleich, die Werte der Refs entscheiden.
+ * Vergleich, die Werte der Refs entscheiden. Der Blick beim Start ist die Grundlinie; ein später
+ * entdeckter Nachbar zählt schon mit dem ersten Blick, denn eine frische Arbeitskopie pusht oft in
+ * derselben Ruhephase, in der sie entsteht. Nachbarn sind eine Optimierung: Nichts hier wirft.
  */
 import type { Dirent } from 'node:fs';
 import { readdir } from 'node:fs/promises';
@@ -44,26 +46,31 @@ type Neighbor = {
 export class NeighborWatch {
   readonly #opts: NeighborOptions;
   readonly #watch: WatchFn;
-  readonly #own: string;
+  /** Physischer Pfad der eigenen Arbeitskopie; bis er sich auflösen lässt, fällt jeder Durchlauf aus. */
+  #own: string | undefined;
   readonly #neighbors = new Map<string, Neighbor>();
   #dirHandle: Handle | undefined;
   #timer: ReturnType<typeof setTimeout> | undefined;
   #running: Promise<void> | undefined;
   #again = false;
   #closed = false;
+  /** Nach dem ersten Blick beim Start: Neue Nachbarn zählen dann schon mit ihrem ersten Blick. */
+  #started = false;
 
-  private constructor(opts: NeighborOptions, own: string) {
+  private constructor(opts: NeighborOptions) {
     this.#opts = opts;
     this.#watch = opts.watch ?? fsWatch;
-    this.#own = own;
   }
 
-  /** Öffnet die Watches und liest den ersten Blick; ein fehlendes Backlog-Verzeichnis ist kein Fehler. */
+  /**
+   * Öffnet die Watches und liest den ersten Blick; wirft nie. Was dabei nicht aufgeht (ein
+   * fehlendes Backlog-Verzeichnis, ein Watch-Fehler), versucht der nächste `check` erneut.
+   */
   static async start(opts: NeighborOptions): Promise<NeighborWatch> {
-    const nw = new NeighborWatch(opts, await physicalPath(opts.own));
-    // Entsteht oder verschwindet ein Nachbar, liest der nächste `check` die Einträge neu.
-    nw.#dirHandle = nw.#watch(opts.backlogDir, { recursive: false }, () => nw.#schedule());
+    const nw = new NeighborWatch(opts);
+    await nw.#watchDir();
     await nw.check();
+    nw.#started = true;
     return nw;
   }
 
@@ -110,8 +117,26 @@ export class NeighborWatch {
     }, this.#opts.debounceMs);
   }
 
+  /**
+   * Beobachtet das Backlog-Verzeichnis, sobald es existiert: Entsteht oder verschwindet ein
+   * Nachbar, liest der nächste `check` die Einträge neu. Ein fehlendes Verzeichnis bekommt keinen
+   * (stummen) Watch, damit ein späterer Durchlauf ihn öffnet.
+   */
+  async #watchDir(): Promise<void> {
+    try {
+      if (!(await exists(this.#opts.backlogDir))) return;
+      const h = this.#watch(this.#opts.backlogDir, { recursive: false }, () => this.#schedule());
+      if (this.#closed) h.close();
+      else this.#dirHandle = h;
+    } catch {
+      // Der nächste Durchlauf versucht es erneut.
+    }
+  }
+
   async #round(): Promise<void> {
-    const found = await this.#candidates();
+    if (this.#dirHandle === undefined) await this.#watchDir();
+    this.#own ??= await physicalPath(this.#opts.own);
+    const found = await this.#candidates(this.#own);
     for (const [dir, n] of this.#neighbors) {
       if (found.has(dir)) continue;
       for (const h of n.handles) h.close();
@@ -126,7 +151,9 @@ export class NeighborWatch {
         const value = await this.#read(dir, n.ref);
         const before = n.last;
         n.last = value;
-        if (before === undefined || value === null || value === before) continue;
+        if (value === null || value === before) continue;
+        // Der Blick beim Start ist die Grundlinie, keine Bewegung.
+        if (before === undefined && !this.#started) continue;
         if (!(await this.#known(value))) moved = true;
       } catch {
         // Ein verschwundener oder kaputter Nachbar fällt aus diesem Durchlauf; der nächste versucht
@@ -137,7 +164,7 @@ export class NeighborWatch {
   }
 
   /** Die Nachbarn im Backlog-Verzeichnis, Pfad → ist der Hub; die eigene Arbeitskopie nie. */
-  async #candidates(): Promise<Map<string, boolean>> {
+  async #candidates(own: string): Promise<Map<string, boolean>> {
     const found = new Map<string, boolean>();
     let entries: Dirent[];
     try {
@@ -151,7 +178,7 @@ export class NeighborWatch {
       const hub = e.name === HUB;
       try {
         if (!hub && !(await exists(join(dir, '.git')))) continue;
-        if (!this.#neighbors.has(dir) && (await physicalPath(dir)) === this.#own) continue;
+        if (!this.#neighbors.has(dir) && (await physicalPath(dir)) === own) continue;
       } catch {
         // Unlesbar: kein Nachbar, solange es so bleibt.
         continue;
@@ -161,9 +188,16 @@ export class NeighborWatch {
     return found;
   }
 
-  /** Watches eines neu entdeckten Nachbarn; nach `close` keine. */
+  /**
+   * Watches eines neu entdeckten Nachbarn; nach `close` keine. Beobachtet wird nur der Nachbar
+   * selbst: Ist er kein Repository, fände git über die Elternverzeichnisse ein fremdes (etwa ein
+   * Repo, in dem `BACKE_HOME` liegt). Beim Hub muss das Common-Dir der Hub sein, bei einer
+   * Arbeitskopie das Git-Dir `<dir>/.git`.
+   */
   async #open(dir: string, hub: boolean): Promise<Neighbor | undefined> {
-    const { commonDir } = await gitDirs(dir);
+    const { gitDir, commonDir } = await gitDirs(dir);
+    const expected = await physicalPath(hub ? dir : join(dir, '.git'));
+    if ((await physicalPath(hub ? commonDir : gitDir)) !== expected) return undefined;
     if (this.#closed) return undefined;
     const { remote, branch } = this.#opts;
     const top = hub ? 'heads' : 'remotes';

@@ -1,5 +1,5 @@
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { writeOp } from '../../test/helpers/context.ts';
 import {
   revParse,
@@ -119,10 +119,11 @@ async function start(
   s: Setup,
   onMove: () => void,
   watch: WatchFn = recorder().watch,
+  at: { backlogDir?: string; own?: string } = {},
 ): Promise<NeighborWatch> {
   const w = await NeighborWatch.start({
-    backlogDir: s.backlogDir,
-    own: s.b.root,
+    backlogDir: at.backlogDir ?? s.backlogDir,
+    own: at.own ?? s.b.root,
     remote: 'origin',
     branch: 'main',
     debounceMs,
@@ -263,29 +264,38 @@ test('a neighbour that appears later is watched', async () => {
   await start(s, onMove, rec.watch);
   expect(rec.all.map((r) => [r.path, r.recursive])).toEqual([[s.backlogDir, false]]);
 
+  // Eine frische Arbeitskopie pusht in derselben Ruhephase, in der sie entsteht.
   const { wc, agentCtx } = await agentCopy(s);
+  await agentPush(agentCtx);
   const hub = join(s.backlogDir, 'hub.git');
   fakeTimers();
   rec.at(s.backlogDir).fire('claude-1');
   await vi.advanceTimersByTimeAsync(debounceMs);
+
+  await vi.waitFor(() => expect(onMove).toHaveBeenCalledTimes(1));
   const hubRefs = await refsOf(hub);
-  const agentRefs = await refsOf(wc);
-  await vi.waitFor(() => {
-    expect(rec.has(hubRefs)).toBe(true);
-    expect(rec.has(agentRefs)).toBe(true);
-  });
+  expect(rec.has(hubRefs)).toBe(true);
+  expect(rec.has(await refsOf(wc))).toBe(true);
   expect(rec.at(hubRefs).recursive).toBe(true);
   expect(rec.at((await gitDirs(hub)).commonDir).recursive).toBe(false);
   expect(rec.has(await refsOf(s.b.root))).toBe(false);
-  // Der erste Blick auf einen neuen Nachbarn ist keine Bewegung.
+});
+
+test('a new neighbour at a known state is no move', async () => {
+  const s = await withAgent();
+  const rec = recorder();
+  const onMove = vi.fn();
+  const w = await start(s, onMove, rec.watch);
+  const { wc, agentCtx } = await agentCopy(s);
+
+  await w.check();
+  expect(rec.has(await refsOf(wc))).toBe(true);
+  expect(rec.has(await refsOf(join(s.backlogDir, 'hub.git')))).toBe(true);
   expect(onMove).not.toHaveBeenCalled();
 
-  vi.useRealTimers();
   await agentPush(agentCtx);
-  fakeTimers();
-  rec.at(hubRefs).fire('heads/main');
-  await vi.advanceTimersByTimeAsync(debounceMs);
-  await vi.waitFor(() => expect(onMove).toHaveBeenCalledTimes(1));
+  await w.check();
+  expect(onMove).toHaveBeenCalledTimes(1);
 });
 
 test('the first glance at start is no move, also on an unknown commit', async () => {
@@ -296,21 +306,6 @@ test('the first glance at start is no move, also on an unknown commit', async ()
   await w.check();
 
   expect(onMove).not.toHaveBeenCalled();
-});
-
-test('the first glance at a new neighbour is no move, its next step is', async () => {
-  const s = await withAgent();
-  const onMove = vi.fn();
-  const w = await start(s, onMove);
-  const { agentCtx } = await agentCopy(s);
-  await agentPush(agentCtx);
-
-  await w.check();
-  expect(onMove).not.toHaveBeenCalled();
-
-  await agentPush(agentCtx);
-  await w.check();
-  expect(onMove).toHaveBeenCalledTimes(1);
 });
 
 test('a vanished neighbour is dropped', async () => {
@@ -399,6 +394,89 @@ test('a missing backlog dir is no error', async () => {
 
   await expect(w.check()).resolves.toBeUndefined();
   expect(onMove).not.toHaveBeenCalled();
+});
+
+test('a foreign repository is never watched', async () => {
+  const s = await withAgent();
+  // `BACKE_HOME` liegt in einem Git-Repo; kaputte Nachbarn fänden es über die Elternverzeichnisse.
+  const outer = dirname(s.b.homes.backeHome);
+  await git(['init', '-q', outer], { cwd: outer });
+  const outerGit = (await gitDirs(outer)).commonDir;
+  await mkdir(join(s.backlogDir, 'hub.git'));
+  await mkdir(join(s.backlogDir, 'stray', '.git'), { recursive: true });
+  expect((await gitDirs(join(s.backlogDir, 'hub.git'))).commonDir).toBe(outerGit);
+  const rec = recorder();
+  const w = await start(s, vi.fn(), rec.watch);
+  await w.check();
+
+  expect(rec.all.map((r) => r.path)).toEqual([s.backlogDir]);
+});
+
+test('start never throws and the next check opens what failed', async () => {
+  const s = await withHub();
+  const rec = recorder();
+  let fail = true;
+  const watch: WatchFn = (path, opts, listener) => {
+    if (fail && path === s.backlogDir) {
+      throw Object.assign(new Error('EMFILE'), { code: 'EMFILE' });
+    }
+    return rec.watch(path, opts, listener);
+  };
+  const w = await start(s, vi.fn(), watch);
+  expect(rec.has(s.backlogDir)).toBe(false);
+  expect(rec.has(await refsOf(s.hub))).toBe(true);
+
+  fail = false;
+  await w.check();
+  expect(rec.has(s.backlogDir)).toBe(true);
+  const check = vi.spyOn(w, 'check');
+  fakeTimers();
+  rec.at(s.backlogDir).fire('claude-1');
+  await vi.advanceTimersByTimeAsync(debounceMs);
+  expect(check).toHaveBeenCalledTimes(1);
+});
+
+test.skipIf(process.getuid?.() === 0)(
+  'an own copy that cannot be resolved yet only skips rounds',
+  async () => {
+    const s = await withHub();
+    const locked = join(dirname(s.b.homes.backeHome), 'locked');
+    await mkdir(locked);
+    await chmod(locked, 0o000);
+    const rec = recorder();
+    let w: NeighborWatch;
+    try {
+      w = await start(s, vi.fn(), rec.watch, { own: join(locked, 'own') });
+      expect(rec.all.map((r) => r.path)).toEqual([s.backlogDir]);
+    } finally {
+      await chmod(locked, 0o700);
+    }
+    await w.check();
+    expect(rec.has(await refsOf(s.hub))).toBe(true);
+  },
+);
+
+test('a backlog dir that appears later is watched', async () => {
+  const s = await withAgent();
+  const later = join(s.b.homes.backeHome, 'later');
+  const rec = recorder();
+  const w = await start(s, vi.fn(), rec.watch, { backlogDir: later });
+  expect(rec.all).toEqual([]);
+
+  await mkdir(later);
+  const hub = join(later, 'hub.git');
+  await git(['init', '--bare', '-q', '-b', 'main', hub], { cwd: later });
+  await w.check();
+  expect(rec.at(later).recursive).toBe(false);
+  expect(rec.has(await refsOf(hub))).toBe(true);
+
+  const check = vi.spyOn(w, 'check');
+  fakeTimers();
+  rec.at(later).fire('claude-1');
+  await vi.advanceTimersByTimeAsync(debounceMs - 1);
+  expect(check).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(check).toHaveBeenCalledTimes(1);
 });
 
 test('a check requested during a running one runs once more afterwards', async () => {
