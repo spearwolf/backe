@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join, sep } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { writeOp } from '../../test/helpers/context.ts';
 import {
   rawCommit,
@@ -36,6 +36,8 @@ import { fsWatch, slashed } from './watch.ts';
 
 const BOOT = '0123abcd';
 const WAIT = { timeout: 10_000 };
+/** 50 echte Git-Writes: lokal rund 13 s, auf den macOS-Runnern der CI über eine Minute. */
+const BURST_TIMEOUT = 180_000;
 
 let b: TestBacklog;
 let ctx: ResolvedContext;
@@ -380,32 +382,36 @@ test('a broken config keeps the last state until it is fixed', async () => {
   expect(c.patches()[0]?.upsert.issues?.[0]?.title).toBe('Neu');
 });
 
-test('patches converge to a fresh state after a burst', async () => {
-  await create('Vorlauf');
-  const live = await start();
-  const initial = await stateJson(ctx, live.rev);
-  const c = collect(live);
-  const ids: string[] = [];
-  for (let i = 0; i < 50; i++) {
-    if (i % 3 === 2) {
-      await writeOp(ctx, {
-        op: 'issue.move',
-        id: ids.at(-1) as string,
-        from: 'todo',
-        to: 'in_progress',
-      });
-    } else {
-      ids.push(await create(`Burst ${i}`));
+test(
+  'patches converge to a fresh state after a burst',
+  async () => {
+    await create('Vorlauf');
+    const live = await start();
+    const initial = await stateJson(ctx, live.rev);
+    const c = collect(live);
+    const ids: string[] = [];
+    for (let i = 0; i < 50; i++) {
+      if (i % 3 === 2) {
+        await writeOp(ctx, {
+          op: 'issue.move',
+          id: ids.at(-1) as string,
+          from: 'todo',
+          to: 'in_progress',
+        });
+      } else {
+        ids.push(await create(`Burst ${i}`));
+      }
     }
-  }
-  await git(['pack-refs', '--all'], { cwd: b.root });
-  await vi.waitFor(() => expect(c.patches().at(-1)?.head).toBe(live.head), WAIT);
-  await settle(live);
-  const fresh = await stateJson(ctx);
-  expect(live.head).toBe(fresh.head);
-  const folded = c.patches().reduce(applyPatch, initial);
-  expect(comparable(folded)).toEqual(comparable(fresh));
-}, 60_000);
+    await git(['pack-refs', '--all'], { cwd: b.root });
+    await vi.waitFor(() => expect(c.patches().at(-1)?.head).toBe(live.head), WAIT);
+    await settle(live);
+    const fresh = await stateJson(ctx);
+    expect(live.head).toBe(fresh.head);
+    const folded = c.patches().reduce(applyPatch, initial);
+    expect(comparable(folded)).toEqual(comparable(fresh));
+  },
+  BURST_TIMEOUT,
+);
 
 test('packed refs still move the head', async () => {
   // Nur `packed-refs` im Git-Dir meldet sich; Ref-Verzeichnis, `HEAD.lock` und Arbeitsbaum sind stumm.
@@ -499,13 +505,24 @@ test('a foreign, future or broken event id gets reset', async () => {
 
 test('an event id outside the buffer gets reset', async () => {
   const id = await create('Oft');
-  const live = await start({ rev: 5 });
+  // Der Test meldet jede Änderung selbst: Es geht um den Puffer, nicht um `fs.watch`. Echte
+  // Ereignisse kämen auf macOS (FSEvents) mit Latenz, und 201 Runden sprengten die Frist.
+  let tree: ((name: string | null) => void) | undefined;
+  const live = await start({
+    rev: 5,
+    watch: (path, _opts, listener) => {
+      if (path === join(b.root, 'issues')) tree = listener;
+      return { close() {} };
+    },
+  });
+  expect(tree).toBeDefined();
   expect(collect(live, `${BOOT}:4`).names()).toEqual(['hello', 'reset', 'sync']);
   const c = collect(live);
   const file = join(b.root, issueFile(id));
   const text = await readFile(file, 'utf8');
   for (let i = 0; i <= LIVE_TIMING.buffer; i++) {
     await writeFile(file, text.replace('title: Oft', `title: Oft ${i}`));
+    tree?.(relative('issues', issueFile(id)));
     await settle(live);
     await vi.waitFor(() => expect(c.patches()).toHaveLength(i + 1), WAIT);
   }
@@ -678,66 +695,70 @@ describe('neighbours', () => {
     }
   });
 
-  test('neighbour pushes converge to a fresh state after a burst', async () => {
-    const { agentCtx } = await withAgent(3600);
-    const agentWc = agentCtx.backlog.workingCopy as string;
-    const spawn = inProcess(() => ctx);
-    const live = await startWith(ctx, { sync: { spawn } });
-    const initial = await stateJson(ctx, live.rev);
-    const c = collect(live);
-    /** Ruhephasen von `neighborMs`, die der Test schafft; je Phase höchstens eine Runde. */
-    let phases = 0;
-    const quiet = (check: () => void | Promise<void>) =>
-      vi.waitFor(async () => {
-        phases += 1;
-        await vi.advanceTimersByTimeAsync(LIVE_TIMING.neighborMs);
-        await check();
-      }, WAIT);
-    const ids: string[] = [];
-    let pushes = 0;
-    for (let i = 0; i < 30; i++) {
-      if (i % 3 !== 2) {
-        ids.push(
-          await writeOp(agentCtx, { op: 'issue.create', title: `Burst ${i}`, state: 'todo' }),
-        );
-        continue;
-      }
-      await writeOp(agentCtx, {
-        op: 'issue.move',
-        id: ids.at(-1) as string,
-        from: 'todo',
-        to: 'in_progress',
-      });
-      await syncNow(agentCtx, { spawn: () => {} });
-      pushes += 1;
-      // Jeder Push ist eine eigene Runde: genau ein Sync, dann holt spw den Stand und sendet ihn.
-      await quiet(() => expect(spawn).toHaveBeenCalledTimes(pushes));
-      await Promise.all(syncs);
-      const agentHead = await revParse(agentWc, 'HEAD');
-      await quiet(() => {
-        expect(live.head).toBe(agentHead);
-        expect(c.patches().at(-1)?.head).toBe(agentHead);
-      });
-      if (pushes === 5) {
-        // Zwischen zwei Runden: Der Hub packt seine Refs, der Wert bleibt, ein Sync folgt nicht.
-        // Eine eigene Ruhephase, damit ein Sync daraus nicht in der Entprellung des nächsten
-        // Pushes verschwindet.
-        await git(['pack-refs', '--all'], { cwd: join(backlogDir(), 'hub.git') });
+  test(
+    'neighbour pushes converge to a fresh state after a burst',
+    async () => {
+      const { agentCtx } = await withAgent(3600);
+      const agentWc = agentCtx.backlog.workingCopy as string;
+      const spawn = inProcess(() => ctx);
+      const live = await startWith(ctx, { sync: { spawn } });
+      const initial = await stateJson(ctx, live.rev);
+      const c = collect(live);
+      /** Ruhephasen von `neighborMs`, die der Test schafft; je Phase höchstens eine Runde. */
+      let phases = 0;
+      const quiet = (check: () => void | Promise<void>) =>
+        vi.waitFor(async () => {
+          phases += 1;
+          await vi.advanceTimersByTimeAsync(LIVE_TIMING.neighborMs);
+          await check();
+        }, WAIT);
+      const ids: string[] = [];
+      let pushes = 0;
+      for (let i = 0; i < 30; i++) {
+        if (i % 3 !== 2) {
+          ids.push(
+            await writeOp(agentCtx, { op: 'issue.create', title: `Burst ${i}`, state: 'todo' }),
+          );
+          continue;
+        }
+        await writeOp(agentCtx, {
+          op: 'issue.move',
+          id: ids.at(-1) as string,
+          from: 'todo',
+          to: 'in_progress',
+        });
+        await syncNow(agentCtx, { spawn: () => {} });
+        pushes += 1;
+        // Jeder Push ist eine eigene Runde: genau ein Sync, dann holt spw den Stand und sendet ihn.
         await quiet(() => expect(spawn).toHaveBeenCalledTimes(pushes));
+        await Promise.all(syncs);
+        const agentHead = await revParse(agentWc, 'HEAD');
+        await quiet(() => {
+          expect(live.head).toBe(agentHead);
+          expect(c.patches().at(-1)?.head).toBe(agentHead);
+        });
+        if (pushes === 5) {
+          // Zwischen zwei Runden: Der Hub packt seine Refs, der Wert bleibt, ein Sync folgt nicht.
+          // Eine eigene Ruhephase, damit ein Sync daraus nicht in der Entprellung des nächsten
+          // Pushes verschwindet.
+          await git(['pack-refs', '--all'], { cwd: join(backlogDir(), 'hub.git') });
+          await quiet(() => expect(spawn).toHaveBeenCalledTimes(pushes));
+        }
       }
-    }
-    await quiet(() => {});
-    await Promise.all(syncs);
-    await settle(live);
-    const fresh = await stateJson(ctx);
-    expect(live.head).toBe(fresh.head);
-    expect(live.head).toBe(await revParse(agentWc, 'HEAD'));
-    expect(c.patches().length).toBeGreaterThan(1);
-    const folded = c.patches().reduce(applyPatch, initial);
-    expect(comparable(folded)).toEqual(comparable(fresh));
-    expect(spawn).toHaveBeenCalledTimes(pushes);
-    expect(spawn.mock.calls.length).toBeLessThanOrEqual(phases);
-  }, 60_000);
+      await quiet(() => {});
+      await Promise.all(syncs);
+      await settle(live);
+      const fresh = await stateJson(ctx);
+      expect(live.head).toBe(fresh.head);
+      expect(live.head).toBe(await revParse(agentWc, 'HEAD'));
+      expect(c.patches().length).toBeGreaterThan(1);
+      const folded = c.patches().reduce(applyPatch, initial);
+      expect(comparable(folded)).toEqual(comparable(fresh));
+      expect(spawn).toHaveBeenCalledTimes(pushes);
+      expect(spawn.mock.calls.length).toBeLessThanOrEqual(phases);
+    },
+    BURST_TIMEOUT,
+  );
 
   /** Faltet die Patches auf den Anfangsstand und vergleicht mit einem frischen Stand. */
   async function converged(live: LiveBacklog, initial: StateJson, c: ReturnType<typeof collect>) {

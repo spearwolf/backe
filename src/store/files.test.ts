@@ -6,6 +6,7 @@ import { catchErrAsync } from '../../test/helpers/catch.ts';
 import { BackeError } from '../core/errors.ts';
 import {
   applyFileChanges,
+  atomicTempPath,
   exists,
   fsFailure,
   isAtomicTemp,
@@ -219,6 +220,10 @@ test('writeFileAtomic replaces the target of a symlink and keeps the link', asyn
 });
 
 test('isAtomicTemp recognizes the temp files of writeFileAtomic', async () => {
+  expect(isAtomicTemp(atomicTempPath('/b/issues/t0/x/issue.md'))).toBe(true);
+  expect(isAtomicTemp('issues/t0/x/issue.md')).toBe(false);
+  // Was `fs.watch` beim Schreiben meldet, wird richtig eingeordnet. Ob der Temp-Name dabei
+  // auftaucht, hängt vom System ab: inotify meldet ihn, FSEvents auf macOS fasst ihn oft weg.
   const dir = await tempDir();
   const names = new Set<string>();
   const w = watch(dir, (_e, name) => {
@@ -226,7 +231,7 @@ test('isAtomicTemp recognizes the temp files of writeFileAtomic', async () => {
   });
   try {
     await writeFileAtomic(join(dir, 'issue.md'), 'x');
-    await vi.waitFor(() => expect([...names].some((n) => n !== 'issue.md')).toBe(true));
+    await vi.waitFor(() => expect(names.has('issue.md')).toBe(true));
   } finally {
     w.close();
   }

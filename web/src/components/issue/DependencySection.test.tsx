@@ -44,9 +44,13 @@ const fold = () => screen.getByRole('button', { name: m.title });
 const node = (id: string) => document.querySelector<HTMLElement>(`[data-dep-node="${id}"]`);
 const edge = (id: string) => document.querySelector(`.react-flow__edge[data-id="${id}"]`);
 
-/** Wartet, bis der Graph-Chunk da ist und xyflow vermessen und eingepasst hat. */
+/**
+ * Wartet, bis der Graph-Chunk da ist und xyflow vermessen und eingepasst hat. Das erste Laden des
+ * Chunks (xyflow und dagre durch den Transform von Vitest) braucht auf den macOS-Runnern der CI
+ * über eine Sekunde, die Default-Frist von `waitFor`.
+ */
 async function graphShown() {
-  await waitFor(() => expect(node(ID)).not.toBeNull());
+  await waitFor(() => expect(node(ID)).not.toBeNull(), { timeout: 10_000 });
   await act(async () => flushFrames());
 }
 

@@ -109,6 +109,14 @@ export function assertRecursiveAllowed(change: FileChange): void {
   }
 }
 
+/** Pfad der Temp-Datei, über die `writeFileAtomic` nach `target` schreibt (`.<name>.tmp-<pid>-<hex>`). */
+export function atomicTempPath(target: string): string {
+  return join(
+    dirname(target),
+    `.${basename(target)}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`,
+  );
+}
+
 /** Ob der Dateiname von `path` eine Temp-Datei von `writeFileAtomic` ist (`.<name>.tmp-<pid>-<hex>`). */
 export function isAtomicTemp(path: string): boolean {
   return /^\..+\.tmp-\d+-[0-9a-f]{8}$/.test(path.slice(path.lastIndexOf('/') + 1));
@@ -125,10 +133,7 @@ export async function writeFileAtomic(abs: string, content: string | Uint8Array)
   } catch {
     // Datei fehlt (noch): es gibt nichts aufzulösen.
   }
-  const tmp = join(
-    dirname(target),
-    `.${basename(target)}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`,
-  );
+  const tmp = atomicTempPath(target);
   try {
     const existing = await stat(target).catch(() => undefined);
     await writeFile(tmp, content);
