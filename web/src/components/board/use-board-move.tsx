@@ -127,6 +127,9 @@ export function useBoardMove(group: BoardGroup): BoardMoves & { dialogs: ReactNo
   // Der Platzhalter, dem der Fokus zuletzt gegeben wurde: Springt die Karte nach einer Ablehnung
   // zurück, holt sie ihn sich von dort wieder.
   const standIn = useRef<HTMLElement | null>(null);
+  // Zählt die Züge: Eine späte Ablehnung holt den Fokus nur zurück, wenn seither kein Zug kam —
+  // sonst ersetzte sie das Folgen eines neueren.
+  const moves = useRef(0);
   // Wohin der Fokus nach dem Dialog geht: erst die Bahn aus dem Dialog, nach einem gelungenen
   // `submit` die Zielbahn des Zugs. Eine Ref, denn das Schließen folgt dem `submit` unmittelbar.
   const back = useRef<string | undefined>(undefined);
@@ -155,6 +158,7 @@ export function useBoardMove(group: BoardGroup): BoardMoves & { dialogs: ReactNo
       const sent = sendBoardMove(store, writes, id, plan);
       if (sent === undefined) return;
       // Jeder neue Zug ersetzt ein offenes Folgen, auch eines, dessen Karte nie erschien.
+      const serial = ++moves.current;
       standIn.current = null;
       if (opts.focus !== true) setFollow(undefined);
       else if (hidden === undefined) setFollow({ id, lane: to.lane });
@@ -163,8 +167,9 @@ export function useBoardMove(group: BoardGroup): BoardMoves & { dialogs: ReactNo
       else setFollow({ id, lane: to.lane, standIn: hidden });
       if (plan.kind === 'rank') return;
       sent.catch((cause: ApiError) => {
-        // Die Karte springt zurück; der Fokus geht mit, wenn er ihr gefolgt war.
-        if (opts.focus === true) setFollow({ id, lane: from.lane });
+        // Die Karte springt zurück; der Fokus geht mit, wenn er ihr gefolgt war und seither kein
+        // neuerer Zug kam.
+        if (opts.focus === true && serial === moves.current) setFollow({ id, lane: from.lane });
         if (plan.state === undefined || openChildrenOf(cause) === undefined) {
           writes.report(cause);
           return;

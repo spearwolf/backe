@@ -414,6 +414,57 @@ test('a rejected alt move gives focus back to the card where it was', async () =
   expect(cellOf(m.noSprint, 'todo').contains(document.activeElement)).toBe(true);
 });
 
+test('a late rejection does not take the focus from a newer move', async () => {
+  let reject!: (cause: unknown) => void;
+  call.mockImplementationOnce(
+    () =>
+      new Promise((_, r) => {
+        reject = r;
+      }),
+  );
+  call.mockImplementation(() => new Promise(() => {}));
+  board([testIssue(1), testIssue(2)]);
+  cardLink(tid(1)).focus();
+  await alt('ArrowRight');
+  // Der zweite Zug, an einer anderen Karte, bevor der erste beantwortet ist.
+  cardLink(tid(2)).focus();
+  await alt('ArrowRight');
+  expect(document.activeElement).toBe(cardLink(tid(2)));
+  await act(async () =>
+    reject(new ApiError(400, 'invariant', 'Nicht erlaubt', 'backe issue move')),
+  );
+  await flush();
+  // Karte 1 springt zurück, der Fokus bleibt beim neueren Zug an Karte 2.
+  expect(cardIds(m.noSprint, 'todo')).toEqual([tid(1)]);
+  expect(document.activeElement).toBe(cardLink(tid(2)));
+  expect(cellOf(m.noSprint, 'in_progress').contains(document.activeElement)).toBe(true);
+});
+
+test('a late rejection does not focus its card once focus is gone elsewhere', async () => {
+  let reject!: (cause: unknown) => void;
+  call.mockImplementationOnce(
+    () =>
+      new Promise((_, r) => {
+        reject = r;
+      }),
+  );
+  call.mockImplementation(() => new Promise(() => {}));
+  board([testIssue(1), testIssue(2)]);
+  cardLink(tid(1)).focus();
+  await alt('ArrowRight');
+  cardLink(tid(2)).focus();
+  await alt('ArrowRight');
+  // Der Fokus geht verloren, nachdem er dem zweiten Zug gefolgt ist; der Platz für den
+  // zurückspringenden ersten ist das nicht.
+  act(() => (document.activeElement as HTMLElement).blur());
+  await act(async () =>
+    reject(new ApiError(400, 'invariant', 'Nicht erlaubt', 'backe issue move')),
+  );
+  await flush();
+  expect(cardIds(m.noSprint, 'todo')).toEqual([tid(1)]);
+  expect(document.activeElement).toBe(document.body);
+});
+
 test('a pending focus ends when its lane is folded', async () => {
   let reject!: (cause: unknown) => void;
   call.mockImplementationOnce(
