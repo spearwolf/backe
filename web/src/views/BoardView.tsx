@@ -30,6 +30,18 @@ import { BoardToolbar } from '../components/board/BoardToolbar.tsx';
 import { boardCollision, type CardData, dropFrom } from '../components/board/board-dnd.ts';
 import { type BoardKey, keyDrop } from '../components/board/board-keys.ts';
 import {
+  BOARD_SCROLLER,
+  CardRevealContext,
+  CardRevealers,
+} from '../components/board/board-virtual.tsx';
+import {
+  CardDragSource,
+  type CardPress,
+  CellDataContext,
+  CellTarget,
+  useCellDataOf,
+} from '../components/board/card-drag.tsx';
+import {
   BoardKeyContext,
   BoardMoveContext,
   useBoardMove,
@@ -86,9 +98,13 @@ function Loaded({ state, backlog }: { state: BoardViewState; backlog: string }) 
   const { canWrite } = useWrites();
   const { group } = view;
   const columns = useMemo(() => boardColumns(view), [view]);
-  const { move, openState, dialogs } = useBoardMove(group);
+  // Virtualisierte Zellen melden sich hier an; das Fokus-Folgen holt über sie eine Karte ins Bild.
+  const [revealers] = useState(() => new CardRevealers());
+  const { move, openState, dialogs } = useBoardMove(group, revealers.reveal);
   const moves = useMemo(() => ({ move, openState }), [move, openState]);
   const drag = useBoardDrag(lanes, move);
+  const press = useRef<CardPress['current']>(undefined);
+  const cellData = useCellDataOf();
 
   // Die Tastenzüge lesen Bahnen und Spalten von gerade eben, sind selbst aber stabil: Ein Patch
   // ändert die Bahnen, und die Karten (`memo`) sollen deswegen nicht alle neu rendern.
@@ -136,8 +152,17 @@ function Loaded({ state, backlog }: { state: BoardViewState; backlog: string }) 
       <BoardKeyContext.Provider value={canWrite ? keys : undefined}>
         <div className="flex h-full min-h-0 flex-col">
           <BoardToolbar view={view} onView={(next) => state.prefs.setView(next)} />
-          <div className="min-h-0 flex-1 overflow-auto">
-            {canWrite ? (
+          <div
+            {...{ [BOARD_SCROLLER]: '' }}
+            className="min-h-0 flex-1 overflow-auto"
+            {...(canWrite ? { onPointerDown: (e) => press.current?.(e) } : {})}
+          >
+            <CardRevealContext.Provider value={revealers}>
+              <CellDataContext.Provider value={cellData}>{body}</CellDataContext.Provider>
+            </CardRevealContext.Provider>
+            {canWrite && (
+              // Neben dem Board, nicht darum (`card-drag.tsx`): Die Quelle, je Zelle ein Ziel und die
+              // Kopie unter dem Zeiger, sonst nichts, was mit dem Kontext von dnd-kit rendern müsste.
               <DndContext
                 sensors={drag.sensors}
                 collisionDetection={boardCollision}
@@ -148,14 +173,20 @@ function Loaded({ state, backlog }: { state: BoardViewState; backlog: string }) 
                 onDragEnd={drag.onDragEnd}
                 onDragCancel={drag.onDragCancel}
               >
-                {body}
+                <CardDragSource press={press} />
+                {lanes.flatMap((lane) =>
+                  lane.cells.map((cell) => (
+                    <CellTarget
+                      key={`${group}\n${lane.key}\n${cell.column}`}
+                      data={cellData(lane.key, cell.column)}
+                    />
+                  )),
+                )}
                 {/* Ohne Rückflug: Nach dem Ablegen steht die Karte (als Vorschau) schon am Ziel. */}
                 <DragOverlay dropAnimation={null}>
                   {drag.dragged === undefined ? null : <BoardCardCopy card={drag.dragged} />}
                 </DragOverlay>
               </DndContext>
-            ) : (
-              body
             )}
           </div>
         </div>
@@ -236,10 +267,10 @@ function markerOf(drop: BoardDrop | undefined): Marker | undefined {
 }
 
 /**
- * Erst ab 5 px Weg zieht der Zeiger, damit ein Klick weiter den Tab öffnet. Eine Konstante, kein
- * Literal im Render: `useSensor` merkt sich die Optionen nach ihrer Identität, und ein neues Objekt
- * je Render gäbe dnd-kit neue Aktivatoren und damit jeder Karte einen neuen Kontext — ein Patch
- * renderte dann alle Karten neu, `memo` hin oder her.
+ * Erst ab 5 px Weg zieht der Zeiger, damit ein Klick weiter den Tab öffnet; `CardDragSource` liest
+ * die gedrückte Karte darum erst nach dem Render des Drucks. Eine Konstante, kein Literal im
+ * Render: `useSensor` merkt sich die Optionen nach ihrer Identität, und ein neues Objekt je Render
+ * gäbe dnd-kit neue Aktivatoren und damit Quelle und Zellen einen neuen Kontext.
  */
 const POINTER = { activationConstraint: { distance: 5 } };
 

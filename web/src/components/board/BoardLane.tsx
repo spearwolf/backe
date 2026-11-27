@@ -1,19 +1,18 @@
 import type { State } from '@backe/core/state.ts';
-import { useDroppable } from '@dnd-kit/core';
 import { ChevronRight } from 'lucide-react';
-import { memo, useId, useMemo, useState } from 'react';
+import { memo, useId, useRef, useState } from 'react';
 import {
   type BoardGroup,
   type BoardCell as Cell,
   type BoardLane as Lane,
   NO_LANE,
 } from '../../app/board-model.ts';
-import { useWrites } from '../../data/write-context.tsx';
 import { cn } from '../../lib/utils.ts';
 import { m } from '../../views/board.messages.ts';
 import { StateIcon } from '../StateIcon.tsx';
 import { BoardCard } from './BoardCard.tsx';
-import type { CellData } from './board-dnd.ts';
+import { type CardSlot, VIRTUAL_FROM, VirtualCards } from './board-virtual.tsx';
+import { useCellData } from './card-drag.tsx';
 import { QuickCreate } from './QuickCreate.tsx';
 
 /** Markierung beim Ziehen in einer Bahn: Linie an einer Karte, oder eine Zelle hervorgehoben. */
@@ -178,7 +177,11 @@ export const BoardLane = memo(function BoardLane(props: {
   );
 });
 
-/** Eine Zelle (Bahn × Spalte): Ziel für Karten aus anderen Zellen und für »ans Ende«. */
+/**
+ * Eine Zelle (Bahn × Spalte), das einzige Ziel beim Ziehen: für Karten aus anderen Zellen und, über
+ * die Rechtecke ihrer Karten (`list`), für die Einfügestelle in ihr selbst. Angemeldet wird sie von
+ * ihrem `CellTarget` im `DndContext` des Boards; sie selbst hängt nicht an dnd-kit.
+ */
 const BoardCell = memo(function BoardCell(props: {
   backlog: string;
   label: string;
@@ -191,39 +194,47 @@ const BoardCell = memo(function BoardCell(props: {
 }) {
   const { backlog, label, laneName, lane, cell, marker, group, choices } = props;
   const { column } = cell;
-  const data = useMemo<CellData>(() => ({ type: 'cell', lane, column }), [lane, column]);
-  const { setNodeRef } = useDroppable({
-    id: `cell:${lane}:${column}`,
-    data,
-    disabled: !useWrites().canWrite,
-  });
+  // Der Ref kommt vom Board, damit dessen `CellTarget` im `DndContext` dasselbe `<ul>` meldet.
+  const own = useRef<HTMLUListElement>(null);
+  const list = useCellData(lane, column)?.list ?? own;
   const over = marker?.kind === 'cell';
+  const ul = {
+    ref: list,
+    'aria-label': label,
+    'data-lane': lane,
+    'data-column': column,
+    ...(over ? { 'data-over': 'true' } : {}),
+    className: cn(
+      'flex min-h-16 flex-col gap-2 rounded-md bg-muted/40 p-2',
+      over && 'bg-accent ring-2 ring-primary',
+    ),
+  };
+  const cardOf = (card: Cell['cards'][number], slot?: Omit<CardSlot, 'card'>) => (
+    <BoardCard
+      key={card.issue.id}
+      backlog={backlog}
+      card={card}
+      lane={lane}
+      column={column}
+      group={group}
+      choices={choices}
+      drop={marker?.kind === 'line' && marker.id === card.issue.id ? marker.side : undefined}
+      {...(slot === undefined ? {} : { index: slot.index, measure: slot.measure })}
+    />
+  );
   return (
     <div>
-      <ul
-        ref={setNodeRef}
-        aria-label={label}
-        data-lane={lane}
-        data-column={column}
-        {...(over ? { 'data-over': 'true' } : {})}
-        className={cn(
-          'flex min-h-16 flex-col gap-2 rounded-md bg-muted/40 p-2',
-          over && 'bg-accent ring-2 ring-primary',
-        )}
-      >
-        {cell.cards.map((card) => (
-          <BoardCard
-            key={card.issue.id}
-            backlog={backlog}
-            card={card}
-            lane={lane}
-            column={column}
-            group={group}
-            choices={choices}
-            drop={marker?.kind === 'line' && marker.id === card.issue.id ? marker.side : undefined}
-          />
-        ))}
-      </ul>
+      {cell.cards.length >= VIRTUAL_FROM ? (
+        <VirtualCards
+          ul={ul}
+          lane={lane}
+          column={column}
+          cards={cell.cards}
+          render={({ card, ...slot }) => cardOf(card, slot)}
+        />
+      ) : (
+        <ul {...ul}>{cell.cards.map((card) => cardOf(card))}</ul>
+      )}
       <QuickCreate group={group} lane={lane} laneName={laneName} column={column} />
     </div>
   );

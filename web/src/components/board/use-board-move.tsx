@@ -25,6 +25,7 @@ import { useWrites } from '../../data/write-context.tsx';
 import { StateDialog } from '../issue/edit/StateDialog.tsx';
 import type { CardData } from './board-dnd.ts';
 import type { BoardKey } from './board-keys.ts';
+import type { RevealCard } from './board-virtual.tsx';
 import { sendBoardMove } from './board-write.ts';
 
 /** Ein State-Dialog für eine Karte; `lane` sagt, wohin der Fokus nach dem Schließen geht. */
@@ -111,7 +112,10 @@ function standInFor(id: string, lane: string, column: string): HTMLElement | nul
  * Zug senden samt Fehlerweg und Dialogen. `group` ist die Gruppierung der Ansicht: Sie entscheidet,
  * welche Mitgliedschaft ein Bahnwechsel tauscht.
  */
-export function useBoardMove(group: BoardGroup): BoardMoves & { dialogs: ReactNode } {
+export function useBoardMove(
+  group: BoardGroup,
+  reveal?: RevealCard,
+): BoardMoves & { dialogs: ReactNode } {
   const store = useStore();
   const { writes } = useWrites();
   const [dialog, setDialog] = useState<BoardStateDialog>();
@@ -204,8 +208,18 @@ export function useBoardMove(group: BoardGroup): BoardMoves & { dialogs: ReactNo
     const link = cardLink(follow.id, follow.lane);
     if (link === null) {
       // Bahn eingeklappt oder weg: Das Folgen endet, sonst griffe die Karte beim Aufklappen viel
-      // später nach dem Fokus. Steht die Bahn da, kommt die Karte noch (ein späterer Render).
-      if (!laneShown(follow.lane)) setFollow(undefined);
+      // später nach dem Fokus. Steht die Bahn da, kommt die Karte noch (ein späterer Render) —
+      // oder sie liegt in einer virtualisierten Zelle außerhalb der gerenderten Karten; dann holt
+      // die Zelle sie ins Bild und gibt den Fokus, sobald sie steht.
+      if (!laneShown(follow.lane)) {
+        setFollow(undefined);
+        return;
+      }
+      const { id } = follow;
+      const revealed = reveal?.(follow.lane, id, (shown) => {
+        if (holds(id)) shown.focus();
+      });
+      if (revealed === true) setFollow(undefined);
       return;
     }
     setFollow(undefined);

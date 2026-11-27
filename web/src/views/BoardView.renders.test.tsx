@@ -1,7 +1,7 @@
 /**
  * Wie viel ein Patch, ein Tastenzug und ein Ziehen neu rendern (ui.md §0.4: ein Board mit einigen
- * tausend Issues darf beim Ziehen nicht ruckeln). Gezählt wird je Karte die Hülle mit den Hooks
- * von dnd-kit (`useDraggable`) und ihr Inneres (der Aufruf von `CardMenu`), dazu je Zelle ihr
+ * tausend Issues darf beim Ziehen nicht ruckeln). Gezählt wird je Karte die Hülle (`BoardCard`)
+ * und ihr Inneres (der Aufruf von `CardMenu`), dazu je Zelle ihr
  * `QuickCreate`. Das Kartenmenü läuft echt: Abonnierte es selbst einen Kontext oder ein Signal, das
  * sich mit jedem Patch ändert, rendert es ohne seinen Aufrufer; das zählt `menu` über `useMenuKey`,
  * das jedes Rendern des echten Menüs genau einmal ruft.
@@ -26,6 +26,7 @@ const counts = vi.hoisted(() => ({
   inner: new Map<string, number>(),
   cell: new Map<string, number>(),
   menu: 0,
+  hooks: new Set<string>(),
   dnd: undefined as DndProps | undefined,
 }));
 const bump = (map: Map<string, number>, id: string) => map.set(id, (map.get(id) ?? 0) + 1);
@@ -57,6 +58,19 @@ vi.mock('../components/board/QuickCreate.tsx', () => ({
     return null;
   },
 }));
+// Die Hülle jeder Karte: gezählt über einen `memo`-Wrapper mit denselben Props wie die echte.
+vi.mock('../components/board/BoardCard.tsx', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../components/board/BoardCard.tsx')>();
+  const { createElement, memo } = await import('react');
+  return {
+    ...mod,
+    BoardCard: memo((p: ComponentProps<typeof mod.BoardCard>) => {
+      bump(counts.shell, p.card.issue.id);
+      return createElement(mod.BoardCard, p);
+    }),
+  };
+});
+// Wer am Kontext von dnd-kit hängt: Jeder Aufruf von `useDraggable`/`useDroppable` mit seiner ID.
 vi.mock('@dnd-kit/core', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@dnd-kit/core')>();
   const { createElement } = await import('react');
@@ -67,9 +81,12 @@ vi.mock('@dnd-kit/core', async (importOriginal) => {
       return createElement(mod.DndContext, props);
     },
     useDraggable: (args: Parameters<typeof mod.useDraggable>[0]) => {
-      // `drag:<Bahn>:<ID>`; gezählt wird je Issue.
-      bump(counts.shell, String(args.id).split(':').at(-1) ?? '');
+      counts.hooks.add(String(args.id));
       return mod.useDraggable(args);
+    },
+    useDroppable: (args: Parameters<typeof mod.useDroppable>[0]) => {
+      counts.hooks.add(String(args.id));
+      return mod.useDroppable(args);
     },
   };
 });
@@ -79,6 +96,7 @@ const clear = () => {
   counts.shell.clear();
   counts.inner.clear();
   counts.cell.clear();
+  counts.hooks.clear();
   counts.menu = 0;
 };
 beforeEach(clear);
@@ -141,21 +159,33 @@ const box = (top: number): ClientRect => ({
   right: 100,
 });
 const active = (n: number) => ({
-  id: `drag:s1:${tid(n)}`,
+  id: 'board-card',
   data: { current: { type: 'card', id: tid(n), lane: 's1', column: 'todo' } },
-  rect: { current: { initial: box(0), translated: box(110) } },
+  rect: { current: { initial: box(0), translated: box(0) } },
 });
-const overCard = (n: number) => ({
-  id: `card:s1:${tid(n)}`,
-  rect: box(100),
+/** Die Zelle `s1:todo` mit der Einfügestelle vor der Karte `n` (gestellte Rechtecke, jsdom). */
+const overSlot = (n: number) => ({
+  id: 'cell:s1:todo',
+  rect: box(0),
   disabled: false,
-  data: { current: { type: 'card', id: tid(n), lane: 's1', column: 'todo' } },
+  data: {
+    current: {
+      type: 'cell',
+      lane: 's1',
+      column: 'todo',
+      list: {
+        current: {
+          children: [{ dataset: { card: tid(n) }, getBoundingClientRect: () => box(500) }],
+        },
+      },
+    },
+  },
 });
 const dragOver = (n: number) =>
   act(() =>
     counts.dnd?.onDragOver?.({
-      active: active(1),
-      over: overCard(n),
+      active: active(3),
+      over: overSlot(n),
       activatorEvent: new Event('pointerdown'),
       collisions: null,
       delta: { x: 0, y: 0 },
@@ -165,15 +195,15 @@ const dragOver = (n: number) =>
 test('a moving drag marker renders no card face', () => {
   board(issues(), { over: { sprints } });
   act(() =>
-    counts.dnd?.onDragStart?.({ active: active(1), activatorEvent: new Event('x') } as never),
+    counts.dnd?.onDragStart?.({ active: active(3), activatorEvent: new Event('x') } as never),
   );
   clear();
+  dragOver(1);
   dragOver(2);
-  dragOver(3);
-  // Die Linie wandert von Karte 2 zu Karte 3: Nur ihre Hüllen rendern, das Innere keiner Karte.
+  // Die Linie wandert von Karte 1 zu Karte 2: Nur ihre Hüllen rendern, das Innere keiner Karte.
   expect(rendered().inner).toEqual({});
   expect(rendered().menu).toBe(0);
-  expect(Object.keys(rendered().shell).sort()).toEqual([tid(2), tid(3)]);
+  expect(Object.keys(rendered().shell).sort()).toEqual([tid(1), tid(2)]);
   // Die Markierung steht in einer Zelle; die übrigen Zellen und Bahnen rendern nicht mit.
   expect(Object.keys(rendered().cell)).toEqual(['s1:todo']);
 });
@@ -191,18 +221,27 @@ test('folding a lane renders only that lane', async () => {
   expect(rendered().menu).toBe(0);
 });
 
-test('a real pointer drag renders the shells, not the card faces', () => {
+test('a real pointer drag renders no card', () => {
   board(issues(), { over: { sprints } });
   clear();
-  // Echte Zeiger-Ereignisse: dnd-kit beginnt nach 5 px zu ziehen und ändert dabei seinen Kontext,
-  // den jede Karte als Ziel liest.
+  // Echte Zeiger-Ereignisse: dnd-kit beginnt nach 5 px zu ziehen und ändert dabei seinen Kontext.
+  // Daran hängen nur die eine Drag-Quelle und die Zellen, keine Karte.
   const li = document.querySelector(`li[data-card="${tid(1)}"]`) as HTMLElement;
   fireEvent.pointerDown(li, { isPrimary: true, button: 0, clientX: 0, clientY: 0 });
   fireEvent.pointerMove(document, { isPrimary: true, clientX: 0, clientY: 20 });
   fireEvent.pointerMove(document, { isPrimary: true, clientX: 0, clientY: 60 });
-  expect(li.className).toContain('opacity-50');
-  expect(Object.keys(rendered().shell).sort()).toEqual([tid(1), tid(2), tid(3)]);
+  expect(li.hasAttribute('data-dragging')).toBe(true);
+  // jsdom hat kein Layout: Alle Rechtecke sind leer, die Kopie liegt unter der letzten Karte, und
+  // die Linie dahinter kommt und geht. Rendern darf höchstens diese eine Hülle und ihre Zelle.
+  expect(Object.keys(rendered().shell).filter((id) => id !== tid(3))).toEqual([]);
+  expect(Object.keys(rendered().cell).filter((k) => k !== 's1:todo')).toEqual([]);
   expect(rendered().inner).toEqual({});
   expect(rendered().menu).toBe(0);
+  // Am Kontext von dnd-kit: die eine Quelle und die Zellen, keine Karte.
+  expect([...counts.hooks].filter((id) => id !== 'board-card' && !id.startsWith('cell:'))).toEqual(
+    [],
+  );
+  expect(counts.hooks.has('board-card')).toBe(true);
   fireEvent.pointerUp(document, { isPrimary: true, clientX: 0, clientY: 60 });
+  expect(li.hasAttribute('data-dragging')).toBe(false);
 });

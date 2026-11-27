@@ -64,26 +64,37 @@ const box = (top: number, height = 40): ClientRect => ({
 
 /** Die gezogene Karte; `top` ist die Oberkante ihrer Kopie unter dem Zeiger. */
 const active = (n: number, lane: string, column: State, top = 0) => ({
-  id: `drag:${lane}:${tid(n)}`,
+  id: 'board-card',
   data: { current: { type: 'card', id: tid(n), lane, column } },
   rect: { current: { initial: box(0), translated: box(top) } },
 });
-/** Zielkarte bei 100–140: Eine Kopie mit Oberkante 80 liegt mittig davor, mit 110 dahinter. */
-const overCard = (n: number, lane: string, column: State) => ({
-  id: `card:${lane}:${tid(n)}`,
-  rect: box(100),
-  disabled: false,
-  data: { current: { type: 'card', id: tid(n), lane, column } },
-});
-const overCell = (lane: string, column: State) => ({
+/**
+ * Die Zelle als Ziel. Mit `slot` steht darin (für die Einfügestelle) genau die Karte `slot`, weit
+ * unter der Kopie: Die Einfügestelle ist vor ihr. jsdom hat kein Layout, die Rechtecke sind gestellt.
+ */
+const overCell = (lane: string, column: State, slot?: string) => ({
   id: `cell:${lane}:${column}`,
   rect: box(0, 400),
   disabled: false,
-  data: { current: { type: 'cell', lane, column } },
+  data: {
+    current: {
+      type: 'cell',
+      lane,
+      column,
+      list: {
+        current: {
+          children:
+            slot === undefined
+              ? []
+              : [{ dataset: { card: slot }, getBoundingClientRect: () => box(1_000) }],
+        },
+      },
+    },
+  },
 });
 
 type Fake = ReturnType<typeof active>;
-type FakeOver = ReturnType<typeof overCard> | ReturnType<typeof overCell>;
+type FakeOver = ReturnType<typeof overCell>;
 const event = (a: Fake, over: FakeOver | null) =>
   ({
     active: a,
@@ -137,7 +148,7 @@ test('a drop into another column is optimistic and posts issue_move', () => {
 test('a drop within the cell posts issue_rank', () => {
   answerNever();
   board([testIssue(1), testIssue(2), testIssue(3)]);
-  drop(active(3, '', 'todo', 80), overCard(1, '', 'todo'));
+  drop(active(3, '', 'todo'), overCell('', 'todo', tid(1)));
   expect(cardIds(m.noSprint, 'todo')).toEqual([tid(3), tid(1), tid(2)]);
   expect(call).toHaveBeenCalledExactlyOnceWith('issue_rank', { id: tid(3), before: tid(1) });
 });
@@ -378,12 +389,15 @@ test('alt arrows move the card and focus follows it', async () => {
 
 test('drag markings show the line in the cell and the other cell', () => {
   board([testIssue(1), testIssue(2), testIssue(3, { state: 'review' })]);
-  const card = active(1, '', 'todo', 110);
+  const card = active(1, '', 'todo');
   start(card);
-  over(card, overCard(2, '', 'todo'));
+  // In derselben Zelle: die Linie vor der Karte an der Einfügestelle, unter der letzten dahinter.
+  over(card, overCell('', 'todo', tid(2)));
+  expect(cardOf(tid(2)).dataset.drop).toBeUndefined();
+  over(card, overCell('', 'todo'));
   expect(cardOf(tid(2)).dataset.drop).toBe('after');
   expect(cellOf(m.noSprint, 'review').dataset.over).toBeUndefined();
-  over(card, overCard(3, '', 'review'));
+  over(card, overCell('', 'review', tid(3)));
   expect(cardOf(tid(2)).dataset.drop).toBeUndefined();
   expect(cellOf(m.noSprint, 'review').dataset.over).toBe('true');
   act(() => handlers().onDragCancel?.(event(card, null)));

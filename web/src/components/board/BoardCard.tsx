@@ -1,7 +1,6 @@
 import type { State } from '@backe/core/state.ts';
-import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { Hourglass } from 'lucide-react';
-import { type KeyboardEvent, memo, useCallback, useContext, useMemo } from 'react';
+import { type KeyboardEvent, memo, useContext, useMemo } from 'react';
 import type { BoardGroup, BoardCard as Card } from '../../app/board-model.ts';
 import { useLinkClick } from '../../app/router.ts';
 import { routeHref } from '../../app/routes.ts';
@@ -12,7 +11,7 @@ import { cn } from '../../lib/utils.ts';
 import { m as b } from '../../views/backlog.messages.ts';
 import { PendingMark } from '../write/PendingMark.tsx';
 import type { LaneChoice } from './BoardLane.tsx';
-import { type CardData, ownListeners } from './board-dnd.ts';
+import type { CardData } from './board-dnd.ts';
 import { BOARD_KEYS, type BoardKey } from './board-keys.ts';
 import { CardMenu } from './CardMenu.tsx';
 import { initialsOf } from './initials.ts';
@@ -34,16 +33,15 @@ const boardKey = (e: KeyboardEvent): BoardKey | undefined =>
     : undefined;
 
 /**
- * Karte des Boards (ui.md §2.8), zweigeteilt. Die Hülle hält die Hooks von dnd-kit und das `<li>`:
- * Jedes Ziehen ändert den Kontext von dnd-kit (gezogene Karte, Ziel unter dem Zeiger), und weil
- * jede Karte Ziel ist, rendern dann alle Hüllen — bei jedem Wechsel des Ziels. Darum ist die Hülle
- * billig und das Teure (Kartenmenü, Link, Gesicht) ein eigenes `memo`, das nur rendert, wenn sich
- * die Karte selbst ändert. `memo` auch außen: `BoardModel` hält unveränderte Karten als dieselben
- * Objekte, ein Patch rendert so nur die Karten neu, die er berührt.
+ * Karte des Boards (ui.md §2.8), zweigeteilt. Die Hülle ist das `<li>` mit Daten-Attributen und
+ * Markierung; das Teure (Kartenmenü, Link, Gesicht) ist ein eigenes `memo`, das nur rendert, wenn
+ * sich die Karte selbst ändert — eine wandernde Markierung rendert so nur die Hüllen. `memo` auch
+ * außen: `BoardModel` hält unveränderte Karten als dieselben Objekte, ein Patch rendert so nur die
+ * Karten neu, die er berührt.
  *
- * Das `<li>` wird gezogen und ist Ziel; der Link darin bleibt das fokussierbare Element und zieht
- * nicht selbst (`draggable={false}`). Darum gehen nur die `listeners` von dnd-kit an das `<li>`,
- * nicht seine `attributes` (sie machten das `<li>` zu einem zweiten Tab-Halt mit `role="button"`).
+ * Gezogen wird über die eine Drag-Quelle des Boards (`CardDragSource`), die das `pointerdown` am
+ * `<li>` abfängt; die Karte selbst hängt nicht am Kontext von dnd-kit. Ziel ist nur die Zelle. Der
+ * Link darin bleibt das fokussierbare Element und zieht nicht selbst (`draggable={false}`).
  */
 export const BoardCard = memo(function BoardCard(props: {
   backlog: string;
@@ -55,35 +53,25 @@ export const BoardCard = memo(function BoardCard(props: {
   choices: readonly LaneChoice[];
   /** Markierung beim Ziehen: Die gezogene Karte landete vor bzw. hinter dieser. */
   drop?: 'before' | 'after' | undefined;
+  /** In einer virtualisierten Zelle (`VirtualCards`): Index in der Zelle und Ref zum Messen. */
+  index?: number;
+  measure?: (node: Element | null) => void;
 }) {
-  const { backlog, card, lane, column, group, choices, drop } = props;
+  const { backlog, card, lane, column, group, choices, drop, index, measure } = props;
   const { issue } = card;
-  // Ohne Schreibrecht gibt es keine Tastenzüge und keinen `DndContext`; die Hooks laufen
-  // trotzdem (Regeln der Hooks), nur abgeschaltet.
+  // Ohne Schreibrecht gibt es keine Tastenzüge und keinen `DndContext`.
   const disabled = !useWrites().canWrite;
   const keys = useContext(BoardKeyContext);
   const data = useMemo<CardData>(
     () => ({ type: 'card', id: issue.id, lane, column }),
     [issue.id, lane, column],
   );
-  const drag = useDraggable({ id: `drag:${lane}:${issue.id}`, data, disabled });
-  const target = useDroppable({ id: `card:${lane}:${issue.id}`, data, disabled });
-  const { setNodeRef: dragRef } = drag;
-  const { setNodeRef: dropRef } = target;
-  const ref = useCallback(
-    (node: HTMLLIElement | null) => {
-      dragRef(node);
-      dropRef(node);
-    },
-    [dragRef, dropRef],
-  );
   return (
     <li
-      ref={ref}
+      {...(measure === undefined ? {} : { ref: measure, 'data-index': index })}
       data-card={issue.id}
       data-lane={lane}
       {...(drop === undefined ? {} : { 'data-drop': drop })}
-      {...(disabled ? {} : ownListeners(drag.listeners))}
       onKeyDown={(e) => {
         const key = boardKey(e);
         if (disabled || key === undefined || keys === undefined) return;
@@ -96,7 +84,8 @@ export const BoardCard = memo(function BoardCard(props: {
         'relative rounded-md border bg-card text-card-foreground shadow-xs',
         // `blocked` zusätzlich über die Umrandung, nicht über Farbe (ui.md §2.13).
         issue.state === 'blocked' && 'border-2 border-foreground',
-        drag.isDragging && 'opacity-50',
+        // Gesetzt von `CardDragSource`, ohne Render der Karte.
+        'data-[dragging]:opacity-50',
         // Die Linie mittig im Abstand zur Nachbarkarte (`gap-2` der Zelle).
         'data-[drop]:before:absolute data-[drop]:before:inset-x-0 data-[drop]:before:h-0.5 data-[drop]:before:rounded-full data-[drop]:before:bg-primary',
         'data-[drop=before]:before:-top-[5px] data-[drop=after]:before:-bottom-[5px]',
