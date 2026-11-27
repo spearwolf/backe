@@ -1,7 +1,8 @@
 /**
  * Prüfstand für die lesende `IssueView`: Router, Store und ein `Writes` ohne Server, Schreibrecht
  * aus. `fetch` liefert das Detail des Issues samt `served`; die Editoren prüfen die Tests unter
- * `components/issue/edit/` mit `issue-view.tsx`.
+ * `components/issue/edit/` mit `issue-view.tsx`. Der `IntersectionObserver` meldet nie einen
+ * Schnitt: Der Graph-Chunk lädt nur in den Tests, die ihn eigens sichtbar machen.
  */
 import { setLocale } from '@backe/i18n/locale.ts';
 import type { CommentJson, IssueDetailJson, IssueJson } from '@backe/ui/api.ts';
@@ -13,6 +14,7 @@ import { StoreContext } from '../data/store-context.tsx';
 import { WriteContext } from '../data/write-context.tsx';
 import { Writes } from '../data/writes.ts';
 import { IssueView } from '../views/IssueView.tsx';
+import { InertIntersectionObserver } from './intersection-observer.ts';
 import { testIssue, testState, tid } from './state.ts';
 
 /** Was der Server zum Issue zusätzlich liefert; Tests setzen es vor `view` oder vor einem Neuladen. */
@@ -27,6 +29,7 @@ export function registerReadIssueViewHarness(): void {
     served.comments = [];
     served.body = undefined;
     served.lastReason = undefined;
+    vi.stubGlobal('IntersectionObserver', InertIntersectionObserver);
     vi.stubGlobal('fetch', async (url: string) => {
       if (url.endsWith('/attachments')) return new Response('[]');
       const id = url.split('/').pop() as string;
@@ -50,12 +53,16 @@ export function registerReadIssueViewHarness(): void {
 
 export const ID = tid(1);
 
-/** `canWrite` nur für Tests, die zeigen, dass ein Teil mit und ohne Schreibrecht gleich aussieht. */
+/**
+ * Rendert den Tab für `id`. `canWrite` nur für Tests, die zeigen, dass ein Teil mit und ohne
+ * Schreibrecht gleich aussieht. `show` wechselt wie die App zu einem anderen Issue, ohne den Tab
+ * neu zu mounten.
+ */
 export function view(
   issues: IssueJson[],
   over: Parameters<typeof testState>[1] = {},
   id = ID,
-  canWrite = false,
+  opts: { canWrite?: boolean } = {},
 ) {
   window.history.replaceState(null, '', `/b/acme/issue/${id}`);
   const router = new Router(window);
@@ -64,16 +71,22 @@ export function view(
   const onClose = vi.fn();
   // Lesend als Default: Die Editoren prüft `components/issue/edit/edit.test.tsx`.
   const writes = new Writes(store, { call: vi.fn(), upload: vi.fn(), refresh: async () => {} });
-  render(
+  const access = { backlog: 'acme', canWrite: opts.canWrite ?? false, me: 'spw', writes };
+  const tab = (shown: string) => (
     <RouterContext.Provider value={router}>
       <StoreContext.Provider value={store}>
-        <WriteContext.Provider value={{ backlog: 'acme', canWrite, me: 'spw', writes }}>
-          <IssueView backlog="acme" id={id} onClose={onClose} />
+        <WriteContext.Provider value={access}>
+          <IssueView backlog="acme" id={shown} onClose={onClose} />
         </WriteContext.Provider>
       </StoreContext.Provider>
-    </RouterContext.Provider>,
+    </RouterContext.Provider>
   );
-  return { router, store, onClose };
+  const { rerender } = render(tab(id));
+  const show = (next: string) => {
+    window.history.replaceState(null, '', `/b/acme/issue/${next}`);
+    rerender(tab(next));
+  };
+  return { router, store, onClose, show };
 }
 
 export const flush = () => act(async () => {});

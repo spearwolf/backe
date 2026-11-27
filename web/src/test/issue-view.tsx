@@ -13,6 +13,7 @@ import { Writes } from '../data/writes.ts';
 import { formatDate } from '../lib/format.ts';
 import { IssueView } from '../views/IssueView.tsx';
 import { m } from '../views/issue.messages.ts';
+import { InertIntersectionObserver } from './intersection-observer.ts';
 import { testIssue, testState, tid } from './state.ts';
 
 export const ID = tid(1);
@@ -32,7 +33,8 @@ let current: Writes | undefined;
 /**
  * Registriert die Hooks: `call` antwortet ohne Commit, `upload` wie der Server mit einem eigenen
  * Commit je Upload (ohne Patch dazu wartet der Write, und sein Name bleibt reserviert), `fetch`
- * liefert das Detail des Issues samt `served`.
+ * liefert das Detail des Issues samt `served`. Der `IntersectionObserver` meldet nie einen Schnitt,
+ * wie im Browser für alles außerhalb des Viewports; so lädt der Graph-Chunk hier nicht.
  */
 export function registerIssueViewHarness(): void {
   beforeEach(() => {
@@ -44,6 +46,7 @@ export function registerIssueViewHarness(): void {
     served.body = undefined;
     served.comments = [];
     served.attachments = [];
+    vi.stubGlobal('IntersectionObserver', InertIntersectionObserver);
     vi.stubGlobal('fetch', async (url: string) => {
       if (url.endsWith('/attachments')) return new Response(JSON.stringify(served.attachments));
       const id = url.split('/').pop() as string;

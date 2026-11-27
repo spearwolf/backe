@@ -16,9 +16,6 @@ import {
 import { testIssue, testPatch, tid } from '../../../test/state.ts';
 import { m } from '../../../views/issue.messages.ts';
 
-// Der Graph-Chunk braucht in jsdom eigene Stubs; ihn prüfen `DependencySection*.test.tsx`.
-vi.mock('../../deps/DepPanel.tsx', () => ({ DepPanel: () => null }));
-
 vi.mock('../../../markdown/index.tsx', () => ({
   Markdown: ({ source }: { source: string }) => <div data-testid="markdown">{source}</div>,
 }));

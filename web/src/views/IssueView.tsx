@@ -200,8 +200,9 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
             issue={markdownIssue}
             {...(fieldAccess.canWrite ? { uploads } : {})}
           />
-          {/* Ein gelöschtes Issue hat keine Kanten mehr, die der Abschnitt live zeigen könnte. */}
-          {!deleted && <DependencySection id={id} backlog={backlog} />}
+          {/* Ein gelöschtes Issue hat keine Kanten mehr, die der Abschnitt live zeigen könnte.
+              `key`: Aufgeklapptes und Sichtbarkeit gehören zu einem Issue, nicht zum Tab. */}
+          {!deleted && <DependencySection key={id} id={id} backlog={backlog} />}
           {detail !== undefined && (
             <Timeline
               id={id}

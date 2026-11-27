@@ -13,12 +13,14 @@ import { flushFrames, installXyflowStubs } from '../../test/xyflow.ts';
 import { m } from '../../views/deps.messages.ts';
 import { m as issueText } from '../../views/issue.messages.ts';
 
-// jsdom kennt kein `IntersectionObserver`: Der Abschnitt gilt sofort als sichtbar, und der
-// Graph-Chunk lädt gleich. Das Laden hinter dem Beobachter prüft `DependencySection.lazy.test.tsx`.
+// Ohne `IntersectionObserver` gilt der Abschnitt sofort als sichtbar, und der Graph-Chunk lädt
+// gleich. Der Prüfstand stubbt einen, der nie einen Schnitt meldet; hier fällt er weg. Das Laden
+// hinter dem Beobachter prüft `DependencySection.lazy.test.tsx`.
 registerReadIssueViewHarness();
 
 let uninstall: () => void;
 beforeEach(() => {
+  vi.stubGlobal('IntersectionObserver', undefined);
   uninstall = installXyflowStubs();
 });
 afterEach(() => {
@@ -65,6 +67,8 @@ test('the section opens with the graph by default', async () => {
     (region() as HTMLElement).compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
   expect(fold().getAttribute('aria-expanded')).toBe('true');
+  const body = document.getElementById(fold().getAttribute('aria-controls') ?? '');
+  expect(body?.contains(node(ID))).toBe(true);
   expect(node(ID)?.getAttribute('aria-current')).toBe('true');
   expect(node(tid(2))).not.toBeNull();
   expect(node(tid(5))).not.toBeNull();
@@ -84,6 +88,7 @@ test('folding and the tree view are remembered per backlog', async () => {
   await graphShown();
   await userEvent.click(fold());
   expect(fold().getAttribute('aria-expanded')).toBe('false');
+  expect(fold().hasAttribute('aria-controls')).toBe(false);
   expect(node(ID)).toBeNull();
   // Zugeklappt nur der Kopf: kein Umschalter, keine Checkbox.
   expect(screen.queryByRole('button', { name: m.viewTree })).toBeNull();
@@ -181,6 +186,44 @@ test('expansion survives switching to the tree and back', async () => {
   expect(screen.getByRole('list', { name: m.prerequisitesOf(tid(3)) })).toBeTruthy();
 });
 
+// ID → tid(3) → X und B → tid(3), tid(6) → X, X → tid(7): X liegt von beiden aus auf Tiefe 2.
+const X = tid(4);
+const B = tid(2);
+const shared = () => [
+  testIssue(1, { depends_on: [tid(3)] }),
+  testIssue(2, { depends_on: [tid(3), tid(6)] }),
+  testIssue(3, { depends_on: [X] }),
+  testIssue(4, { depends_on: [tid(7)] }),
+  testIssue(6, { depends_on: [X] }),
+  testIssue(7),
+];
+const centreShown = async (id: string) => {
+  await waitFor(() => expect(node(id)?.getAttribute('aria-current')).toBe('true'));
+  await act(async () => flushFrames());
+};
+
+test('another issue in the same tab starts with nothing expanded', async () => {
+  const { show } = view(shared());
+  await graphShown();
+  await userEvent.click(
+    within(node(X) as HTMLElement).getByRole('button', { name: m.expand(X, 2) }),
+  );
+  await act(async () => flushFrames());
+  expect(node(tid(7))).not.toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: m.viewTree }));
+  await userEvent.click(screen.getByRole('button', { name: m.hideTree(tid(3)) }));
+  expect(screen.queryByRole('list', { name: m.prerequisitesOf(tid(3)) })).toBeNull();
+
+  // Wie die App beim Wechsel des Issues: dieselbe `IssueView`, nur eine andere `id`.
+  show(B);
+  expect(await screen.findByRole('list', { name: m.prerequisitesOf(tid(3)) })).toBeTruthy();
+  await userEvent.click(screen.getByRole('button', { name: m.viewGraph }));
+  await centreShown(B);
+  expect(within(node(X) as HTMLElement).getByRole('button', { name: m.expand(X, 1) })).toBeTruthy();
+  expect(within(node(X) as HTMLElement).queryByRole('button', { name: m.collapse(X) })).toBeNull();
+  expect(node(tid(7))).toBeNull();
+});
+
 /** Bedienelemente und Knoten des Abschnitts, unabhängig von generierten IDs. */
 function outline(): string[] {
   const section = region() as HTMLElement;
@@ -196,13 +239,13 @@ function outline(): string[] {
 }
 
 test('the section looks the same without write access', async () => {
-  view(chain(), {}, ID, false);
+  view(chain(), {}, ID, { canWrite: false });
   await graphShown();
   const readOnly = outline();
   expect(readOnly.length).toBeGreaterThan(5);
 
   cleanup();
-  view(chain(), {}, ID, true);
+  view(chain(), {}, ID, { canWrite: true });
   await graphShown();
   expect(outline()).toEqual(readOnly);
 });

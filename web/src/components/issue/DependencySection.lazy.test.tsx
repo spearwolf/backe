@@ -1,4 +1,5 @@
 import { act, cleanup, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { m as app } from '../../app/app.messages.ts';
 import { writeDepPrefs } from '../../app/dep-prefs.ts';
 import { flush, ID, registerReadIssueViewHarness, view } from '../../test/read-issue-view.tsx';
@@ -58,6 +59,9 @@ afterEach(() => {
 const issues = () => [testIssue(1, { depends_on: [tid(2)] }), testIssue(2)];
 const region = () => screen.getByRole('region', { name: m.title });
 const node = (id: string) => document.querySelector(`[data-dep-node="${id}"]`);
+const fold = () => screen.getByRole('button', { name: m.title });
+/** Ein Beobachter hängt am Abschnitt. */
+const observed = () => observers.some((o) => o.target !== undefined && region().contains(o.target));
 
 /** Meldet den Abschnitt als sichtbar, wie der Browser beim Hineinscrollen. */
 const intersect = () =>
@@ -72,9 +76,10 @@ test('a folded section loads nothing even when visible', async () => {
   writeDepPrefs('acme', { open: false, view: 'graph', parents: false });
   view(issues());
   await flush();
+  expect(observed()).toBe(true);
   await intersect();
   await flush();
-  expect(screen.getByRole('button', { name: m.title }).getAttribute('aria-expanded')).toBe('false');
+  expect(fold().getAttribute('aria-expanded')).toBe('false');
   expect(screen.queryByText(app.loading)).toBeNull();
   expect(gate.imports).toBe(0);
 });
@@ -82,8 +87,7 @@ test('a folded section loads nothing even when visible', async () => {
 test('the graph chunk loads only when the open section becomes visible', async () => {
   view(issues());
   await flush();
-  expect(region()).toBeTruthy();
-  expect(observers.some((o) => o.target !== undefined && region().contains(o.target))).toBe(true);
+  expect(observed()).toBe(true);
   expect(gate.imports).toBe(0);
   expect(screen.queryByText(app.loading)).toBeNull();
 
@@ -98,4 +102,22 @@ test('the graph chunk loads only when the open section becomes visible', async (
   await act(async () => flushFrames());
   expect(node(tid(2))).not.toBeNull();
   expect(screen.queryByText(app.loading)).toBeNull();
+});
+
+// Nach dem Test oben ist das Modul geladen; hier zählt, dass das Aufklappen ohne neuen Schnitt lädt.
+test('a section seen while folded shows the graph at once when opened', async () => {
+  writeDepPrefs('acme', { open: false, view: 'graph', parents: false });
+  view(issues());
+  await flush();
+  expect(observed()).toBe(true);
+  await intersect();
+  expect(node(ID)).toBeNull();
+
+  observers = [];
+  await userEvent.click(fold());
+  await waitFor(() => expect(node(ID)).not.toBeNull());
+  await act(async () => flushFrames());
+  expect(node(tid(2))).not.toBeNull();
+  // Einmal gesehen bleibt gesehen: Kein neuer Beobachter wartet auf einen Schnitt.
+  expect(observers).toEqual([]);
 });

@@ -5,7 +5,7 @@
  * wenn der offene Abschnitt sichtbar wird.
  */
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { lazy, type RefObject, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { m as app } from '../../app/app.messages.ts';
 import { hasDependencies } from '../../app/dep-graph.ts';
 import { type DepPrefs, readDepPrefs, writeDepPrefs } from '../../app/dep-prefs.ts';
@@ -20,7 +20,7 @@ const DepPanel = lazy(async () => ({ default: (await import('../deps/DepPanel.ts
  * Sichtbar, sobald `el` einmal in den Viewport ragt; danach bleibt es dabei. Ohne
  * `IntersectionObserver` gilt alles sofort als sichtbar.
  */
-function useSeen(el: { readonly current: Element | null }, active: boolean): boolean {
+function useSeen(el: RefObject<Element | null>, active: boolean): boolean {
   const [seen, setSeen] = useState(() => typeof IntersectionObserver === 'undefined');
   useEffect(() => {
     const target = el.current;
@@ -44,6 +44,7 @@ export function DependencySection(props: { id: string; backlog: string }) {
   const [prefs, setPrefs] = useState<DepPrefs>(() => readDepPrefs(backlog));
   const host = useRef<HTMLElement>(null);
   const headingId = useId();
+  const bodyId = useId();
   // `hasDependencies` kennt auch fehlende IDs; ohne das Issue selbst gibt es hier nichts zu zeigen.
   const shown = useMemo(
     () => snapshot?.issues.has(id) === true && hasDependencies(snapshot, id),
@@ -69,6 +70,7 @@ export function DependencySection(props: { id: string; backlog: string }) {
             type="button"
             className="-ml-1 inline-flex items-center gap-1 rounded-sm pr-1 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
             aria-expanded={prefs.open}
+            aria-controls={prefs.open ? bodyId : undefined}
             onClick={() => change({ open: !prefs.open })}
           >
             <Chevron aria-hidden="true" className="size-4 text-muted-foreground" />
@@ -109,16 +111,20 @@ export function DependencySection(props: { id: string; backlog: string }) {
           </>
         )}
       </div>
-      {prefs.open && seen && (
-        <Suspense
-          fallback={
-            <p role="status" className="text-sm text-muted-foreground">
-              {app.loading}
-            </p>
-          }
-        >
-          <DepPanel id={id} backlog={backlog} view={prefs.view} parents={prefs.parents} />
-        </Suspense>
+      {prefs.open && (
+        <div id={bodyId}>
+          {seen && (
+            <Suspense
+              fallback={
+                <p role="status" className="text-sm text-muted-foreground">
+                  {app.loading}
+                </p>
+              }
+            >
+              <DepPanel id={id} backlog={backlog} view={prefs.view} parents={prefs.parents} />
+            </Suspense>
+          )}
+        </div>
       )}
     </section>
   );
