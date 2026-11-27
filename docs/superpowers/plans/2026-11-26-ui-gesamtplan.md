@@ -128,6 +128,7 @@ Jeder Meilenstein endet mit grünem `mise run check`, `mise run smoke` und einem
 
 - **Spec:** UI §2.10 (ohne Benachrichtigungen), §2.11.
 - **Inhalt:** Abschnitte Repositories, Projects, Sprints, Users & Agents, Backlog, Oberfläche; Policy-Ausblendung; Suche auf dem Store mit `⌘K`, Gruppen, exakter ID-Treffer oben, »In Beschreibungen suchen« über `/search`.
+- **Produziert:** `body` an Projekten, Sprints und Repos in `/state` und Patches; `ToolArgs`/`ToolResults` der Verwaltungs-Tools samt `RepoCheckJson`, `SyncResultJson`, `CreateAgentJson` (`src/ui/api.ts`); `isAdmin` in der reinen Hülle. Suche: `buildSearchIndex`, `searchStore`, `SEARCH_LIMIT` (`web/src/app/search.ts`), `createSearchIndex` (`search-index.ts`), `SearchBox`. Oberfläche: `UiPrefs` (Sprache, externe Bilder, Default-Gruppierung), `UiContext`/`useUi`/`useUiPrefs`/`useExternalImages`, `board-groups.ts`; `Router.navigation`. Settings (Lazy-Chunk): `SettingsView`, `SettingsSection` mit `overlays`, `SectionFrame`, `Field`/`TextField`/`TextAreaField`, `useDialogFocus`, `ReferenceList`, `settings-memos.ts`; `settingsRights`, `projectRows`, `sprintGroups`, `repoReferences`, `projectReferences` (`settings-model.ts`); `readFolded`/`writeFolded`. `ConfirmDialog` mit `formId` und Fokus-Rückgabe an den Auslöser. U11 hängt den Schalter für Browser-Benachrichtigungen an `UiPrefs` und `InterfaceSection`.
 
 ### U11 — Nachbarn und Benachrichtigungen
 

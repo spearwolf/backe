@@ -22,7 +22,7 @@ Umsetzung nach UI §6, Status im Kopf von `docs/proposals/ui.md`.
 - [x] Writes im Frontend (UI §6 Schritt 6)
 - [x] Tab Board (UI §6 Schritt 7)
 - [x] Abhängigkeitsgraph (UI §6 Schritt 8)
-- [ ] Settings und Suche (UI §6 Schritt 9)
+- [x] Settings und Suche (UI §6 Schritt 9)
 - [ ] Nachbarn und Benachrichtigungen (UI §6 Schritt 10)
 - [ ] Paket, CI, Performance (UI §6 Schritt 11; BK §2.17 nach UI §4.2)
 

@@ -66,7 +66,7 @@ export type CreateAgentJson = { handle: string; key_path: string; commit: string
 
 Typ von `skipped`, `conflicts` u. a. gegen `syncJson` in `src/services/views.ts` prüfen und exakt übernehmen. `body` steht in den Einträgen von `projects`, `sprints`, `repos` wie bei `sprint show --format json`: fehlt, wenn leer. Eine reine Body-Änderung eines Projekts, Sprints oder Repos ist damit ein `upsert` im Patch.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
 // src/ui/delta.test.ts
@@ -76,10 +76,10 @@ test('a changed project body is an upsert', …zwei Snapshots, nur Body anders �
 test('state carries sprint goals', …Fixture-Backlog mit sprint create --body → state.sprints[0].body);
 ```
 
-- [ ] **Step 2: Run, verify FAIL** — `pnpm vitest run src/ui/delta.test.ts src/ui/state.test.ts`
-- [ ] **Step 3: Implement**; `isAdmin` nimmt `Pick<User, 'kind'> | undefined`, `src/ops/admin.ts` in `WEB_ENTRIES`
-- [ ] **Step 4: Run** `pnpm vitest run src/ui test/conventions.test.ts` und `pnpm run lint` → PASS
-- [ ] **Step 5: Commit** — `feat: Beschreibungen von Projekten, Sprints und Repos im Zustand der UI`
+- [x] **Step 2: Run, verify FAIL** — `pnpm vitest run src/ui/delta.test.ts src/ui/state.test.ts`
+- [x] **Step 3: Implement**; `isAdmin` nimmt `Pick<User, 'kind'> | undefined`, `src/ops/admin.ts` in `WEB_ENTRIES`
+- [x] **Step 4: Run** `pnpm vitest run src/ui test/conventions.test.ts` und `pnpm run lint` → PASS
+- [x] **Step 5: Commit** — `feat: Beschreibungen von Projekten, Sprints und Repos im Zustand der UI`
 
 ### Task 2: Suche — reiner Index und Treffer
 
@@ -122,10 +122,10 @@ Regeln:
 - Issue-ID: Anfrage ohne Leerraum, gefaltet. Gleich der ID → exakt. Mit Präfix `<p>-<rest>`: `p` ≠ `prefix` → kein ID-Treffer; sonst `rest` als Kurzform. Ohne Präfix die ganze Anfrage als Kurzform. Kurzform ab `SHORT_ID_MIN` Zeichen: Zufallsteil beginnt damit → Treffer mit Score 5; gleich dem Zufallsteil → exakt. Ein ID-Treffer und ein Titel-Treffer desselben Issues zählen einmal (höherer Score).
 - Reihenfolge: exakt zuerst, dann Score absteigend; Issues danach offene vor erledigten (`isSettled`), dann `compareIssues`; andere nach Schlüssel (`compareCodeUnits`). Je Gruppe die ersten `SEARCH_LIMIT`, `more` = Rest.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
-test('title words match by prefix, substring and one typo', …'Login-Seite reparieren': 'log' trifft (3), 'seite rep' trifft, 'reparirn' (Abstand 1) trifft, 'xyz' nicht);
+test('title words match by prefix, substring and one typo', …'Login-Seite reparieren': 'log' trifft (3), 'seite rep' trifft, 'repariern' (Abstand 1) trifft, 'xyz' nicht);
 test('every token must match', …'login fehlt' trifft 'Login fehlt' aber nicht 'Login');
 test('ids follow the short form rules', …bk-7f3k2: '7f3' trifft, 'BK-7F3' trifft, 'ac-7f3' nicht, '7f' nicht, 'bk-7f3k2' exakt, '7f3k2' exakt);
 test('an exact id hit stands first', …Issue mit Titel '7f3k2 notes' und Issue bk-7f3k2 → hits[0] ist bk-7f3k2 mit exact true);
@@ -137,10 +137,10 @@ test('odd queries never throw', …'   ' → []; '(*\\[' → [] ohne Ausnahme; '
 test('the index memo follows the store', …searchIndexOf(store) gleich bei zweitem Aufruf; Patch mit neuem Issue → searchStore findet es);
 ```
 
-- [ ] **Step 2: Run, verify FAIL** — `pnpm vitest run --project web web/src/app/search`
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: Run** → PASS
-- [ ] **Step 5: Commit** — `feat: Suche auf dem Store mit Kurzform-IDs und unscharfen Titelwörtern`
+- [x] **Step 2: Run, verify FAIL** — `pnpm vitest run --project web web/src/app/search`
+- [x] **Step 3: Implement**
+- [x] **Step 4: Run** → PASS
+- [x] **Step 5: Commit** — `feat: Suche auf dem Store mit Kurzform-IDs und unscharfen Titelwörtern`
 
 ### Task 3: Suchfeld in der Tab-Leiste mit `⌘K`
 
@@ -169,7 +169,7 @@ Verhalten (WAI-ARIA Combobox mit Listbox):
 - `⌘K`/Strg+K (`e.key.toLowerCase() === 'k'`, genau einer von Meta/Ctrl, ohne Alt/Shift) auf `document`: `preventDefault`, Feld fokussieren und Text markieren; nichts bei offenem `[role="dialog"], [role="alertdialog"], [role="menu"]`. Platzhalter zeigt `shortcut(isMac)` mit `isMac = /Mac|iPhone|iPad/.test(navigator.platform)`.
 - Breite `w-40 sm:w-56`, Liste rechtsbündig, `w-[28rem] max-w-[calc(100vw-1rem)]`, `max-h-[70vh] overflow-auto`, Zeilen wie `IssueRef` (Icon, ID mono, Titel `truncate`).
 
-- [ ] **Step 1: Failing tests** (Harness wie `TabBar` in `App.test.tsx`: Store mit Issues, Projekten, Sprints, Repos, Users; Router mit Fake-Window)
+- [x] **Step 1: Failing tests** (Harness wie `TabBar` in `App.test.tsx`: Store mit Issues, Projekten, Sprints, Repos, Users; Router mit Fake-Window)
 
 ```tsx
 test('typing shows grouped hits with the exact id first', …'bk-t0001' → erste Option Issue t0001, Gruppe issues);
@@ -185,10 +185,10 @@ test('more than eight hits show the rest as a count', …12 Projekte → '+4 mor
 test('search works without write access', …canWrite false → Treffer und Auswahl gehen);
 ```
 
-- [ ] **Step 2: Run, verify FAIL** — `pnpm vitest run --project web web/src/components/SearchBox`
-- [ ] **Step 3: Implement**, in `TabBar` einhängen
-- [ ] **Step 4: Run** `pnpm vitest run --project web` → PASS (TabBar-, App- und Read-only-Tests bleiben grün)
-- [ ] **Step 5: Commit** — `feat: Suchfeld in der Tab-Leiste mit Cmd-K und Suche in Beschreibungen`
+- [x] **Step 2: Run, verify FAIL** — `pnpm vitest run --project web web/src/components/SearchBox`
+- [x] **Step 3: Implement**, in `TabBar` einhängen
+- [x] **Step 4: Run** `pnpm vitest run --project web` → PASS (TabBar-, App- und Read-only-Tests bleiben grün)
+- [x] **Step 5: Commit** — `feat: Suchfeld in der Tab-Leiste mit Cmd-K und Suche in Beschreibungen`
 
 ### Task 4: Oberflächen-Einstellungen — Sprache, externe Bilder, Default-Gruppierung
 
@@ -235,7 +235,7 @@ Regeln:
 - `BoardPrefs(backlog, defaultGroup = DEFAULT_BOARD_VIEW.group)`: Ohne gespeicherte Ansicht des Backlogs gilt `{ ...DEFAULT_BOARD_VIEW, group: defaultGroup }`; eine gespeicherte Wahl des Boards gilt weiter.
 - Ungültige Werte im `localStorage` → Default (Server-Sprache, Bilder erlaubt, `sprint`).
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
 // ui-prefs.test.ts
@@ -251,10 +251,10 @@ test('external images stay blocked when switched off', …Provider mit externalI
 test('switching the language re-renders every text and keeps the session', …Server 'en'; prefs.setLang('de') in act → Tab »Board«/Kopfzeile deutsch (z. B. m.settings 'Einstellungen'), fakeEventSources().length unverändert 1, document.documentElement.lang 'de');
 ```
 
-- [ ] **Step 2: Run, verify FAIL**
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: Run** `pnpm vitest run --project web` → PASS
-- [ ] **Step 5: Commit** — `feat: Sprache, externe Bilder und Default-Gruppierung als Einstellungen der Oberfläche`
+- [x] **Step 2: Run, verify FAIL**
+- [x] **Step 3: Implement**
+- [x] **Step 4: Run** `pnpm vitest run --project web` → PASS
+- [x] **Step 5: Commit** — `feat: Sprache, externe Bilder und Default-Gruppierung als Einstellungen der Oberfläche`
 
 ### Task 5: Settings-Gerüst als Lazy-Chunk, Abschnitte Oberfläche und Backlog
 
@@ -291,7 +291,7 @@ Regeln:
 - **Oberfläche:** Theme als Radiogruppe (`fieldset`, `light`/`dark`/`system` mit den Texten aus `app.messages.ts`) über `theme.set`; Sprache als `<select>` (`server` mit `langServer(name)` — »Sprache des Servers (English)«, `en` »English«, `de` »Deutsch«, Sprachnamen unübersetzt) über `prefs.setLang`, holt nach dem Neumounten per `takeLangFocus()` in `useLayoutEffect` den Fokus; Checkbox `externalImages` mit Hinweis; `<select>` Default-Gruppierung mit den Gruppentexten aus `board.messages.ts` und Hinweis `boardGroupHint` (»Gilt für Boards ohne eigene Wahl.«). Browser-Benachrichtigungen fehlen (U11).
 - **Backlog:** `config` als Beschreibungsliste (`<dl>`): Name, ID-Präfix, Admins, Workflow (`strict` ja/nein), Sync (`mode`, `remote`, `branch`, `pull_interval` s), `verify`, Anhänge (`max_bytes` über `formatBytes`, `null` = unbegrenzt; `lfs`), `props_strict`; deklarierte Properties als Tabelle (Key mono, Typ samt `values` bei `enum`, `description`). Hinweis `configReadOnly` (Bearbeiten nur per Hand-Edit und `backe commit`). Sync-Status aus `store.sync`: ohne eigene Arbeitskopie (`null`) `noWorkingCopy`; sonst Remote, Modus, `unpushed`, letzter Versuch/Erfolg (`formatDate`), letzter Fehler, `running`; Konflikte als Liste (`id` mono, `created`, `subject`, `reason`) mit Hinweis `backe sync resolve` im Code-Stil. Mit Schreibrecht Knopf `syncNow` → `writes.run('sync_now', {})` über `useAction`, danach `syncDone(result)` (geholt, eingespielt, gepusht) samt Notices; Fehler über `ActionError`.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```tsx
 // settings-prefs.test.ts
@@ -315,10 +315,10 @@ test('without a working copy there is no sync block', …sync null → noWorking
 test('a settings chunk that fails to load shows a line, the tabs stay usable', …vi.mock('../views/SettingsView.tsx', () => { throw … }) wie App-board-error → chunkFailed, Tab Backlog bedienbar);
 ```
 
-- [ ] **Step 2: Run, verify FAIL**
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: Run** `pnpm vitest run --project web` → PASS; `pnpm build` → Settings in eigenem Chunk unter `dist/ui/assets/`, nicht in `index-*.js`; Budget gehalten
-- [ ] **Step 5: Commit** — `feat: Settings als eigener Chunk mit den Abschnitten Oberfläche und Backlog`
+- [x] **Step 2: Run, verify FAIL**
+- [x] **Step 3: Implement**
+- [x] **Step 4: Run** `pnpm vitest run --project web` → PASS; `pnpm build` → Settings in eigenem Chunk unter `dist/ui/assets/`, nicht in `index-*.js`; Budget gehalten
+- [x] **Step 5: Commit** — `feat: Settings als eigener Chunk mit den Abschnitten Oberfläche und Backlog`
 
 ### Task 6: Abschnitt Repositories
 
@@ -343,7 +343,7 @@ Darstellung und Writes:
 - »Entfernen« → `ConfirmDialog` destruktiv; nennt das Issue weiter `repoReferences` → Liste der `IssueRef`s, Text `repoStillReferenced`, Bestätigen gesperrt. Verschwindet das Repo per Patch, schließt der Dialog.
 - »Prüfen« (Abschnitts-Aktion, nur mit Schreibrecht) mit Checkbox `remote` → `repo_check` mit `{remote: true}` falls gewählt; Ergebnis flüchtig im Komponentenzustand: je Repo die Befunde mit Stufe als Icon und Text (`error`/`warning`/`info` übersetzt), `github` (Sichtbarkeit, archiviert), `cached` (»aus dem Cache vom …«), dazu `notices`; ohne Befunde `checkClean`. Ein neuer Lauf ersetzt das Ergebnis.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```tsx
 test('repo references match by name with or without ref', …repos ['core@main', 'web'] → repoReferences(…, 'core'));
@@ -356,10 +356,10 @@ test('check shows findings per repo with their level', …Antwort mit error/warn
 test('lists follow patches and a dialog of a vanished repo closes', …Patch upsert neues Repo → Zeile da; Dialog von core offen, Patch remove core → Dialog weg, keine Ausnahme);
 ```
 
-- [ ] **Step 2: Run, verify FAIL**
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: Run** → PASS
-- [ ] **Step 5: Commit** — `feat: Repositories in den Settings anlegen, prüfen und entfernen`
+- [x] **Step 2: Run, verify FAIL**
+- [x] **Step 3: Implement**
+- [x] **Step 4: Run** → PASS
+- [x] **Step 5: Commit** — `feat: Repositories in den Settings anlegen, prüfen und entfernen`
 
 ### Task 7: Abschnitte Projects und Sprints
 
@@ -392,7 +392,7 @@ Sprints:
 - Offene Sprints, dann ein Klappknopf `closedSprints(n)` (Default zu, flüchtig) mit den geschlossenen. Zeile: Titel als Link auf `?sprint=<slug>`, Slug mono, `start`–`end` (`formatDate` ohne Uhrzeit bzw. das Datum roh), Ziel (`body`) als `Markdown`.
 - Mit Schreibrecht: »Hinzufügen« → Dialog `slug` (Pflicht, `isSprintSlug`), `title`, `start`, `end` (`<input type="date">`), Ziel → `sprint_create`. Je offenem Sprint »Schließen« → Dialog mit optionalem `carry_over` (Auswahl der anderen offenen Sprints, »keiner«) → `sprint_close`.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```tsx
 test('project rows form a tree with recursive open counts', …web, web/auth, api; Issue in web/auth offen, eines done → web.open 1, web/auth.open 1, web.hasChildren true);
@@ -408,10 +408,10 @@ test('creating a sprint sends dates and goal', …sprint_create {slug, title, st
 test('closing a sprint can carry over to another open sprint', …sprint_close {slug, carry_over});
 ```
 
-- [ ] **Step 2: Run, verify FAIL**
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: Run** → PASS
-- [ ] **Step 5: Commit** — `feat: Projekte und Sprints in den Settings verwalten`
+- [x] **Step 2: Run, verify FAIL**
+- [x] **Step 3: Implement**
+- [x] **Step 4: Run** → PASS
+- [x] **Step 5: Commit** — `feat: Projekte und Sprints in den Settings verwalten`
 
 ### Task 8: Abschnitt Users & Agents mit Policy-Ausblendung
 
@@ -449,7 +449,7 @@ Darstellung und Writes:
 - »Agent anlegen« (bei `createAgent`) → Dialog `handle`, `name`, Hinweis `createAgentHint` (Key entsteht auf diesem Rechner unter `~/.backe/keys/…`) → `user_create_agent`; danach im Dialog `keyPathCreated` mit `CopyValue(key_path)` und »Schließen« statt sofortigem Zuklappen.
 - »Widerrufen« → destruktiver Dialog mit Fingerprint und `revokeFinal` (endgültig) → `user_revoke_key {handle, fingerprint}`. »Entfernen« (bei `removeUser`) → destruktiver Dialog → `user_rm`.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```tsx
 test('rights follow the identity protection', …Tabelle: admin spw; Mensch ana; Agent bot (operator ana) — als spw: addHuman, addAgent 'any', removeUser(ana) false (Operator), removeUser(bot) true, removeUser(spw) false; als ana: addHuman false, addAgent 'self', createAgent true, revokeKey(bot) true, revokeKey(spw) false, removeUser(*) false; als bot: alles false außer revokeKey(bot); canWrite false → alles false);
@@ -462,10 +462,10 @@ test('revoking a key asks first', …user_revoke_key {handle, fingerprint});
 test('removing a user asks first and is hidden where policy refuses', …);
 ```
 
-- [ ] **Step 2: Run, verify FAIL**
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: Run** → PASS
-- [ ] **Step 5: Commit** — `feat: Users und Agents in den Settings, Aktionen nach dem Identitätsschutz`
+- [x] **Step 2: Run, verify FAIL**
+- [x] **Step 3: Implement**
+- [x] **Step 4: Run** → PASS
+- [x] **Step 5: Commit** — `feat: Users und Agents in den Settings, Aktionen nach dem Identitätsschutz`
 
 ### Task 9: Nur lesen über Settings und Suche, Budget
 
@@ -473,7 +473,7 @@ test('removing a user asks first and is hidden where policy refuses', …);
 - Modify: `web/src/components/read-only.test.tsx`
 - Test: dieselbe Datei
 
-- [ ] **Step 1: Failing tests** (Muster der Datei: `mountApp` mit `can_write: false`, `fetch` schreibt mit; Gegentest mit `can_write: true`)
+- [x] **Step 1: Failing tests** (Muster der Datei: `mountApp` mit `can_write: false`, `fetch` schreibt mit; Gegentest mit `can_write: true`)
 
 ```tsx
 test('read-only hides settings writes', …Route /b/acme/settings (findBy wegen Lazy-Chunk): keine Knöpfe Hinzufügen/Unterprojekt/Verschieben/Entfernen/Schließen/Widerrufen/Prüfen/Jetzt synchronisieren/Lokaler Pfad; Theme-Radio und Sprachwahl bedienbar; kein Aufruf auf /tools/);
@@ -481,19 +481,19 @@ test('the same settings offer every write with write access', …dieselben Namen
 test('search works read-only, descriptions included', …Strg+K, Text, »In Beschreibungen suchen« → GET /search, kein /tools/);
 ```
 
-- [ ] **Step 2: Run** → FAIL nur, falls etwas durchrutscht; dann im Abschnitt beheben
-- [ ] **Step 3: Run** `pnpm vitest run --project web` → PASS; `pnpm build` → Budget gehalten; Größen notieren (initial, Settings-Chunk)
-- [ ] **Step 4: Commit** — `test: Settings und Suche ohne Schreibrecht`
+- [x] **Step 2: Run** → FAIL nur, falls etwas durchrutscht; dann im Abschnitt beheben
+- [x] **Step 3: Run** `pnpm vitest run --project web` → PASS; `pnpm build` → Budget gehalten; Größen notieren (initial, Settings-Chunk)
+- [x] **Step 4: Commit** — `test: Settings und Suche ohne Schreibrecht`
 
 ### Task 10: Sichtprüfung, Docs
 
 **Files:**
 - Modify: `docs/proposals/ui.md` (Status-Satz, §2.3.1, §2.6, §2.10, §2.11, §2.14), `ROADMAP.md`, `docs/superpowers/plans/2026-11-26-ui-gesamtplan.md` (U10 »Produziert«), dieser Plan (Häkchen)
 
-- [ ] **Step 1: Run** `mise run check` und `mise run smoke` → grün
-- [ ] **Step 2: Sichtprüfung** — `backe ui --port 0` gegen ein Test-Backlog unter Temp-`BACKE_HOME` im Browser (Playwright-MCP), hell und dunkel: Settings mit allen Abschnitten, Navigation links ab `lg`, Klappen; Repo anlegen, prüfen, entfernen; Projekt- und Unterprojekt anlegen, verschieben, entfernen mit `reassign`; Sprint anlegen, schließen mit `carry_over`; Agent anlegen; Key widerrufen; `sync_now`; Sprache umstellen; externe Bilder blocken; Default-Gruppierung im Board; `⌘K`/Strg+K, Gruppen, exakte ID, Beschreibungssuche; zweite Identität ohne Key → nur lesen. Ein `.playwright-mcp`-Verzeichnis im Haupt-Checkout danach entfernen.
-- [ ] **Step 3: Docs** — ui.md Status: Settings ohne Browser-Benachrichtigungen und Suche gebaut; offen bleiben §2.4.1 Punkt 3 und »Browser-Benachrichtigungen« in §2.10. Als Gegenwart nachziehen: §2.3.1 Einträge von `projects`, `sprints`, `repos` tragen `body` (fehlt, wenn leer); §2.10 Oberfläche um »externe Bilder« (§4.1) und die Bedeutung der Default-Gruppierung (für Boards ohne eigene Wahl), Abschnitte per Route aufklappen, Klappzustand im `localStorage`, `backlog.jsonc` und Sync-Status lesend, Policy-Ausblendung nach BK §2.13; §2.11 Trefferregeln (Kurzform ab 3 Zeichen, Titelwörter mit Anfang, Teilwort und einem Tippfehler, Reihenfolge, Auswahl je Art, Beschreibungs-Treffer als eigene Gruppe, Esc); §2.14 Wahl im `localStorage`, Wechsel rendert neu. ROADMAP »Settings und Suche« abhaken. Gesamtplan U10 »Produziert«.
-- [ ] **Step 4: Commit** — `docs: Settings und Suche in ui.md, Roadmap und Gesamtplan nachgezogen`
+- [x] **Step 1: Run** `mise run check` und `mise run smoke` → grün
+- [x] **Step 2: Sichtprüfung** — `backe ui --port 0` gegen ein Test-Backlog unter Temp-`BACKE_HOME` im Browser (Playwright-MCP), hell und dunkel: Settings mit allen Abschnitten, Navigation links ab `lg`, Klappen; Repo anlegen, prüfen, entfernen; Projekt- und Unterprojekt anlegen, verschieben, entfernen mit `reassign`; Sprint anlegen, schließen mit `carry_over`; Agent anlegen; Key widerrufen; `sync_now`; Sprache umstellen; externe Bilder blocken; Default-Gruppierung im Board; `⌘K`/Strg+K, Gruppen, exakte ID, Beschreibungssuche; zweite Identität ohne Key → nur lesen. Ein `.playwright-mcp`-Verzeichnis im Haupt-Checkout danach entfernen.
+- [x] **Step 3: Docs** — ui.md Status: Settings ohne Browser-Benachrichtigungen und Suche gebaut; offen bleiben §2.4.1 Punkt 3 und »Browser-Benachrichtigungen« in §2.10. Als Gegenwart nachziehen: §2.3.1 Einträge von `projects`, `sprints`, `repos` tragen `body` (fehlt, wenn leer); §2.10 Oberfläche um »externe Bilder« (§4.1) und die Bedeutung der Default-Gruppierung (für Boards ohne eigene Wahl), Abschnitte per Route aufklappen, Klappzustand im `localStorage`, `backlog.jsonc` und Sync-Status lesend, Policy-Ausblendung nach BK §2.13; §2.11 Trefferregeln (Kurzform ab 3 Zeichen, Titelwörter mit Anfang, Teilwort und einem Tippfehler, Reihenfolge, Auswahl je Art, Beschreibungs-Treffer als eigene Gruppe, Esc); §2.14 Wahl im `localStorage`, Wechsel rendert neu. ROADMAP »Settings und Suche« abhaken. Gesamtplan U10 »Produziert«.
+- [x] **Step 4: Commit** — `docs: Settings und Suche in ui.md, Roadmap und Gesamtplan nachgezogen`
 
 ## Festlegungen
 
@@ -509,3 +509,9 @@ test('search works read-only, descriptions included', …Strg+K, Text, »In Besc
 | Settings-Abschnitte | Slugs `repositories`, `projects`, `sprints`, `users`, `backlog`, `interface`; alle untereinander, die Route klappt einen auf und rückt ihn ins Bild. |
 | Policy-Ausblendung | Client-Regel `settingsRights` nach BK §2.13 Punkt 4; was die Regel nicht sicher weiß (früher entfernte Handles), bleibt sichtbar und scheitert mit Meldung. Zusätzlich gesperrt, was der Service sicher ablehnt: Projekt mit Unterprojekten entfernen (fehlt), Repo mit Verweisen entfernen (Dialog gesperrt). |
 | Settings als Chunk | `SettingsView` lädt per `React.lazy` hinter `ChunkBoundary`; die Suche bleibt im Hauptchunk, weil sie in jeder Ansicht steht. |
+| Suchindex auf Zeit | Signalize-Memos rechnen ohne `lazy` bei jeder Änderung neu, mit `lazy` melden sie nichts; der Index gehört darum der `SearchBox` und lebt nur, solange die Suche offen ist oder Text hat (`createSearchIndex`). |
+| Abschnitt zeigen | Der Router zählt jede Navigation (`Router.navigation`), auch zur aktuellen URL; Settings zeigt den Abschnitt einmal je Navigation. Die zuletzt gezeigte merkt sich `App` oberhalb des Sprach-Keys, damit ein Sprachwechsel nicht erneut springt. Eine Navigation zur aktuellen URL ersetzt den Verlaufseintrag. |
+| Projektbaum | Pfade segmentweise sortiert (`web`, `web/auth`, `web-x`), damit Unterprojekte unter ihrem Parent stehen; `project list` sortiert flach. |
+| Dialoge eingeklappter Abschnitte | `SettingsSection` rendert Dialoge in `overlays` unabhängig vom Klappzustand; »Prüfen« klappt den Abschnitt auf, damit das Ergebnis sichtbar ist. |
+| Fokus nach Dialogen | Radix gibt den Fokus nur an einen `DialogTrigger` zurück; `ConfirmDialog` merkt sich das auslösende Element selbst, die Settings-Abschnitte nutzen `useDialogFocus` mit Rückfall auf »Hinzufügen«, wenn der Auslöser verschwand. |
+| Enter in Formularen | Der per `form=` zugeordnete Absende-Knopf im Dialogfuß ist im Browser der Default-Knopf des Formulars; einen verborgenen Knopf nur für jsdom gibt es nicht, Tests senden per `submit`. |
