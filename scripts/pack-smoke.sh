@@ -50,7 +50,7 @@ TARBALL_SIZE="$(wc -c <"$TARBALL" | tr -d ' ')"
 FULL_SIZE="$(cd "$T/unpacked" && tar -cf - package | gzip -9 | wc -c | tr -d ' ')"
 BASE_SIZE="$(cd "$T/unpacked" && tar -cf - --exclude package/dist/ui package | gzip -9 | wc -c | tr -d ' ')"
 UI_SIZE=$((FULL_SIZE - BASE_SIZE))
-[ "$UI_SIZE" -le "$UI_LIMIT" ] || fail "dist/ui vergrößert den Tarball um $UI_SIZE B, mehr als $UI_LIMIT B (ui.md §4.1)"
+[ "$UI_SIZE" -le "$UI_LIMIT" ] || fail "dist/ui vergrößert den Tarball um $UI_SIZE B, mehr als $UI_LIMIT B (ui.md §3.9)"
 rm -rf "$T/unpacked"
 
 PKG_JSON="$(tar -xOf "$TARBALL" package/package.json)"

@@ -9,3 +9,5 @@ Was gilt, steht in den Proposals (`docs/proposals/`); die ADRs tragen die Histor
 
 | ADR | Titel | Status |
 | --- | --- | --- |
+| [ADR-001](./001-ui-als-dritter-adapter.md) | Die UI ist ein dritter Adapter über einen gemeinsamen Tool-Katalog | akzeptiert |
+| [ADR-002](./002-signalize-store-react-view.md) | Der Zustand der UI liegt in signalize, React stellt nur dar | akzeptiert |

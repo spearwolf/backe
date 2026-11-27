@@ -96,7 +96,7 @@ function Pre({ node: _node, children, ...rest }: ComponentProps<'pre'> & { node?
 }
 
 /**
- * Externe Bilder können den Leser verfolgen (ui.md §4.1). Ist der Schalter in Settings aus, steht
+ * Externe Bilder können den Leser verfolgen (ui.md §2.9.2). Ist der Schalter in Settings aus, steht
  * statt des Bilds ein Link darauf, in einem Link nur der Hinweis; Anhänge, `blob:`- und
  * `data:`-Bilder bleiben, denn sie verlassen den Rechner nicht.
  */

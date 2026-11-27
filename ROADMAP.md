@@ -6,26 +6,6 @@ sonst.
 
 > Offen: Reihenfolge, Termine und Prioritäten zwischen den Strängen legt der User fest.
 
-## In Arbeit
-
-### `backe ui` (UI)
-
-Umsetzung nach UI §6, Status im Kopf von `docs/proposals/ui.md`.
-
-- [x] Vorlauf in BK: reine Modul-Hülle, Tool-Katalog `src/tools/` (UI §2.2, §3.3, §4.2)
-- [x] Server-Gerüst (UI §6 Schritt 1)
-- [x] Live-Kern (UI §6 Schritt 2)
-- [x] Server-Writes (UI §2.3.2, §6 Schritt 6)
-- [x] Frontend-Gerüst (UI §6 Schritt 3)
-- [x] Tab Backlog (UI §6 Schritt 4)
-- [x] Tab Issue lesend (UI §6 Schritt 5)
-- [x] Writes im Frontend (UI §6 Schritt 6)
-- [x] Tab Board (UI §6 Schritt 7)
-- [x] Abhängigkeitsgraph (UI §6 Schritt 8)
-- [x] Settings und Suche (UI §6 Schritt 9)
-- [x] Nachbarn und Benachrichtigungen (UI §6 Schritt 10)
-- [x] Paket, CI, Performance (UI §6 Schritt 11; BK §2.17 nach UI §4.2)
-
 ## Geplant
 
 ### Backstube (BS)
@@ -34,30 +14,30 @@ Spec im Entwurf, offene Entscheidungen in BS §4.1; Umsetzung nach BS §6.
 
 ## Offene Entscheidungen
 
-| Frage                                            | Proposal      | Stand                                                       |
-| ------------------------------------------------ | ------------- | ----------------------------------------------------------- |
-| Remote Control aus einem Skript starten          | BS §4.1       | wird in F1 geprüft                                          |
-| Benachrichtigung ab Stufe 2                      | BS §4.1       | Vorschlag (a) Relay-Session                                 |
-| Vertrauen und MCP-Freigabe in frischen Worktrees | BS §4.1       | wird in F1 geprüft                                          |
-| Kontext aus `--add-dir`                          | BS §4.1       | zu prüfen                                                   |
-| Modell je Phase                                  | BS §4.1       | nach Messung in F1                                          |
-| Ort des Codes der Backstube                      | BS §4.1       | Vorschlag eigenes Repo                                      |
-| Frontend im Hauptpaket oder eigenes Paket        | UI §4.1       | Hauptpaket: `dist/ui/` +1,9 MiB von 3 MiB (0.4.0, UI §2.16) |
-| `.backe/backlog.jsonc` aus der UI bearbeiten     | UI §4.1, §4.2 | erst mit einer Operation in BK                              |
-| Fehlertexte in der UI-Sprache                    | UI §4.1       | erst mit Messages je Aufruf                                 |
+| Frage                                            | Proposal      | Stand                          |
+| ------------------------------------------------ | ------------- | ------------------------------ |
+| Remote Control aus einem Skript starten          | BS §4.1       | wird in F1 geprüft             |
+| Benachrichtigung ab Stufe 2                      | BS §4.1       | Vorschlag (a) Relay-Session    |
+| Vertrauen und MCP-Freigabe in frischen Worktrees | BS §4.1       | wird in F1 geprüft             |
+| Kontext aus `--add-dir`                          | BS §4.1       | zu prüfen                      |
+| Modell je Phase                                  | BS §4.1       | nach Messung in F1             |
+| Ort des Codes der Backstube                      | BS §4.1       | Vorschlag eigenes Repo         |
+| `.backe/backlog.jsonc` aus der UI bearbeiten     | UI §4.1, §4.2 | erst mit einer Operation in BK |
+| Fehlertexte in der UI-Sprache                    | UI §4.1       | erst mit Messages je Aufruf    |
 
 ## Später — mit Bedingung
 
-| Vorhaben                                                    | Wenn                                                               | Proposal      |
-| ----------------------------------------------------------- | ------------------------------------------------------------------ | ------------- |
-| Custom Git-Merge-Driver für Issue-Dateien                   | mehr als ein Replay-Konflikt pro 100 Sync-Runden im Realbetrieb    | BK §4.2       |
-| Volltext-Index                                              | `issue list -q` über 1 s bei 10⁴ Issues                            | BK §4.2       |
-| Graph-Patch und Statusabfrage beschleunigen                 | messbar langsam bei 10⁴ Issues                                     | BK §4.2       |
-| `issue.link` zeichnet den Repo-Namen auf                    | Replay-Konflikte im Realbetrieb zeigen die Abweichung              | BK §4.2       |
-| Serverseitiges Paging und Filtern in der UI                 | Ziel für `GET /state` aus UI §2.17 gerissen                        | UI §3.4, §4.3 |
-| `SharedWorker` für eine Event-Verbindung aller Browser-Tabs | Grenze von sechs Verbindungen je Origin stört im Betrieb           | UI §3.1, §4.3 |
-| Lease in `backe`                                            | ein zweiter Host im Betrieb                                        | BS §4.2       |
-| Batch-Merges in der Merge-Queue                             | Issues warten im Mittel länger in der Queue, als ihr Verify dauert | BS §4.2       |
+| Vorhaben                                                    | Wenn                                                                            | Proposal      |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------- |
+| Custom Git-Merge-Driver für Issue-Dateien                   | mehr als ein Replay-Konflikt pro 100 Sync-Runden im Realbetrieb                 | BK §4.2       |
+| Volltext-Index                                              | `issue list -q` über 1 s bei 10⁴ Issues                                         | BK §4.2       |
+| Graph-Patch und Statusabfrage beschleunigen                 | messbar langsam bei 10⁴ Issues                                                  | BK §4.2       |
+| `issue.link` zeichnet den Repo-Namen auf                    | Replay-Konflikte im Realbetrieb zeigen die Abweichung                           | BK §4.2       |
+| Serverseitiges Paging und Filtern in der UI                 | Ziel für `GET /state` aus UI §2.17 gerissen                                     | UI §3.4, §4.3 |
+| `SharedWorker` für eine Event-Verbindung aller Browser-Tabs | Grenze von sechs Verbindungen je Origin stört im Betrieb                        | UI §3.1, §4.3 |
+| Frontend als eigenes Paket `@spearwolf/backe-ui`            | `dist/ui/` vergrößert den Tarball um mehr als 3 MiB (Pack-Smoke-Test bricht ab) | UI §3.9       |
+| Lease in `backe`                                            | ein zweiter Host im Betrieb                                                     | BS §4.2       |
+| Batch-Merges in der Merge-Queue                             | Issues warten im Mittel länger in der Queue, als ihr Verify dauert              | BS §4.2       |
 
 ## Später — ohne Bedingung
 

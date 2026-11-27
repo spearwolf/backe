@@ -1,6 +1,6 @@
 # backe ui — lokale Web-Oberfläche für ein Backlog
 
-> **Status: gebaut.** Alle Schritte aus §6 stehen: Befehl `backe ui`, Sitzung und Sicherheits-Header, lesende und schreibende API samt Uploads, Live-Updates samt Nachbarn, Frontend mit den Tabs Backlog, Board und Issue, Settings, Suche und Issue anlegen; das Paket trägt `dist/ui/` (§2.16 »Paket«), Playwright-E2E laufen in der CI (§5 »E2E«), und der Benchmark belegt jedes Ziel aus §2.17. Die Empfehlungen in §4.1 gelten, solange keine Zeile dort anders entschieden ist; Wünsche an BK in §4.2, späterer Ausbau in §4.3.
+> **Status: gebaut.** Offen sind zwei Entscheidungen in §4.1 (Backlog-Config aus der UI, Fehlertexte in der UI-Sprache), der Wunsch an BK in §4.2 und der spätere Ausbau in §4.3.
 > Bezug: Adapter über den Service-Layer von BK (`backe.md`), vor allem BK §2.14 (Kontext), §2.16 (Schreibpfad und Sync), §2.18 (Ausgabe), §2.19 (MCP als Vorbild des Adapters), §2.22–§2.24 (Abhängigkeiten, Sub-Issues, Properties).
 > Skizzen: [`layout-tabs.png`](../assets/layout-tabs.png), [`backlog.png`](../assets/backlog.png), [`board.png`](../assets/board.png), [`issue-details.png`](../assets/issue-details.png), [`settings.png`](../assets/settings.png).
 
@@ -25,7 +25,7 @@ Ein Backlog, an dem mehrere Agents parallel arbeiten, ändert sich im Minutentak
 
 - Kein Zugriff von anderen Rechnern. Der Server lauscht nur auf `127.0.0.1` (§2.15).
 - Kein Mehrbenutzer-Server. Eine laufende UI schreibt als genau eine Identität je Backlog.
-- Keine Webhooks, keine Integrationen mit Fremdsystemen, keine Benachrichtigungen außerhalb des offenen Browsers (§4.1).
+- Keine Webhooks, keine Integrationen mit Fremdsystemen, keine Benachrichtigungen außerhalb des offenen Browsers. Sie bräuchten einen dauerhaft laufenden Prozess und gehören, wenn überhaupt, zu BK (»Watcher/Daemon«, BK §4.2).
 - Kein Bearbeiten der Backlog-Config `.backe/backlog.jsonc` (§4.1, §4.2).
 - Kein Offline-Betrieb des Browsers. Ohne laufenden Server zeigt die UI nur den Verbindungsstatus.
 - Kein Daemon. `backe ui` ist ein Vordergrundprozess wie `backe mcp` (BK §3.8).
@@ -41,7 +41,7 @@ Die UI ist gescheitert, auch wenn alles technisch funktioniert, wenn …
 
 ## 1. Ist-Zustand
 
-Es gibt keine UI. Gelesen und geschrieben wird über das CLI und den MCP-Modus. BK §0.3 nennt ein Web-UI als Nicht-Ziel der ersten Version und verweist für `backe ui` auf dieses Proposal.
+`backe ui` ist gebaut wie in §2 beschrieben: Server in `src/ui/`, Tool-Katalog in `src/tools/`, Frontend in `web/`, gebaut nach `dist/ui/`.
 
 ## 2. Soll-Zustand
 
@@ -289,7 +289,7 @@ Nach `settings.png`: einklappbare Abschnitte, auf breiten Bildschirmen mit Navig
 | Sprints | offene zuerst, mit `start`, `end`, Ziel; geschlossene eingeklappt | `sprint_create`, `sprint_close` (mit `carry_over`) |
 | Users & Agents | Handle, Name, Art, Operator, Key-Fingerprints, widerrufene Keys | `user_add` (Public Key einfügen), `user_create_agent` (Key entsteht auf diesem Rechner, BK §2.12), `user_revoke_key`, `user_rm` |
 | Backlog | `backlog.jsonc` lesend: Name, ID-Präfix, Admins, Workflow, Sync, Anhänge, deklarierte Properties samt Beschreibung; Sync-Status und Konflikte (BK §2.16.4) | `sync_now`; Konflikte lösen bleibt im CLI (Hinweis `backe sync resolve`) |
-| Oberfläche | Theme, Sprache, externe Bilder in Beschreibungen (§4.1), Browser-Benachrichtigungen, Default-Gruppierung des Boards | nur `localStorage` |
+| Oberfläche | Theme, Sprache, externe Bilder in Beschreibungen (§2.9.2), Browser-Benachrichtigungen, Default-Gruppierung des Boards | nur `localStorage` |
 
 - **Aufbau:** Alle Abschnitte stehen untereinander, Slugs `repositories`, `projects`, `sprints`, `users`, `backlog`, `interface`. `/settings/<abschnitt>` und jeder Klick in der Navigation, auch auf den schon gewählten Abschnitt, klappt ihn auf, rückt ihn ins Bild und fokussiert seinen Kopf. Der Klappzustand steht je Backlog im `localStorage` (§2.5). Settings lädt als eigener Chunk.
 - **Listen:** Projekte als Baum (Unterprojekte unter ihrem Parent), mit Titel, `lead` und offenen Issues rekursiv wie `project list`; Sprints offen zuerst, dann geschlossene eingeklappt, je nach `start` absteigend; Projekte, Sprints und Repos tragen ihre Beschreibung (§2.9.2) und verlinken auf den Tab Backlog mit dem passenden Filter. Alle Listen folgen Patches live; ein Dialog, dessen Entität verschwindet, schließt sich.
@@ -349,7 +349,7 @@ Die UI kann signierte Commits im Namen des Nutzers erzeugen. Jede Webseite im se
 - **Code-Splitting:** Mermaid, Board, Graph und Highlighting-Sprachen sind eigene Chunks und laden erst bei Bedarf. Lädt der Chunk von Board oder Graph nicht (etwa nach einem Update mit neuen Dateinamen), zeigt die Ansicht an seiner Stelle eine Meldung, der Rest der App bleibt bedienbar. Budget für den initialen Chunk: 300 KB gzip.
 - **Build:** `pnpm build` baut CLI (tsdown) und Frontend (`vite build` → `dist/ui/`). Entwicklung: `pnpm dev:ui` startet den Vite-Dev-Server mit Proxy `/api` auf ein laufendes `backe ui`. Das Proxy-Ziel ist `BACKE_UI_PORT` (Default 8002). Dessen `Origin`-Prüfung erlaubt zusätzlich den Ursprung aus `BACKE_UI_DEV_ORIGIN`, sofern gesetzt. Cookies trennen keine Ports: Im Dev-Betrieb wird erst die Konsolen-URL von `backe ui` geöffnet (sie setzt das Sitzungs-Cookie), danach `http://127.0.0.1:5173/`.
 - **Lint und Typen:** Biome und `tsc` decken `web/` mit ab (eigene `tsconfig` mit DOM-Typen).
-- **Paket:** Der Tarball enthält zusätzlich `dist/ui/**`: `index.html`, `theme.js`, `favicon.svg` (Graustufen, eigenes `prefers-color-scheme`) und `assets/`. `scripts/check-ui-build.ts` prüft nach jedem Build Reihenfolge und Vollständigkeit dieser Dateien sowie das Budget des initialen Chunks und meldet dessen gzip-Größe. Der Pack-Smoke-Test (BK §2.21) misst den Anteil von `dist/ui/` am Tarball gegen die Schwelle aus §4.1, startet `backe ui --port 0`, ruft die Start-URL samt Token und `/api/backlogs` ab und beendet den Server per SIGTERM. Gemessen mit Version 0.4.0: Tarball 2 312 037 B, davon `dist/ui/` 1 993 369 B (gzip -9, Differenz zweier Packläufe mit und ohne `dist/ui/`; unkomprimiert 6,9 MB), initialer Chunk 244 310 B gzip vom Budget 307 200 B. Über 500 kB roh liegen nur der Einstieg und der Lazy-Chunk des ELK-Layouts von Mermaid; die Warnschwelle von Vite steht darum auf 2 048 kB, das Budget prüft `check-ui-build.ts`.
+- **Paket:** Der Tarball enthält zusätzlich `dist/ui/**`: `index.html`, `theme.js`, `favicon.svg` (Graustufen, eigenes `prefers-color-scheme`) und `assets/`. `scripts/check-ui-build.ts` prüft nach jedem Build Reihenfolge und Vollständigkeit dieser Dateien sowie das Budget des initialen Chunks und meldet dessen gzip-Größe. Der Pack-Smoke-Test (BK §2.21) misst den Anteil von `dist/ui/` am Tarball gegen die Schwelle aus §3.9, startet `backe ui --port 0`, ruft die Start-URL samt Token und `/api/backlogs` ab und beendet den Server per SIGTERM. Gemessen mit Version 0.4.0: Tarball 2 312 037 B, davon `dist/ui/` 1 993 369 B (gzip -9, Differenz zweier Packläufe mit und ohne `dist/ui/`; unkomprimiert 6,9 MB), initialer Chunk 244 310 B gzip vom Budget 307 200 B. Über 500 kB roh liegen nur der Einstieg und der Lazy-Chunk des ELK-Layouts von Mermaid; die Warnschwelle von Vite steht darum auf 2 048 kB, das Budget prüft `check-ui-build.ts`.
 - **Browser:** aktuelle Versionen von Chromium, Firefox und Safari.
 
 ### 2.17 Performance-Ziele
@@ -370,8 +370,6 @@ Verfehlt die Umsetzung ein Ziel, ist das ein offener Punkt mit Messung, kein sti
 
 ## 3. Designentscheidungen
 
-Solange nichts gebaut ist, stehen hier die Abwägungen; beim Konsolidieren wandern sie in ADRs.
-
 ### 3.1 Server-Sent Events plus HTTP statt WebSocket
 
 Der Server muss nur in eine Richtung pushen; Writes sind ohnehin Anfrage und Antwort, jede mit eigenem Ergebnis oder Fehler. SSE bringt der Browser mit (`EventSource`, automatisches Wiederverbinden, `Last-Event-ID` für verpasste Patches), und der Server braucht dafür nur `node:http`. Ein WebSocket-Server bräuchte nach unserem Kenntnisstand eine Bibliothek wie `ws` als neue Runtime-Abhängigkeit (für Node 26 ungeprüft), dazu ein eigenes Protokoll für Anfrage-Antwort-Zuordnung, Wiederverbinden und Nachholen.
@@ -388,7 +386,7 @@ Das Beobachten der Ref-Dateien erfasst jeden Weg, der den Stand bewegt — CLI, 
 
 ### 3.3 Die UI ist ein dritter Adapter
 
-Die UI ruft dieselben Services wie CLI und MCP, über dieselbe Write-Warteschlange, und liefert dasselbe JSON. Die Tool-Namen der API sind die des MCP-Modus. So gibt es kein zweites Verhalten, das auseinanderdriften kann, und kein Feature nur in der UI. Die zusätzlichen Tools für die Verwaltung (§2.3.2) sind Befehle, die das CLI schon hat.
+Die UI ruft dieselben Services wie CLI und MCP über denselben Tool-Katalog (`src/tools/`) und dieselbe Write-Warteschlange und liefert dasselbe JSON; so gibt es kein zweites Verhalten und kein Feature nur in der UI. ADR-001
 
 ### 3.4 Gesamtzustand im Client, Bodies auf Abruf
 
@@ -400,7 +398,7 @@ Ein einziger State-Wechsel ändert Bereitschaft, offene Abhängigkeiten und Fort
 
 ### 3.6 signalize als Store, React als View
 
-Ein Patch betrifft meist ein einzelnes Issue. Mit einem Signal je Entität und Memos für das Abgeleitete rendert genau das neu, was sich geändert hat: die eine Zeile, die eine Karte, der eine Tab. Ein Gesamtzustand in React-State oder Context würde bei jedem Patch die ganze Ansicht durchrechnen. `eventize` trägt die Ereignisse der Verbindung, `signalize` den Zustand; React bleibt reine Darstellung.
+Ein Signal je Entität und Memos für das Abgeleitete, damit ein Patch nur neu rendert, was sich geändert hat; `eventize` trägt die Ereignisse der Verbindung, React bleibt reine Darstellung. ADR-002
 
 ### 3.7 Board-Spalten aus der Hauptlinie
 
@@ -412,7 +410,11 @@ Der Abhängigkeitsgraph ist ein gerichteter, meist kleiner DAG. `dagre` liefert 
 
 ### 3.9 Vorgebautes Frontend im npm-Paket
 
-Vite, React und alle Frontend-Bibliotheken sind Werkzeuge zur Build-Zeit. Ausgeliefert werden statische Dateien, die `node:http` direkt serviert. Wer `backe` installiert, bekommt die UI ohne zusätzliches Installieren und ohne neue Runtime-Abhängigkeiten. Den Preis zahlt nur die Größe des Tarballs.
+Vite, React und alle Frontend-Bibliotheken sind Werkzeuge zur Build-Zeit. Ausgeliefert werden statische Dateien, die `node:http` direkt serviert. Wer `backe` installiert, bekommt die UI ohne zusätzliches Installieren und ohne neue Runtime-Abhängigkeiten. Den Preis zahlt nur die Größe des Tarballs: Solange `dist/ui/` ihn um höchstens 3 MiB vergrößert, bleibt das Frontend im Hauptpaket `@spearwolf/backe` (gemessen in §2.16 »Paket«; der Pack-Smoke-Test bricht darüber ab). Darüber käme es in ein eigenes Paket `@spearwolf/backe-ui`, das `backe ui` bei Bedarf nachlädt.
+
+### 3.10 Projekte, Sprints und Repos in den Settings
+
+Verwaltet werden sie in den Settings (§2.10), gefunden über Suche und Filter. Eigene feste Tabs, wie die Skizze `backlog.png` sie zeigt, verdoppelten, was die Filter des Tabs Backlog schon leisten.
 
 ## 4. Was offen bleibt
 
@@ -420,13 +422,8 @@ Vite, React und alle Frontend-Bibliotheken sind Werkzeuge zur Build-Zeit. Ausgel
 
 | Frage | Empfehlung |
 | --- | --- |
-| Transport: SSE plus HTTP oder WebSocket? | SSE plus HTTP (§3.1). |
-| Frontend im Hauptpaket `@spearwolf/backe` oder als eigenes Paket `@spearwolf/backe-ui`? | Hauptpaket (§3.9), solange `dist/ui/` den Tarball nicht um mehr als 3 MB vergrößert; sonst eigenes Paket, das `backe ui` bei Bedarf nachlädt. Gemessen mit 0.4.0: 1,9 MiB (§2.16 »Paket«); der Pack-Smoke-Test bricht über 3 MiB ab. |
-| Projekte, Sprints und Repos: in Settings (wie oben) oder als eigene feste Tabs (Skizze `backlog.png`)? | Settings, dazu der Einstieg über Suche und Filter. Eigene Tabs verdoppeln, was Filter schon leisten. |
 | Darf die UI `.backe/backlog.jsonc` bearbeiten? | Erst, wenn BK dafür eine Operation hat (§4.2); bis dahin lesend. |
-| Externe Bilder in Markdown laden (Tracking über Bild-URLs)? | Ja, per CSP auf `https:` beschränkt; ein Schalter in Settings blockt sie. |
 | Fehlertexte in der UI-Sprache statt der Server-Sprache (§2.14)? | Erst, wenn sich die Auswahl der Messages je Aufruf statt je Prozess treffen lässt; bis dahin Server-Sprache. |
-| Webhooks und Integrationen (Settings-Wunsch)? | Nicht in der UI. Sie bräuchten einen dauerhaft laufenden Prozess und gehören, wenn überhaupt, zu BK (»Watcher/Daemon«, BK §4.2). |
 
 ### 4.2 Wünsche an BK
 
@@ -469,17 +466,3 @@ Verbindlich erst, wenn BK sie aufnimmt:
 **E2E** (Playwright gegen das gebaute `backe ui`, `test/browser/*.spec.ts`, in Chromium, Firefox und WebKit; lokal `mise run e2e`, in der CI der Job `e2e`, BK §2.21): anlegen, bearbeiten, verschieben per Drag & Drop und per Tastatur, Live-Update nach parallelem CLI-Write, Theme-Wechsel ohne Aufblitzen, Mermaid-Rendering, Anhang hochladen und anzeigen, Backlog-Wechsel. Jeder Test bekommt ein eigenes Zuhause (isoliert wie oben) mit zwei Backlogs und einen eigenen `backe ui --port 0`, wartet auf Zustände statt auf Zeit und endet ohne Konsolenfehler und ohne Antwort ≥ 400 der App.
 
 **Performance:** `scripts/bench-ui.ts` prüft die Ziele aus §2.17 gegen ein generiertes Backlog mit 10⁴ Issues (`scripts/bench-backlog.ts`) samt 20 Nachbarn; es läuft auf Anfrage (`node scripts/bench-ui.ts`), nicht in jedem CI-Lauf. Gemessen wird im Browser über `requestAnimationFrame`, gedrosselt nur per CDP auf der Messseite.
-
-## 6. Umsetzung in Schritten
-
-1. **Server-Gerüst:** Befehl `backe ui`, `node:http`, Sitzung und Sicherheits-Header, `/api/backlogs`, `/state`, statische Auslieferung eines Platzhalters.
-2. **Live-Kern:** Watcher (eigene Arbeitskopie, Arbeitsbaum, Sicherheitsnetz), Delta, Event-Stream mit Puffer und `reset`.
-3. **Frontend-Gerüst:** Vite, Tailwind, shadcn/ui, Theme, Routing, Tab-Leiste, Backlog-Umschalter, Verbindung und Store mit signalize/eventize.
-4. **Tab Backlog:** Liste, Baum, Filter, Sortierung, Virtualisierung, Live-Hervorhebung.
-5. **Tab Issue lesend:** Felder, Markdown, Kommentare, Anhänge; Mermaid als Lazy-Chunk.
-6. **Writes:** Tool-Endpunkte, Bearbeiten am Feld, Editor, Kommentare, Upload, Issue anlegen, optimistische Anzeige.
-7. **Tab Board:** Bahnen, Spalten, Drag & Drop mit Batch, Tastaturalternative.
-8. **Abhängigkeitsgraph** und Baumansicht.
-9. **Settings** und **Suche**.
-10. **Nachbarn und Benachrichtigungen:** Hub- und Nachbar-Refs, Browser-Benachrichtigungen.
-11. **Paket und CI:** Tarball-Inhalt, Pack-Smoke-Test, E2E in der CI, Performance-Benchmark.
