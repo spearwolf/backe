@@ -407,6 +407,15 @@ test('the graph follows the dark theme', async () => {
   expect(flow?.classList.contains('light')).toBe(true);
 });
 
+test('the attribution stays and gets a link colour with AA contrast', async () => {
+  const { container } = await show(graphOf(chain(), C));
+  expect(container.querySelector('.react-flow__attribution a')).not.toBeNull();
+  // xyflow setzt #999 ungeschichtet; nur ein `!important`-Utility kommt darüber.
+  expect(container.querySelector('.react-flow')?.className).toContain(
+    '[&_.react-flow\\_\\_attribution_a]:text-muted-foreground!',
+  );
+});
+
 test('controls are labelled from the catalogue and offer no interactivity toggle', async () => {
   await show(graphOf(chain(), C));
   expect(screen.getByRole('button', { name: m.zoomIn })).toBeTruthy();

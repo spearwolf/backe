@@ -276,6 +276,10 @@ export function DepGraph(props: {
           forceColorMode={theme}
           ariaLabelConfig={ariaLabels()}
           style={THEME}
+          // Der Hinweis auf xyflow bleibt; sein Link (#999, etwa 2,85:1) bekommt AA-Kontrast. Die
+          // Regel von xyflow steht ungeschichtet, darum `!`. Als JSX-String, damit Tailwind
+          // denselben Text sieht wie der Browser (`\_` hält den Unterstrich wörtlich).
+          className="[&_.react-flow\_\_attribution_a]:text-muted-foreground!"
         >
           <StartView graphKey={graph.key} positions={positions} centre={centre} />
           <Controls showInteractive={false} fitViewOptions={FIT} />
