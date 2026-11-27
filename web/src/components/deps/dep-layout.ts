@@ -25,7 +25,8 @@ export function layoutDeps(
   for (const n of graph.nodes) g.setNode(n.id, { width: DEP_NODE_WIDTH, height: DEP_NODE_HEIGHT });
   for (const e of graph.edges) g.setEdge(e.from, e.to, {}, e.kind);
 
-  const centre = graph.nodes.find((n) => n.role === 'center');
+  // `depGraph` liefert die Mitte immer als ersten Knoten; ohne Knoten gibt es nichts anzuhängen.
+  const centre = graph.nodes[0];
   if (graph.more > 0 && centre !== undefined) {
     g.setNode(DEP_MORE_ID, { width: DEP_NODE_WIDTH, height: DEP_NODE_HEIGHT });
     g.setEdge(centre.id, DEP_MORE_ID, {}, MORE_EDGE);

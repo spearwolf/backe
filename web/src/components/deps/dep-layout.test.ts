@@ -22,21 +22,17 @@ const pos = (m: ReturnType<typeof layoutDeps>, id: string) => {
 
 function overlaps(m: ReturnType<typeof layoutDeps>): boolean {
   const all = [...m.values()];
-  for (let i = 0; i < all.length; i++) {
-    for (let j = i + 1; j < all.length; j++) {
-      const a = all[i] as (typeof all)[number];
-      const b = all[j] as (typeof all)[number];
-      if (
-        a.x < b.x + DEP_NODE_WIDTH &&
-        b.x < a.x + DEP_NODE_WIDTH &&
-        a.y < b.y + DEP_NODE_HEIGHT &&
-        b.y < a.y + DEP_NODE_HEIGHT
-      ) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return all.some((a, i) =>
+    all
+      .slice(i + 1)
+      .some(
+        (b) =>
+          a.x < b.x + DEP_NODE_WIDTH &&
+          b.x < a.x + DEP_NODE_WIDTH &&
+          a.y < b.y + DEP_NODE_HEIGHT &&
+          b.y < a.y + DEP_NODE_HEIGHT,
+      ),
+  );
 }
 
 test('prerequisites above the centre, dependents below', () => {
@@ -103,6 +99,6 @@ test('150 nodes and the collector lay out without overlap', () => {
   expect(g.more).toBeGreaterThan(0);
   const m = layoutDeps(g);
   expect(m.size).toBe(151);
-  expect(pos(m, DEP_MORE_ID).y).toBeGreaterThan(pos(m, tid(1)).y);
+  expect(pos(m, DEP_MORE_ID).y - pos(m, tid(1)).y).toBeGreaterThanOrEqual(DEP_NODE_HEIGHT);
   expect(overlaps(m)).toBe(false);
 });
