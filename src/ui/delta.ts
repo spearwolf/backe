@@ -30,6 +30,13 @@ export function userJson(handle: string, user: User, admins: readonly string[]):
   };
 }
 
+/**
+ * Beschreibung von Projekt, Sprint oder Repo wie bei `sprint show --format json`: fehlt, wenn leer.
+ * Sie reist in den Listen, damit eine reine Body-Änderung als Upsert im Patch ankommt; Issue-Bodies
+ * bleiben draußen.
+ */
+const bodyOf = (e: { body: string }): { body?: string } => (e.body === '' ? {} : { body: e.body });
+
 /** Die Entitätslisten von `/state`, in der Reihenfolge des Snapshots. */
 export function entityLists(
   s: BacklogSnapshot,
@@ -38,9 +45,9 @@ export function entityLists(
   return {
     config,
     issues: [...s.issues.values()].map((e) => e.data),
-    projects: [...s.projects].map(([path, e]) => ({ path, ...e.data })),
-    sprints: [...s.sprints].map(([slug, e]) => ({ slug, ...e.data })),
-    repos: [...s.repos].map(([name, e]) => ({ name, ...e.data })),
+    projects: [...s.projects].map(([path, e]) => ({ path, ...e.data, ...bodyOf(e) })),
+    sprints: [...s.sprints].map(([slug, e]) => ({ slug, ...e.data, ...bodyOf(e) })),
+    repos: [...s.repos].map(([name, e]) => ({ name, ...e.data, ...bodyOf(e) })),
     users: [...s.users].map(([handle, e]) => userJson(handle, e.data, s.config.admins)),
   };
 }

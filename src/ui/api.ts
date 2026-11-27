@@ -48,9 +48,10 @@ export type AttachmentListJson = {
   size?: number;
   not_loaded?: true;
 }[];
-export type ProjectJson = { path: string } & Project;
-export type SprintJson = { slug: string } & Sprint;
-export type RepoJson = { name: string } & Repo;
+/** Beschreibung (`body`) wie bei `sprint show --format json`: fehlt, wenn leer. */
+export type ProjectJson = { path: string; body?: string } & Project;
+export type SprintJson = { slug: string; body?: string } & Sprint;
+export type RepoJson = { name: string; body?: string } & Repo;
 
 /** Wie `user show --json` ohne `body`; leere Listen fehlen. */
 export type UserJson = {
@@ -149,6 +150,37 @@ export type RepoLocateJson = {
   path: string;
 };
 
+/** Ein Befund von `repo check`. */
+export type RepoFindingJson = {
+  level: 'error' | 'warning' | 'info';
+  kind: 'local' | 'ref' | 'network' | 'github';
+  message: string;
+};
+/** `repoCheckJson`: je Repo Befunde und GitHub-Stand; `notices` nur, wenn es welche gibt. */
+export type RepoCheckJson = {
+  repos: {
+    name: string;
+    url: string;
+    canonical?: string;
+    findings: RepoFindingJson[];
+    github?: { visibility: string; archived: boolean };
+    cached?: string;
+  }[];
+  notices?: NoticeJson[];
+};
+/** `syncResult` (`sync_now`): `pushed` ist `null` ohne Push, `skipped` nur ohne Git-Remote. */
+export type SyncResultJson = {
+  fetched: number;
+  replayed: number;
+  conflicts: number;
+  pushed: number | null;
+  rounds: number;
+  skipped?: 'no_remote';
+  notices?: NoticeJson[];
+};
+/** Ergebnis von `user_create_agent`. */
+export type CreateAgentJson = { handle: string; key_path: string; commit: string | null };
+
 /** Argumente der Tools, die das Frontend aufruft; jeder Key ist ein Parameter des Katalogs (`src/ui/tool-args.test.ts`). */
 export type ToolArgs = {
   issue_create: {
@@ -195,6 +227,19 @@ export type ToolArgs = {
   comment_delete: { id: string; comment: string };
   attachment_rm: { id: string; name: string };
   repo_locate: { name: string };
+  project_create: { path: string; title?: string; lead?: string; body?: string };
+  project_mv: { from: string; to: string };
+  project_rm: { path: string; reassign?: string; detach?: boolean };
+  sprint_create: { slug: string; title?: string; start?: string; end?: string; body?: string };
+  sprint_close: { slug: string; carry_over?: string };
+  repo_add: { url: string; name?: string; ref?: string; body?: string };
+  repo_rm: { name: string };
+  repo_check: { names?: string[]; remote?: boolean; fresh?: boolean };
+  user_add: { handle: string; key: string; name?: string; agent?: boolean; operator?: string };
+  user_create_agent: { handle: string; name?: string };
+  user_revoke_key: { handle: string; fingerprint: string };
+  user_rm: { handle: string };
+  sync_now: Record<string, never>;
   /** Operationen im Format von backe.md §2.16.6, etwa `{ op: 'issue.rank', id, from, bottom: true }`. */
   batch: { ops: Record<string, unknown>[] };
 };
@@ -204,5 +249,11 @@ export type ToolResults = {
     ? RepoLocateJson
     : K extends 'batch'
       ? BatchResultJson
-      : WriteResultJson;
+      : K extends 'repo_check'
+        ? RepoCheckJson
+        : K extends 'sync_now'
+          ? SyncResultJson
+          : K extends 'user_create_agent'
+            ? CreateAgentJson
+            : WriteResultJson;
 };

@@ -8,7 +8,7 @@ import type { BacklogConfig, User } from '../core/schemas.ts';
 export function isAdmin(
   config: Pick<BacklogConfig, 'admins'>,
   handle: string,
-  record: User | undefined,
+  record: Pick<User, 'kind'> | undefined,
 ): boolean {
   return config.admins.includes(handle) && record?.kind === 'human';
 }

@@ -9,6 +9,7 @@ const ROOT = join(import.meta.dirname, '..', '..');
 
 /** Einstiegspunkte des Web-Bundles in `src/`. */
 export const WEB_ENTRIES: readonly string[] = [
+  'src/ops/admin.ts',
   'src/ops/delete-scope.ts',
   'src/ops/edit-list.ts',
   'src/ops/graph.ts',

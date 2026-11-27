@@ -193,3 +193,18 @@ test('a broken hand edit shows up in problems', async () => {
     expect.arrayContaining([expect.objectContaining({ kind: 'issue', key: id })]),
   );
 });
+
+test('state carries sprint goals', async () => {
+  const b = await testBacklog();
+  const ctx = await b.context();
+  await executeWrite(ctx, {
+    kind: 'batch',
+    ops: [
+      { op: 'sprint.create', slug: '2026-w47', title: 'W47', body: 'Ziel: Release\n' },
+      { op: 'sprint.create', slug: '2026-w48', title: 'W48' },
+    ],
+  });
+  const s = await stateJson(ctx);
+  expect(s.sprints[0]?.body).toBe('Ziel: Release\n');
+  expect(s.sprints[1]).not.toHaveProperty('body');
+});

@@ -1,5 +1,12 @@
 import { I, snap } from '../../test/helpers/snapshot.ts';
-import { diffTables, entityTable, needsFullReload, touchedIssues, watchedPath } from './delta.ts';
+import {
+  diffTables,
+  entityLists,
+  entityTable,
+  needsFullReload,
+  touchedIssues,
+  watchedPath,
+} from './delta.ts';
 
 test('an unchanged table is no patch', () => {
   const s = snap({ issues: [{ id: I(1) }], projects: ['web'] });
@@ -29,6 +36,40 @@ test('entities in a patch have the shape of state', () => {
   const patch = diffTables(entityTable(a), entityTable(b));
   expect(patch?.upsert.projects?.[0]).toMatchObject({ path: 'web' });
   expect(patch?.upsert.repos?.[0]).toMatchObject({ name: 'webapp' });
+});
+
+function withBodies(bodies: { project?: string; sprint?: string; repo?: string }) {
+  const s = snap({
+    projects: ['web'],
+    sprints: ['2026-w47'],
+    repos: { webapp: 'git@example.com:a/w.git' },
+  });
+  for (const [map, key, body] of [
+    [s.projects, 'web', bodies.project],
+    [s.sprints, '2026-w47', bodies.sprint],
+    [s.repos, 'webapp', bodies.repo],
+  ] as const) {
+    const entry = map.get(key);
+    if (entry !== undefined && body !== undefined) entry.body = body;
+  }
+  return s;
+}
+
+test('project, sprint and repo bodies travel in the entity lists', () => {
+  const lists = entityLists(withBodies({ project: 'Ziel\n', repo: 'Notiz\n' }));
+  expect(lists.projects[0]?.body).toBe('Ziel\n');
+  expect(lists.repos[0]?.body).toBe('Notiz\n');
+  expect('body' in (lists.sprints[0] ?? {})).toBe(false);
+});
+
+test('a changed project, sprint or repo body is an upsert', () => {
+  const a = withBodies({ project: 'alt', sprint: 'alt', repo: 'alt' });
+  const b = withBodies({ project: 'neu', sprint: 'neu', repo: 'neu' });
+  const patch = diffTables(entityTable(a), entityTable(b));
+  expect(patch?.upsert.projects).toEqual([{ path: 'web', title: 'web', body: 'neu' }]);
+  expect(patch?.upsert.sprints?.[0]).toMatchObject({ slug: '2026-w47', body: 'neu' });
+  expect(patch?.upsert.repos?.[0]).toMatchObject({ name: 'webapp', body: 'neu' });
+  expect(patch).not.toHaveProperty('touched');
 });
 
 test('config changes upsert config and users with changed admin', () => {
