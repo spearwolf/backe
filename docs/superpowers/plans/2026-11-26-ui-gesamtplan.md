@@ -134,6 +134,7 @@ Jeder Meilenstein endet mit grünem `mise run check`, `mise run smoke` und einem
 
 - **Spec:** UI §2.4.1 Punkt 3, §2.10 »Browser-Benachrichtigungen«.
 - **Inhalt:** Watch auf `hub.git`-Refs und Remote-Tracking-Refs der Nachbar-Arbeitskopien unter `<BACKE_HOME>/backlogs/<backlog>/`, Hintergrund-Sync nach 250 ms, nur bei `sync.mode: auto`; Benachrichtigungen nach Zustimmung.
+- **Produziert:** Server: `NeighborWatch` mit `NeighborOptions` (`src/ui/neighbors.ts`), `LIVE_TIMING.neighborMs`; `PatchJson.actors` (`src/ui/api.ts`), `issueActors`/`mergeActors` (`src/ui/actors.ts`), `issueOfPath` (`src/ui/delta.ts`). Client: `Session.onApplied` (Patch samt Serverstand der Issues davor); `Note`, `issueNotes`, `conflictNotes`, `isIssueNote` (`web/src/app/notes.ts`); `attachNotifier`, `NOTE_SUMMARY_AFTER` (`notifier.ts`); `ShowNote`, `NotePermission`, `showBrowserNote`, `notePermission`, `requestNotePermission` (`browser-notes.ts`); `UiPrefs.notifications`/`setNotifications`, `NOTIFICATIONS_KEY`; Prop `notify` von `App`. Prüfstand `installNotifications` (`web/src/test/notifications.ts`).
 
 ### U12 — Paket, CI, Performance
 

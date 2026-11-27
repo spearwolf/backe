@@ -23,7 +23,7 @@ Umsetzung nach UI §6, Status im Kopf von `docs/proposals/ui.md`.
 - [x] Tab Board (UI §6 Schritt 7)
 - [x] Abhängigkeitsgraph (UI §6 Schritt 8)
 - [x] Settings und Suche (UI §6 Schritt 9)
-- [ ] Nachbarn und Benachrichtigungen (UI §6 Schritt 10)
+- [x] Nachbarn und Benachrichtigungen (UI §6 Schritt 10)
 - [ ] Paket, CI, Performance (UI §6 Schritt 11; BK §2.17 nach UI §4.2)
 
 ## Geplant

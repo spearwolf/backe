@@ -32,7 +32,7 @@ Alle Global Constraints des Gesamtplans und der Pläne U1–U10. Dazu für U11:
 | Sicherheitsnetz | Der 10-s-Takt des `LiveBacklog` ruft zusätzlich `neighbors.check()` (ohne Debounce). |
 | `actors` im Patch | `actors?: Record<string, string[]>` — Issue-ID → Handles aus `Backe-Actor` der Commits zwischen altem und neuem `head`, die Pfade unter `issues/<shard>/<id>/` ändern; sortiert, ohne Doppelte; nur für Issues, die im Patch stehen (`upsert.issues`, `remove.issues`, `touched`); fehlt, wenn leer. Hand-Edits im Arbeitsbaum haben keine Actors. Kommt eine Bewegung von `HEAD` erst eine Runde später als Patch heraus (kaputter Stand dazwischen), reisen ihre Actors mit. |
 | Wann gemeldet wird | Nur Patches, nie `/state` (Laden, `reset`). Ein Issue zählt, wenn `actors[id]` einen Handle ≠ ich enthält: `assigned`, wenn der Assignee vorher nicht ich war und danach ich ist; `deleted`, wenn es verschwindet und vorher mir gehörte; sonst `changed`, wenn es vorher oder nachher mir gehört (Felder, Body, Kommentare, Anhänge). Konflikte: jede Konflikt-ID im Sync-Status, die der Notifier seit seinem Start nicht kannte; der erste gesehene Status ist die Grundlinie. |
-| Bündeln | Mehr als 3 Issue-Meldungen aus einem Patch → eine Sammelmeldung (»n Issues geändert«), Klick öffnet den Tab Backlog mit `?assignee=<ich>`. |
+| Bündeln | Mehr als 3 Issue-Meldungen aus einem Patch → eine Sammelmeldung (»n Issues geändert«), Klick öffnet den Tab Backlog mit `?state=all&assignee=<ich>` (ein gezähltes Issue kann inzwischen geschlossen sein). |
 | Klick | `window.focus()`, Issue-Meldung → Issue-Tab, Konflikt → `/b/<b>/settings/backlog`. `tag` = `backe:<backlog>:<id>`, damit ein zweites Ereignis desselben Issues das erste ersetzt. |
 | Schalter | Abschnitt Oberfläche, Checkbox »Browser-Benachrichtigungen«. Einschalten fragt bei `permission: 'default'` per `Notification.requestPermission()` und schaltet nur bei `granted` ein. `denied` oder fehlende API: Checkbox gesperrt, Hinweis nennt den Grund. Angezeigt wird `prefs.notifications && permission === 'granted'`. |
 | Ohne Identität | `me === null` (kein Handle) → kein Notifier. Ohne Schreibrecht meldet er trotzdem (Lesen und Live-Updates gehen). |
@@ -54,10 +54,10 @@ Alle Global Constraints des Gesamtplans und der Pläne U1–U10. Dazu für U11:
 
 `r.once('drain', done); r.once('close', done)` lässt bei jedem vollen Puffer den jeweils anderen Listener stehen; ab elf Chunks mit Gegendruck meldet Node `MaxListenersExceededWarning` (ausgelöst von `a chunked json body over the limit is 400 …` in `src/ui/write-api.test.ts`). Das ist ein echtes Leck im Helper, nicht im Server.
 
-- [ ] **Step 1:** `pnpm vitest run src/ui/write-api.test.ts 2>&1 | grep -c MaxListenersExceededWarning` → ≥ 1.
-- [ ] **Step 2:** Warten auf `drain` oder `close` so, dass nach dem ersten Ereignis beide Listener weg sind (beide per `off` entfernen).
-- [ ] **Step 3:** Befehl aus Step 1 → 0; `pnpm vitest run src/ui` → PASS.
-- [ ] **Step 4: Commit** `test: streamRequest räumt seine Drain- und Close-Listener ab`
+- [x] **Step 1:** `pnpm vitest run src/ui/write-api.test.ts 2>&1 | grep -c MaxListenersExceededWarning` → ≥ 1.
+- [x] **Step 2:** Warten auf `drain` oder `close` so, dass nach dem ersten Ereignis beide Listener weg sind (beide per `off` entfernen).
+- [x] **Step 3:** Befehl aus Step 1 → 0; `pnpm vitest run src/ui` → PASS.
+- [x] **Step 4: Commit** `test: streamRequest räumt seine Drain- und Close-Listener ab`
 
 ---
 
@@ -84,7 +84,7 @@ export async function issueActors(root: string, from: string, to: string): Promi
 
 `issueActors`: ein `git -c log.showSignature=false log -z --no-renames --name-only --format=%x01%(trailers:key=Backe-Actor,valueonly,separator=%x02) --end-of-options <from>..<to> -- issues/`. Die Ausgabe je Commit ist `\x01<actors>\0\n<pfad>\0<pfad>\0…`. In `LiveBacklog.#refresh` bei bewegtem `HEAD` vor dem Setzen von `#head` aufrufen (Fehler → keine Actors), in `#actors` (Map) sammeln und beim nächsten Patch auf dessen Issues beschränkt anhängen; nach jedem Vergleich (`diffTables`), auch ohne Patch, leeren. `actors` allein macht keinen Patch.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
 // delta.test.ts
@@ -102,10 +102,10 @@ test('a patch names the actors of its issues', …create → patch.actors == {[i
 test('a hand edit has no actors', …writeFile auf issue.md → patch ohne 'actors');
 ```
 
-- [ ] **Step 2:** `pnpm vitest run src/ui/delta.test.ts src/ui/actors.test.ts src/ui/live.test.ts` → FAIL.
-- [ ] **Step 3:** Implementieren wie oben.
-- [ ] **Step 4:** Dieselben Tests → PASS; `pnpm vitest run src/ui` → PASS (bestehende Patch-Erwartungen mit `toEqual` um `actors` ergänzen, wo ein Commit dahintersteht).
-- [ ] **Step 5: Commit** `feat: Patches von backe ui nennen, wer ein Issue geändert hat`
+- [x] **Step 2:** `pnpm vitest run src/ui/delta.test.ts src/ui/actors.test.ts src/ui/live.test.ts` → FAIL.
+- [x] **Step 3:** Implementieren wie oben.
+- [x] **Step 4:** Dieselben Tests → PASS; `pnpm vitest run src/ui` → PASS (bestehende Patch-Erwartungen mit `toEqual` um `actors` ergänzen, wo ein Commit dahintersteht).
+- [x] **Step 5: Commit** `feat: Patches von backe ui nennen, wer ein Issue geändert hat`
 
 ---
 
@@ -143,7 +143,7 @@ export class NeighborWatch {
 
 Ereignisse starten nach `LIVE_TIMING.neighborMs` Ruhe (`clearTimeout`/`setTimeout`) einen `check()`.
 
-- [ ] **Step 1: Failing tests** (echtes Git; eine aufzeichnende `WatchFn`, deren Listener der Test selbst auslöst, für die Timing-Tests; ein Test mit `fsWatch`). Aufbau: `testBacklog()`, Agent `claude-1` per `ensureWorkingCopy` (legt den Hub an, `src/services/working-copy.test.ts` »… goes through the local hub«); Agent-Writes per `writeOp(agentCtx, …)`, Push per `syncNow(agentCtx, { spawn: () => {} })`.
+- [x] **Step 1: Failing tests** (echtes Git; eine aufzeichnende `WatchFn`, deren Listener der Test selbst auslöst, für die Timing-Tests; ein Test mit `fsWatch`). Aufbau: `testBacklog()`, Agent `claude-1` per `ensureWorkingCopy` (legt den Hub an, `src/services/working-copy.test.ts` »… goes through the local hub«); Agent-Writes per `writeOp(agentCtx, …)`, Push per `syncNow(agentCtx, { spawn: () => {} })`.
 
 ```ts
 test('a hub move starts one check after 250 ms', …Agent pusht; Listener von hub.git/refs auslösen; advance 249 → onMove 0×; advance 1 → waitFor onMove 1×);
@@ -157,10 +157,10 @@ test('a real push in the hub reaches onMove', …fsWatch; Agent pusht; advance p
 test('close leaves no watch and no timer', …Auslösen, close, advance 250 → onMove 0×; jedes geöffnete Handle geschlossen; vi.getTimerCount() == 0);
 ```
 
-- [ ] **Step 2:** `pnpm vitest run src/ui/neighbors.test.ts` → FAIL.
-- [ ] **Step 3:** Implementieren.
-- [ ] **Step 4:** → PASS.
-- [ ] **Step 5: Commit** `feat: backe ui beobachtet Hub und Arbeitskopien der Nachbarn`
+- [x] **Step 2:** `pnpm vitest run src/ui/neighbors.test.ts` → FAIL.
+- [x] **Step 3:** Implementieren.
+- [x] **Step 4:** → PASS.
+- [x] **Step 5: Commit** `feat: backe ui beobachtet Hub und Arbeitskopien der Nachbarn`
 
 ---
 
@@ -175,7 +175,7 @@ test('close leaves no watch and no timer', …Auslösen, close, advance 250 → 
 
 Bei eigener Arbeitskopie nach den Watchern der Arbeitskopie und vor dem Laden von `HEAD` starten (`backlogDir = join(ctx.homes.backeHome, 'backlogs', ctx.backlog.value)`), `onMove` → `void scheduleSync(ctx, 'periodic', deps.sync)`, sofern nicht beendet. Das Intervall des Sicherheitsnetzes ruft zusätzlich `void this.#neighbors?.check()`. `#teardown` schließt die Nachbar-Watch.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
 const inProcess = (c: () => ResolvedContext) => vi.fn(() => void runBackground(c(), { spawn: () => {} }));
@@ -186,10 +186,10 @@ test('the safety net catches a lost neighbour push', …watch verschluckt alles 
 test('a stopped watcher starts no neighbour sync', …Agent pusht, live.stop() vor Ablauf der 250 ms → spawn 0×);
 ```
 
-- [ ] **Step 2:** `pnpm vitest run src/ui/live.test.ts` → FAIL.
-- [ ] **Step 3:** Implementieren.
-- [ ] **Step 4:** `pnpm vitest run src/ui` → PASS.
-- [ ] **Step 5: Commit** `feat: Ein Push eines Nachbarn startet den Sync von backe ui`
+- [x] **Step 2:** `pnpm vitest run src/ui/live.test.ts` → FAIL.
+- [x] **Step 3:** Implementieren.
+- [x] **Step 4:** `pnpm vitest run src/ui` → PASS.
+- [x] **Step 5: Commit** `feat: Ein Push eines Nachbarn startet den Sync von backe ui`
 
 ---
 
@@ -223,7 +223,7 @@ export function installNotifications(opts: { permission: NotificationPermission 
 
 Texte (en / de): `notifications` »Browser notifications« / »Browser-Benachrichtigungen«; `notificationsHint` »While this page is open: an issue is assigned to you, someone else changes one of your issues, or a new sync conflict appears.« / »Solange diese Seite offen ist: Ein Issue wird dir zugewiesen, jemand anderes ändert eines deiner Issues, oder ein neuer Sync-Konflikt entsteht.«; `notificationsDenied` »Blocked by the browser; allow notifications for this site in its settings.« / »Vom Browser blockiert; erlaube Benachrichtigungen für diese Seite in seinen Einstellungen.«; `notificationsUnsupported` »This browser has no notifications.« / »Dieser Browser kann keine Benachrichtigungen.«
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
 // ui-prefs.test.ts
@@ -238,10 +238,10 @@ test('without the api the switch is disabled', …missing → disabled, m.notifi
 test('a stored switch without permission shows off', …localStorage 'on', permission denied → Checkbox nicht angehakt);
 ```
 
-- [ ] **Step 2:** `pnpm vitest run --project web web/src/app/ui-prefs.test.ts web/src/app/browser-notes.test.ts web/src/components/settings/InterfaceSection.test.tsx` → FAIL.
-- [ ] **Step 3:** Implementieren; die Erlaubnis hält `InterfaceSection` als lokalen React-State (`useState(notePermission)`), gesetzt nach `requestNotePermission`.
-- [ ] **Step 4:** → PASS.
-- [ ] **Step 5: Commit** `feat: Schalter für Browser-Benachrichtigungen in den Settings`
+- [x] **Step 2:** `pnpm vitest run --project web web/src/app/ui-prefs.test.ts web/src/app/browser-notes.test.ts web/src/components/settings/InterfaceSection.test.tsx` → FAIL.
+- [x] **Step 3:** Implementieren; die Erlaubnis hält `InterfaceSection` als lokalen React-State (`useState(notePermission)`), gesetzt nach `requestNotePermission`.
+- [x] **Step 4:** → PASS.
+- [x] **Step 5: Commit** `feat: Schalter für Browser-Benachrichtigungen in den Settings`
 
 ---
 
@@ -271,7 +271,7 @@ onApplied(listener: (patch: PatchJson, before: ReadonlyMap<string, IssueJson | u
 
 `by` = `actors[id]` ohne `me`, sortiert. `before` in `onApplied` nimmt `store.issues.server(id)` (ohne Überlagerung) für alle IDs aus `upsert.issues`, `remove.issues` und `touched`, bevor `applyPatch` läuft; `stale` und `gap` melden nichts. `conflictNotes` liest Konflikte über `syncStatusView` (`web/src/app/sync-status.ts`).
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
 // notes.test.ts — me = 'spw'
@@ -285,10 +285,10 @@ test('onApplied gets the patch and the server state before it', …Overlay auf b
 test('patches drained after a load reach onApplied', …Patch während des Ladens → nach Laden genau ein Aufruf);
 ```
 
-- [ ] **Step 2:** `pnpm vitest run --project web web/src/app/notes.test.ts web/src/data/session.test.ts` → FAIL.
-- [ ] **Step 3:** Implementieren.
-- [ ] **Step 4:** → PASS.
-- [ ] **Step 5: Commit** `feat: Regeln für Benachrichtigungen aus Patches und Sync-Status`
+- [x] **Step 2:** `pnpm vitest run --project web web/src/app/notes.test.ts web/src/data/session.test.ts` → FAIL.
+- [x] **Step 3:** Implementieren.
+- [x] **Step 4:** → PASS.
+- [x] **Step 5: Commit** `feat: Regeln für Benachrichtigungen aus Patches und Sync-Status`
 
 ---
 
@@ -311,7 +311,7 @@ Konflikte über ein Effect auf `session.store.sync` (signalize, `attach` an eine
 
 Texte (en / de), Titel `<id> <title>` bzw. für Konflikte `syncConflict`: `assigned(by)` »Assigned to you by {by}« / »Dir zugewiesen von {by}«; `changed(by)` »Changed by {by}« / »Geändert von {by}«; `deleted(by)` »Deleted by {by}« / »Gelöscht von {by}«; `syncConflict` »Sync conflict« / »Sync-Konflikt«; `summaryTitle(n)` »{n} of your issues changed« / »{n} deiner Issues geändert«; `summaryBody(by)` »By {by}« / »Von {by}«. `by` mit `, ` verbunden.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```ts
 // notifier.test.ts — Session aus web/src/test/session-harness.ts
@@ -323,18 +323,18 @@ test('detached notifier stays silent', …off(); Patch → 0×);
 test('notifications follow the switch', …installNotifications granted; prefs.setNotifications(true); Patch mit fremder Zuweisung → shown 1×; setNotifications(false); weiterer Patch → shown bleibt 1);
 ```
 
-- [ ] **Step 2:** `pnpm vitest run --project web web/src/app/notifier.test.ts web/src/components/App.test.tsx` → FAIL.
-- [ ] **Step 3:** Implementieren.
-- [ ] **Step 4:** `pnpm vitest run --project web` → PASS; `pnpm build && pnpm tsx scripts/check-ui-build.ts` (bzw. das Skript aus `mise run check`) → initialer Chunk ≤ 307 200 B.
-- [ ] **Step 5: Commit** `feat: Browser-Benachrichtigungen für zugewiesene, fremd geänderte Issues und Konflikte`
+- [x] **Step 2:** `pnpm vitest run --project web web/src/app/notifier.test.ts web/src/components/App.test.tsx` → FAIL.
+- [x] **Step 3:** Implementieren.
+- [x] **Step 4:** `pnpm vitest run --project web` → PASS; `pnpm build && pnpm tsx scripts/check-ui-build.ts` (bzw. das Skript aus `mise run check`) → initialer Chunk ≤ 307 200 B.
+- [x] **Step 5: Commit** `feat: Browser-Benachrichtigungen für zugewiesene, fremd geänderte Issues und Konflikte`
 
 ---
 
 ### Task 8: Docs, Roadmap, Abnahme
 
-- [ ] ui.md: Status-Satz (§2.4 vollständig, §2.10 vollständig; offen nur noch, was U12 betrifft); §2.4.1 Punkt 3 als Gegenwart nach »Festlegungen für U11« (Wertvergleich, eigener Stand zählt nicht, neue Nachbarn, Watches, Sicherheitsnetz auch über Nachbarn, Prüfung des Modus beim Start der Runde); §2.4.3 Patch-Zeile um `actors?`; §2.10 »Browser-Benachrichtigungen« um Regeln, Bündeln, Klick und Schalter; §5 Live-Updates bleibt.
-- [ ] `ROADMAP.md`: »Nachbarn und Benachrichtigungen« abhaken.
-- [ ] Gesamtplan U11: Zeile »Produziert«.
-- [ ] Sichtprüfung im Browser (Playwright-MCP): Demo-Backlog unter Temp-`BACKE_HOME`, Agent mit eigener Arbeitskopie, `backe ui --port 0`; CLI-Write des Agents kommt ohne manuellen Sync live an; nach Zustimmung erscheint die Benachrichtigung für eine fremde Zuweisung. Server danach beenden, `.playwright-mcp` im Haupt-Checkout entfernen.
-- [ ] `mise run check`, `mise run smoke` grün.
-- [ ] **Commit** `docs: Nachbarn und Benachrichtigungen in ui.md, Roadmap und Gesamtplan`
+- [x] ui.md: Status-Satz (§2.4 vollständig, §2.10 vollständig; offen nur noch, was U12 betrifft); §2.4.1 Punkt 3 als Gegenwart nach »Festlegungen für U11« (Wertvergleich, eigener Stand zählt nicht, neue Nachbarn, Watches, Sicherheitsnetz auch über Nachbarn, Prüfung des Modus beim Start der Runde); §2.4.3 Patch-Zeile um `actors?`; §2.10 »Browser-Benachrichtigungen« um Regeln, Bündeln, Klick und Schalter; §5 Live-Updates bleibt.
+- [x] `ROADMAP.md`: »Nachbarn und Benachrichtigungen« abhaken.
+- [x] Gesamtplan U11: Zeile »Produziert«.
+- [x] Sichtprüfung im Browser (Playwright-MCP): Demo-Backlog unter Temp-`BACKE_HOME`, Agent mit eigener Arbeitskopie, `backe ui --port 0`; CLI-Write des Agents kommt ohne manuellen Sync live an; nach Zustimmung erscheint die Benachrichtigung für eine fremde Zuweisung. Server danach beenden, `.playwright-mcp` im Haupt-Checkout entfernen.
+- [x] `mise run check`, `mise run smoke` grün.
+- [x] **Commit** `docs: Nachbarn und Benachrichtigungen in ui.md, Roadmap und Gesamtplan`
