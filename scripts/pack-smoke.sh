@@ -35,7 +35,8 @@ $ACTUAL"
 UI_FILES="$(printf '%s\n' "$LISTING" | grep '^package/dist/ui/' || true)"
 printf '%s\n' "$UI_FILES" | grep -qx 'package/dist/ui/index.html' || fail "dist/ui/index.html fehlt im Tarball"
 printf '%s\n' "$UI_FILES" | grep -qx 'package/dist/ui/theme.js' || fail "dist/ui/theme.js fehlt im Tarball"
-STRAY="$(printf '%s\n' "$UI_FILES" | grep -vx -e 'package/dist/ui/index.html' -e 'package/dist/ui/theme.js' -e 'package/dist/ui/assets/.*' || true)"
+printf '%s\n' "$UI_FILES" | grep -qx 'package/dist/ui/favicon.svg' || fail "dist/ui/favicon.svg fehlt im Tarball"
+STRAY="$(printf '%s\n' "$UI_FILES" | grep -vx -e 'package/dist/ui/index.html' -e 'package/dist/ui/theme.js' -e 'package/dist/ui/favicon.svg' -e 'package/dist/ui/assets/.*' || true)"
 [ -z "$STRAY" ] || fail "Unerwartete Dateien unter dist/ui:
 $STRAY"
 

@@ -37,6 +37,7 @@ async function writeBuild(
   ].join('\n');
   await writeFile(join(dir, 'index.html'), html);
   await writeFile(join(dir, 'theme.js'), '(() => {})();\n');
+  await writeFile(join(dir, 'favicon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
   const files = { 'index.js': 'console.log(1);', 'index.css': 'body{}', ...assets };
   for (const [name, content] of Object.entries(files)) {
     await writeFile(join(dir, 'assets', name), content);
@@ -53,6 +54,12 @@ test('check-ui-build rejects a missing index.html or theme.js', async () => {
   await writeBuild([THEME, ENTRY, STYLE]);
   await rm(join(dir, 'theme.js'));
   expect(await checkUiBuild(dir)).toHaveLength(1);
+});
+
+test('a missing favicon is a problem', async () => {
+  await writeBuild([THEME, ENTRY, STYLE]);
+  await rm(join(dir, 'favicon.svg'));
+  expect(await checkUiBuild(dir)).toEqual(['favicon.svg is missing']);
 });
 
 test('check-ui-build rejects an inline script', async () => {

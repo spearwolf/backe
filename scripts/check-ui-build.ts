@@ -71,6 +71,7 @@ export async function checkUiBuild(dir: string): Promise<string[]> {
     }
   }
   if (!(await exists(join(dir, 'theme.js')))) problems.push('theme.js is missing');
+  if (!(await exists(join(dir, 'favicon.svg')))) problems.push('favicon.svg is missing');
 
   const initial = new Set([
     ...scripts.filter(isModule).flatMap((t) => t.attrs.get('src') ?? []),
