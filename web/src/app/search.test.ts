@@ -177,3 +177,15 @@ describe('search', () => {
     expect(idsOf(searchStore(searchIndexOf(store)(), 'neu', 'bk'))).toEqual(['bk-bbbbb']);
   });
 });
+
+test('entities without optional fields do not break the index', () => {
+  const index = buildSearchIndex({
+    issues: [],
+    projects: [{ path: 'web' } as ProjectJson],
+    sprints: [],
+    repos: [{ name: 'core' } as RepoJson],
+    users: [],
+  });
+  expect(searchStore(index, 'core', 'bk').map((g) => g.kind)).toEqual(['repo']);
+  expect(searchStore(index, 'web', 'bk').map((g) => g.kind)).toEqual(['project']);
+});

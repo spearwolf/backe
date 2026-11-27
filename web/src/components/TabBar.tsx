@@ -8,6 +8,7 @@ import type { TabModel } from '../app/tabs.ts';
 import { useStore } from '../data/store-context.tsx';
 import { useSignal } from '../data/use-signal.ts';
 import { cn } from '../lib/utils.ts';
+import { SearchBox } from './SearchBox.tsx';
 
 type Props = {
   backlog: string;
@@ -131,6 +132,7 @@ export function TabBar({ backlog, route, tabs, onClose }: Props) {
           />
         ))}
       </div>
+      <SearchBox backlog={backlog} />
       <a
         href={settingsHref}
         onClick={go(settingsHref)}

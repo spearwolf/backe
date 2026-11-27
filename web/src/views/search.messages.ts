@@ -1,0 +1,43 @@
+import { catalog } from '@backe/i18n/catalog.ts';
+
+/** Suchfeld der Tab-Leiste (ui.md §2.11). */
+export const m = catalog({
+  en: {
+    label: 'Search',
+    placeholder: 'Search…',
+    shortcut: (mac: boolean): string => (mac ? '⌘K' : 'Ctrl K'),
+    groupIssues: 'Issues',
+    groupProjects: 'Projects',
+    groupSprints: 'Sprints',
+    groupRepos: 'Repos',
+    groupUsers: 'Users',
+    groupBodies: 'In descriptions',
+    searchBodies: 'Search in descriptions',
+    searching: 'Searching…',
+    bodyFailed: 'Search in descriptions failed',
+    noBodyHits: 'No hits in descriptions',
+    more: (n: number) => `+${n} more`,
+    exact: 'exact match',
+    closed: 'closed',
+    agent: 'agent',
+  },
+  de: {
+    label: 'Suche',
+    placeholder: 'Suchen …',
+    shortcut: (mac: boolean) => (mac ? '⌘K' : 'Strg K'),
+    groupIssues: 'Issues',
+    groupProjects: 'Projekte',
+    groupSprints: 'Sprints',
+    groupRepos: 'Repos',
+    groupUsers: 'Nutzer',
+    groupBodies: 'In Beschreibungen',
+    searchBodies: 'In Beschreibungen suchen',
+    searching: 'Suche läuft …',
+    bodyFailed: 'Suche in Beschreibungen fehlgeschlagen',
+    noBodyHits: 'Keine Treffer in Beschreibungen',
+    more: (n: number) => `+${n} weitere`,
+    exact: 'exakter Treffer',
+    closed: 'geschlossen',
+    agent: 'Agent',
+  },
+});

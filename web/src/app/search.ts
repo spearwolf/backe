@@ -43,8 +43,9 @@ function wordsOf(field: string): string[] {
   return field.split(/[^\p{L}\p{N}]+/u).filter((w) => w !== '');
 }
 
-function entry<T>(item: T, raw: readonly string[]): Entry<T> {
-  const fields = raw.map(fold);
+/** Felder, die ein Eintrag nicht haben muss (Titel, URL, Name), zählen als leer statt zu werfen. */
+function entry<T>(item: T, raw: readonly (string | undefined)[]): Entry<T> {
+  const fields = raw.map((f) => fold(f ?? ''));
   return { item, fields, words: fields.flatMap(wordsOf) };
 }
 

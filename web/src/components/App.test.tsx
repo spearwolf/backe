@@ -507,8 +507,12 @@ test('arrow keys, Home and End move the focus across tabs', async () => {
   // Roving Tabindex: Nur der gewählte Tab steht in der Tab-Folge.
   expect(screen.getAllByRole('tab').map((t) => t.tabIndex)).toEqual([-1, 0, -1, -1]);
   act(() => tab('Board').focus());
+  // Hinter der Tab-Liste folgen das Suchfeld und Settings.
+  await user.tab();
+  expect(document.activeElement).toBe(screen.getByRole('combobox', { name: 'Search' }));
   await user.tab();
   expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Settings' }));
+  await user.tab({ shift: true });
   await user.tab({ shift: true });
   expect(focused()).toBe('Board');
   await user.keyboard('{ArrowRight}');
