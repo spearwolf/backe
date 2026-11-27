@@ -113,7 +113,7 @@ test('grouping and the backlog column are remembered', async () => {
   // Ohne Gruppierung gibt es eine Bahn ohne Kopf.
   await userEvent.selectOptions(screen.getByLabelText(m.lanes), 'none');
   expect(laneLabels()).toEqual([m.allIssues]);
-  expect(within(laneOf(m.allIssues)).queryByRole('button')).toBeNull();
+  expect(within(laneOf(m.allIssues)).queryByRole('button', { name: m.allIssues })).toBeNull();
   expect(cardIds(m.allIssues, 'todo')).toEqual([tid(1), tid(3)]);
 });
 

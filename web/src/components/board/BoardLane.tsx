@@ -14,6 +14,7 @@ import { m } from '../../views/board.messages.ts';
 import { StateIcon } from '../StateIcon.tsx';
 import { BoardCard } from './BoardCard.tsx';
 import type { CellData } from './board-dnd.ts';
+import { QuickCreate } from './QuickCreate.tsx';
 
 /** Markierung beim Ziehen in einer Bahn: Linie an einer Karte, oder eine Zelle hervorgehoben. */
 export type LaneMarker =
@@ -157,6 +158,7 @@ export function BoardLane(props: {
               key={cell.column}
               backlog={backlog}
               label={m.cell(label, cell.column)}
+              laneName={label}
               lane={lane.key}
               cell={cell}
               marker={marker?.column === cell.column ? marker : undefined}
@@ -174,13 +176,14 @@ export function BoardLane(props: {
 function BoardCell(props: {
   backlog: string;
   label: string;
+  laneName: string;
   lane: string;
   cell: Cell;
   marker: LaneMarker | undefined;
   group: BoardGroup;
   choices: readonly LaneChoice[];
 }) {
-  const { backlog, label, lane, cell, marker, group, choices } = props;
+  const { backlog, label, laneName, lane, cell, marker, group, choices } = props;
   const { column } = cell;
   const data = useMemo<CellData>(() => ({ type: 'cell', lane, column }), [lane, column]);
   const { setNodeRef } = useDroppable({
@@ -190,29 +193,32 @@ function BoardCell(props: {
   });
   const over = marker?.kind === 'cell';
   return (
-    <ul
-      ref={setNodeRef}
-      aria-label={label}
-      data-lane={lane}
-      data-column={column}
-      {...(over ? { 'data-over': 'true' } : {})}
-      className={cn(
-        'flex min-h-16 flex-col gap-2 rounded-md bg-muted/40 p-2',
-        over && 'bg-accent ring-2 ring-primary',
-      )}
-    >
-      {cell.cards.map((card) => (
-        <BoardCard
-          key={card.issue.id}
-          backlog={backlog}
-          card={card}
-          lane={lane}
-          column={column}
-          group={group}
-          choices={choices}
-          drop={marker?.kind === 'line' && marker.id === card.issue.id ? marker.side : undefined}
-        />
-      ))}
-    </ul>
+    <div>
+      <ul
+        ref={setNodeRef}
+        aria-label={label}
+        data-lane={lane}
+        data-column={column}
+        {...(over ? { 'data-over': 'true' } : {})}
+        className={cn(
+          'flex min-h-16 flex-col gap-2 rounded-md bg-muted/40 p-2',
+          over && 'bg-accent ring-2 ring-primary',
+        )}
+      >
+        {cell.cards.map((card) => (
+          <BoardCard
+            key={card.issue.id}
+            backlog={backlog}
+            card={card}
+            lane={lane}
+            column={column}
+            group={group}
+            choices={choices}
+            drop={marker?.kind === 'line' && marker.id === card.issue.id ? marker.side : undefined}
+          />
+        ))}
+      </ul>
+      <QuickCreate group={group} lane={lane} laneName={laneName} column={column} />
+    </div>
   );
 }

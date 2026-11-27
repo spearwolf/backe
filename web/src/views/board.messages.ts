@@ -19,6 +19,9 @@ export const m = catalog({
     menuLane: 'Lane',
     rankUp: 'One up',
     rankDown: 'One down',
+    newIssue: (column: string, lane: string) => `New issue in ${column} · ${lane}`,
+    titleLabel: 'Title',
+    more: 'More …',
   },
   de: {
     lanes: 'Bahnen',
@@ -38,5 +41,8 @@ export const m = catalog({
     menuLane: 'Bahn',
     rankUp: 'Eine nach oben',
     rankDown: 'Eine nach unten',
+    newIssue: (column: string, lane: string) => `Neues Issue in ${column} · ${lane}`,
+    titleLabel: 'Titel',
+    more: 'Mehr …',
   },
 });
