@@ -29,7 +29,7 @@ export const m = catalog({
     groupProjects: 'Projekte',
     groupSprints: 'Sprints',
     groupRepos: 'Repos',
-    groupUsers: 'Nutzer',
+    groupUsers: 'User',
     groupBodies: 'In Beschreibungen',
     searchBodies: 'In Beschreibungen suchen',
     searching: 'Suche läuft …',

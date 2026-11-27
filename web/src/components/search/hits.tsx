@@ -101,7 +101,12 @@ export function HitRow({ hit }: { hit: SearchHit }) {
         </>
       );
     case 'repo':
-      return <span className="truncate font-mono text-xs">{hit.repo.name}</span>;
+      return (
+        <>
+          <span className="shrink-0 font-mono text-xs">{hit.repo.name}</span>
+          <span className="truncate text-muted-foreground">{hit.repo.url}</span>
+        </>
+      );
     case 'user':
       return (
         <>

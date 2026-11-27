@@ -103,6 +103,17 @@ test('a project opens the backlog filtered by it', async () => {
   expect(here()).toBe('/b/acme/backlog?project=web');
 });
 
+test('a repo hit shows its url muted next to the name', async () => {
+  const input = mount();
+  await userEvent.type(input, 'core');
+  const repos = screen.getByRole('group', { name: m.groupRepos });
+  const option = within(repos).getByRole('option');
+  expect(within(option).getByText('core').className).toContain('font-mono');
+  const url = within(option).getByText('https://example.com/core.git');
+  expect(url.className).toContain('truncate');
+  expect(url.className).toContain('text-muted-foreground');
+});
+
 test('sprint, repo and user hits filter the backlog', async () => {
   const input = mount();
   await userEvent.type(input, 'erster');

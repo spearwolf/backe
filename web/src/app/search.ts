@@ -1,6 +1,7 @@
 /**
  * Suche über den Clientzustand (ui.md §2.11): ein vorgefalteter Index (als Memo siehe
- * `search-index.ts`), daraus gruppierte Treffer. Rein und ohne Regex auf Nutzereingaben, damit keine Anfrage werfen oder hängen kann.
+ * `search-index.ts`), daraus gruppierte Treffer. Rein und ohne Regex auf Nutzereingaben, damit
+ * keine Anfrage werfen oder hängen kann.
  */
 import { compareCodeUnits } from '@backe/core/compare.ts';
 import { isSettled } from '@backe/core/state.ts';
