@@ -487,7 +487,8 @@ export class LiveBacklog {
   /**
    * Ob ein Pfad aus dem Arbeitsbaum keine Datei nennt: ein Verzeichnis (FSEvents fasst Änderungen
    * so zusammen, inotify meldet ein neues) oder einen verschwundenen Pfad, der eines gewesen sein
-   * kann. Welche Dateien darunter sich geändert haben, sagt erst der Blick des Sicherheitsnetzes.
+   * kann. Welche Dateien darunter sich geändert haben, sagt erst ein Blick auf den Arbeitsbaum
+   * (`#scan`).
    */
   async #vague(paths: Iterable<string>): Promise<boolean> {
     for (const p of paths) {
@@ -502,7 +503,8 @@ export class LiveBacklog {
   }
 
   async #round(): Promise<void> {
-    if (this.#scanDue) {
+    const scanned = this.#scanDue;
+    if (scanned) {
       this.#scanDue = false;
       for (const p of await this.#scan()) this.#paths.add(p);
     }
@@ -511,7 +513,7 @@ export class LiveBacklog {
     this.#treeReady = false;
     let syncDue = this.#syncDirty;
     this.#syncDirty = false;
-    if (tree && (await this.#refresh())) syncDue = true;
+    if (tree && (await this.#refresh(scanned))) syncDue = true;
     if (syncDue) await this.#refreshSync();
   }
 
@@ -533,17 +535,23 @@ export class LiveBacklog {
     return [...ids];
   }
 
-  /** Schreibt den Snapshot fort; liefert, ob `HEAD` sich bewegt hat. */
-  async #refresh(): Promise<boolean> {
+  /**
+   * Schreibt den Snapshot fort; liefert, ob `HEAD` sich bewegt hat. `scanned`: Die Runde hat den
+   * Arbeitsbaum schon angesehen (Sicherheitsnetz), ein zweiter Blick fände nichts Neues.
+   */
+  async #refresh(scanned: boolean): Promise<boolean> {
     const paths = new Set(this.#paths);
     this.#paths.clear();
     let full = this.#full;
     this.#full = false;
     let head: string;
     try {
-      // Nennt ein Ereignis keine Datei, findet der Blick auf den Arbeitsbaum die geänderten;
-      // sonst gingen Kommentare und Anhänge ohne Commit bis zum Sicherheitsnetz verloren.
-      if (full || (await this.#vague(paths))) for (const p of await this.#scan()) paths.add(p);
+      // Nennt ein Ereignis keine Datei, oder lädt die Runde ohnehin vollständig, findet der Blick
+      // auf den Arbeitsbaum die geänderten; sonst gingen Kommentare und Anhänge ohne Commit bis
+      // zum Sicherheitsnetz verloren.
+      if (!scanned && (full || (await this.#vague(paths)))) {
+        for (const p of await this.#scan()) paths.add(p);
+      }
     } catch {
       full = true;
     }
