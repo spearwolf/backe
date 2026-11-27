@@ -14,13 +14,16 @@ import { git } from '../git/exec.ts';
 import { resolveCommit } from '../git/history.ts';
 import { stateDir } from '../git/local-state.ts';
 import { requireRoot } from '../services/read.ts';
+import { scheduleSync, spawnDetached } from '../services/schedule.ts';
 import type { SyncDeps } from '../services/sync.ts';
+import { requireHeadConfig } from '../services/write.ts';
 import {
   type BacklogSnapshot,
   loadSnapshot,
   orphanedProjectPaths,
   snapshotAt,
 } from '../store/snapshot.ts';
+import { pendingStarts } from '../tools/run.ts';
 import { startPeriodicSync } from '../tools/sync.ts';
 import { issueActors, mergeActors } from './actors.ts';
 import type { PatchJson, ServerEvent } from './api.ts';
@@ -33,6 +36,7 @@ import {
   touchedIssue,
   watchedPath,
 } from './delta.ts';
+import { NeighborWatch } from './neighbors.ts';
 import { hasOwnCopy, syncJson } from './state.ts';
 import { type Watched, type WatchFn, watchWorkingCopy } from './watch.ts';
 
@@ -166,6 +170,9 @@ export class LiveBacklog {
   #ready = false;
 
   #watched: Watched | undefined;
+  #neighbors: NeighborWatch | undefined;
+  /** Laufende `scheduleSync` nach einer Bewegung der Nachbarn; `stop` wartet sie ab. */
+  readonly #starts = pendingStarts();
   #stopPeriodic: () => void = () => {};
   #treeTimer: ReturnType<typeof setTimeout> | undefined;
   #syncTimer: ReturnType<typeof setTimeout> | undefined;
@@ -230,12 +237,28 @@ export class LiveBacklog {
         },
       },
     );
+    if (ownCopy) {
+      // Pusht ein Nachbar (ui.md §2.4.1 Punkt 3), holt ein Hintergrund-Sync den Stand, statt bis
+      // zum nächsten `pull_interval` zu warten; der Pull bewegt dann `HEAD` und ergibt den Patch.
+      const { remote, branch } = (await requireHeadConfig(this.#root)).sync;
+      this.#neighbors = await NeighborWatch.start({
+        backlogDir: join(this.#ctx.homes.backeHome, 'backlogs', this.#ctx.backlog.value),
+        own: this.#root,
+        remote,
+        branch,
+        debounceMs: LIVE_TIMING.neighborMs,
+        ...(deps.watch === undefined ? {} : { watch: deps.watch }),
+        onMove: () => this.#neighborMoved(deps.sync),
+      });
+    }
     // Sicherheitsnetz: `fs.watch` kann Ereignisse verlieren. Regelmäßig werden `HEAD` und die im
-    // Arbeitsbaum geänderten Dateien mit dem letzten Blick verglichen.
+    // Arbeitsbaum geänderten Dateien mit dem letzten Blick verglichen, dazu die Refs der Nachbarn.
     this.#safety = setInterval(() => {
       this.#refDirty = true;
       this.#scanDue = true;
       this.#kick();
+      // `check` lehnt nur Programmierfehler ab; die kosten hier nur diesen Blick.
+      void this.#neighbors?.check().catch(() => {});
     }, LIVE_TIMING.safetyMs);
     this.#head = await resolveCommit(this.#root, 'HEAD');
     this.#dirtySigs = await this.#dirtyFiles();
@@ -249,6 +272,24 @@ export class LiveBacklog {
     this.#kick();
   }
 
+  /**
+   * Ein Nachbar hat sich auf einen unbekannten Stand bewegt: Hintergrund-Sync wie ein Takt des
+   * periodischen, ob er läuft, entscheidet `scheduleSync`. Nach dem Ende startet nichts mehr, auch
+   * kein `scheduleSync`, der beim Ende noch prüfte.
+   */
+  #neighborMoved(sync: SyncDeps | undefined): void {
+    if (this.#stopped) return;
+    const spawn = sync?.spawn ?? spawnDetached;
+    this.#starts.add(
+      scheduleSync(this.#ctx, 'periodic', {
+        ...sync,
+        spawn: (args) => {
+          if (!this.#stopped) spawn(args);
+        },
+      }),
+    );
+  }
+
   /** Watcher, Timer und periodischen Sync abbauen. */
   #teardown(): void {
     this.#stopped = true;
@@ -257,6 +298,7 @@ export class LiveBacklog {
     clearTimeout(this.#lingerTimer);
     clearInterval(this.#safety);
     this.#watched?.close();
+    this.#neighbors?.close();
     this.#stopPeriodic();
     this.#listeners.clear();
   }
@@ -518,13 +560,16 @@ export class LiveBacklog {
 
   /**
    * Beendet Watcher und Timer und meldet den letzten `rev` sofort an `onStop`; wartet danach die
-   * laufende Runde ab, die nichts mehr sendet. Idempotent.
+   * laufende Runde ab, die nichts mehr sendet, und die Prüfungen nach einer Bewegung der Nachbarn,
+   * die nichts mehr starten. So ist nach `stop` (und nach `LiveHub.close`) auch keine Prüfung mehr
+   * offen, die dieser Watcher für einen Sync angestoßen hat. Idempotent.
    */
   async stop(): Promise<void> {
     if (this.#stopped) return;
     this.#teardown();
     this.#onStop(this.#rev);
     await this.idle();
+    await this.#starts.settled();
   }
 }
 

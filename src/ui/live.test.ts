@@ -1,24 +1,32 @@
 import { writeFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { writeOp } from '../../test/helpers/context.ts';
 import {
   rawCommit,
+  revParse,
   setPullInterval,
   type TestBacklog,
   testBacklog,
+  testKey,
 } from '../../test/helpers/git.ts';
 import { applyPatch, collect, comparable, fakeTimers, settle } from '../../test/helpers/live.ts';
+import { setIdentity } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { git } from '../git/exec.ts';
 import { bodyHash } from '../ops/operation.ts';
 import { addAttachment } from '../services/attachments.ts';
+import { runBackground } from '../services/background.ts';
 import { commitEdits } from '../services/commit.ts';
+import * as scheduleModule from '../services/schedule.ts';
+import { syncNow } from '../services/sync.ts';
 import { writeSyncState } from '../services/sync-state.ts';
+import { ensureWorkingCopy } from '../services/working-copy.ts';
+import { executeWrite } from '../services/write.ts';
 import { writeFileAtomic } from '../store/files.ts';
 import { BACKLOG_CONFIG, commentsDir, issueFile } from '../store/layout.ts';
 import * as snapshotModule from '../store/snapshot.ts';
-import { LIVE_TIMING, LiveBacklog, LiveHub, parseEventId } from './live.ts';
+import { LIVE_TIMING, LiveBacklog, type LiveDeps, LiveHub, parseEventId } from './live.ts';
 import { stateJson } from './state.ts';
 import type { WatchFn } from './watch.ts';
 import { fsWatch } from './watch.ts';
@@ -29,6 +37,8 @@ const WAIT = { timeout: 10_000 };
 let b: TestBacklog;
 let ctx: ResolvedContext;
 const running: LiveBacklog[] = [];
+/** Hintergrund-Syncs, die ein Test in-process gestartet hat; das Aufräumen wartet sie ab. */
+const syncs: Promise<unknown>[] = [];
 
 beforeEach(async () => {
   b = await testBacklog();
@@ -37,6 +47,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   for (const l of running.splice(0)) await l.stop();
+  await Promise.all(syncs.splice(0));
   vi.useRealTimers();
 });
 
@@ -516,6 +527,206 @@ test('periodic sync runs at pull_interval while watched', async () => {
   await live.stop();
   await vi.advanceTimersByTimeAsync(120_000);
   expect(spawn).toHaveBeenCalledTimes(1);
+});
+
+describe('neighbours', () => {
+  /** Ein Hintergrund-Sync, der in-process läuft, statt einen Prozess zu starten. */
+  const inProcess = (c: () => ResolvedContext) =>
+    vi.fn(() => {
+      syncs.push(runBackground(c(), { spawn: () => {} }));
+    });
+
+  const manual = (c: ResolvedContext): ResolvedContext => ({
+    ...c,
+    userConfig: {
+      ...c.userConfig,
+      backlogs: { acme: { ...c.userConfig.backlogs?.acme, sync: { mode: 'manual' } } },
+    },
+  });
+
+  const backlogDir = () => join(b.homes.backeHome, 'backlogs', 'acme');
+
+  /**
+   * Der Agent `claude-1` mit Push-Rechten und eigener Arbeitskopie; sie legt den Hub an und hängt
+   * die Arbeitskopie von spw daran. Mit `pullInterval` steht der Takt des periodischen Syncs fest.
+   */
+  async function withAgent(pullInterval?: number): Promise<{ agentCtx: ResolvedContext }> {
+    if (pullInterval !== undefined) await setPullInterval(b, pullInterval);
+    const claude = await testKey('claude-1');
+    await executeWrite(await b.context(), {
+      kind: 'op',
+      op: {
+        op: 'user.add',
+        handle: 'claude-1',
+        name: 'Claude',
+        kind: 'agent',
+        operator: 'spw',
+        keys: [claude.line],
+      },
+    });
+    await setIdentity(b.homes, 'acme', 'claude-1', claude.priv);
+    const { root: wc } = await ensureWorkingCopy(await b.context({ as: 'claude-1' }), 'claude-1');
+    ctx = await b.context();
+    return { agentCtx: await b.context({ as: 'claude-1' }, wc) };
+  }
+
+  async function agentPush(agentCtx: ResolvedContext, title = 'Vom Agent'): Promise<string> {
+    const id = await writeOp(agentCtx, { op: 'issue.create', title, state: 'todo' });
+    await syncNow(agentCtx, { spawn: () => {} });
+    return id;
+  }
+
+  async function startWith(c: ResolvedContext, deps: LiveDeps): Promise<LiveBacklog> {
+    const live = await LiveBacklog.start(c, { boot: BOOT, rev: 0, deps });
+    running.push(live);
+    return live;
+  }
+
+  /** Spult je Versuch die Nachbar-Entprellung vor, bis `check` gilt. */
+  const advancing = (check: () => void | Promise<void>) =>
+    vi.waitFor(async () => {
+      await vi.advanceTimersByTimeAsync(LIVE_TIMING.neighborMs);
+      await check();
+    }, WAIT);
+
+  test('a neighbour write arrives as a patch without waiting for pull_interval', async () => {
+    const { agentCtx } = await withAgent(3600);
+    const spawn = inProcess(() => ctx);
+    const live = await startWith(ctx, { sync: { spawn } });
+    const c = collect(live);
+    const id = await agentPush(agentCtx);
+    await advancing(() => expect(c.patches()).toHaveLength(1));
+    await Promise.all(syncs);
+    await settle(live);
+    const [patch] = c.patches();
+    expect(c.patches()).toHaveLength(1);
+    expect(patch?.upsert.issues?.map((i) => [i.id, i.title])).toEqual([[id, 'Vom Agent']]);
+    expect(patch?.actors).toEqual({ [id]: ['claude-1'] });
+    expect(live.head).toBe(await revParse(agentCtx.backlog.workingCopy as string, 'HEAD'));
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  test('manual mode starts no neighbour sync', async () => {
+    const { agentCtx } = await withAgent();
+    const scheduled = vi.spyOn(scheduleModule, 'scheduleSync');
+    try {
+      const spawn = vi.fn();
+      const live = await startWith(manual(ctx), { sync: { spawn } });
+      await agentPush(agentCtx);
+      // Die Bewegung kommt an; ob sie einen Sync startet, entscheidet `scheduleSync`.
+      await advancing(() =>
+        expect(scheduled).toHaveBeenCalledWith(expect.anything(), 'periodic', expect.anything()),
+      );
+      expect(await scheduled.mock.results[0]?.value).toBe(false);
+      await vi.advanceTimersByTimeAsync(LIVE_TIMING.neighborMs);
+      await settle(live);
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      scheduled.mockRestore();
+    }
+  });
+
+  test('neighbour pushes converge to a fresh state after a burst', async () => {
+    const { agentCtx } = await withAgent(3600);
+    const spawn = inProcess(() => ctx);
+    const live = await startWith(ctx, { sync: { spawn } });
+    const initial = await stateJson(ctx, live.rev);
+    const c = collect(live);
+    const ids: string[] = [];
+    for (let i = 0; i < 30; i++) {
+      if (i % 3 === 2) {
+        await writeOp(agentCtx, {
+          op: 'issue.move',
+          id: ids.at(-1) as string,
+          from: 'todo',
+          to: 'in_progress',
+        });
+        await syncNow(agentCtx, { spawn: () => {} });
+        if (i === 14) await git(['pack-refs', '--all'], { cwd: join(backlogDir(), 'hub.git') });
+      } else {
+        ids.push(
+          await writeOp(agentCtx, { op: 'issue.create', title: `Burst ${i}`, state: 'todo' }),
+        );
+      }
+    }
+    const agentHead = await revParse(agentCtx.backlog.workingCopy as string, 'HEAD');
+    await advancing(() => {
+      expect(live.head).toBe(agentHead);
+      expect(c.patches().at(-1)?.head).toBe(agentHead);
+    });
+    await Promise.all(syncs);
+    await settle(live);
+    const fresh = await stateJson(ctx);
+    expect(live.head).toBe(fresh.head);
+    const folded = c.patches().reduce(applyPatch, initial);
+    expect(comparable(folded)).toEqual(comparable(fresh));
+    expect(spawn.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(spawn.mock.calls.length).toBeLessThanOrEqual(10);
+  }, 60_000);
+
+  test('the safety net catches a lost neighbour push', async () => {
+    const { agentCtx } = await withAgent();
+    const dir = backlogDir();
+    const spawn = vi.fn();
+    // Alles unter dem Backlog-Verzeichnis bleibt stumm: Nachbarn, Hub und die eigene Arbeitskopie.
+    const watch: WatchFn = (path, opts, listener) =>
+      path === dir || path.startsWith(`${dir}${sep}`)
+        ? { close() {} }
+        : fsWatch(path, opts, listener);
+    const live = await startWith(ctx, { watch, sync: { spawn } });
+    await agentPush(agentCtx);
+    await vi.advanceTimersByTimeAsync(LIVE_TIMING.neighborMs);
+    await settle(live);
+    expect(spawn).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1), WAIT);
+  });
+
+  test('a stopped watcher starts no neighbour sync', async () => {
+    const { agentCtx } = await withAgent();
+    const spawn = vi.fn();
+    const scheduled = vi.spyOn(scheduleModule, 'scheduleSync');
+    try {
+      const live = await startWith(ctx, { sync: { spawn } });
+      collect(live);
+      const timers = vi.getTimerCount();
+      await agentPush(agentCtx);
+      // Die Entprellung des Nachbarn läuft schon, wenn der Watcher endet.
+      await vi.waitFor(() => expect(vi.getTimerCount()).toBeGreaterThan(timers), WAIT);
+      await live.stop();
+      await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
+      expect(scheduled).not.toHaveBeenCalled();
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      scheduled.mockRestore();
+    }
+  });
+
+  test('a neighbour sync that becomes due after stop starts nothing', async () => {
+    const { agentCtx } = await withAgent();
+    const spawn = vi.fn();
+    const live = await startWith(ctx, { sync: { spawn } });
+    const real = scheduleModule.scheduleSync;
+    const scheduled = vi.spyOn(scheduleModule, 'scheduleSync');
+    let started: Promise<boolean> | undefined;
+    let stopped: Promise<void> | undefined;
+    // Der Watcher endet, während `scheduleSync` noch prüft, ob ein Start fällig ist.
+    scheduled.mockImplementationOnce((c, reason, deps) => {
+      stopped = live.stop();
+      started = real(c, reason, deps);
+      return started;
+    });
+    try {
+      await agentPush(agentCtx);
+      await advancing(() => expect(stopped).toBeDefined());
+      await stopped;
+      // Fällig war der Start; erst der beendete Watcher hält ihn zurück.
+      expect(await started).toBe(true);
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      scheduled.mockRestore();
+    }
+  });
 });
 
 describe('LiveHub', () => {
