@@ -1,12 +1,20 @@
 import { isSettled } from '@backe/core/state.ts';
-import { Handle, type Node, type NodeProps, Position } from '@xyflow/react';
-import type { CSSProperties } from 'react';
+import {
+  Handle,
+  type Node,
+  type NodeProps,
+  Position,
+  useReactFlow,
+  useReactFlowStoreApi,
+} from '@xyflow/react';
+import type { CSSProperties, FocusEvent } from 'react';
 import type { DepNode } from '../../app/dep-graph.ts';
 import { useLinkClick } from '../../app/router.ts';
 import { routeHref } from '../../app/routes.ts';
 import { cn } from '../../lib/utils.ts';
 import { m } from '../../views/deps.messages.ts';
 import { StateIcon } from '../StateIcon.tsx';
+import { DEP_NODE_HEIGHT, DEP_NODE_WIDTH } from './dep-layout.ts';
 
 export type IssueNodeData = {
   node: DepNode;
@@ -55,10 +63,51 @@ function Handles() {
   );
 }
 
+/** Fokus per Tastatur; Browser ohne `:focus-visible` zählen jeden Fokus mit. */
+function keyboardFocus(el: Element): boolean {
+  try {
+    return el.matches(':focus-visible');
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Holt den Knoten in die Fläche, wenn Link oder Knopf darin den Tastaturfokus bekommen und er
+ * ganz oder teilweise außerhalb liegt; der Zoom bleibt. Das Auto-Pan von xyflow greift hier
+ * nicht: Es hängt am fokussierbaren Knoten-Wrapper, und der ist es nicht (`nodesFocusable` aus).
+ * Das Scrollen des Browsers zum Fokus setzt xyflow zurück, sonst bliebe der Fokus unsichtbar.
+ * Wie bei xyflow nur für die Tastatur: Wer mit der Maus am Rand greift, will ziehen.
+ */
+function useReveal(x: number, y: number, width: number, height: number) {
+  const { setCenter } = useReactFlow();
+  const { viewportStore } = useReactFlowStoreApi();
+  return (event: FocusEvent<HTMLElement>) => {
+    if (!keyboardFocus(event.currentTarget)) return;
+    const { transform, width: paneWidth, height: paneHeight } = viewportStore.getState();
+    const [tx, ty, zoom] = transform;
+    const left = tx + x * zoom;
+    const top = ty + y * zoom;
+    const inside =
+      left >= 0 &&
+      top >= 0 &&
+      left + width * zoom <= paneWidth &&
+      top + height * zoom <= paneHeight;
+    if (!inside) void setCenter(x + width / 2, y + height / 2, { zoom });
+  };
+}
+
 /** Ein Issue im Graphen: State, ID, gekürzter Titel; Link auf den Issue-Tab außer bei der Mitte. */
-export function DepIssueNode({ data }: NodeProps<IssueFlowNode>) {
+export function DepIssueNode(props: NodeProps<IssueFlowNode>) {
+  const { data, positionAbsoluteX, positionAbsoluteY } = props;
   const { node, backlog, more, onToggle } = data;
   const go = useLinkClick();
+  const reveal = useReveal(
+    positionAbsoluteX,
+    positionAbsoluteY,
+    props.width ?? DEP_NODE_WIDTH,
+    props.height ?? DEP_NODE_HEIGHT,
+  );
   const { id, issue, role } = node;
   const centre = role === 'center';
   const missing = issue === undefined;
@@ -96,6 +145,7 @@ export function DepIssueNode({ data }: NodeProps<IssueFlowNode>) {
       <a
         href={href}
         onClick={go(href)}
+        onFocus={reveal}
         // Hover unterstreicht den Titel, statt die Fläche einzufärben: Auf `accent` fiele
         // gedämpfter Text unter AA-Kontrast.
         className={cn(
@@ -134,6 +184,7 @@ export function DepIssueNode({ data }: NodeProps<IssueFlowNode>) {
               className={BUTTON}
               aria-label={m.expand(id, node.hidden)}
               onClick={() => onToggle(id)}
+              onFocus={reveal}
             >
               +{node.hidden}
             </button>
@@ -144,6 +195,7 @@ export function DepIssueNode({ data }: NodeProps<IssueFlowNode>) {
               className={BUTTON}
               aria-label={m.collapse(id)}
               onClick={() => onToggle(id)}
+              onFocus={reveal}
             >
               −
             </button>

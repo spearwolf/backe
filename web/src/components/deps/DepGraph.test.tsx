@@ -410,6 +410,56 @@ test('a patch re-renders only the nodes whose issue changed', async () => {
   }
 });
 
+/** Liegt der Knoten ganz in der Fläche? Rechnet wie xyflow: Position mal Zoom plus Verschiebung. */
+function inPane(container: HTMLElement, id: string): boolean {
+  const v = parseTransform(viewport(container));
+  const p = parseTransform(placed(container, id));
+  const left = v.x + p.x * v.zoom;
+  const top = v.y + p.y * v.zoom;
+  return (
+    left >= 0 &&
+    top >= 0 &&
+    left + DEP_NODE_WIDTH * v.zoom <= PANE.width &&
+    top + DEP_NODE_HEIGHT * v.zoom <= PANE.height
+  );
+}
+
+const focus = async (el: HTMLElement) => {
+  await act(async () => el.focus());
+  await settle();
+};
+
+test('focusing a link outside the pane moves the view to it at the same zoom', async () => {
+  const { container } = await show(graphOf(fan(60), tid(1)));
+  const far = tid(61);
+  expect(inPane(container, far)).toBe(false);
+  await focus(within(nodeEl(container, far)).getByRole('link'));
+  expect(inPane(container, far)).toBe(true);
+  expect(parseTransform(viewport(container)).zoom).toBe(READABLE_ZOOM);
+});
+
+test('focusing an expand button outside the pane moves the view to it', async () => {
+  // c ← 60 Abhängige; der letzte hat einen Abhängigen in Tiefe 2, der wieder einen in Tiefe 3.
+  const issues = [
+    ...fan(60),
+    testIssue(70, { depends_on: [tid(61)] }),
+    testIssue(71, { depends_on: [tid(70)] }),
+  ];
+  const { container } = await show(graphOf(issues, tid(1)));
+  const node = tid(70);
+  expect(inPane(container, node)).toBe(false);
+  await focus(within(nodeEl(container, node)).getByRole('button', { name: m.expand(node, 1) }));
+  expect(inPane(container, node)).toBe(true);
+});
+
+test('focusing a node inside the pane leaves the view', async () => {
+  const { container } = await show(graphOf(fan(1), tid(1)));
+  const before = viewport(container);
+  expect(inPane(container, tid(2))).toBe(true);
+  await focus(within(nodeEl(container, tid(2))).getByRole('link'));
+  expect(viewport(container)).toBe(before);
+});
+
 test('xyflow adds no English descriptions to nodes', async () => {
   const { container } = await show(graphOf(chain(), C, { limit: 3 }));
   const wrappers = container.querySelectorAll('.react-flow__node');
