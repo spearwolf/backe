@@ -3,9 +3,11 @@ import { ImageOff } from 'lucide-react';
 import {
   Children,
   type ComponentProps,
+  createContext,
   isValidElement,
   memo,
   type ReactNode,
+  useContext,
   useMemo,
 } from 'react';
 import ReactMarkdown, { type Components, type Options } from 'react-markdown';
@@ -36,6 +38,9 @@ export type MarkdownProps = {
   className?: string;
 };
 
+/** Steht ein Bild schon in einem Link (Badges), darf es keinen eigenen aufmachen: `<a>` in `<a>`. */
+const InLink = createContext(false);
+
 function Anchor({
   href,
   children,
@@ -43,23 +48,24 @@ function Anchor({
   ...rest
 }: ComponentProps<'a'> & { node?: unknown }) {
   const click = useLinkClick();
+  const inner = <InLink.Provider value={true}>{children}</InLink.Provider>;
   if (href?.startsWith('/b/')) {
     return (
       <a {...rest} href={href} onClick={click(href)}>
-        {children}
+        {inner}
       </a>
     );
   }
   if (href !== undefined && /^https?:/i.test(href)) {
     return (
       <a {...rest} href={href} target="_blank" rel="noopener noreferrer">
-        {children}
+        {inner}
       </a>
     );
   }
   return (
     <a {...rest} href={href}>
-      {children}
+      {inner}
     </a>
   );
 }
@@ -88,16 +94,24 @@ function Pre({ node: _node, children, ...rest }: ComponentProps<'pre'> & { node?
 
 /**
  * Externe Bilder können den Leser verfolgen (ui.md §4.1). Ist der Schalter in Settings aus, steht
- * statt des Bilds ein Link darauf; Anhänge, `blob:`- und `data:`-Bilder bleiben, denn sie verlassen
- * den Rechner nicht.
+ * statt des Bilds ein Link darauf, in einem Link nur der Hinweis; Anhänge, `blob:`- und
+ * `data:`-Bilder bleiben, denn sie verlassen den Rechner nicht.
  */
 function Image({ node: _node, src, alt, ...rest }: ComponentProps<'img'> & { node?: unknown }) {
   const allowed = useExternalImages();
+  const inLink = useContext(InLink);
   if (!allowed && typeof src === 'string' && /^https?:/i.test(src)) {
-    return (
-      <a href={src} target="_blank" rel="noopener noreferrer">
+    const notice = (
+      <>
         <ImageOff aria-hidden="true" className="inline size-4 align-text-bottom" />{' '}
-        {m.imageBlocked(alt ?? '')}
+        {alt === undefined || alt === '' ? m.imageBlockedNoAlt : m.imageBlocked(alt)}
+      </>
+    );
+    return inLink ? (
+      <span>{notice}</span>
+    ) : (
+      <a href={src} target="_blank" rel="noopener noreferrer">
+        {notice}
       </a>
     );
   }

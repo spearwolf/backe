@@ -12,7 +12,7 @@ import {
   type SignalReader,
 } from '@spearwolf/signalize';
 import { readText, writeText } from '../lib/storage.ts';
-import { BOARD_GROUPS, type BoardGroup, DEFAULT_BOARD_VIEW } from './board-model.ts';
+import { BOARD_GROUPS, type BoardGroup, DEFAULT_BOARD_VIEW } from './board-groups.ts';
 
 export type LangChoice = 'server' | 'en' | 'de';
 
@@ -25,7 +25,7 @@ const parseLang = (raw: string | undefined): LangChoice =>
   raw === 'en' || raw === 'de' ? raw : 'server';
 
 // Nur ein ausdrückliches Aus blockt: Bilder sind erlaubt, solange nichts anderes gewählt ist.
-const parseImages = (raw: string | undefined): boolean => raw !== 'false';
+const parseImages = (raw: string | undefined): boolean => raw !== 'off';
 
 const parseGroup = (raw: string | undefined): BoardGroup =>
   BOARD_GROUPS.includes(raw as BoardGroup) ? (raw as BoardGroup) : DEFAULT_BOARD_VIEW.group;
@@ -65,14 +65,17 @@ export class UiPrefs {
    */
   setLang(choice: LangChoice): void {
     writeText(LANG_KEY, choice === 'server' ? '' : choice);
-    this.#focusLang = true;
-    this.#applyLang(choice === 'server' ? this.serverLang : choice);
+    const next = choice === 'server' ? this.serverLang : choice;
+    // Nur ein echter Wechsel mountet neu; sonst nähme niemand den Wunsch, und das nächste Öffnen
+    // von Settings stähle grundlos den Fokus.
+    if (next !== this.lang()) this.#focusLang = true;
+    this.#applyLang(next);
     this.langChoice.set(choice);
   }
 
   setExternalImages(on: boolean): void {
     this.externalImages.set(on);
-    writeText(EXTERNAL_IMAGES_KEY, String(on));
+    writeText(EXTERNAL_IMAGES_KEY, on ? 'on' : 'off');
   }
 
   setBoardGroup(group: BoardGroup): void {

@@ -173,6 +173,24 @@ test('external images stay blocked when switched off', () => {
   prefs?.dispose();
 });
 
+test('a blocked image inside a link stays a single link', () => {
+  const { container } = setup(
+    '[![build](https://img.shields.io/badge/ci-green)](https://ci.example.com/run)',
+    { externalImages: false },
+  );
+  expect(container.querySelector('img')).toBeNull();
+  expect(container.querySelector('a a')).toBeNull();
+  const links = container.querySelectorAll('a');
+  expect(links).toHaveLength(1);
+  expect(links[0]?.getAttribute('href')).toBe('https://ci.example.com/run');
+  expect(links[0]?.textContent).toContain('External image blocked: build');
+});
+
+test('a blocked image without alt text reads naturally', () => {
+  setup('![](https://example.com/logo.png)', { externalImages: false });
+  expect(screen.getByRole('link', { name: 'External image blocked' })).toBeTruthy();
+});
+
 test('external images load without a ui context', () => {
   const { container } = setup('![Logo](https://example.com/logo.png)');
   expect(container.querySelector('img[src="https://example.com/logo.png"]')).not.toBeNull();

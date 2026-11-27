@@ -2,11 +2,11 @@ import { catalog } from '@backe/i18n/catalog.ts';
 
 export const m = catalog({
   en: {
-    imageBlocked: (alt: string) =>
-      alt === '' ? 'External image blocked' : `External image blocked: ${alt}`,
+    imageBlocked: (alt: string) => `External image blocked: ${alt}`,
+    imageBlockedNoAlt: 'External image blocked',
   },
   de: {
-    imageBlocked: (alt: string) =>
-      alt === '' ? 'Externes Bild blockiert' : `Externes Bild blockiert: ${alt}`,
+    imageBlocked: (alt: string) => `Externes Bild blockiert: ${alt}`,
+    imageBlockedNoAlt: 'Externes Bild blockiert',
   },
 });

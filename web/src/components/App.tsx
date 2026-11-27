@@ -208,7 +208,9 @@ export function App({ backlogs, router, theme, prefs, deps }: Props) {
       <RouterContext.Provider value={router}>
         <div className="flex h-svh flex-col">
           {/* Ein Sprachwechsel baut Kopfzeile und Ansichten neu auf: Gemerkte Komponenten und
-              Caches je Locale lesen ihre Texte sonst nie neu. Die Sitzung oben bleibt. */}
+              Caches je Locale lesen ihre Texte sonst nie neu. Die Sitzung oben bleibt. Mit
+              abgebaut wird `CreateIssueProvider` samt offenem Entwurf; das ist hinnehmbar, denn
+              die Sprache wechselt nur in Settings, und dort steht kein Anlegen-Dialog offen. */}
           <Fragment key={lang}>
             <Header backlogs={backlogs} current={current} session={session} theme={theme} />
             {body}

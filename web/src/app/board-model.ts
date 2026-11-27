@@ -11,11 +11,14 @@ import { hasOpenDeps } from '@backe/ops/issue-query.ts';
 import { compareIssues } from '@backe/ops/order.ts';
 import type { BacklogSnapshot } from '@backe/store/snapshot.ts';
 import type { IssueJson, ProjectJson, RepoJson, SprintJson } from '@backe/ui/api.ts';
+import type { BoardGroup, BoardView } from './board-groups.ts';
 
-export type BoardGroup = 'sprint' | 'project' | 'repo' | 'none';
-export type BoardView = { group: BoardGroup; showBacklog: boolean };
-export const DEFAULT_BOARD_VIEW: BoardView = { group: 'sprint', showBacklog: false };
-export const BOARD_GROUPS: readonly BoardGroup[] = ['sprint', 'project', 'repo', 'none'];
+export {
+  BOARD_GROUPS,
+  type BoardGroup,
+  type BoardView,
+  DEFAULT_BOARD_VIEW,
+} from './board-groups.ts';
 /** Schlüssel der Bahn »ohne …« und der einzigen Bahn bei `none`. */
 export const NO_LANE = '';
 

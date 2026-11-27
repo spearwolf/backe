@@ -59,18 +59,51 @@ test('the focus request is taken once', () => {
   prefs.dispose();
 });
 
+test('a choice that keeps the language asks for no focus', () => {
+  // Ohne Wechsel der wirksamen Sprache mountet nichts neu; ein liegengebliebener Wunsch stähle
+  // beim nächsten Öffnen von Settings den Fokus.
+  const prefs = new UiPrefs('en', document.createElement('html'));
+  prefs.setLang('en');
+  expect(prefs.langChoice.value).toBe('en');
+  expect(prefs.takeLangFocus()).toBe(false);
+  prefs.setLang('server');
+  expect(prefs.takeLangFocus()).toBe(false);
+  prefs.setLang('de');
+  prefs.setLang('de');
+  expect(prefs.takeLangFocus()).toBe(true);
+  prefs.dispose();
+});
+
 test('image and board settings persist', () => {
   const prefs = new UiPrefs('en', document.createElement('html'));
   prefs.setExternalImages(false);
   prefs.setBoardGroup('project');
   expect(prefs.externalImages.value).toBe(false);
   expect(prefs.boardGroup.value).toBe('project');
+  expect(localStorage.getItem(EXTERNAL_IMAGES_KEY)).toBe('off');
   prefs.dispose();
 
   const again = new UiPrefs('en', document.createElement('html'));
   expect(again.externalImages.value).toBe(false);
   expect(again.boardGroup.value).toBe('project');
   again.setExternalImages(true);
+  expect(localStorage.getItem(EXTERNAL_IMAGES_KEY)).toBe('on');
   again.dispose();
-  expect(new UiPrefs('en', document.createElement('html')).externalImages.value).toBe(true);
+  const third = new UiPrefs('en', document.createElement('html'));
+  expect(third.externalImages.value).toBe(true);
+  third.dispose();
+});
+
+test('only off blocks external images', () => {
+  for (const [raw, allowed] of [
+    ['off', false],
+    ['false', true],
+    ['on', true],
+    ['', true],
+  ] as const) {
+    localStorage.setItem(EXTERNAL_IMAGES_KEY, raw);
+    const prefs = new UiPrefs('en', document.createElement('html'));
+    expect(prefs.externalImages.value, raw).toBe(allowed);
+    prefs.dispose();
+  }
 });
