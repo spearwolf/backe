@@ -6,7 +6,7 @@ import { Router, RouterContext } from '../app/router.ts';
 import { Store } from '../data/store.ts';
 import { StoreContext } from '../data/store-context.tsx';
 import { type WriteAccess, WriteContext } from '../data/write-context.tsx';
-import { testIssue, testState, tid } from '../test/state.ts';
+import { testIssue, testPatch, testState, tid } from '../test/state.ts';
 import { m } from '../views/search.messages.ts';
 import { SearchBox } from './SearchBox.tsx';
 
@@ -14,6 +14,7 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
 let router: Router | undefined;
+let store: Store;
 
 beforeEach(() => {
   window.history.replaceState(null, '', '/b/acme/backlog');
@@ -28,7 +29,7 @@ afterEach(() => {
 
 function mount(over: Partial<StateJson> = {}, canWrite = true) {
   router = new Router(window);
-  const store = new Store();
+  store = new Store();
   store.load(
     testState([testIssue(1, { title: 'Alpha Login' }), testIssue(2, { title: 'Alpha Export' })], {
       projects: [{ path: 'web', title: 'Webseite' }] as StateJson['projects'],
@@ -44,6 +45,7 @@ function mount(over: Partial<StateJson> = {}, canWrite = true) {
       <StoreContext.Provider value={store}>
         <WriteContext.Provider value={access}>
           <SearchBox backlog="acme" />
+          <button type="button">outside</button>
         </WriteContext.Provider>
       </StoreContext.Provider>
     </RouterContext.Provider>,
@@ -210,4 +212,109 @@ test('search works without write access', async () => {
   await userEvent.type(input, 'export');
   await userEvent.keyboard('{Enter}');
   expect(here()).toBe(`/b/acme/issue/${tid(2)}`);
+});
+
+test('arrow keys with nothing selectable do not break the selection', async () => {
+  let answer: (r: Response) => void = () => {};
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() => new Promise<Response>((resolve) => (answer = resolve))),
+  );
+  const input = mount();
+  await userEvent.type(input, 'zzz');
+  await userEvent.click(screen.getByRole('option', { name: m.searchBodies }));
+  // Keine wählbare Zeile: weder lokale Treffer noch die Beschreibungs-Option.
+  expect(screen.queryAllByRole('option')).toHaveLength(0);
+  await userEvent.keyboard('{ArrowDown}{ArrowUp}');
+  await act(async () => answer(json({ issues: [{ id: tid(2) }] })));
+  await screen.findByRole('group', { name: m.groupBodies });
+  await userEvent.keyboard('{Enter}');
+  expect(here()).toBe(`/b/acme/issue/${tid(2)}`);
+});
+
+test('the active option is scrolled into view', async () => {
+  const scroll = vi.fn();
+  Element.prototype.scrollIntoView = scroll;
+  const input = mount();
+  await userEvent.type(input, 'alpha');
+  await userEvent.keyboard('{ArrowDown}');
+  const active = screen.getAllByRole('option')[1] as HTMLElement;
+  expect(active.getAttribute('aria-selected')).toBe('true');
+  expect(scroll).toHaveBeenLastCalledWith({ block: 'nearest' });
+  expect(scroll.mock.contexts.at(-1)).toBe(active);
+  delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+});
+
+test('a press on a group heading keeps the list open and the focus in the field', async () => {
+  const projects = Array.from({ length: 12 }, (_, i) => ({
+    path: `proj${i}`,
+    title: `Projekt ${i}`,
+  })) as StateJson['projects'];
+  const input = mount({ projects });
+  await userEvent.type(input, 'projekt');
+  await userEvent.click(screen.getByText(m.groupProjects));
+  await userEvent.click(screen.getByText(m.more(4)));
+  expect(screen.getByRole('listbox')).toBeTruthy();
+  expect(document.activeElement).toBe(input);
+});
+
+test('description hits show current titles after a patch', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => json({ issues: [{ id: tid(2) }] })),
+  );
+  const input = mount();
+  await userEvent.type(input, 'zzz');
+  await userEvent.click(screen.getByRole('option', { name: m.searchBodies }));
+  const group = await screen.findByRole('group', { name: m.groupBodies });
+  expect(group.textContent).toContain('Alpha Export');
+  act(() => {
+    store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(2, { title: 'Umbenannt' })] } }));
+  });
+  expect(screen.getByRole('group', { name: m.groupBodies }).textContent).toContain('Umbenannt');
+});
+
+test('an idle field does not build the search index', async () => {
+  const input = mount();
+  const issues = vi.spyOn(store.users, 'list');
+  act(() => {
+    store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(3, { title: 'Neu' })] } }));
+  });
+  expect(issues).not.toHaveBeenCalled();
+  await userEvent.type(input, 'neu');
+  expect(issues).toHaveBeenCalled();
+});
+
+test('the description query is trimmed', async () => {
+  const fetch = vi.fn(async () => json({ issues: [] }));
+  vi.stubGlobal('fetch', fetch);
+  const input = mount();
+  await userEvent.type(input, '  zzz  ');
+  await userEvent.click(screen.getByRole('option', { name: m.searchBodies }));
+  expect(fetch).toHaveBeenCalledWith('/api/b/acme/search?q=zzz', undefined);
+});
+
+test('the listbox holds only options and groups, status text lives in a live region', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => json({ issues: [] })),
+  );
+  const input = mount();
+  expect(input.hasAttribute('aria-controls')).toBe(false);
+  await userEvent.type(input, 'alpha');
+  const list = screen.getByRole('listbox');
+  expect(input.getAttribute('aria-controls')).toBe(list.id);
+  const status = screen.getByRole('status');
+  await userEvent.click(screen.getByRole('option', { name: m.searchBodies }));
+  expect(await within(status).findByText(m.noBodyHits)).toBeTruthy();
+  expect(list.contains(status)).toBe(false);
+});
+
+test('focus leaving the field closes the list', async () => {
+  const input = mount();
+  await userEvent.type(input, 'alpha');
+  expect(screen.getByRole('listbox')).toBeTruthy();
+  await userEvent.click(screen.getByRole('button', { name: 'outside' }));
+  expect(screen.queryByRole('listbox')).toBeNull();
+  expect(input.value).toBe('alpha');
 });
