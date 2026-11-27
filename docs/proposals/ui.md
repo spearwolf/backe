@@ -1,6 +1,6 @@
 # backe ui — lokale Web-Oberfläche für ein Backlog
 
-> **Status: in Umsetzung.** Gebaut: Befehl `backe ui`, Sitzung und Sicherheits-Header, lesende und schreibende API samt Uploads, statische Auslieferung, Live-Updates samt Nachbarn (§2.1, §2.3, §2.4, §2.15, §2.16 »Server«), Frontend-Gerüst (§2.2 `web/`, §2.5 samt optimistischer Anzeige, §2.6, §2.13, §2.14, §2.16 »Build«, »Lint und Typen« und »Paket« ohne Größenmessung), Tab Backlog vollständig (§2.7), Tab Board (§2.8), Tab Issue samt Abhängigkeitsgraph (§2.9), Settings samt Browser-Benachrichtigungen (§2.10), Suche (§2.11), Issue anlegen (§2.12). Offen (§6 Schritt 11): Größe des Tarballs gegen die 3-MB-Schwelle aus §4.1 messen, Performance-Ziele samt Benchmark (§2.17, §5 »Performance«), Playwright-E2E in der CI (§5 »E2E«). Die Empfehlungen in §4.1 gelten, solange keine Zeile dort anders entschieden ist. Wünsche an BK in §4.2.
+> **Status: gebaut.** Alle Schritte aus §6 stehen: Befehl `backe ui`, Sitzung und Sicherheits-Header, lesende und schreibende API samt Uploads, Live-Updates samt Nachbarn, Frontend mit den Tabs Backlog, Board und Issue, Settings, Suche und Issue anlegen; das Paket trägt `dist/ui/` (§2.16 »Paket«), Playwright-E2E laufen in der CI (§5 »E2E«), und der Benchmark belegt jedes Ziel aus §2.17. Die Empfehlungen in §4.1 gelten, solange keine Zeile dort anders entschieden ist; Wünsche an BK in §4.2, späterer Ausbau in §4.3.
 > Bezug: Adapter über den Service-Layer von BK (`backe.md`), vor allem BK §2.14 (Kontext), §2.16 (Schreibpfad und Sync), §2.18 (Ausgabe), §2.19 (MCP als Vorbild des Adapters), §2.22–§2.24 (Abhängigkeiten, Sub-Issues, Properties).
 > Skizzen: [`layout-tabs.png`](../assets/layout-tabs.png), [`backlog.png`](../assets/backlog.png), [`board.png`](../assets/board.png), [`issue-details.png`](../assets/issue-details.png), [`settings.png`](../assets/settings.png).
 
@@ -229,6 +229,7 @@ Nach `board.png`:
 - **Tastatur und Kartenmenü** (§2.13): `Alt+↑`/`Alt+↓` an der fokussierten Karte verschiebt sie in ihrer Zelle, `Alt+←`/`Alt+→` in die Nachbarspalte derselben Bahn. Das Kartenmenü (Rechtsklick, Kontextmenü-Taste oder `Umschalt+F10`) bietet jeden Übergang ohne Maus, auch »Mit Begründung …« (`reason`), dazu Bahn und Rang. »Ganz oben« und »Ganz unten« gelten backlogweit wie im Tab Backlog, »Eine nach oben« und »Eine nach unten« in der Zelle und sind an ihrem Rand gesperrt. Steht die Karte noch in einer weiteren Bahn der Gruppierung, fehlt unter »Bahn« die Bahn »ohne …«: Die Karte käme dort nicht an. Nach `blocked` geht es nicht per Ziehen, sondern über das Kartenmenü, das `blocked_by` abfragt. Der Fokus folgt der Karte; geht sie in eine Zelle, die nicht zu sehen ist (ausgeblendete Spalte `backlog`, eingeklappte Bahn), bekommt ihn die nächste Karte der alten Zelle, sonst die vorige, sonst deren `+`.
 - **Schnell anlegen:** `+` am Fuß jeder Zelle legt ein Issue nur mit Titel an, State = Spalte, Mitgliedschaft = Bahn; das Titelfeld bleibt für das nächste offen. »Mehr …« übergibt den Titel an den Dialog aus §2.12, vorbelegt aus Spalte und Bahn; nach dem Dialog steht der Fokus wieder auf dem `+`.
 - **Ohne Schreibrecht** gibt es weder Kartenmenü noch Tastenzüge noch ziehbare Karten, weder `+` noch »Neues Issue« (§2.12).
+- **Große Zellen:** Ab 100 Karten rendert eine Zelle nur die Karten in Sichtweite, die übrigen nehmen ihren Platz ein (Scrollbalken und Länge der Zelle stimmen). Landet eine Karte nach einem Tastenzug außerhalb davon, holt die Zelle sie ins Bild, und der Fokus folgt ihr. Ziel beim Ziehen ist immer die ganze Zelle; die Einfügestelle in derselben Zelle ergibt sich aus der Mitte der gezogenen Kopie gegenüber den Karten, wie sie im Moment des Ablegens stehen, auch wenn das Board unterdessen gescrollt hat.
 
 ### 2.9 Tab Issue
 
@@ -348,20 +349,22 @@ Die UI kann signierte Commits im Namen des Nutzers erzeugen. Jede Webseite im se
 - **Code-Splitting:** Mermaid, Board, Graph und Highlighting-Sprachen sind eigene Chunks und laden erst bei Bedarf. Lädt der Chunk von Board oder Graph nicht (etwa nach einem Update mit neuen Dateinamen), zeigt die Ansicht an seiner Stelle eine Meldung, der Rest der App bleibt bedienbar. Budget für den initialen Chunk: 300 KB gzip.
 - **Build:** `pnpm build` baut CLI (tsdown) und Frontend (`vite build` → `dist/ui/`). Entwicklung: `pnpm dev:ui` startet den Vite-Dev-Server mit Proxy `/api` auf ein laufendes `backe ui`. Das Proxy-Ziel ist `BACKE_UI_PORT` (Default 8002). Dessen `Origin`-Prüfung erlaubt zusätzlich den Ursprung aus `BACKE_UI_DEV_ORIGIN`, sofern gesetzt. Cookies trennen keine Ports: Im Dev-Betrieb wird erst die Konsolen-URL von `backe ui` geöffnet (sie setzt das Sitzungs-Cookie), danach `http://127.0.0.1:5173/`.
 - **Lint und Typen:** Biome und `tsc` decken `web/` mit ab (eigene `tsconfig` mit DOM-Typen).
-- **Paket:** Der Tarball enthält zusätzlich `dist/ui/**`. Der Pack-Smoke-Test startet `backe ui --port 0`, ruft die Start-URL samt Token und `/api/backlogs` ab und beendet den Server per SIGTERM.
+- **Paket:** Der Tarball enthält zusätzlich `dist/ui/**`: `index.html`, `theme.js`, `favicon.svg` (Graustufen, eigenes `prefers-color-scheme`) und `assets/`. `scripts/check-ui-build.ts` prüft nach jedem Build Reihenfolge und Vollständigkeit dieser Dateien sowie das Budget des initialen Chunks und meldet dessen gzip-Größe. Der Pack-Smoke-Test (BK §2.21) misst den Anteil von `dist/ui/` am Tarball gegen die Schwelle aus §4.1, startet `backe ui --port 0`, ruft die Start-URL samt Token und `/api/backlogs` ab und beendet den Server per SIGTERM. Gemessen mit Version 0.4.0: Tarball 2 311 246 B, davon `dist/ui/` 1 992 733 B (gzip -9, Differenz zweier Packläufe mit und ohne `dist/ui/`; unkomprimiert 6,9 MB), initialer Chunk 244 313 B gzip vom Budget 307 200 B. Über 500 kB roh liegen nur der Einstieg und der Lazy-Chunk des ELK-Layouts von Mermaid; die Warnschwelle von Vite steht darum auf 2 048 kB, das Budget prüft `check-ui-build.ts`.
 - **Browser:** aktuelle Versionen von Chromium, Firefox und Safari.
 
 ### 2.17 Performance-Ziele
 
 Prüfbar mit einem Benchmark-Backlog von 10⁴ Issues auf localhost:
 
-| Messgröße | Ziel |
-| --- | --- |
-| `GET /state` (Server, ohne Netz) | ≤ 1 s |
-| Erste vollständige Darstellung des Tabs Backlog nach dem Laden | ≤ 1,5 s |
-| Write im CLI bis zur sichtbaren Änderung in allen offenen Ansichten (eigene Arbeitskopie) | ≤ 300 ms |
-| Board-Drag bis zur optimistischen Anzeige | im selben Frame |
-| Scrollen durch die Liste | ohne Frame-Drops bei 60 Hz |
+| Messgröße | Ziel | gemessen |
+| --- | --- | --- |
+| `GET /state` (Server, ohne Netz) | ≤ 1 s | 779 ms kalt, 656 ms warm (Median) |
+| Erste vollständige Darstellung des Tabs Backlog nach dem Laden | ≤ 1,5 s | 770 ms, mit CPU-Drosselung 4× 1 085 ms (Median) |
+| Write im CLI bis zur sichtbaren Änderung in allen offenen Ansichten (eigene Arbeitskopie) | ≤ 300 ms | höchstens 6 ms nach dem Ende des CLI-Prozesses, 44 ms nach der Bewegung des Refs (Backlog, Board, Issue-Tab) |
+| Board-Drag bis zur optimistischen Anzeige | im selben Frame | im ersten Frame nach dem Loslassen (16,4 ms), kein Frame über 17 ms bei Start und Ziehen, auch mit 7 600 Karten in einer Bahn |
+| Scrollen durch die Liste | ohne Frame-Drops bei 60 Hz | 0 Drops in 4 s, auch mit CPU-Drosselung 4× |
+
+Gemessen mit `scripts/bench-ui.ts` (§5 »Performance«): 10⁴ Issues, 20 Nachbarn, je fünf Läufe, Chromium headless auf einem Ryzen 9 7900X3D (24 Threads, 60 GB RAM, Linux), Node 26. »Im selben Frame« heißt: Im ersten `requestAnimationFrame` nach dem Loslassen steht die Karte in der Zielzelle, und dieser Frame kommt ohne Frame-Drop (≤ 25 ms); ein Frame-Drop ist ein Abstand zweier Frames über 25 ms. Der CLI-Prozess eines Writes selbst braucht in diesem Backlog rund 3,5 s; das ist der Schreibpfad von BK (Snapshot und Policy-Prüfung), nicht die UI.
 
 Verfehlt die Umsetzung ein Ziel, ist das ein offener Punkt mit Messung, kein stilles Nachgeben.
 
@@ -418,7 +421,7 @@ Vite, React und alle Frontend-Bibliotheken sind Werkzeuge zur Build-Zeit. Ausgel
 | Frage | Empfehlung |
 | --- | --- |
 | Transport: SSE plus HTTP oder WebSocket? | SSE plus HTTP (§3.1). |
-| Frontend im Hauptpaket `@spearwolf/backe` oder als eigenes Paket `@spearwolf/backe-ui`? | Hauptpaket (§3.9), solange `dist/ui/` den Tarball nicht um mehr als 3 MB vergrößert; sonst eigenes Paket, das `backe ui` bei Bedarf nachlädt. |
+| Frontend im Hauptpaket `@spearwolf/backe` oder als eigenes Paket `@spearwolf/backe-ui`? | Hauptpaket (§3.9), solange `dist/ui/` den Tarball nicht um mehr als 3 MB vergrößert; sonst eigenes Paket, das `backe ui` bei Bedarf nachlädt. Gemessen mit 0.4.0: 1,9 MiB (§2.16 »Paket«); der Pack-Smoke-Test bricht über 3 MiB ab. |
 | Projekte, Sprints und Repos: in Settings (wie oben) oder als eigene feste Tabs (Skizze `backlog.png`)? | Settings, dazu der Einstieg über Suche und Filter. Eigene Tabs verdoppeln, was Filter schon leisten. |
 | Darf die UI `.backe/backlog.jsonc` bearbeiten? | Erst, wenn BK dafür eine Operation hat (§4.2); bis dahin lesend. |
 | Externe Bilder in Markdown laden (Tracking über Bild-URLs)? | Ja, per CSP auf `https:` beschränkt; ein Schalter in Settings blockt sie. |
@@ -429,7 +432,6 @@ Vite, React und alle Frontend-Bibliotheken sind Werkzeuge zur Build-Zeit. Ausgel
 
 Verbindlich erst, wenn BK sie aufnimmt:
 
-- BK §2.17: `backe ui` in die Befehlsübersicht, sobald gebaut.
 - Eine Operation zum Ändern von `.backe/backlog.jsonc` (heute nur Hand-Edit und `backe commit` als `manual`-Commit, BK §2.13), falls die UI die Backlog-Config bearbeiten soll (§4.1).
 
 ### 4.3 Späterer Ausbau
@@ -464,9 +466,9 @@ Verbindlich erst, wenn BK sie aufnimmt:
 - Filter-Parität: Client-Filter gegen `issue list --format json` auf Fixture-Backlogs.
 - Markdown: Bereinigung (Skripte, Event-Handler, `javascript:`-Links fallen weg), relative Bildpfade, Issue-ID-Links.
 
-**E2E** (Playwright gegen das gebaute `backe ui`): anlegen, bearbeiten, verschieben per Drag & Drop und per Tastatur, Live-Update nach parallelem CLI-Write, Theme-Wechsel ohne Aufblitzen, Mermaid-Rendering, Anhang hochladen und anzeigen, Backlog-Wechsel.
+**E2E** (Playwright gegen das gebaute `backe ui`, `test/browser/*.spec.ts`, in Chromium, Firefox und WebKit; lokal `mise run e2e`, in der CI der Job `e2e`, BK §2.21): anlegen, bearbeiten, verschieben per Drag & Drop und per Tastatur, Live-Update nach parallelem CLI-Write, Theme-Wechsel ohne Aufblitzen, Mermaid-Rendering, Anhang hochladen und anzeigen, Backlog-Wechsel. Jeder Test bekommt ein eigenes Zuhause (isoliert wie oben) mit zwei Backlogs und einen eigenen `backe ui --port 0`, wartet auf Zustände statt auf Zeit und endet ohne Konsolenfehler und ohne Antwort ≥ 400 der App.
 
-**Performance:** ein Benchmark-Skript prüft die Ziele aus §2.17 gegen ein generiertes Backlog mit 10⁴ Issues; es läuft auf Anfrage, nicht in jedem CI-Lauf.
+**Performance:** `scripts/bench-ui.ts` prüft die Ziele aus §2.17 gegen ein generiertes Backlog mit 10⁴ Issues (`scripts/bench-backlog.ts`) samt 20 Nachbarn; es läuft auf Anfrage (`node scripts/bench-ui.ts`), nicht in jedem CI-Lauf. Gemessen wird im Browser über `requestAnimationFrame`, gedrosselt nur per CDP auf der Messseite.
 
 ## 6. Umsetzung in Schritten
 

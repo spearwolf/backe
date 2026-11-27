@@ -24,7 +24,7 @@ Umsetzung nach UI §6, Status im Kopf von `docs/proposals/ui.md`.
 - [x] Abhängigkeitsgraph (UI §6 Schritt 8)
 - [x] Settings und Suche (UI §6 Schritt 9)
 - [x] Nachbarn und Benachrichtigungen (UI §6 Schritt 10)
-- [ ] Paket, CI, Performance (UI §6 Schritt 11; BK §2.17 nach UI §4.2)
+- [x] Paket, CI, Performance (UI §6 Schritt 11; BK §2.17 nach UI §4.2)
 
 ## Geplant
 
@@ -34,17 +34,17 @@ Spec im Entwurf, offene Entscheidungen in BS §4.1; Umsetzung nach BS §6.
 
 ## Offene Entscheidungen
 
-| Frage                                            | Proposal      | Stand                                                      |
-| ------------------------------------------------ | ------------- | ---------------------------------------------------------- |
-| Remote Control aus einem Skript starten          | BS §4.1       | wird in F1 geprüft                                         |
-| Benachrichtigung ab Stufe 2                      | BS §4.1       | Vorschlag (a) Relay-Session                                |
-| Vertrauen und MCP-Freigabe in frischen Worktrees | BS §4.1       | wird in F1 geprüft                                         |
-| Kontext aus `--add-dir`                          | BS §4.1       | zu prüfen                                                  |
-| Modell je Phase                                  | BS §4.1       | nach Messung in F1                                         |
-| Ort des Codes der Backstube                      | BS §4.1       | Vorschlag eigenes Repo                                     |
-| Frontend im Hauptpaket oder eigenes Paket        | UI §4.1       | Hauptpaket bis +3 MB Tarball; gemessen in UI §6 Schritt 11 |
-| `.backe/backlog.jsonc` aus der UI bearbeiten     | UI §4.1, §4.2 | erst mit einer Operation in BK                             |
-| Fehlertexte in der UI-Sprache                    | UI §4.1       | erst mit Messages je Aufruf                                |
+| Frage                                            | Proposal      | Stand                                                       |
+| ------------------------------------------------ | ------------- | ----------------------------------------------------------- |
+| Remote Control aus einem Skript starten          | BS §4.1       | wird in F1 geprüft                                          |
+| Benachrichtigung ab Stufe 2                      | BS §4.1       | Vorschlag (a) Relay-Session                                 |
+| Vertrauen und MCP-Freigabe in frischen Worktrees | BS §4.1       | wird in F1 geprüft                                          |
+| Kontext aus `--add-dir`                          | BS §4.1       | zu prüfen                                                   |
+| Modell je Phase                                  | BS §4.1       | nach Messung in F1                                          |
+| Ort des Codes der Backstube                      | BS §4.1       | Vorschlag eigenes Repo                                      |
+| Frontend im Hauptpaket oder eigenes Paket        | UI §4.1       | Hauptpaket: `dist/ui/` +1,9 MiB von 3 MiB (0.4.0, UI §2.16) |
+| `.backe/backlog.jsonc` aus der UI bearbeiten     | UI §4.1, §4.2 | erst mit einer Operation in BK                              |
+| Fehlertexte in der UI-Sprache                    | UI §4.1       | erst mit Messages je Aufruf                                 |
 
 ## Später — mit Bedingung
 

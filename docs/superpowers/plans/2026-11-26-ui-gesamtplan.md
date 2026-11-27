@@ -140,6 +140,7 @@ Jeder Meilenstein endet mit grünem `mise run check`, `mise run smoke` und einem
 
 - **Spec:** UI §2.16 »Paket«, §2.17, §5 »E2E« und »Performance«, §4.2 Wünsche 1 und 2.
 - **Inhalt:** Tarball-Größe gegen die 3-MB-Schwelle aus UI §4.1 messen; Playwright-E2E in `ci.yml`; Benchmark-Skript mit 10⁴ Issues; BK §2.17 (Befehlsübersicht) und §2.21 (Tarball, Smoke-Test) nachziehen; ui.md auf `gebaut` setzen, Konsolidieren anbieten.
+- **Produziert:** Pack-Smoke-Test mit Messung des Anteils von `dist/ui/` (`scripts/pack-smoke.sh`, Grenze 3 MiB), `checkUiBuild(dir): { problems, initialGzip }` (`scripts/check-ui-build.ts`), `web/public/favicon.svg`; Playwright-E2E (`playwright.config.ts`, `test/browser/fixture.ts` mit `UiHome`/`UiServer`/`app`, `mise run e2e`, Job `e2e` in `ci.yml`); Benchmark `scripts/bench-ui.ts` (`--issues`, `--neighbors`, `--runs`, `--only`, `--trace`) über `scripts/bench-backlog.ts` (`benchIssue`, `writeBenchFiles`, `BENCH_PROJECTS`, `BENCH_SPRINTS`); Board: `slotAt`/`dropOf`/`dropFrom` nur mit Zellen als Ziel (`board-dnd.ts`), `CardDragSource`/`CellTarget`/`pressedCard`/`useCellDataOf` (`card-drag.tsx`, Board neben dem `DndContext`), `VirtualCards`/`VIRTUAL_FROM`/`CardRevealers` (`board-virtual.tsx`).
 
 ## Festlegungen
 
