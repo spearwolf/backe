@@ -106,6 +106,8 @@ export type PatchJson = {
   };
   /** Issues mit geänderten Kommentaren oder Anhängen. */
   touched?: string[];
+  /** Issue → Handles (`Backe-Actor`) der Commits, die es in diesem Patch geändert haben; fehlt, wenn leer. */
+  actors?: Record<string, string[]>;
   problems?: ProblemJson[];
 };
 

@@ -115,7 +115,28 @@ test('a body edit is a touch', async () => {
   });
   await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
   await settle(live);
-  expect(c.patches()).toEqual([{ rev: 1, head: live.head, upsert: {}, remove: {}, touched: [id] }]);
+  expect(c.patches()).toEqual([
+    { rev: 1, head: live.head, upsert: {}, remove: {}, touched: [id], actors: { [id]: ['spw'] } },
+  ]);
+});
+
+test('a patch names the actors of its issues', async () => {
+  const live = await start();
+  const c = collect(live);
+  const id = await create('Von spw');
+  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
+  expect(c.patches()[0]?.actors).toEqual({ [id]: ['spw'] });
+});
+
+test('a hand edit has no actors', async () => {
+  const id = await create('Vorher');
+  const live = await start();
+  const c = collect(live);
+  const file = join(b.root, issueFile(id));
+  await writeFile(file, (await readFile(file, 'utf8')).replace('title: Vorher', 'title: Nachher'));
+  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
+  await settle(live);
+  expect(c.patches()[0]).not.toHaveProperty('actors');
 });
 
 test('a deleted issue is a remove', async () => {

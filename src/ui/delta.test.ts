@@ -3,6 +3,7 @@ import {
   diffTables,
   entityLists,
   entityTable,
+  issueOfPath,
   needsFullReload,
   touchedIssues,
   watchedPath,
@@ -183,4 +184,11 @@ test('needsFullReload for config, directories and non-md paths', () => {
   expect(needsFullReload('issues/t0/bk-t0001/attachments/a.png')).toBe(false);
   expect(needsFullReload('issues/t0/bk-t0001/comments')).toBe(false);
   expect(needsFullReload('.backe/quarantine.jsonc')).toBe(false);
+});
+
+test('issueOfPath reads every path below an issue', () => {
+  expect(issueOfPath('issues/7f/bk-7f3k2/issue.md')).toBe('bk-7f3k2');
+  expect(issueOfPath('issues/7f/bk-7f3k2/comments/x.md')).toBe('bk-7f3k2');
+  expect(issueOfPath('issues/7f')).toBeUndefined();
+  expect(issueOfPath('projects/a.md')).toBeUndefined();
 });

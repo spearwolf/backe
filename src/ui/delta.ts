@@ -155,6 +155,15 @@ export function touchedIssue(path: string): string | undefined {
   return sub === 'comments' || sub === 'attachments' ? id : undefined;
 }
 
+/** `issues/<shard>/<id>/…` → `<id>`, sonst `undefined`. */
+export function issueOfPath(path: string): string | undefined {
+  const [top, shard, id, sub] = path.split('/');
+  if (top !== 'issues' || shard === undefined || id === undefined || sub === undefined) {
+    return undefined;
+  }
+  return id;
+}
+
 /** Issues, deren Kommentare oder Anhänge unter `paths` liegen, sortiert und ohne Doppelte. */
 export function touchedIssues(paths: Iterable<string>): string[] {
   const ids = new Set<string>();

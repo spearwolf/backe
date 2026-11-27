@@ -9,6 +9,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ResolvedContext } from '../context/resolve.ts';
+import { compareCodeUnits } from '../core/compare.ts';
 import { git } from '../git/exec.ts';
 import { resolveCommit } from '../git/history.ts';
 import { stateDir } from '../git/local-state.ts';
@@ -21,6 +22,7 @@ import {
   snapshotAt,
 } from '../store/snapshot.ts';
 import { startPeriodicSync } from '../tools/sync.ts';
+import { issueActors } from './actors.ts';
 import type { PatchJson, ServerEvent } from './api.ts';
 import {
   BACKLOG_DIRS,
@@ -86,6 +88,22 @@ async function changedPaths(root: string, from: string, to: string): Promise<str
   return stdout.split('\0').filter((p) => p !== '');
 }
 
+/** Die gesammelten Actors, beschränkt auf die Issues des Patches; `undefined`, wenn keine bleiben. */
+function patchActors(
+  patch: PatchJson,
+  actors: Map<string, Set<string>>,
+): Record<string, string[]> | undefined {
+  const ids = new Set<string>(patch.touched);
+  for (const issue of patch.upsert.issues ?? []) ids.add(issue.id);
+  for (const id of patch.remove.issues ?? []) ids.add(id);
+  const out: Record<string, string[]> = {};
+  for (const id of [...ids].sort(compareCodeUnits)) {
+    const handles = actors.get(id);
+    if (handles !== undefined) out[id] = [...handles].sort(compareCodeUnits);
+  }
+  return Object.keys(out).length === 0 ? undefined : out;
+}
+
 /**
  * Signatur eines Pfads für `touched`: Inhalts-Hash einer Datei, `dir` für ein Verzeichnis, `gone`
  * für einen fehlenden. Nach Inhalt, nicht nach mtime: `backe commit` schreibt unveränderte Dateien
@@ -124,6 +142,8 @@ export class LiveBacklog {
   #snapshot!: BacklogSnapshot;
   #table!: EntityTable;
   #head = '';
+  /** Handles der Commits seit dem letzten Vergleich je Issue; der nächste Patch hängt sie an. */
+  #actors = new Map<string, Set<string>>();
   #rev: number;
   #buffer: PatchJson[] = [];
   #sync: { json: Record<string, unknown>; text: string } | undefined;
@@ -432,6 +452,17 @@ export class LiveBacklog {
         full = true;
       }
     }
+    if (moved) {
+      try {
+        for (const [id, handles] of await issueActors(this.#root, this.#head, head)) {
+          const set = this.#actors.get(id) ?? new Set<string>();
+          for (const h of handles) set.add(h);
+          this.#actors.set(id, set);
+        }
+      } catch {
+        // Ohne Actors bleibt der Patch, was er war: ein Hinweis fehlt, keine Änderung.
+      }
+    }
     this.#head = head;
     for (const p of paths) if (needsFullReload(p)) full = true;
     let next: BacklogSnapshot;
@@ -460,9 +491,13 @@ export class LiveBacklog {
     const diff = diffTables(this.#table, table, touched);
     this.#snapshot = next;
     this.#table = table;
+    const actors = this.#actors;
+    this.#actors = new Map();
     if (diff !== undefined) {
       this.#rev += 1;
       const patch: PatchJson = { rev: this.#rev, head, ...diff };
+      const named = patchActors(patch, actors);
+      if (named !== undefined) patch.actors = named;
       this.#buffer.push(patch);
       if (this.#buffer.length > LIVE_TIMING.buffer) this.#buffer.shift();
       this.#emit({ event: 'patch', data: patch }, this.#id());
