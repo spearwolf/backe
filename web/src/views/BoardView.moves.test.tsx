@@ -6,7 +6,7 @@
 import type { State } from '@backe/core/state.ts';
 import type { IssueJson, StateJson } from '@backe/ui/api.ts';
 import type { ClientRect, DndContext } from '@dnd-kit/core';
-import { act, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ComponentProps } from 'react';
 import { m as w } from '../components/write/write.messages.ts';
@@ -21,6 +21,7 @@ import {
   cardLink,
   cardOf,
   cellOf,
+  foldOf,
   registerBoardViewHarness,
 } from '../test/board-view.tsx';
 import { testIssue, testPatch, tid } from '../test/state.ts';
@@ -183,13 +184,14 @@ test('a rejected drop springs back with the hint', async () => {
 });
 
 test('done with open sub-issues offers force for the whole move', async () => {
+  answerCommitted();
   call.mockRejectedValueOnce(
     new ApiError(400, 'invariant', 'Offene Sub-Issues', 'mit --force abschließen', {
       reason: 'open_children',
       ids: [tid(2)],
     }),
   );
-  board(
+  const { store } = board(
     [
       testIssue(1, { state: 'review', sprints: ['s1'] }),
       testIssue(2, { title: 'Kind', parent: tid(1) }),
@@ -223,8 +225,12 @@ test('done with open sub-issues offers force for the whole move', async () => {
   });
   await flush();
   expect(screen.queryByRole('dialog')).toBeNull();
-  // Der Fokus geht an die Karte zurück (ohne Commit in der Antwort steht sie wieder in `s1`).
-  expect(document.activeElement).toBe(cardLink(tid(1), 'Sprint 1'));
+  // Mit Commit bleibt die Vorschau bis zum Patch stehen: die Karte am neuen Platz, und der Fokus
+  // geht dorthin, nicht an die Bahn, aus der sie kam.
+  expect(cardIds('Sprint 2', 'done')).toEqual([tid(1)]);
+  expect(document.activeElement).toBe(cardLink(tid(1), 'Sprint 2'));
+  serverWrote(store, { ...testIssue(1), state: 'done', sprints: ['s2'] });
+  expect(document.activeElement).toBe(cardLink(tid(1), 'Sprint 2'));
 });
 
 test('a second drop waits and sends the server state', async () => {
@@ -239,9 +245,13 @@ test('a second drop waits and sends the server state', async () => {
   await alt('ArrowRight');
   expect(cardIds(m.noSprint, 'review')).toEqual([tid(1)]);
   expect(call).not.toHaveBeenCalled();
+  // Der Fokus folgt schon der Vorschau des wartenden Zugs und bleibt, wenn er hinausgeht.
+  expect(cellOf(m.noSprint, 'review').contains(document.activeElement)).toBe(true);
   serverWrote(store, { ...testIssue(1), state: 'in_progress' });
   await flush();
   expect(call).toHaveBeenCalledExactlyOnceWith('issue_move', { id: tid(1), to: 'review' });
+  expect(document.activeElement).toBe(cardLink(tid(1)));
+  expect(cellOf(m.noSprint, 'review').contains(document.activeElement)).toBe(true);
 });
 
 test('a second lane and column drop carries the from of the server', async () => {
@@ -300,6 +310,9 @@ test('alt arrows move the card and focus follows it', async () => {
   expect(cardLink(tid(1)).getAttribute('aria-keyshortcuts')).toBe(
     'Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight',
   );
+  // Hilfsmittel hören die Tastenzüge als Beschreibung des Links.
+  const hint = document.getElementById(cardLink(tid(1)).getAttribute('aria-describedby') ?? '');
+  expect(hint?.textContent).toBe(m.dragHint);
   cardLink(tid(1)).focus();
   await alt('ArrowDown');
   expect(call).toHaveBeenCalledExactlyOnceWith('issue_rank', { id: tid(1), after: tid(2) });
@@ -336,9 +349,61 @@ test('without write access there is no dragging and no alt keys', async () => {
   board([testIssue(1), testIssue(2)], { canWrite: false });
   expect(dnd.props).toBeUndefined();
   expect(cardLink(tid(1)).hasAttribute('aria-keyshortcuts')).toBe(false);
+  expect(cardLink(tid(1)).hasAttribute('aria-describedby')).toBe(false);
   cardLink(tid(1)).focus();
   await alt('ArrowDown');
   await alt('ArrowRight');
   expect(call).not.toHaveBeenCalled();
   expect(cardIds(m.noSprint, 'todo')).toEqual([tid(1), tid(2)]);
+});
+
+test('a rejected alt move gives focus back to the card where it was', async () => {
+  call.mockRejectedValueOnce(new ApiError(400, 'invariant', 'Nicht erlaubt', 'backe issue move'));
+  board([testIssue(1)]);
+  cardLink(tid(1)).focus();
+  await alt('ArrowRight');
+  await flush();
+  expect(cardIds(m.noSprint, 'todo')).toEqual([tid(1)]);
+  expect(document.activeElement).toBe(cardLink(tid(1)));
+  expect(cellOf(m.noSprint, 'todo').contains(document.activeElement)).toBe(true);
+});
+
+test('a pending focus ends when its lane is folded', async () => {
+  let reject!: (cause: unknown) => void;
+  call.mockImplementationOnce(
+    () =>
+      new Promise((_, r) => {
+        reject = r;
+      }),
+  );
+  const { store } = board([testIssue(1)]);
+  cardLink(tid(1)).focus();
+  await alt('ArrowRight');
+  // Eingeklappt, bevor die Ablehnung kommt: Die Karte springt in eine Bahn zurück, die keiner sieht.
+  await userEvent.click(foldOf(m.noSprint));
+  await act(async () =>
+    reject(new ApiError(400, 'invariant', 'Nicht erlaubt', 'backe issue move')),
+  );
+  act(() => (document.activeElement as HTMLElement).blur());
+  // Aufklappen ohne Fokus (`fireEvent` fokussiert nicht) und ein Patch danach: Die Karte greift
+  // nicht mehr nach dem Fokus.
+  fireEvent.click(foldOf(m.noSprint));
+  act(() => {
+    store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(2)] } }));
+  });
+  expect(cardIds(m.noSprint, 'todo')).toEqual([tid(1), tid(2)]);
+  expect(document.activeElement).toBe(document.body);
+});
+
+test('the click that ends a drag does not open the card', async () => {
+  const { router } = board([testIssue(1)]);
+  const card = active(1, '', 'todo');
+  start(card);
+  act(() => handlers().onDragEnd?.(event(card, null)));
+  // Der Klick nach dem Loslassen landet auf dem Link: verworfen, auch die native Navigation.
+  expect(fireEvent.click(cardLink(tid(1)))).toBe(false);
+  expect(router.location.value.pathname).toBe('/b/acme/board');
+  // Der nächste Klick (mit Zeiger-Druck davor) gehört wieder dem Nutzer.
+  await userEvent.click(cardLink(tid(1)));
+  expect(router.location.value.pathname).toBe(`/b/acme/issue/${tid(1)}`);
 });

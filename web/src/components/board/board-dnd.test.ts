@@ -9,6 +9,7 @@ import {
   type CellData,
   dropFrom,
   dropOf,
+  ownListeners,
   sideOf,
 } from './board-dnd.ts';
 
@@ -151,4 +152,16 @@ test('the drop from the drag event takes the side from the dragged centre', () =
   expect(
     dropFrom({ active: active(110), over: { ...over, data: { current: { other: 1 } } } }, lanes),
   ).toBeUndefined();
+});
+
+test('drag listeners ignore events from portals', () => {
+  const seen: unknown[] = [];
+  const own = ownListeners({ onPointerDown: (e: { target: unknown }) => seen.push(e.target) });
+  const inside = {};
+  const node = { contains: (n: unknown) => n === inside };
+  own.onPointerDown?.({ currentTarget: node, target: inside });
+  // Im React-Baum unter der Karte, im DOM aber woanders (Portal): kein Ziehen.
+  own.onPointerDown?.({ currentTarget: node, target: {} });
+  expect(seen).toEqual([inside]);
+  expect(ownListeners(undefined)).toEqual({});
 });

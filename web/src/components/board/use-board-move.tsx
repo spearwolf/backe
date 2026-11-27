@@ -10,6 +10,7 @@ import {
   useCallback,
   useContext,
   useLayoutEffect,
+  useRef,
   useState,
 } from 'react';
 import { type BoardGroup, columnOf, laneKeysOf } from '../../app/board-model.ts';
@@ -49,23 +50,31 @@ export const BoardMoveContext = createContext<BoardMoves>({
 export const useBoardMoves = (): BoardMoves => useContext(BoardMoveContext);
 
 /**
- * Die Tastenzüge an der fokussierten Karte; `undefined` ohne Schreibrecht. Ein eigener Kontext mit
- * stabiler Funktion: Die Bahnen ändern sich mit jedem Patch, die Karten (`memo`) sollen deswegen
- * nicht alle neu rendern.
+ * Tastenzüge an der fokussierten Karte und die Id des Hinweises, der sie Hilfsmitteln beschreibt;
+ * `undefined` ohne Schreibrecht. Ein eigener Kontext mit stabilem Wert: Die Bahnen ändern sich mit
+ * jedem Patch, die Karten (`memo`) sollen deswegen nicht alle neu rendern.
  */
-export const BoardKeyContext = createContext<((card: CardData, key: BoardKey) => void) | undefined>(
-  undefined,
-);
+export type BoardKeys = { onKey: (card: CardData, key: BoardKey) => void; hintId: string };
+export const BoardKeyContext = createContext<BoardKeys | undefined>(undefined);
 
-/** Der Link der Karte `id`, bevorzugt in Bahn `lane`; ohne Treffer dort in irgendeiner. */
-function cardLink(id: string, lane: string | undefined): HTMLElement | null {
+/**
+ * Der Link der Karte `id` in Bahn `lane`. Mit `anyLane` ohne Treffer dort der in irgendeiner Bahn —
+ * für die Rückkehr aus dem Dialog, nach dem die Karte auch woanders stehen kann. Ohne `anyLane`
+ * streng: Der Fokus folgt einem Zug nur in die Zelle, in die er die Karte brachte.
+ */
+function cardLink(id: string, lane: string | undefined, anyLane = false): HTMLElement | null {
   const cards = [...document.querySelectorAll<HTMLElement>('li[data-card]')].filter(
     (li) => li.dataset.card === id,
   );
-  const li =
-    cards.find((c) => c.dataset.lane === lane) ?? (lane === undefined ? cards[0] : undefined);
+  const li = cards.find((c) => c.dataset.lane === lane) ?? (anyLane ? cards[0] : undefined);
   return li?.querySelector<HTMLElement>('a') ?? null;
 }
+
+/** Ob Zellen der Bahn `lane` zu sehen sind; eingeklappt (oder verschwunden) nicht. */
+const laneShown = (lane: string): boolean =>
+  [...document.querySelectorAll<HTMLElement>('ul[data-lane]')].some(
+    (ul) => ul.dataset.lane === lane,
+  );
 
 /**
  * Zug senden samt Fehlerweg und Dialogen. `group` ist die Gruppierung der Ansicht: Sie entscheidet,
@@ -78,12 +87,18 @@ export function useBoardMove(group: BoardGroup): BoardMoves & { dialogs: ReactNo
   // Wohin der Fokus nach einem Tastenzug geht. Ein State statt einer Ref: Setzen rendert, und der
   // Layout-Effekt danach findet die Karte auch, wenn sie (nach einer Ablehnung) zurückspringt.
   const [follow, setFollow] = useState<{ id: string; lane: string }>();
+  // Wohin der Fokus nach dem Dialog geht: erst die Bahn aus dem Dialog, nach einem gelungenen
+  // `submit` die Zielbahn des Zugs. Eine Ref, denn das Schließen folgt dem `submit` unmittelbar.
+  const back = useRef<string | undefined>(undefined);
 
-  const openState = useCallback((d: BoardStateDialog) => setDialog(d), []);
+  const openState = useCallback((d: BoardStateDialog) => {
+    back.current = d.lane;
+    setDialog(d);
+  }, []);
 
   const move = useCallback(
     (drop: BoardDrop, opts: { focus?: boolean } = {}) => {
-      const { id, from } = drop;
+      const { id, from, to } = drop;
       // Wie es jetzt dasteht, samt Vorschau: Ein Patch kann das Issue während des Ziehens gelöscht
       // oder aus der Zelle genommen haben; dann ist das Ablegen veraltet, und nichts geht hinaus.
       const issue = store.issues.get(id).value;
@@ -94,7 +109,8 @@ export function useBoardMove(group: BoardGroup): BoardMoves & { dialogs: ReactNo
       if (plan === undefined) return;
       const sent = sendBoardMove(store, writes, id, plan);
       if (sent === undefined) return;
-      if (opts.focus === true) setFollow({ id, lane: drop.to.lane });
+      // Jeder neue Zug ersetzt ein offenes Folgen, auch eines, dessen Karte nie erschien.
+      setFollow(opts.focus === true ? { id, lane: to.lane } : undefined);
       if (plan.kind === 'rank') return;
       sent.catch((cause: ApiError) => {
         // Die Karte springt zurück; der Fokus geht mit, wenn er ihr gefolgt war.
@@ -105,23 +121,30 @@ export function useBoardMove(group: BoardGroup): BoardMoves & { dialogs: ReactNo
         }
         // `done` mit offenen Sub-Issues: Der Dialog nennt sie, »Trotzdem abschließen« wiederholt
         // den ganzen Zug mit `force` — Bahn und Spalte, als ein `batch`, wenn es einer war.
-        setDialog({
+        openState({
           id,
           action: plan.state,
           rejected: cause,
           lane: from.lane,
-          submit: (extra) => sendBoardMove(store, writes, id, plan, extra) ?? Promise.resolve(),
+          submit: async (extra) => {
+            await sendBoardMove(store, writes, id, plan, extra);
+            back.current = to.lane;
+          },
         });
       });
     },
-    [store, writes, group],
+    [store, writes, group, openState],
   );
 
   useLayoutEffect(() => {
     if (follow === undefined) return;
     const link = cardLink(follow.id, follow.lane);
-    // Noch nicht (oder nicht mehr) zu sehen, etwa in einer eingeklappten Bahn: Nichts zu tun.
-    if (link === null) return;
+    if (link === null) {
+      // Bahn eingeklappt oder weg: Das Folgen endet, sonst griffe die Karte beim Aufklappen viel
+      // später nach dem Fokus. Steht die Bahn da, kommt die Karte noch (ein späterer Render).
+      if (!laneShown(follow.lane)) setFollow(undefined);
+      return;
+    }
     setFollow(undefined);
     // Nur, wenn der Fokus mit der alten Karte verloren ging oder noch bei ihr ist; wer inzwischen
     // woanders arbeitet, dem nimmt ihn die Karte nicht weg.
@@ -144,7 +167,7 @@ export function useBoardMove(group: BoardGroup): BoardMoves & { dialogs: ReactNo
         onOpenChange={close}
         onCloseAutoFocus={(e) => {
           e.preventDefault();
-          cardLink(dialog.id, dialog.lane)?.focus();
+          cardLink(dialog.id, back.current, true)?.focus();
         }}
       />
     );

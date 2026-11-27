@@ -90,3 +90,24 @@ export function dropFrom(
     box === null ? 'after' : sideOf(box.top + box.height / 2, over.rect.top, over.rect.height);
   return dropOf(dragged, target, side, lanes);
 }
+
+type OwnEvent = { currentTarget: { contains(node: Node | null): boolean }; target: unknown };
+
+/**
+ * Die `listeners` von `useDraggable`, nur für Ereignisse aus dem Knoten selbst. React reicht ein
+ * `pointerdown` aus einem Portal (Kartenmenü, Dialog) durch den Komponentenbaum an die Karte
+ * weiter; ohne diese Prüfung begänne ein Ziehen der Karte unter dem Menü.
+ */
+export function ownListeners<E extends OwnEvent>(
+  // `SyntheticListenerMap` von dnd-kit typt die Handler nur als `Function`.
+  listeners: Readonly<Record<string, unknown>> | undefined,
+): Record<string, (event: E) => void> {
+  const out: Record<string, (event: E) => void> = {};
+  for (const [name, listener] of Object.entries(listeners ?? {})) {
+    if (typeof listener !== 'function') continue;
+    out[name] = (event) => {
+      if (event.currentTarget.contains(event.target as Node)) (listener as (e: E) => void)(event);
+    };
+  }
+  return out;
+}

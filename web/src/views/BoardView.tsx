@@ -8,7 +8,7 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { m as app } from '../app/app.messages.ts';
 import {
   boardColumns,
@@ -83,12 +83,16 @@ function Loaded({ state, backlog }: { state: BoardViewState; backlog: string }) 
   useLayoutEffect(() => {
     latest.current = { lanes, columns };
   });
-  const onKey = useCallback(
-    (card: CardData, key: BoardKey) => {
-      const drop = keyDrop(latest.current.lanes, card, key, latest.current.columns);
-      if (drop !== undefined) move(drop, { focus: true });
-    },
-    [move],
+  const hintId = useId();
+  const keys = useMemo(
+    () => ({
+      hintId,
+      onKey: (card: CardData, key: BoardKey) => {
+        const drop = keyDrop(latest.current.lanes, card, key, latest.current.columns);
+        if (drop !== undefined) move(drop, { focus: true });
+      },
+    }),
+    [move, hintId],
   );
 
   const body = (
@@ -108,7 +112,7 @@ function Loaded({ state, backlog }: { state: BoardViewState; backlog: string }) 
   );
   return (
     <BoardMoveContext.Provider value={moves}>
-      <BoardKeyContext.Provider value={canWrite ? onKey : undefined}>
+      <BoardKeyContext.Provider value={canWrite ? keys : undefined}>
         <div className="flex h-full min-h-0 flex-col">
           <BoardToolbar view={view} onView={(next) => state.prefs.setView(next)} />
           <div className="min-h-0 flex-1 overflow-auto">
@@ -134,6 +138,12 @@ function Loaded({ state, backlog }: { state: BoardViewState; backlog: string }) 
             )}
           </div>
         </div>
+        {/* Beschreibt jedem Kartenlink die Tastenzüge (`aria-describedby`); sichtbar nur dort. */}
+        {canWrite && (
+          <p id={hintId} hidden>
+            {m.dragHint}
+          </p>
+        )}
         {dialogs}
       </BoardKeyContext.Provider>
     </BoardMoveContext.Provider>
@@ -143,7 +153,9 @@ function Loaded({ state, backlog }: { state: BoardViewState; backlog: string }) 
 /**
  * Hilfsmittel: dnd-kit sagt sonst auf Englisch »Picked up draggable item drag:…« an und beschreibt
  * eine Leertasten-Bedienung, die es hier nicht gibt (nur `PointerSensor`). Die Tastatur geht über
- * Alt+Pfeil an der Karte; die Ansagen bleiben darum stumm.
+ * Alt+Pfeil an der Karte; die Ansagen bleiben darum stumm. Die Anleitung von dnd-kit hängt an den
+ * `attributes`, die die Karte nicht übernimmt; ihr Text ist nur gesetzt, damit kein englischer im
+ * DOM steht — den Kartenlinks beschreibt `m.dragHint` die Züge über ein eigenes Element.
  */
 const silent = () => undefined;
 const DND_ACCESSIBILITY = {
@@ -155,6 +167,30 @@ const DND_ACCESSIBILITY = {
   },
   screenReaderInstructions: { draggable: m.dragHint },
 };
+
+/**
+ * Schluckt den Klick, mit dem ein Ziehen endet. dnd-kit hält ihn nur mit `stopPropagation` auf;
+ * landet er auf einem Link, navigierte der Browser trotzdem — an `go()` vorbei, mit einem
+ * Neuladen der Seite. Am `window` in der Capture-Phase, vor dem Listener von dnd-kit am Dokument.
+ * Ohne Timer: Der Wächter endet mit dem geschluckten Klick, sonst mit dem nächsten Zeiger-Druck
+ * oder der nächsten Taste (nach Esc folgt kein Klick, und der nächste gehört wieder dem Nutzer).
+ */
+function swallowNextClick(win: Window): () => void {
+  const off = () => {
+    win.removeEventListener('click', swallow, true);
+    win.removeEventListener('pointerdown', off, true);
+    win.removeEventListener('keydown', off, true);
+  };
+  const swallow = (e: Event) => {
+    e.preventDefault();
+    e.stopPropagation();
+    off();
+  };
+  win.addEventListener('click', swallow, true);
+  win.addEventListener('pointerdown', off, true);
+  win.addEventListener('keydown', off, true);
+  return off;
+}
 
 const sameMarker = (a: Marker | undefined, b: Marker | undefined): boolean =>
   a === b ||
@@ -195,11 +231,16 @@ function useBoardDrag(lanes: readonly Lane[], move: (drop: BoardDrop) => void) {
     setDragged(undefined);
     setMarker(undefined);
   };
+  // Endet der Lauf ohne Klick, räumt der Abbau der Ansicht den Wächter weg.
+  const unguard = useRef<(() => void) | undefined>(undefined);
+  useEffect(() => () => unguard.current?.(), []);
   return {
     sensors,
     dragged,
     markerIn: (lane: string) => (marker?.lane === lane ? marker.at : undefined),
     onDragStart: ({ active }: DragStartEvent) => {
+      unguard.current?.();
+      unguard.current = swallowNextClick(window);
       const data = active.data.current as CardData | undefined;
       const card = current.current
         .find((l) => l.key === data?.lane)

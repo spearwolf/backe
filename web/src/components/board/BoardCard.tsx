@@ -11,7 +11,7 @@ import { useWrites } from '../../data/write-context.tsx';
 import { cn } from '../../lib/utils.ts';
 import { m as b } from '../../views/backlog.messages.ts';
 import { PendingMark } from '../write/PendingMark.tsx';
-import type { CardData } from './board-dnd.ts';
+import { type CardData, ownListeners } from './board-dnd.ts';
 import { BOARD_KEYS, type BoardKey } from './board-keys.ts';
 import { initialsOf } from './initials.ts';
 import { BoardKeyContext } from './use-board-move.tsx';
@@ -52,7 +52,7 @@ export const BoardCard = memo(function BoardCard(props: {
   // Ohne Schreibrecht gibt es keine Tastenzüge und keinen `DndContext`; die Hooks laufen
   // trotzdem (Regeln der Hooks), nur abgeschaltet.
   const disabled = !useWrites().canWrite;
-  const onKey = useContext(BoardKeyContext);
+  const keys = useContext(BoardKeyContext);
   const data = useMemo<CardData>(
     () => ({ type: 'card', id: issue.id, lane, column }),
     [issue.id, lane, column],
@@ -74,14 +74,14 @@ export const BoardCard = memo(function BoardCard(props: {
       data-card={issue.id}
       data-lane={lane}
       {...(drop === undefined ? {} : { 'data-drop': drop })}
-      {...(disabled ? {} : drag.listeners)}
+      {...(disabled ? {} : ownListeners(drag.listeners))}
       onKeyDown={(e) => {
         const key = boardKey(e);
-        if (disabled || key === undefined || onKey === undefined) return;
+        if (disabled || key === undefined || keys === undefined) return;
         // Ereignisse aus Menü und Dialogen kommen über das Portal hier an; sie meinen die Karte nicht.
         if (!e.currentTarget.contains(e.target as Node)) return;
         e.preventDefault();
-        onKey(data, key);
+        keys.onKey(data, key);
       }}
       className={cn(
         'relative rounded-md border bg-card text-card-foreground shadow-xs',
@@ -97,7 +97,9 @@ export const BoardCard = memo(function BoardCard(props: {
         href={href}
         draggable={false}
         onClick={go(href)}
-        {...(disabled ? {} : { 'aria-keyshortcuts': KEY_SHORTCUTS })}
+        {...(disabled || keys === undefined
+          ? {}
+          : { 'aria-keyshortcuts': KEY_SHORTCUTS, 'aria-describedby': keys.hintId })}
         className="flex flex-col gap-1.5 rounded-md p-2 text-sm outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring"
       >
         <CardFace card={card} />
