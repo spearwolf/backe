@@ -1,5 +1,12 @@
+import type { UserJson } from '@backe/ui/api.ts';
 import { testIssue, tid } from '../test/state.ts';
-import { projectReferences, projectRows, repoReferences, sprintGroups } from './settings-model.ts';
+import {
+  projectReferences,
+  projectRows,
+  repoReferences,
+  settingsRights,
+  sprintGroups,
+} from './settings-model.ts';
 
 test('repo references match by name with or without ref', () => {
   const issues = [
@@ -68,4 +75,62 @@ test('sprint groups put open first by start descending', () => {
   const { open, closed } = sprintGroups(sprints);
   expect(open.map((s) => s.slug)).toEqual(['late', 'a', 'b', 'no-start']);
   expect(closed.map((s) => s.slug)).toEqual(['recent', 'old', 'older']);
+});
+
+const spw: UserJson = { handle: 'spw', name: 'Spw', kind: 'human', admin: true };
+const ana: UserJson = { handle: 'ana', name: 'Ana', kind: 'human', admin: false };
+const bot: UserJson = { handle: 'bot', name: 'Bot', kind: 'agent', operator: 'ana', admin: false };
+const users = [spw, ana, bot];
+const config = { admins: ['spw'] };
+
+test('rights follow the identity protection', () => {
+  const as = (me: string | null, canWrite = true) =>
+    settingsRights({ canWrite, me, users, config });
+
+  const admin = as('spw');
+  expect(admin.addHuman).toBe(true);
+  expect(admin.addAgent).toBe('any');
+  expect(admin.createAgent).toBe(true);
+  expect(users.map((u) => admin.revokeKey(u))).toEqual([true, true, true]);
+  // `ana` ist Operator von `bot`, `spw` ist Admin und ich selbst.
+  expect(users.map((u) => admin.removeUser(u))).toEqual([false, false, true]);
+
+  const member = as('ana');
+  expect(member.addHuman).toBe(false);
+  expect(member.addAgent).toBe('self');
+  expect(member.createAgent).toBe(true);
+  expect(users.map((u) => member.revokeKey(u))).toEqual([false, true, true]);
+  expect(users.map((u) => member.removeUser(u))).toEqual([false, false, false]);
+
+  // Ein Agent ändert nur sich selbst und legt niemanden an.
+  const agent = as('bot');
+  expect([agent.addHuman, agent.addAgent, agent.createAgent]).toEqual([false, false, false]);
+  expect(users.map((u) => agent.revokeKey(u))).toEqual([false, false, true]);
+  expect(users.map((u) => agent.removeUser(u))).toEqual([false, false, false]);
+
+  for (const none of [as('spw', false), as(null)]) {
+    expect([none.addHuman, none.addAgent, none.createAgent]).toEqual([false, false, false]);
+    expect(users.some((u) => none.revokeKey(u) || none.removeUser(u))).toBe(false);
+  }
+});
+
+test('an agent listed in admins is no admin', () => {
+  const rights = settingsRights({
+    canWrite: true,
+    me: 'bot',
+    users,
+    config: { admins: ['spw', 'bot'] },
+  });
+  expect(rights.addHuman).toBe(false);
+  expect(rights.addAgent).toBe(false);
+  expect(rights.revokeKey(ana)).toBe(false);
+  expect(rights.removeUser(ana)).toBe(false);
+  // Ein Handle in `admins` ohne User-Datei ist auch keiner.
+  const ghost = settingsRights({
+    canWrite: true,
+    me: 'ghost',
+    users,
+    config: { admins: ['ghost'] },
+  });
+  expect([ghost.addHuman, ghost.addAgent, ghost.createAgent]).toEqual([false, false, false]);
 });

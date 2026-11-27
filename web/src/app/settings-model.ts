@@ -1,8 +1,10 @@
 import { compareCodeUnits } from '@backe/core/compare.ts';
 import { parseRepoRef, projectAncestors } from '@backe/core/names.ts';
+import type { BacklogConfig } from '@backe/core/schemas.ts';
 import { isSettled } from '@backe/core/state.ts';
+import { isAdmin } from '@backe/ops/admin.ts';
 import { compareIssues } from '@backe/ops/order.ts';
-import type { IssueJson, ProjectJson, SprintJson } from '@backe/ui/api.ts';
+import type { IssueJson, ProjectJson, SprintJson, UserJson } from '@backe/ui/api.ts';
 
 /**
  * Die Abschnitte des Tabs Settings (ui.md §2.10) in der Reihenfolge der Skizze `settings.png`.
@@ -128,5 +130,53 @@ export function sprintGroups(sprints: readonly SprintJson[]): {
   return {
     open: sorted.filter((s) => s.closed !== true),
     closed: sorted.filter((s) => s.closed === true),
+  };
+}
+
+/** Was die aktuelle Identität im Abschnitt Users & Agents darf (ui.md §2.10, BK §2.13 Punkt 4). */
+export type SettingsRights = {
+  /** Mensch anlegen (`user_add` ohne `agent`). */
+  addHuman: boolean;
+  /** Agent per vorhandenem Key: `'any'` (Admin, Operator frei), `'self'` (Operator fest = ich), `false`. */
+  addAgent: 'any' | 'self' | false;
+  /** `user_create_agent`: Operator = ich, darum nur für menschliche User. */
+  createAgent: boolean;
+  revokeKey(user: UserJson): boolean;
+  removeUser(user: UserJson): boolean;
+};
+
+const NO_RIGHTS: SettingsRights = {
+  addHuman: false,
+  addAgent: false,
+  createAgent: false,
+  revokeKey: () => false,
+  removeUser: () => false,
+};
+
+/**
+ * Spiegelt den Identitätsschutz von `verify`, damit die UI nur anbietet, was die Policy nicht
+ * sicher ablehnt: Admin ist nur ein Mensch in `admins`; ein Mitglied legt Agents mit sich selbst
+ * als Operator an und ändert sich und die eigenen Agents (nur als Mensch); User entfernen nur
+ * Admins, nie einen Admin, sich selbst oder einen Operator, den noch ein Agent nennt (BK §2.12).
+ */
+export function settingsRights(input: {
+  canWrite: boolean;
+  me: string | null;
+  users: readonly UserJson[];
+  config: Pick<BacklogConfig, 'admins'>;
+}): SettingsRights {
+  const { canWrite, me, users, config } = input;
+  if (!canWrite || me === null) return NO_RIGHTS;
+  const meUser = users.find((u) => u.handle === me);
+  const admin = isAdmin(config, me, meUser);
+  const human = meUser?.kind === 'human';
+  return {
+    addHuman: admin,
+    addAgent: admin ? 'any' : human ? 'self' : false,
+    createAgent: human,
+    revokeKey: (u) =>
+      admin || u.handle === me || (human && u.kind === 'agent' && u.operator === me),
+    removeUser: (u) =>
+      admin && !u.admin && u.handle !== me && !users.some((other) => other.operator === u.handle),
   };
 }

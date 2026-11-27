@@ -62,6 +62,7 @@ export function view(
     backlog?: string;
     section?: string;
     canWrite?: boolean;
+    me?: string | null;
     serverLang?: Locale;
     over?: Partial<StateJson>;
   } = {},
@@ -89,7 +90,12 @@ export function view(
     () => store.dispose(),
     () => router.dispose(),
   );
-  const access = { backlog, canWrite: opts.canWrite ?? true, me: 'spw', writes };
+  const access = {
+    backlog,
+    canWrite: opts.canWrite ?? true,
+    me: opts.me === undefined ? 'spw' : opts.me,
+    writes,
+  };
 
   const result = render(
     <UiContext.Provider value={{ theme, prefs }}>

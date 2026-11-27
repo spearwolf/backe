@@ -21,6 +21,7 @@ import {
   toggleId,
 } from '../components/settings/SettingsSection.tsx';
 import { SprintsSection } from '../components/settings/SprintsSection.tsx';
+import { UsersSection } from '../components/settings/UsersSection.tsx';
 import { useSignal } from '../data/use-signal.ts';
 import { cn } from '../lib/utils.ts';
 import { m } from './settings.messages.ts';
@@ -37,7 +38,7 @@ const SECTIONS: Record<
   repositories: { title: () => m.sectionRepositories, Own: ReposSection },
   projects: { title: () => m.sectionProjects, Own: ProjectsSection },
   sprints: { title: () => m.sectionSprints, Own: SprintsSection },
-  users: { title: () => m.sectionUsers },
+  users: { title: () => m.sectionUsers, Own: UsersSection },
   backlog: { title: () => m.sectionBacklog, Body: BacklogSection },
   interface: { title: () => m.sectionInterface, Body: InterfaceSection },
 };
