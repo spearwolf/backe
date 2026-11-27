@@ -11,7 +11,7 @@ import { cn } from '../../lib/utils.ts';
 import { m } from '../../views/board.messages.ts';
 import { StateIcon } from '../StateIcon.tsx';
 import { BoardCard } from './BoardCard.tsx';
-import { type CardSlot, VIRTUAL_FROM, VirtualCards } from './board-virtual.tsx';
+import { type CardSlot, CellCards } from './board-virtual.tsx';
 import { useCellData } from './card-drag.tsx';
 import { QuickCreate } from './QuickCreate.tsx';
 
@@ -205,11 +205,13 @@ const BoardCell = memo(function BoardCell(props: {
     'data-column': column,
     ...(over ? { 'data-over': 'true' } : {}),
     className: cn(
-      'flex min-h-16 flex-col gap-2 rounded-md bg-muted/40 p-2',
+      // Fokussierbar nur virtualisiert (`CellCards`): Fällt die fokussierte Karte aus dem Bild,
+      // geht der Fokus an die Zelle.
+      'flex min-h-16 flex-col gap-2 rounded-md bg-muted/40 p-2 outline-none focus-visible:ring-2 focus-visible:ring-ring',
       over && 'bg-accent ring-2 ring-primary',
     ),
   };
-  const cardOf = (card: Cell['cards'][number], slot?: Omit<CardSlot, 'card'>) => (
+  const cardOf = (card: Cell['cards'][number], slot: CardSlot | undefined) => (
     <BoardCard
       key={card.issue.id}
       backlog={backlog}
@@ -219,22 +221,12 @@ const BoardCell = memo(function BoardCell(props: {
       group={group}
       choices={choices}
       drop={marker?.kind === 'line' && marker.id === card.issue.id ? marker.side : undefined}
-      {...(slot === undefined ? {} : { index: slot.index, measure: slot.measure })}
+      slot={slot}
     />
   );
   return (
     <div>
-      {cell.cards.length >= VIRTUAL_FROM ? (
-        <VirtualCards
-          ul={ul}
-          lane={lane}
-          column={column}
-          cards={cell.cards}
-          render={({ card, ...slot }) => cardOf(card, slot)}
-        />
-      ) : (
-        <ul {...ul}>{cell.cards.map((card) => cardOf(card))}</ul>
-      )}
+      <CellCards ul={ul} lane={lane} column={column} cards={cell.cards} render={cardOf} />
       <QuickCreate group={group} lane={lane} laneName={laneName} column={column} />
     </div>
   );

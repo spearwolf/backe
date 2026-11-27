@@ -1,14 +1,16 @@
 import type { State } from '@backe/core/state.ts';
-import { useDraggable, useDroppable } from '@dnd-kit/core';
+import { useDndMonitor, useDraggable, useDroppable } from '@dnd-kit/core';
 import {
   createContext,
   type PointerEvent,
   type RefObject,
   useContext,
   useLayoutEffect,
+  useRef,
   useState,
 } from 'react';
 import type { CardData, CellData } from './board-dnd.ts';
+import { BOARD_SCROLLER } from './board-virtual.tsx';
 
 /**
  * Ziehen auf dem Board (ui.md §2.8) ohne Karten im Kontext von dnd-kit. Ändert sich der Kontext
@@ -46,13 +48,21 @@ export function pressedCard(
 }
 
 /**
- * Die einzige Drag-Quelle des Boards, im `DndContext`, ohne eigenes DOM. Ein Druck setzt die
- * gedrückte Karte als Knoten und Daten und reicht das Ereignis an den Listener von dnd-kit.
+ * Die einzige Drag-Quelle des Boards, im `DndContext`. Ein Druck setzt die gedrückte Karte als
+ * Knoten und Daten und reicht das Ereignis an den Listener von dnd-kit.
  *
  * Die Daten gehen über einen State: dnd-kit liest sie erst beim Aktivieren, also nach den 5 px aus
  * `POINTER` in `BoardView` — da hat React den Druck längst gerendert. Der Knoten dagegen muss
- * sofort stehen, dnd-kit misst ihn beim Aktivieren; `setNodeRef` setzt ihn ohne Render. Die gezogene
- * Karte trägt `data-dragging` direkt am `<li>`, ohne die Karte zu rendern.
+ * sofort stehen, dnd-kit misst ihn beim Aktivieren; `setNodeRef` setzt ihn ohne Render.
+ *
+ * Ein Druck zählt nur mit dem primären Zeiger und der linken Taste (wie beim `PointerSensor`) und
+ * nur, solange kein Zug läuft oder aussteht: Ein zweiter Zeiger (Finger neben der Maus, Stift)
+ * tauschte sonst mitten im Zug die Daten, und das Ablegen verschöbe die falsche Karte. Laufend
+ * heißt: vom angenommenen Druck bis Ende, Abbruch (Esc) oder Abbruch vor den 5 px.
+ *
+ * Die gezogene Karte ist halb durchsichtig über eine Regel nach ihrer ID, ohne Render der Karte. Eine
+ * Regel statt eines Attributs am `<li>`: In einer virtualisierten Zelle kann die Karte beim
+ * Auto-Scroll aus dem Bild fallen und mit einem neuen `<li>` zurückkommen.
  */
 export function CardDragSource({ press }: { press: CardPress }) {
   const [pressed, setPressed] = useState<{ node: HTMLLIElement; data: CardData }>();
@@ -60,26 +70,36 @@ export function CardDragSource({ press }: { press: CardPress }) {
     id: CARD_DRAG_ID,
     ...(pressed === undefined ? {} : { data: pressed.data }),
   });
-  useLayoutEffect(() => {
-    const node = pressed?.node;
-    if (node === undefined) return;
-    node.toggleAttribute('data-dragging', isDragging);
-    return () => node.removeAttribute('data-dragging');
-  }, [pressed, isDragging]);
+  const busy = useRef(false);
+  const free = () => {
+    busy.current = false;
+  };
+  useDndMonitor({ onDragEnd: free, onDragCancel: free, onDragAbort: free });
   // Nach jedem Render der aktuelle Handler: `listeners` kommen von dnd-kit und ändern sich mit ihm.
   useLayoutEffect(() => {
     press.current = (e) => {
+      if (busy.current || !e.isPrimary || e.button !== 0) return;
+      // Schon von einem anderen Sensor gefangen: dnd-kit nimmt den Druck dann nicht an.
+      const native = e.nativeEvent as { dndKit?: unknown };
+      if (native.dndKit !== undefined) return;
       const card = pressedCard(e.currentTarget, e.target);
       if (card === undefined) return;
       setNodeRef(card.node);
       setPressed(card);
       (listeners?.onPointerDown as ((e: PointerEvent) => void) | undefined)?.(e);
+      busy.current = native.dndKit !== undefined;
     };
     return () => {
       press.current = undefined;
     };
   });
-  return null;
+  if (!isDragging || pressed === undefined) return null;
+  const { id, lane } = pressed.data;
+  return (
+    <style data-dragging={id}>
+      {`[${BOARD_SCROLLER}] li[data-card="${CSS.escape(id)}"][data-lane="${CSS.escape(lane)}"] { opacity: 0.5; }`}
+    </style>
+  );
 }
 
 /**

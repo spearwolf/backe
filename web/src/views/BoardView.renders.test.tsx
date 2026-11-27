@@ -27,6 +27,7 @@ const counts = vi.hoisted(() => ({
   cell: new Map<string, number>(),
   menu: 0,
   hooks: new Set<string>(),
+  ended: [] as (string | undefined)[],
   dnd: undefined as DndProps | undefined,
 }));
 const bump = (map: Map<string, number>, id: string) => map.set(id, (map.get(id) ?? 0) + 1);
@@ -78,7 +79,12 @@ vi.mock('@dnd-kit/core', async (importOriginal) => {
     ...mod,
     DndContext: (props: DndProps) => {
       counts.dnd = props;
-      return createElement(mod.DndContext, props);
+      // Welche Karte das Ende eines Zugs meldet.
+      const onDragEnd: DndProps['onDragEnd'] = (e) => {
+        counts.ended.push((e.active.data.current as { id?: string } | undefined)?.id);
+        props.onDragEnd?.(e);
+      };
+      return createElement(mod.DndContext, { ...props, onDragEnd });
     },
     useDraggable: (args: Parameters<typeof mod.useDraggable>[0]) => {
       counts.hooks.add(String(args.id));
@@ -97,6 +103,7 @@ const clear = () => {
   counts.inner.clear();
   counts.cell.clear();
   counts.hooks.clear();
+  counts.ended.length = 0;
   counts.menu = 0;
 };
 beforeEach(clear);
@@ -230,7 +237,11 @@ test('a real pointer drag renders no card', () => {
   fireEvent.pointerDown(li, { isPrimary: true, button: 0, clientX: 0, clientY: 0 });
   fireEvent.pointerMove(document, { isPrimary: true, clientX: 0, clientY: 20 });
   fireEvent.pointerMove(document, { isPrimary: true, clientX: 0, clientY: 60 });
-  expect(li.hasAttribute('data-dragging')).toBe(true);
+  // Halb durchsichtig über eine Regel nach der ID der gezogenen Karte, ohne Render der Karte.
+  expect(document.querySelector<HTMLElement>('style[data-dragging]')?.dataset.dragging).toBe(
+    tid(1),
+  );
+  expect(getComputedStyle(li).opacity).toBe('0.5');
   // jsdom hat kein Layout: Alle Rechtecke sind leer, die Kopie liegt unter der letzten Karte, und
   // die Linie dahinter kommt und geht. Rendern darf höchstens diese eine Hülle und ihre Zelle.
   expect(Object.keys(rendered().shell).filter((id) => id !== tid(3))).toEqual([]);
@@ -242,6 +253,81 @@ test('a real pointer drag renders no card', () => {
     [],
   );
   expect(counts.hooks.has('board-card')).toBe(true);
+  // Fällt die Karte in einer großen Zelle aus dem Bild und kommt mit einem neuen `<li>` zurück,
+  // trifft die Regel auch das.
+  const again = document.createElement('li');
+  again.dataset.card = tid(1);
+  again.dataset.lane = 's1';
+  li.parentElement?.append(again);
+  expect(getComputedStyle(again).opacity).toBe('0.5');
+  again.remove();
   fireEvent.pointerUp(document, { isPrimary: true, clientX: 0, clientY: 60 });
-  expect(li.hasAttribute('data-dragging')).toBe(false);
+  expect(document.querySelector('style[data-dragging]')).toBeNull();
+  expect(getComputedStyle(li).opacity).not.toBe('0.5');
+  expect(counts.ended).toEqual([tid(1)]);
+});
+
+test('a second pointer during a drag changes neither the card nor the source', () => {
+  board(issues(), { over: { sprints } });
+  const card = (n: number) => document.querySelector(`li[data-card="${tid(n)}"]`) as HTMLElement;
+  fireEvent.pointerDown(card(1), {
+    isPrimary: true,
+    button: 0,
+    pointerId: 1,
+    clientX: 0,
+    clientY: 0,
+  });
+  fireEvent.pointerMove(document, { isPrimary: true, pointerId: 1, clientX: 0, clientY: 30 });
+  // Ein Stift neben der Maus: ebenfalls primär, eigener Zeiger, auf einer anderen Karte.
+  fireEvent.pointerDown(card(2), {
+    isPrimary: true,
+    button: 0,
+    pointerId: 2,
+    clientX: 0,
+    clientY: 0,
+  });
+  expect(document.querySelector<HTMLElement>('style[data-dragging]')?.dataset.dragging).toBe(
+    tid(1),
+  );
+  fireEvent.pointerUp(document, { isPrimary: true, pointerId: 1, clientX: 0, clientY: 30 });
+  expect(counts.ended).toEqual([tid(1)]);
+  // Danach zählt ein Druck wieder, auch einer, der vor den 5 px endet (Abbruch statt Zug).
+  fireEvent.pointerDown(card(2), {
+    isPrimary: true,
+    button: 0,
+    pointerId: 1,
+    clientX: 0,
+    clientY: 0,
+  });
+  fireEvent.pointerUp(document, { isPrimary: true, pointerId: 1, clientX: 0, clientY: 0 });
+  fireEvent.pointerDown(card(3), {
+    isPrimary: true,
+    button: 0,
+    pointerId: 1,
+    clientX: 0,
+    clientY: 0,
+  });
+  fireEvent.pointerMove(document, { isPrimary: true, pointerId: 1, clientX: 0, clientY: 30 });
+  fireEvent.pointerUp(document, { isPrimary: true, pointerId: 1, clientX: 0, clientY: 30 });
+  expect(counts.ended).toEqual([tid(1), tid(3)]);
+  // Ein nicht primärer Zeiger (zweiter Finger) oder die rechte Taste beginnt keinen Zug.
+  fireEvent.pointerDown(card(2), {
+    isPrimary: false,
+    button: 0,
+    pointerId: 3,
+    clientX: 0,
+    clientY: 0,
+  });
+  fireEvent.pointerMove(document, { isPrimary: false, pointerId: 3, clientX: 0, clientY: 30 });
+  fireEvent.pointerUp(document, { isPrimary: false, pointerId: 3, clientX: 0, clientY: 30 });
+  fireEvent.pointerDown(card(2), {
+    isPrimary: true,
+    button: 2,
+    pointerId: 1,
+    clientX: 0,
+    clientY: 0,
+  });
+  fireEvent.pointerMove(document, { isPrimary: true, pointerId: 1, clientX: 0, clientY: 30 });
+  fireEvent.pointerUp(document, { isPrimary: true, pointerId: 1, clientX: 0, clientY: 30 });
+  expect(counts.ended).toEqual([tid(1), tid(3)]);
 });

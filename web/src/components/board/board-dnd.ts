@@ -118,6 +118,14 @@ export function dropFrom(
   const slot = slotAt(box.top + box.height / 2, cards.length, (i) =>
     (cards[i] as Element).getBoundingClientRect(),
   );
-  const slotId = (cards[slot] as HTMLElement | undefined)?.dataset.card;
+  let slotId = (cards[slot] as HTMLElement | undefined)?.dataset.card;
+  // Unter der letzten gerenderten Karte einer virtualisierten Zelle: vor die im Modell folgende,
+  // nicht ans Ende hinter Tausende ungerenderte.
+  const lastShown = (cards[cards.length - 1] as HTMLElement | undefined)?.dataset.card;
+  if (slotId === undefined && lastShown !== undefined) {
+    const model = cardsIn(lanes, target.lane, target.column);
+    const at = model.indexOf(lastShown);
+    if (at >= 0 && at < model.length - 1) slotId = model[at + 1];
+  }
   return dropOf(dragged, target, slotId, lanes);
 }

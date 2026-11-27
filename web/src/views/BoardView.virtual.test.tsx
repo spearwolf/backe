@@ -12,9 +12,10 @@ import {
   call,
   cardIds,
   cardLink,
+  cardOf,
   registerBoardViewHarness,
 } from '../test/board-view.tsx';
-import { testIssue, tid } from '../test/state.ts';
+import { testIssue, testPatch, tid } from '../test/state.ts';
 import { m } from './board.messages.ts';
 
 const CARD = 66;
@@ -46,8 +47,11 @@ beforeAll(() => {
     configurable: true,
     value(this: Element) {
       const height = this instanceof HTMLLIElement && this.dataset.card !== undefined ? CARD : 0;
+      // Eine Zelle wandert wie im Browser mit dem Scrollstand nach oben; der Scrollbereich steht.
+      const cell = this instanceof HTMLUListElement && this.dataset.column !== undefined;
+      const top = cell ? -(this.closest<HTMLElement>('[data-board-scroller]')?.scrollTop ?? 0) : 0;
       return {
-        top: 0,
+        top,
         left: 0,
         right: 0,
         bottom: height,
@@ -101,4 +105,39 @@ test('focus follows a card moved past the rendered cards of a big cell', async (
   expect(call).toHaveBeenCalledExactlyOnceWith('issue_move', { id: tid(last), to: 'todo' });
   await waitFor(() => expect(document.activeElement).toBe(cardLink(tid(last))));
   expect(cardIds(m.noSprint, 'todo')).not.toContain(tid(1));
+});
+
+test('rendered cards of a big cell name their place and the length of the cell', () => {
+  board(many(VIRTUAL_FROM + 50));
+  const li = cardOf(tid(2));
+  expect(li.getAttribute('aria-posinset')).toBe('2');
+  expect(li.getAttribute('aria-setsize')).toBe(String(VIRTUAL_FROM + 50));
+});
+
+test('a cell crossing the threshold keeps its cards and the focus', () => {
+  const { store } = board(many(VIRTUAL_FROM - 1));
+  const li = cardOf(tid(1));
+  cardLink(tid(1)).focus();
+  // Ein Patch aus dem CLI hebt die Zelle über die Schwelle: dasselbe `<li>`, derselbe Fokus.
+  act(() => {
+    store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(VIRTUAL_FROM)] } }));
+  });
+  expect(cardOf(tid(1))).toBe(li);
+  expect(document.activeElement).toBe(cardLink(tid(1)));
+  expect(cardOf(tid(1)).getAttribute('aria-setsize')).toBe(String(VIRTUAL_FROM));
+  // Und zurück unter die Schwelle.
+  act(() => {
+    store.applyPatch(testPatch(3, { remove: { issues: [tid(VIRTUAL_FROM)] } }));
+  });
+  expect(cardOf(tid(1))).toBe(li);
+  expect(document.activeElement).toBe(cardLink(tid(1)));
+});
+
+test('a focused card scrolled out of sight leaves the focus with its cell', () => {
+  board(many(VIRTUAL_FROM + 50));
+  cardLink(tid(1)).focus();
+  const scroller = document.querySelector<HTMLElement>('[data-board-scroller]') as HTMLElement;
+  act(() => scroller.scrollTo({ top: CARD * 120 }));
+  expect(cardIds(m.noSprint, 'todo')).not.toContain(tid(1));
+  expect(document.activeElement).toBe(document.querySelector('ul[data-column="todo"]'));
 });

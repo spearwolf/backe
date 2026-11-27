@@ -13,6 +13,7 @@ import { PendingMark } from '../write/PendingMark.tsx';
 import type { LaneChoice } from './BoardLane.tsx';
 import type { CardData } from './board-dnd.ts';
 import { BOARD_KEYS, type BoardKey } from './board-keys.ts';
+import type { CardSlot } from './board-virtual.tsx';
 import { CardMenu } from './CardMenu.tsx';
 import { initialsOf } from './initials.ts';
 import { BoardKeyContext, type BoardKeys } from './use-board-move.tsx';
@@ -53,11 +54,10 @@ export const BoardCard = memo(function BoardCard(props: {
   choices: readonly LaneChoice[];
   /** Markierung beim Ziehen: Die gezogene Karte landete vor bzw. hinter dieser. */
   drop?: 'before' | 'after' | undefined;
-  /** In einer virtualisierten Zelle (`VirtualCards`): Index in der Zelle und Ref zum Messen. */
-  index?: number;
-  measure?: (node: Element | null) => void;
+  /** In einer virtualisierten Zelle (`CellCards`): Platz in der Zelle und Ref zum Messen. */
+  slot?: CardSlot | undefined;
 }) {
-  const { backlog, card, lane, column, group, choices, drop, index, measure } = props;
+  const { backlog, card, lane, column, group, choices, drop, slot } = props;
   const { issue } = card;
   // Ohne Schreibrecht gibt es keine Tastenzüge und keinen `DndContext`.
   const disabled = !useWrites().canWrite;
@@ -68,7 +68,15 @@ export const BoardCard = memo(function BoardCard(props: {
   );
   return (
     <li
-      {...(measure === undefined ? {} : { ref: measure, 'data-index': index })}
+      {...(slot === undefined
+        ? {}
+        : {
+            ref: slot.measure,
+            'data-index': slot.index,
+            // Gerendert sind nur die sichtbaren Karten; Hilfsmittel nennen Platz und Länge der Zelle.
+            'aria-posinset': slot.index + 1,
+            'aria-setsize': slot.count,
+          })}
       data-card={issue.id}
       data-lane={lane}
       {...(drop === undefined ? {} : { 'data-drop': drop })}
@@ -84,8 +92,6 @@ export const BoardCard = memo(function BoardCard(props: {
         'relative rounded-md border bg-card text-card-foreground shadow-xs',
         // `blocked` zusätzlich über die Umrandung, nicht über Farbe (ui.md §2.13).
         issue.state === 'blocked' && 'border-2 border-foreground',
-        // Gesetzt von `CardDragSource`, ohne Render der Karte.
-        'data-[dragging]:opacity-50',
         // Die Linie mittig im Abstand zur Nachbarkarte (`gap-2` der Zelle).
         'data-[drop]:before:absolute data-[drop]:before:inset-x-0 data-[drop]:before:h-0.5 data-[drop]:before:rounded-full data-[drop]:before:bg-primary',
         'data-[drop=before]:before:-top-[5px] data-[drop=after]:before:-bottom-[5px]',

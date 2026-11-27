@@ -31,8 +31,8 @@ import { boardCollision, type CardData, dropFrom } from '../components/board/boa
 import { type BoardKey, keyDrop } from '../components/board/board-keys.ts';
 import {
   BOARD_SCROLLER,
-  CardRevealContext,
-  CardRevealers,
+  VirtualCells,
+  VirtualCellsContext,
 } from '../components/board/board-virtual.tsx';
 import {
   CardDragSource,
@@ -99,8 +99,11 @@ function Loaded({ state, backlog }: { state: BoardViewState; backlog: string }) 
   const { group } = view;
   const columns = useMemo(() => boardColumns(view), [view]);
   // Virtualisierte Zellen melden sich hier an; das Fokus-Folgen holt über sie eine Karte ins Bild.
-  const [revealers] = useState(() => new CardRevealers());
-  const { move, openState, dialogs } = useBoardMove(group, revealers.reveal);
+  const [cells] = useState(() => new VirtualCells());
+  const { move, openState, dialogs } = useBoardMove(group, cells.reveal);
+  // Nach jedem Render: Bahnen können sich umordnen, ohne dass sich die Höhe des Inhalts ändert, und
+  // virtualisierte Zellen messen dann nach, wo sie beginnen.
+  useLayoutEffect(() => cells.relayout());
   const moves = useMemo(() => ({ move, openState }), [move, openState]);
   const drag = useBoardDrag(lanes, move);
   const press = useRef<CardPress['current']>(undefined);
@@ -157,9 +160,9 @@ function Loaded({ state, backlog }: { state: BoardViewState; backlog: string }) 
             className="min-h-0 flex-1 overflow-auto"
             {...(canWrite ? { onPointerDown: (e) => press.current?.(e) } : {})}
           >
-            <CardRevealContext.Provider value={revealers}>
+            <VirtualCellsContext.Provider value={cells}>
               <CellDataContext.Provider value={cellData}>{body}</CellDataContext.Provider>
-            </CardRevealContext.Provider>
+            </VirtualCellsContext.Provider>
             {canWrite && (
               // Neben dem Board, nicht darum (`card-drag.tsx`): Die Quelle, je Zelle ein Ziel und die
               // Kopie unter dem Zeiger, sonst nichts, was mit dem Kontext von dnd-kit rendern müsste.

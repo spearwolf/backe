@@ -338,7 +338,7 @@ const RAF_LOGGER = `(() => {
 const DRAG_STATE = (target: string) => `JSON.stringify({
   probe: window.__probe,
   over: [...document.querySelectorAll('ul[data-over]')].map((u) => u.dataset.lane + ':' + u.dataset.column),
-  dragging: [...document.querySelectorAll('li[data-dragging]')].map((li) => li.dataset.card),
+  dragging: document.querySelector('style[data-dragging]')?.dataset.dragging ?? null,
   scroller: (() => {
     const el = document.querySelector('ul[data-column]')?.closest('.overflow-auto');
     return el ? { top: el.scrollTop, left: el.scrollLeft, height: el.clientHeight } : null;
@@ -594,7 +594,7 @@ async function boardDrag(
       if (id === null) throw new Error('Karte ohne data-card');
       // Die Karte mittig ins Bild: Nahe am Rand des Scrollbereichs scrollt dnd-kit beim Ziehen von
       // selbst. Ein Sprung per Skript holt Karten auf einmal ins Bild; bis sie ihre echte Höhe haben
-      // (`content-visibility`), steht die Box noch nicht — darum nach jeder Ruhe nachmessen.
+      // (virtualisierte Zellen messen jede Karte erst gerendert), steht die Box noch nicht — darum nach jeder Ruhe nachmessen.
       const viewport = page.viewportSize()?.height ?? 800;
       let from = await source.boundingBox();
       for (let k = 0; k < 5 && !centred(from, viewport); k++) {

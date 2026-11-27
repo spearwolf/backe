@@ -220,3 +220,18 @@ test('without a target, cell data or geometry there is no ranked drop', () => {
       ?.anchor,
   ).toEqual({ after: tid(3) });
 });
+
+test('below the last rendered card of a virtual cell the drop goes before the next in the model', () => {
+  // Gerendert sind nur die 1 und die 2; im Modell folgt die 3.
+  const shown: CellData = {
+    ...cell('s1', 'todo'),
+    list: listOf([tid(1), tid(2)], { tops: [0, 50] }),
+  };
+  expect(dropFrom(dragEvent(card(1), 200, shown), lanes)?.anchor).toEqual({ before: tid(3) });
+  // Ist die letzte gerenderte auch die letzte im Modell, bleibt es beim Ende.
+  const all: CellData = {
+    ...cell('s1', 'todo'),
+    list: listOf([tid(1), tid(2), tid(3)], { tops: [0, 50, 100] }),
+  };
+  expect(dropFrom(dragEvent(card(1), 200, all), lanes)?.anchor).toEqual({ after: tid(3) });
+});
