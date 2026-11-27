@@ -1,3 +1,4 @@
+import type { IssueJson, PatchJson } from '@backe/ui/api.ts';
 import { describe, expect, it } from 'vitest';
 import { hello, issue, patch, setup, state } from '../test/session-harness.ts';
 
@@ -107,6 +108,52 @@ describe('openSession', () => {
     const { session, es } = setup();
     es()?.emitEvent('sync', { ahead: 2 });
     expect(session.store.sync.value).toEqual({ ahead: 2 });
+    session.dispose();
+  });
+
+  it('onApplied gets the patch and the server state before it', async () => {
+    const { session, es, answer } = setup();
+    es()?.emitEvent('hello', hello(1));
+    await answer(state(1));
+    const calls: Array<[PatchJson, ReadonlyMap<string, IssueJson | undefined>]> = [];
+    session.onApplied((p, before) => calls.push([p, before]));
+    session.store.setOverlay(1, new Map([['bk-t0001', { title: 'Lokal' }]]));
+    es()?.emitEvent('patch', patch(2, [{ ...issue(1), title: 'Neu' }]));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[0].rev).toBe(2);
+    expect(calls[0]?.[1].get('bk-t0001')?.title).toBe('Issue 1');
+    es()?.emitEvent('patch', patch(2, [issue(1)]));
+    expect(calls).toHaveLength(1);
+    session.dispose();
+  });
+
+  it('a throwing listener neither breaks the patch nor other listeners; off unsubscribes', async () => {
+    const { session, es, answer } = setup();
+    es()?.emitEvent('hello', hello(1));
+    await answer(state(1));
+    const seen: number[] = [];
+    session.onApplied(() => {
+      throw new Error('boom');
+    });
+    const off = session.onApplied((p) => seen.push(p.rev));
+    es()?.emitEvent('patch', patch(2, [issue(2)]));
+    expect(session.store.rev.value).toBe(2);
+    expect(seen).toEqual([2]);
+    off();
+    es()?.emitEvent('patch', patch(3, [issue(3)]));
+    expect(seen).toEqual([2]);
+    session.dispose();
+  });
+
+  it('patches drained after a load reach onApplied', async () => {
+    const { session, es, answer } = setup();
+    const seen: number[] = [];
+    session.onApplied((p) => seen.push(p.rev));
+    es()?.emitEvent('hello', hello(1));
+    es()?.emitEvent('patch', patch(2, [issue(2)]));
+    expect(seen).toEqual([]);
+    await answer(state(1));
+    expect(seen).toEqual([2]);
     session.dispose();
   });
 });

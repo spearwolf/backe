@@ -1,8 +1,8 @@
-import type { PatchJson } from '@backe/ui/api.ts';
+import type { IssueJson, PatchJson } from '@backe/ui/api.ts';
 import { createSignal, type Signal, SignalGroup } from '@spearwolf/signalize';
 import { ApiError } from './api-client.ts';
 import { Connection, type ConnectionDeps, type ConnectionStatus } from './connection.ts';
-import { Store } from './store.ts';
+import { type PatchOutcome, Store } from './store.ts';
 import { callTool, uploadAttachment } from './tools.ts';
 import { Writes } from './writes.ts';
 
@@ -19,6 +19,10 @@ export type Session = {
   readonly writes: Writes;
   /** Lädt `/state` neu; erfüllt, sobald das letzte Laden fertig ist, auch nach einem Fehler. */
   refresh(): Promise<void>;
+  /** Nach jedem angewendeten Patch (auch aus dem Puffer), mit dem Serverstand der betroffenen Issues davor. */
+  onApplied(
+    listener: (patch: PatchJson, before: ReadonlyMap<string, IssueJson | undefined>) => void,
+  ): () => void;
   dispose(): void;
 };
 
@@ -61,10 +65,38 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
     for (const resolve of ready) resolve();
   };
 
+  const listeners = new Set<
+    (patch: PatchJson, before: ReadonlyMap<string, IssueJson | undefined>) => void
+  >();
+
+  /**
+   * Der einzige Weg eines Patches in den Store: hält den Serverstand der betroffenen Issues vor
+   * dem Anwenden fest und meldet nur angewendete Patches (`stale` und `gap` melden nichts).
+   */
+  const apply = (p: PatchJson): PatchOutcome => {
+    const ids = new Set([
+      ...(p.upsert.issues ?? []).map((i) => i.id),
+      ...(p.remove.issues ?? []),
+      ...(p.touched ?? []),
+    ]);
+    const before = new Map<string, IssueJson | undefined>();
+    for (const id of ids) before.set(id, store.issues.server(id));
+    const outcome = store.applyPatch(p);
+    if (outcome === 'applied') {
+      for (const listener of listeners) {
+        // Ein Hörer, der wirft, darf weder den Patch noch die anderen Hörer stören.
+        try {
+          listener(p, before);
+        } catch {}
+      }
+    }
+    return outcome;
+  };
+
   const drain = (): void => {
     while (buffer.length > 0 && !disposed) {
       const next = buffer.shift() as PatchJson;
-      if (store.applyPatch(next) === 'gap') {
+      if (apply(next) === 'gap') {
         // Der Rest bleibt im Puffer und läuft nach dem Neuladen durch.
         load();
         return;
@@ -131,7 +163,7 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
         buffer.push(p);
         return;
       }
-      if (store.applyPatch(p) === 'gap') {
+      if (apply(p) === 'gap') {
         buffer.length = 0;
         buffer.push(p);
         reload();
@@ -174,9 +206,16 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
     error,
     writes,
     refresh,
+    onApplied(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
+      listeners.clear();
       for (const off of handles) off();
       connection.close();
       writes.dispose();
