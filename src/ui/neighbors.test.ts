@@ -1,4 +1,4 @@
-import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { writeOp } from '../../test/helpers/context.ts';
 import {
@@ -106,10 +106,33 @@ async function refsOf(dir: string): Promise<string> {
   return join((await gitDirs(dir)).commonDir, 'refs');
 }
 
+const isVerify = (args: readonly string[]) => args[0] === 'rev-parse' && args.includes('--verify');
+
 function verifyCalls(): number {
-  return vi
-    .mocked(git)
-    .mock.calls.filter(([args]) => args[0] === 'rev-parse' && args.includes('--verify')).length;
+  return vi.mocked(git).mock.calls.filter(([args]) => isVerify(args)).length;
+}
+
+async function realGit(): Promise<typeof git> {
+  return (await vi.importActual<typeof import('../git/exec.ts')>('../git/exec.ts')).git;
+}
+
+const emfile = () => Object.assign(new Error('EMFILE'), { code: 'EMFILE' });
+
+/** spw und `claude-1` mit einem baren Remote außerhalb des Backlog-Verzeichnisses, ohne Hub. */
+async function fromTwoClones(): Promise<{
+  s: Setup;
+  agentCtx: ResolvedContext;
+  wc: string;
+  remote: string;
+}> {
+  const { spw, agent, remote } = await twoClones();
+  const s: Setup = {
+    b: spw,
+    ctx: spw.ctx,
+    cloneCtx: agent.ctx,
+    backlogDir: join(spw.homes.backeHome, 'backlogs', 'acme'),
+  };
+  return { s, agentCtx: agent.ctx, wc: agent.wc, remote };
 }
 
 const debounceMs = LIVE_TIMING.neighborMs;
@@ -182,20 +205,14 @@ test('events during the debounce collapse into one move', async () => {
 });
 
 test('a tracking ref of a neighbour counts as a move', async () => {
-  const { spw, agent } = await twoClones();
-  const s: Setup = {
-    b: spw,
-    ctx: spw.ctx,
-    cloneCtx: agent.ctx,
-    backlogDir: join(spw.homes.backeHome, 'backlogs', 'acme'),
-  };
+  const { s, agentCtx, wc } = await fromTwoClones();
   const rec = recorder();
   const onMove = vi.fn();
   await start(s, onMove, rec.watch);
-  await agentPush(agent.ctx);
+  await agentPush(agentCtx);
   fakeTimers();
 
-  rec.at(await refsOf(agent.wc)).fire('remotes/origin/main');
+  rec.at(await refsOf(wc)).fire('remotes/origin/main');
   await vi.advanceTimersByTimeAsync(debounceMs);
 
   await vi.waitFor(() => expect(onMove).toHaveBeenCalledTimes(1));
@@ -308,6 +325,124 @@ test('the first glance at start is no move, also on an unknown commit', async ()
   expect(onMove).not.toHaveBeenCalled();
 });
 
+test('a neighbour the first round could not read counts with its first value', async () => {
+  const { s, agentCtx, wc } = await fromTwoClones();
+  const agentCommon = (await gitDirs(wc)).commonDir;
+  const rec = recorder();
+  let fail = true;
+  const watch: WatchFn = (path, opts, listener) => {
+    if (fail && path === agentCommon) throw emfile();
+    return rec.watch(path, opts, listener);
+  };
+  const onMove = vi.fn();
+  const w = await start(s, onMove, watch);
+  await agentPush(agentCtx);
+
+  fail = false;
+  await w.check();
+  expect(onMove).toHaveBeenCalledTimes(1);
+});
+
+test('a neighbour that appears in a trailing round of start counts', async () => {
+  const { s, agentCtx, remote } = await fromTwoClones();
+  // Remote und Tracking-Ref des Agenten stehen auf einem Commit, den spw nicht hat.
+  await agentPush(agentCtx);
+  const other = join(s.backlogDir, 'other');
+  const rec = recorder();
+  const onMove = vi.fn();
+  const real = await realGit();
+  let armed = true;
+  fakeTimers();
+  // Während der erste Durchlauf den Agenten liest, entsteht ein Nachbar, und ein Ereignis fordert
+  // einen Nachlauf an.
+  vi.mocked(git).mockImplementation(async (args, opts) => {
+    const r = await real(args, opts);
+    if (armed && isVerify(args)) {
+      armed = false;
+      await real(['clone', '-q', remote, other], { cwd: s.backlogDir });
+      rec.at(s.backlogDir).fire('other');
+      vi.advanceTimersByTime(debounceMs);
+    }
+    return r;
+  });
+  try {
+    await start(s, onMove, rec.watch);
+  } finally {
+    vi.mocked(git).mockImplementation(real);
+  }
+
+  expect(armed).toBe(false);
+  expect(rec.has(await refsOf(other))).toBe(true);
+  expect(onMove).toHaveBeenCalledTimes(1);
+});
+
+test('a recreated neighbour gets fresh watches and counts as new', async () => {
+  const s = await withHub();
+  await agentPush(s.agentCtx);
+  const rec = recorder();
+  const onMove = vi.fn();
+  const w = await start(s, onMove, rec.watch);
+  const agentRefs = await refsOf(s.wc);
+  const first = rec.at(agentRefs);
+
+  // Gelöscht und neu geklont zwischen zwei Durchläufen; der Stand ist derselbe, spw kennt ihn nicht.
+  await rm(s.wc, { recursive: true, force: true });
+  await agentCopy(s);
+  await w.check();
+
+  expect(first.closed).toBe(true);
+  expect(rec.at(agentRefs)).not.toBe(first);
+  expect(rec.has(agentRefs)).toBe(true);
+  expect(onMove).toHaveBeenCalledTimes(1);
+});
+
+test('a throwing onMove is not swallowed', async () => {
+  const s = await withHub();
+  const onMove = vi.fn(() => {
+    throw new Error('boom');
+  });
+  const w = await start(s, onMove);
+  await agentPush(s.agentCtx);
+
+  await expect(w.check()).rejects.toThrow('boom');
+  await expect(w.check()).resolves.toBeUndefined();
+  expect(onMove).toHaveBeenCalledTimes(1);
+});
+
+test('an unexpected error is not swallowed', async () => {
+  const s = await withAgent();
+  const rec = recorder();
+  let fail = false;
+  const watch: WatchFn = (path, opts, listener) => {
+    if (fail && path !== s.backlogDir) throw new TypeError('bug');
+    return rec.watch(path, opts, listener);
+  };
+  const w = await start(s, vi.fn(), watch);
+  await agentCopy(s);
+
+  fail = true;
+  await expect(w.check()).rejects.toThrow(TypeError);
+  fail = false;
+  await w.check();
+  expect(rec.has(await refsOf(join(s.backlogDir, 'hub.git')))).toBe(true);
+});
+
+test('neighbours behind a symlinked BACKE_HOME are found, the own copy is not', async () => {
+  const s = await withHub();
+  const link = join(dirname(s.b.homes.backeHome), 'backe-link');
+  await symlink(s.b.homes.backeHome, link);
+  const rec = recorder();
+  const onMove = vi.fn();
+  const w = await start(s, onMove, rec.watch, { backlogDir: join(link, 'backlogs', 'acme') });
+
+  expect(rec.has(await refsOf(s.wc))).toBe(true);
+  expect(rec.has(await refsOf(s.hub))).toBe(true);
+  expect(rec.has(await refsOf(s.b.root))).toBe(false);
+  await agentPush(s.agentCtx);
+  await w.check();
+  expect(onMove).toHaveBeenCalledTimes(1);
+});
+
 test('a vanished neighbour is dropped', async () => {
   const s = await withHub();
   const rec = recorder();
@@ -364,7 +499,7 @@ test('a neighbour whose watch fails leaves no handle and is retried', async () =
   const agentCommon = (await gitDirs(s.wc)).commonDir;
   let fail = true;
   const watch: WatchFn = (path, opts, listener) => {
-    if (fail && path === agentCommon) throw Object.assign(new Error('EMFILE'), { code: 'EMFILE' });
+    if (fail && path === agentCommon) throw emfile();
     return rec.watch(path, opts, listener);
   };
   const w = await start(s, vi.fn(), watch);
@@ -417,9 +552,7 @@ test('start never throws and the next check opens what failed', async () => {
   const rec = recorder();
   let fail = true;
   const watch: WatchFn = (path, opts, listener) => {
-    if (fail && path === s.backlogDir) {
-      throw Object.assign(new Error('EMFILE'), { code: 'EMFILE' });
-    }
+    if (fail && path === s.backlogDir) throw emfile();
     return rec.watch(path, opts, listener);
   };
   const w = await start(s, vi.fn(), watch);
@@ -495,12 +628,65 @@ test('a check requested during a running one runs once more afterwards', async (
   expect(verifyCalls()).toBe(6);
 });
 
+test('a check requested right after a round ends gets its own round', async () => {
+  const s = await withHub();
+  const w = await start(s, vi.fn());
+  const real = await realGit();
+  try {
+    // Die Anforderung kommt aus einer Fortsetzung, die nach dem letzten Lesen des Durchlaufs läuft;
+    // die Tiefe verschiebt sie über alle Mikrotasks bis nach dem Ende des Durchlaufs.
+    for (let depth = 0; depth < 12; depth++) {
+      let seen = 0;
+      let at = -1;
+      let requested: Promise<void> | undefined;
+      vi.mocked(git).mockImplementation(async (args, opts) => {
+        const r = await real(args, opts);
+        if (isVerify(args) && ++seen === 2) {
+          let p = Promise.resolve();
+          for (let i = 0; i < depth; i++) p = p.then(() => {});
+          void p.then(() => {
+            at = verifyCalls();
+            requested = w.check();
+          });
+        }
+        return r;
+      });
+      await w.check();
+      await vi.waitFor(() => expect(requested).toBeDefined());
+      await requested;
+      expect({ depth, after: verifyCalls() > at }).toEqual({ depth, after: true });
+    }
+  } finally {
+    vi.mocked(git).mockImplementation(real);
+  }
+});
+
+test('a round running during close does not reopen the dir watch', async () => {
+  const s = await withHub();
+  const rec = recorder();
+  let fail = true;
+  const watch: WatchFn = (path, opts, listener) => {
+    if (fail && path === s.backlogDir) throw emfile();
+    return rec.watch(path, opts, listener);
+  };
+  const w = await start(s, vi.fn(), watch);
+  fail = false;
+
+  const running = w.check();
+  w.close();
+  await running;
+
+  expect(rec.all.some((r) => r.path === s.backlogDir)).toBe(false);
+  expect(rec.all.filter((r) => !r.closed)).toEqual([]);
+});
+
 test('a real push in the hub reaches onMove', async () => {
   const s = await withHub();
   const onMove = vi.fn();
   await start(s, onMove, fsWatch);
-  await agentPush(s.agentCtx);
+  // Vor dem Push, damit die Entprellung des ersten Ereignisses schon auf dem Fake-Timer läuft.
   fakeTimers();
+  await agentPush(s.agentCtx);
 
   await vi.waitFor(
     async () => {
@@ -553,7 +739,7 @@ test('close during the last comparison suppresses onMove', async () => {
   const onMove = vi.fn();
   const w = await start(s, onMove);
   await agentPush(s.agentCtx);
-  const real = (await vi.importActual<typeof import('../git/exec.ts')>('../git/exec.ts')).git;
+  const real = await realGit();
   // Beide Nachbarn haben sich bewegt; `close` kommt während des Vergleichs des zweiten.
   let compared = 0;
   vi.mocked(git).mockImplementation(async (args, opts) => {
@@ -575,7 +761,7 @@ test('a neighbour found while closing gets no watch', async () => {
   const rec = recorder();
   const w = await start(s, vi.fn(), rec.watch);
   await agentCopy(s);
-  const real = (await vi.importActual<typeof import('../git/exec.ts')>('../git/exec.ts')).git;
+  const real = await realGit();
   // Der erste Git-Aufruf des Durchlaufs liest die Git-Dirs des ersten neuen Nachbarn.
   vi.mocked(git).mockImplementationOnce(async (args, opts) => {
     w.close();

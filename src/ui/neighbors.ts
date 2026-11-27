@@ -5,14 +5,23 @@
  * Arbeitskopie `refs/remotes/<remote>/<branch>` — der Stand, den sie zuletzt gepusht oder geholt
  * hat. Eine Bewegung meldet nur, wer auf einen Commit zeigt, den die eigene Arbeitskopie noch nicht
  * hat; der eigene Push in den Hub zählt so nicht. Ein Watch-Ereignis ist nur der Anlass zum
- * Vergleich, die Werte der Refs entscheiden. Der Blick beim Start ist die Grundlinie; ein später
- * entdeckter Nachbar zählt schon mit dem ersten Blick, denn eine frische Arbeitskopie pusht oft in
- * derselben Ruhephase, in der sie entsteht. Nachbarn sind eine Optimierung: Nichts hier wirft.
+ * Vergleich, die Werte der Refs entscheiden.
+ *
+ * Grundlinie ist genau, was der erste vollständige Durchlauf gelesen hat; diese Werte sind keine
+ * Bewegung. Jeder spätere Durchlauf zählt, auch ein Nachlauf noch innerhalb von `start`: Ein
+ * Nachbar, den der erste Durchlauf nicht lesen konnte oder der danach entsteht, ist neu, und sein
+ * erster Wert zählt, wenn die eigene Arbeitskopie ihn nicht kennt — eine frische Arbeitskopie
+ * pusht oft in derselben Ruhephase, in der sie entsteht. Ein gelöschter und neu angelegter Nachbar
+ * ist ebenfalls neu.
+ *
+ * Nachbarn sind eine Optimierung: Git- und Dateisystemfehler kosten nur den betroffenen Nachbarn
+ * oder Durchlauf. Durch kommen nur Fehler von `onMove` und Programmierfehler.
  */
 import type { Dirent } from 'node:fs';
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { physicalPath } from '../context/paths.ts';
+import { BackeError } from '../core/errors.ts';
 import { git } from '../git/exec.ts';
 import { isAncestor } from '../git/history.ts';
 import { exists } from '../store/files.ts';
@@ -36,12 +45,24 @@ const HUB = 'hub.git';
 
 type Handle = { close(): void };
 
+type Candidate = { hub: boolean; id: string };
+
 type Neighbor = {
   ref: string;
+  /** Identität des Verzeichnisses (Gerät, Inode, Entstehung); ändert sie sich, ist er neu. */
+  id: string;
   handles: Handle[];
   /** Letzter Blick: `undefined` vor dem ersten, `null`, solange der Ref fehlt. */
   last: string | null | undefined;
 };
+
+/** Fehler, die nur einen Nachbarn oder Durchlauf kosten: Git (`BackeError`) und Dateisystem. */
+function skippable(err: unknown): boolean {
+  return (
+    err instanceof BackeError ||
+    (err instanceof Error && typeof (err as NodeJS.ErrnoException).code === 'string')
+  );
+}
 
 export class NeighborWatch {
   readonly #opts: NeighborOptions;
@@ -54,8 +75,8 @@ export class NeighborWatch {
   #running: Promise<void> | undefined;
   #again = false;
   #closed = false;
-  /** Nach dem ersten Blick beim Start: Neue Nachbarn zählen dann schon mit ihrem ersten Blick. */
-  #started = false;
+  /** Der erste vollständige Durchlauf ist vorbei; ab jetzt zählt auch der erste Wert eines Nachbarn. */
+  #baselined = false;
 
   private constructor(opts: NeighborOptions) {
     this.#opts = opts;
@@ -63,18 +84,21 @@ export class NeighborWatch {
   }
 
   /**
-   * Öffnet die Watches und liest den ersten Blick; wirft nie. Was dabei nicht aufgeht (ein
-   * fehlendes Backlog-Verzeichnis, ein Watch-Fehler), versucht der nächste `check` erneut.
+   * Öffnet die Watches und liest die Grundlinie. Was dabei nicht aufgeht (ein fehlendes
+   * Backlog-Verzeichnis, ein Watch-, Git- oder Dateisystemfehler), versucht der nächste `check`
+   * erneut. Wirft nur, was `check` durchlässt.
    */
   static async start(opts: NeighborOptions): Promise<NeighborWatch> {
     const nw = new NeighborWatch(opts);
     await nw.#watchDir();
     await nw.check();
-    nw.#started = true;
     return nw;
   }
 
-  /** Nachbarn neu lesen, Refs vergleichen; Single-Flight mit Nachlauf. Wirft nie. */
+  /**
+   * Nachbarn neu lesen, Refs vergleichen; Single-Flight mit Nachlauf. Git- und
+   * Dateisystemfehler schluckt er; was `onMove` wirft und Programmierfehler lehnt er ab.
+   */
   check(): Promise<void> {
     if (this.#closed) return Promise.resolve();
     if (this.#running !== undefined) {
@@ -82,18 +106,20 @@ export class NeighborWatch {
       return this.#running;
     }
     const run = async () => {
-      do {
-        this.#again = false;
-        try {
-          await this.#round();
-        } catch {
-          // Ein Fehler beim Lesen des Backlog-Verzeichnisses kostet nur diesen Durchlauf.
-        }
-      } while (this.#again && !this.#closed);
+      try {
+        do {
+          this.#again = false;
+          const moved = await this.#round();
+          if (moved && !this.#closed) this.#opts.onMove();
+        } while (this.#again && !this.#closed);
+      } finally {
+        // Im selben Schritt wie die letzte Prüfung von `#again`: Ein `check` danach startet einen
+        // eigenen Lauf statt sich an einen anzuhängen, der schon fertig ist. `#round` wartet immer,
+        // darum ist `#running` hier schon gesetzt.
+        this.#running = undefined;
+      }
     };
-    this.#running = run().finally(() => {
-      this.#running = undefined;
-    });
+    this.#running = run();
     return this.#running;
   }
 
@@ -124,52 +150,65 @@ export class NeighborWatch {
    */
   async #watchDir(): Promise<void> {
     try {
-      if (!(await exists(this.#opts.backlogDir))) return;
-      const h = this.#watch(this.#opts.backlogDir, { recursive: false }, () => this.#schedule());
-      if (this.#closed) h.close();
-      else this.#dirHandle = h;
-    } catch {
+      if (!(await exists(this.#opts.backlogDir)) || this.#closed) return;
+      this.#dirHandle = this.#watch(this.#opts.backlogDir, { recursive: false }, () =>
+        this.#schedule(),
+      );
+    } catch (err) {
+      if (!skippable(err)) throw err;
       // Der nächste Durchlauf versucht es erneut.
     }
   }
 
-  async #round(): Promise<void> {
+  /** Ein Durchlauf; `true`, wenn sich ein Nachbar auf einen unbekannten Stand bewegt hat. */
+  async #round(): Promise<boolean> {
+    if (this.#closed) return false;
     if (this.#dirHandle === undefined) await this.#watchDir();
-    this.#own ??= await physicalPath(this.#opts.own);
+    try {
+      this.#own ??= await physicalPath(this.#opts.own);
+    } catch (err) {
+      if (!skippable(err)) throw err;
+      // Ohne eigene Arbeitskopie ließe sie sich nicht von den Nachbarn trennen; der Durchlauf fällt
+      // aus und zählt nicht als Grundlinie.
+      return false;
+    }
     const found = await this.#candidates(this.#own);
     for (const [dir, n] of this.#neighbors) {
-      if (found.has(dir)) continue;
+      if (found.get(dir)?.id === n.id) continue;
       for (const h of n.handles) h.close();
       this.#neighbors.delete(dir);
     }
+    const baseline = !this.#baselined;
     let moved = false;
-    for (const [dir, hub] of found) {
-      if (this.#closed) return;
+    for (const [dir, c] of found) {
+      if (this.#closed) return false;
       try {
-        const n = this.#neighbors.get(dir) ?? (await this.#open(dir, hub));
+        const n = this.#neighbors.get(dir) ?? (await this.#open(dir, c));
         if (n === undefined) continue;
         const value = await this.#read(dir, n.ref);
         const before = n.last;
         n.last = value;
         if (value === null || value === before) continue;
-        // Der Blick beim Start ist die Grundlinie, keine Bewegung.
-        if (before === undefined && !this.#started) continue;
+        if (before === undefined && baseline) continue;
         if (!(await this.#known(value))) moved = true;
-      } catch {
+      } catch (err) {
+        if (!skippable(err)) throw err;
         // Ein verschwundener oder kaputter Nachbar fällt aus diesem Durchlauf; der nächste versucht
         // es erneut.
       }
     }
-    if (moved && !this.#closed) this.#opts.onMove();
+    this.#baselined = true;
+    return moved;
   }
 
-  /** Die Nachbarn im Backlog-Verzeichnis, Pfad → ist der Hub; die eigene Arbeitskopie nie. */
-  async #candidates(own: string): Promise<Map<string, boolean>> {
-    const found = new Map<string, boolean>();
+  /** Die Nachbarn im Backlog-Verzeichnis nach Pfad; die eigene Arbeitskopie nie. */
+  async #candidates(own: string): Promise<Map<string, Candidate>> {
+    const found = new Map<string, Candidate>();
     let entries: Dirent[];
     try {
       entries = await readdir(this.#opts.backlogDir, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+      if (!skippable(err)) throw err;
       return found;
     }
     for (const e of entries) {
@@ -179,11 +218,12 @@ export class NeighborWatch {
       try {
         if (!hub && !(await exists(join(dir, '.git')))) continue;
         if (!this.#neighbors.has(dir) && (await physicalPath(dir)) === own) continue;
-      } catch {
+        const st = await stat(dir);
+        found.set(dir, { hub, id: `${st.dev}:${st.ino}:${st.birthtimeMs}` });
+      } catch (err) {
+        if (!skippable(err)) throw err;
         // Unlesbar: kein Nachbar, solange es so bleibt.
-        continue;
       }
-      found.set(dir, hub);
     }
     return found;
   }
@@ -194,7 +234,7 @@ export class NeighborWatch {
    * Repo, in dem `BACKE_HOME` liegt). Beim Hub muss das Common-Dir der Hub sein, bei einer
    * Arbeitskopie das Git-Dir `<dir>/.git`.
    */
-  async #open(dir: string, hub: boolean): Promise<Neighbor | undefined> {
+  async #open(dir: string, { hub, id }: Candidate): Promise<Neighbor | undefined> {
     const { gitDir, commonDir } = await gitDirs(dir);
     const expected = await physicalPath(hub ? dir : join(dir, '.git'));
     if ((await physicalPath(hub ? commonDir : gitDir)) !== expected) return undefined;
@@ -203,6 +243,7 @@ export class NeighborWatch {
     const top = hub ? 'heads' : 'remotes';
     const n: Neighbor = {
       ref: hub ? `refs/heads/${branch}` : `refs/remotes/${remote}/${branch}`,
+      id,
       handles: [],
       last: undefined,
     };
@@ -239,7 +280,8 @@ export class NeighborWatch {
   async #known(sha: string): Promise<boolean> {
     try {
       return await isAncestor(this.#opts.own, sha, 'HEAD');
-    } catch {
+    } catch (err) {
+      if (!skippable(err)) throw err;
       return false;
     }
   }
