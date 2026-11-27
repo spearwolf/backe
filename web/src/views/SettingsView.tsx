@@ -12,17 +12,24 @@ import {
 import { type Folded, readFolded, writeFolded } from '../app/settings-prefs.ts';
 import { BacklogSection } from '../components/settings/BacklogSection.tsx';
 import { InterfaceSection } from '../components/settings/InterfaceSection.tsx';
+import { ReposSection } from '../components/settings/ReposSection.tsx';
 import { SettingsSection, sectionId, toggleId } from '../components/settings/SettingsSection.tsx';
 import { useSignal } from '../data/use-signal.ts';
 import { cn } from '../lib/utils.ts';
 import { m } from './settings.messages.ts';
 
+type Frame = { folded: boolean; onToggle: () => void };
+
 /**
  * Titel und Inhalt je Abschnitt, an einer Stelle. Ein Abschnitt ohne `Body` zeigt vorerst nur
- * seinen Rahmen; seinen Inhalt bringt er mit, sobald er gebaut ist.
+ * seinen Rahmen; seinen Inhalt bringt er mit, sobald er gebaut ist. Ein Abschnitt mit Aktionen im
+ * Kopf (`Own`) setzt seinen Rahmen selbst, weil Kopf und Inhalt einen Zustand teilen.
  */
-const SECTIONS: Record<Section, { title: () => string; Body?: ComponentType }> = {
-  repositories: { title: () => m.sectionRepositories },
+const SECTIONS: Record<
+  Section,
+  { title: () => string; Body?: ComponentType; Own?: ComponentType<Frame> }
+> = {
+  repositories: { title: () => m.sectionRepositories, Own: ReposSection },
   projects: { title: () => m.sectionProjects },
   sprints: { title: () => m.sectionSprints },
   users: { title: () => m.sectionUsers },
@@ -94,8 +101,11 @@ function Settings({ backlog, section, shown }: Props) {
             </p>
           )}
           {SETTINGS_SECTIONS.map((id) => {
-            const { title, Body } = SECTIONS[id];
+            const { title, Body, Own } = SECTIONS[id];
             const isFolded = folded[id] === true;
+            if (Own !== undefined) {
+              return <Own key={id} folded={isFolded} onToggle={() => setFold(id, !isFolded)} />;
+            }
             return (
               <SettingsSection
                 key={id}
