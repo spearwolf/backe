@@ -29,7 +29,7 @@ import * as snapshotModule from '../store/snapshot.ts';
 import { LIVE_TIMING, LiveBacklog, type LiveDeps, LiveHub, parseEventId } from './live.ts';
 import { stateJson } from './state.ts';
 import type { WatchFn } from './watch.ts';
-import { fsWatch } from './watch.ts';
+import { fsWatch, slashed } from './watch.ts';
 
 const BOOT = '0123abcd';
 const WAIT = { timeout: 10_000 };
@@ -628,40 +628,58 @@ describe('neighbours', () => {
 
   test('neighbour pushes converge to a fresh state after a burst', async () => {
     const { agentCtx } = await withAgent(3600);
+    const agentWc = agentCtx.backlog.workingCopy as string;
     const spawn = inProcess(() => ctx);
     const live = await startWith(ctx, { sync: { spawn } });
     const initial = await stateJson(ctx, live.rev);
     const c = collect(live);
+    /** Ruhephasen von `neighborMs`, die der Test schafft; je Phase höchstens eine Runde. */
+    let phases = 0;
+    const quiet = (check: () => void | Promise<void>) =>
+      vi.waitFor(async () => {
+        phases += 1;
+        await vi.advanceTimersByTimeAsync(LIVE_TIMING.neighborMs);
+        await check();
+      }, WAIT);
     const ids: string[] = [];
+    let pushes = 0;
     for (let i = 0; i < 30; i++) {
-      if (i % 3 === 2) {
-        await writeOp(agentCtx, {
-          op: 'issue.move',
-          id: ids.at(-1) as string,
-          from: 'todo',
-          to: 'in_progress',
-        });
-        await syncNow(agentCtx, { spawn: () => {} });
-        if (i === 14) await git(['pack-refs', '--all'], { cwd: join(backlogDir(), 'hub.git') });
-      } else {
+      if (i % 3 !== 2) {
         ids.push(
           await writeOp(agentCtx, { op: 'issue.create', title: `Burst ${i}`, state: 'todo' }),
         );
+        continue;
       }
+      await writeOp(agentCtx, {
+        op: 'issue.move',
+        id: ids.at(-1) as string,
+        from: 'todo',
+        to: 'in_progress',
+      });
+      await syncNow(agentCtx, { spawn: () => {} });
+      pushes += 1;
+      // Jeder Push ist eine eigene Runde: genau ein Sync, dann holt spw den Stand und sendet ihn.
+      await quiet(() => expect(spawn).toHaveBeenCalledTimes(pushes));
+      await Promise.all(syncs);
+      const agentHead = await revParse(agentWc, 'HEAD');
+      await quiet(() => {
+        expect(live.head).toBe(agentHead);
+        expect(c.patches().at(-1)?.head).toBe(agentHead);
+      });
+      // Zwischen zwei Runden: Der Hub packt seine Refs, der Wert bleibt, ein Sync folgt nicht.
+      if (pushes === 5) await git(['pack-refs', '--all'], { cwd: join(backlogDir(), 'hub.git') });
     }
-    const agentHead = await revParse(agentCtx.backlog.workingCopy as string, 'HEAD');
-    await advancing(() => {
-      expect(live.head).toBe(agentHead);
-      expect(c.patches().at(-1)?.head).toBe(agentHead);
-    });
+    await quiet(() => {});
     await Promise.all(syncs);
     await settle(live);
     const fresh = await stateJson(ctx);
     expect(live.head).toBe(fresh.head);
+    expect(live.head).toBe(await revParse(agentWc, 'HEAD'));
+    expect(c.patches().length).toBeGreaterThan(1);
     const folded = c.patches().reduce(applyPatch, initial);
     expect(comparable(folded)).toEqual(comparable(fresh));
-    expect(spawn.mock.calls.length).toBeGreaterThanOrEqual(1);
-    expect(spawn.mock.calls.length).toBeLessThanOrEqual(10);
+    expect(spawn).toHaveBeenCalledTimes(pushes);
+    expect(spawn.mock.calls.length).toBeLessThanOrEqual(phases);
   }, 60_000);
 
   test('the safety net catches a lost neighbour push', async () => {
@@ -685,15 +703,27 @@ describe('neighbours', () => {
   test('a stopped watcher starts no neighbour sync', async () => {
     const { agentCtx } = await withAgent();
     const spawn = vi.fn();
+    const hubRefs = join(backlogDir(), 'hub.git', 'refs');
+    const hubEvents: string[] = [];
+    // Meldet, wann ein Ereignis aus den Refs des Hubs bei der Nachbar-Watch angekommen ist.
+    const watch: WatchFn = (path, opts, listener) =>
+      fsWatch(path, opts, (name) => {
+        listener(name);
+        if (path === hubRefs && name !== null && slashed(name).startsWith('heads/')) {
+          hubEvents.push(name);
+        }
+      });
     const scheduled = vi.spyOn(scheduleModule, 'scheduleSync');
     try {
-      const live = await startWith(ctx, { sync: { spawn } });
+      const live = await startWith(ctx, { watch, sync: { spawn } });
       collect(live);
       const timers = vi.getTimerCount();
       await agentPush(agentCtx);
-      // Die Entprellung des Nachbarn läuft schon, wenn der Watcher endet.
-      await vi.waitFor(() => expect(vi.getTimerCount()).toBeGreaterThan(timers), WAIT);
+      // Der Push ist bei der Nachbar-Watch angekommen; ihre Entprellung läuft, wenn der Watcher endet.
+      await vi.waitFor(() => expect(hubEvents.length).toBeGreaterThan(0), WAIT);
+      expect(vi.getTimerCount()).toBe(timers + 1);
       await live.stop();
+      expect(vi.getTimerCount()).toBe(0);
       await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
       expect(scheduled).not.toHaveBeenCalled();
       expect(spawn).not.toHaveBeenCalled();

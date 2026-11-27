@@ -237,39 +237,50 @@ export class LiveBacklog {
         },
       },
     );
-    if (ownCopy) {
-      // Pusht ein Nachbar (ui.md §2.4.1 Punkt 3), holt ein Hintergrund-Sync den Stand, statt bis
-      // zum nächsten `pull_interval` zu warten; der Pull bewegt dann `HEAD` und ergibt den Patch.
-      const { remote, branch } = (await requireHeadConfig(this.#root)).sync;
-      this.#neighbors = await NeighborWatch.start({
-        backlogDir: join(this.#ctx.homes.backeHome, 'backlogs', this.#ctx.backlog.value),
-        own: this.#root,
-        remote,
-        branch,
-        debounceMs: LIVE_TIMING.neighborMs,
-        ...(deps.watch === undefined ? {} : { watch: deps.watch }),
-        onMove: () => this.#neighborMoved(deps.sync),
-      });
-    }
+    if (ownCopy) await this.#openOwnCopy(deps);
     // Sicherheitsnetz: `fs.watch` kann Ereignisse verlieren. Regelmäßig werden `HEAD` und die im
     // Arbeitsbaum geänderten Dateien mit dem letzten Blick verglichen, dazu die Refs der Nachbarn.
     this.#safety = setInterval(() => {
       this.#refDirty = true;
       this.#scanDue = true;
       this.#kick();
-      // `check` lehnt nur Programmierfehler ab; die kosten hier nur diesen Blick.
+      // `check` lehnt nur Programmierfehler ab; die kosten hier nur diesen Blick. Geloggt wird
+      // nicht: `backe ui` hat keinen Logger und gibt außer seiner Startzeile nichts aus.
       void this.#neighbors?.check().catch(() => {});
     }, LIVE_TIMING.safetyMs);
     this.#head = await resolveCommit(this.#root, 'HEAD');
     this.#dirtySigs = await this.#dirtyFiles();
     this.#snapshot = await loadSnapshot(this.#root);
     this.#table = entityTable(this.#snapshot);
-    const sync = ownCopy ? await syncJson(this.#ctx) : null;
-    if (sync !== null) this.#sync = { json: sync, text: JSON.stringify(sync) };
-    if (ownCopy) this.#stopPeriodic = await startPeriodicSync(this.#ctx, deps.sync);
     this.#ready = true;
     this.#linger();
     this.#kick();
+  }
+
+  /**
+   * Was nur die eigene Arbeitskopie hat, nach ihren Watchern und vor dem Laden von `HEAD`: die
+   * Nachbar-Watch, der Sync-Zustand und der periodische Sync. Ändert sich der Sync-Zustand danach,
+   * meldet ihn der Watcher auf das Sync-Verzeichnis; der erste periodische Takt kommt erst nach
+   * `pull_interval`.
+   */
+  async #openOwnCopy(deps: LiveDeps): Promise<void> {
+    // Pusht ein Nachbar (ui.md §2.4.1 Punkt 3), holt ein Hintergrund-Sync den Stand, statt bis zum
+    // nächsten `pull_interval` zu warten; der Pull bewegt dann `HEAD` und ergibt den Patch.
+    // `sync.remote` und `sync.branch` gelten, wie sie beim Start in `HEAD` stehen: Eine Änderung
+    // wirkt erst mit dem nächsten Start des Watchers.
+    const { remote, branch } = (await requireHeadConfig(this.#root)).sync;
+    this.#neighbors = await NeighborWatch.start({
+      backlogDir: join(this.#ctx.homes.backeHome, 'backlogs', this.#ctx.backlog.value),
+      own: this.#root,
+      remote,
+      branch,
+      debounceMs: LIVE_TIMING.neighborMs,
+      ...(deps.watch === undefined ? {} : { watch: deps.watch }),
+      onMove: () => this.#neighborMoved(deps.sync),
+    });
+    const sync = await syncJson(this.#ctx);
+    if (sync !== null) this.#sync = { json: sync, text: JSON.stringify(sync) };
+    this.#stopPeriodic = await startPeriodicSync(this.#ctx, deps.sync);
   }
 
   /**
@@ -278,6 +289,9 @@ export class LiveBacklog {
    * kein `scheduleSync`, der beim Ende noch prüfte.
    */
   #neighborMoved(sync: SyncDeps | undefined): void {
+    // Vertragswache: `NeighborWatch` ruft `onMove` nach `close` nie, und `#teardown` schließt sie
+    // im selben Schritt, in dem es `#stopped` setzt; erreichbar ist das also heute nicht. Die
+    // Prüfung bleibt, damit ein geänderter Vertrag der Watch keinen Sync nach dem Ende startet.
     if (this.#stopped) return;
     const spawn = sync?.spawn ?? spawnDetached;
     this.#starts.add(
