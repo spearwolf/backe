@@ -265,7 +265,8 @@ test('tabs have tab roles and selection', async () => {
   expect(settings.getAttribute('href')).toBe('/b/main/settings');
   await user.click(settings);
   expect(path()).toBe('/b/main/settings');
-  expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy();
+  // Settings ist ein eigener Chunk und kommt einen Moment später.
+  expect(await screen.findByRole('heading', { name: 'Settings', level: 1 })).toBeTruthy();
   expect(tab('Backlog').getAttribute('aria-selected')).toBe('false');
 });
 

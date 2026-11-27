@@ -98,6 +98,41 @@ test('confirm dialog locks buttons and Esc while busy and renders description', 
   expect(closed).toHaveBeenCalledTimes(1);
 });
 
+test('with a form id enter in a field confirms', async () => {
+  const user = userEvent.setup();
+  const confirmed = vi.fn();
+  render(
+    <ConfirmDialog
+      open
+      title="Repo hinzufügen"
+      confirmLabel="Hinzufügen"
+      formId="add-repo"
+      busy={false}
+      error={undefined}
+      onConfirm={confirmed}
+      onOpenChange={() => {}}
+    >
+      <form
+        id="add-repo"
+        onSubmit={(e) => {
+          e.preventDefault();
+          confirmed();
+        }}
+      >
+        <input aria-label="Name" />
+      </form>
+    </ConfirmDialog>,
+  );
+  const confirm = screen.getByRole('button', { name: 'Hinzufügen' });
+  expect(confirm.getAttribute('type')).toBe('submit');
+  expect(confirm.getAttribute('form')).toBe('add-repo');
+  await user.type(screen.getByRole('textbox', { name: 'Name' }), 'core{Enter}');
+  expect(confirmed).toHaveBeenCalledTimes(1);
+  // Der Knopf schickt das Formular ab und ruft `onConfirm` nicht noch einmal selbst.
+  await user.click(confirm);
+  expect(confirmed).toHaveBeenCalledTimes(2);
+});
+
 test('cancel closes the dialog when idle', async () => {
   const user = userEvent.setup();
   const closed = vi.fn();

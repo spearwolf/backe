@@ -15,7 +15,6 @@ import { type WriteAccess, WriteContext } from '../data/write-context.tsx';
 import { useOwned } from '../lib/use-owned.ts';
 import { BacklogView } from '../views/BacklogView.tsx';
 import { IssueView } from '../views/IssueView.tsx';
-import { SettingsView } from '../views/SettingsView.tsx';
 import { ChunkBoundary } from './ChunkBoundary.tsx';
 import { ErrorAlert } from './ErrorPage.tsx';
 import { Header } from './Header.tsx';
@@ -38,6 +37,12 @@ const createTabs = (backlog: string) => new TabModel(backlog);
 const BoardView = lazy(() =>
   import('../views/BoardView.tsx').then((mod) => ({ default: mod.BoardView })),
 );
+// Settings ebenso: Formulare und Abschnitte, die nur braucht, wer sie öffnet.
+const SettingsView = lazy(() => import('../views/SettingsView.tsx'));
+
+function Loading() {
+  return <p className="p-4 text-sm text-muted-foreground">{m.loading}</p>;
+}
 
 function backlogOf(route: Route): string | undefined {
   return route.kind === 'home' || route.kind === 'not-found' ? undefined : route.backlog;
@@ -53,10 +58,11 @@ function View({
   onClose: (id: string) => void;
 }) {
   switch (route.kind) {
+    // Eigene Keys: Sonst übernähme die Grenze der einen Ansicht den Fehlerzustand der anderen.
     case 'board':
       return (
-        <ChunkBoundary className="p-4">
-          <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">{m.loading}</p>}>
+        <ChunkBoundary key="board" className="p-4">
+          <Suspense fallback={<Loading />}>
             <BoardView backlog={route.backlog} />
           </Suspense>
         </ChunkBoundary>
@@ -64,7 +70,13 @@ function View({
     case 'issue':
       return <IssueView backlog={route.backlog} id={route.id} onClose={onClose} />;
     case 'settings':
-      return <SettingsView />;
+      return (
+        <ChunkBoundary key="settings" className="p-4">
+          <Suspense fallback={<Loading />}>
+            <SettingsView backlog={route.backlog} section={route.section} />
+          </Suspense>
+        </ChunkBoundary>
+      );
     case 'backlog':
       return <BacklogView backlog={route.backlog} me={me} />;
     default:

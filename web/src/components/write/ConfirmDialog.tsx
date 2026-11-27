@@ -24,6 +24,12 @@ type Props = {
   error: ApiError | undefined;
   onConfirm: () => void;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Gesetzt, ist Bestätigen der Absende-Knopf des Formulars mit dieser ID: Der Aufrufer legt
+   * `<form id={formId} onSubmit>` um seine Felder, und Enter in einem Feld bestätigt wie der Knopf.
+   * `onConfirm` ruft der Knopf dann nicht selbst, sonst liefe er bei einem Klick doppelt.
+   */
+  formId?: string;
   /** Fokus nach dem Schließen; ohne Angabe der Radix-Default (das zuvor fokussierte Element). */
   onCloseAutoFocus?: (event: Event) => void;
   children?: ReactNode;
@@ -67,10 +73,11 @@ export function ConfirmDialog(props: Props) {
             {m.cancel}
           </Button>
           <Button
-            type="button"
             variant={destructive === true ? 'destructive' : 'default'}
             disabled={busy || props.confirmDisabled === true}
-            onClick={props.onConfirm}
+            {...(props.formId === undefined
+              ? { type: 'button', onClick: props.onConfirm }
+              : { type: 'submit', form: props.formId })}
           >
             {confirmLabel}
           </Button>
