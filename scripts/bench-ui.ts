@@ -834,6 +834,14 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     void cleanUp().finally(() => process.exit(128 + (signal === 'SIGINT' ? 2 : 15)));
   });
 }
+// Ein Fehler außerhalb jedes `await` (etwa eine Ablehnung, auf die gerade niemand wartet) beendet
+// Node sofort, an `finally` vorbei; ohne diesen Weg blieben Server und Temp-Verzeichnis zurück.
+for (const event of ['uncaughtException', 'unhandledRejection'] as const) {
+  process.once(event, (err: unknown) => {
+    console.error(err);
+    void cleanUp().finally(() => process.exit(1));
+  });
+}
 
 const wall = performance.now();
 try {
