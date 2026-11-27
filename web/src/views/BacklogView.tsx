@@ -101,7 +101,14 @@ function Loaded(props: {
         </div>
         {create !== undefined && (
           <div className="border-b p-3">
-            <Button size="sm" onClick={() => create.open(draftFromFilter(filter, me))}>
+            <Button
+              size="sm"
+              // Der Knopf selbst als Rückkehr: Nicht jeder Browser fokussiert einen geklickten Knopf.
+              onClick={(e) => {
+                const button = e.currentTarget;
+                create.open(draftFromFilter(filter, me), () => button);
+              }}
+            >
               <Plus aria-hidden="true" />
               {w.newIssue}
             </Button>

@@ -52,7 +52,15 @@ export function BoardToolbar({
         {m.showBacklog}
       </label>
       {create !== undefined && (
-        <Button size="sm" className="ml-auto" onClick={() => create.open(EMPTY_DRAFT)}>
+        <Button
+          size="sm"
+          className="ml-auto"
+          // Der Knopf selbst als Rückkehr: Nicht jeder Browser fokussiert einen geklickten Knopf.
+          onClick={(e) => {
+            const button = e.currentTarget;
+            create.open(EMPTY_DRAFT, () => button);
+          }}
+        >
           <Plus aria-hidden="true" />
           {w.newIssue}
         </Button>

@@ -19,7 +19,14 @@ import { parseRoute } from '../../app/routes.ts';
 import { useWrites } from '../../data/write-context.tsx';
 import { CreateIssueDialog } from './CreateIssueDialog.tsx';
 
-export type CreateIssue = { open(draft?: CreateDraft): void };
+/**
+ * `returnFocus` sagt, wohin der Fokus nach dem Schließen geht; ohne es dorthin, wo er beim Öffnen
+ * stand. Der Dialog hat keinen eigenen Auslöser, von dem Radix das wüsste. Ein Rückruf statt eines
+ * Elements: Wer öffnet, kann dabei verschwinden (»Mehr …« schließt sein Feld), und das Ziel steht
+ * erst beim Schließen fest.
+ */
+export type ReturnFocus = () => HTMLElement | null;
+export type CreateIssue = { open(draft?: CreateDraft, returnFocus?: ReturnFocus): void };
 
 const CreateIssueContext = createContext<CreateIssue | undefined>(undefined);
 
@@ -44,9 +51,16 @@ export function CreateIssueProvider({ children }: { children: ReactNode }) {
   const { canWrite, me } = useWrites();
   const router = useRouter();
   // Jedes Öffnen ist ein neuer Dialog mit frischem Zustand, auch ein zweites `open` bei offenem.
-  const [opened, setOpened] = useState<{ draft: CreateDraft; serial: number }>();
-  const open = useCallback((draft: CreateDraft = EMPTY_DRAFT) => {
-    setOpened((prev) => ({ draft, serial: (prev?.serial ?? 0) + 1 }));
+  const [opened, setOpened] = useState<{
+    draft: CreateDraft;
+    serial: number;
+    returnFocus: ReturnFocus;
+  }>();
+  const open = useCallback((draft: CreateDraft = EMPTY_DRAFT, returnFocus?: ReturnFocus) => {
+    const active = document.activeElement;
+    const before = active instanceof HTMLElement && active !== document.body ? active : null;
+    const back = returnFocus ?? (() => before);
+    setOpened((prev) => ({ draft, serial: (prev?.serial ?? 0) + 1, returnFocus: back }));
   }, []);
   const value = useMemo(() => (canWrite ? { open } : undefined), [canWrite, open]);
 
@@ -74,6 +88,7 @@ export function CreateIssueProvider({ children }: { children: ReactNode }) {
         <CreateIssueDialog
           key={opened.serial}
           initial={opened.draft}
+          returnFocus={opened.returnFocus}
           onClose={() => setOpened(undefined)}
         />
       )}

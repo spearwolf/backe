@@ -70,9 +70,12 @@ function useInvalidProps() {
  */
 export function CreateIssueDialog({
   initial,
+  returnFocus,
   onClose,
 }: {
   initial: CreateDraft;
+  /** Wohin der Fokus nach dem Schließen geht; ist das Element weg, bleibt er, wo er landet. */
+  returnFocus?: () => HTMLElement | null;
   onClose: () => void;
 }) {
   const { backlog, writes } = useWrites();
@@ -137,6 +140,12 @@ export function CreateIssueDialog({
         showCloseButton={false}
         aria-describedby={undefined}
         className="max-h-[90svh] overflow-y-auto sm:max-w-2xl"
+        // Ohne Auslöser fokussierte Radix nach dem Schließen nichts, und der Fokus fiele auf `body`.
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          const target = returnFocus?.();
+          if (target?.isConnected) target.focus();
+        }}
       >
         <form
           className="grid gap-4"

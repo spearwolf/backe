@@ -107,6 +107,8 @@ test('more opens the dialog prefilled from the lane', async () => {
   await userEvent.keyboard('{Escape}');
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(within(laneOf('Sprint 1')).queryByRole('textbox', { name: m.titleLabel })).toBeNull();
+  // »Mehr …« ist mit dem Feld verschwunden; der Fokus kehrt zum `+` der Zelle zurück.
+  expect(document.activeElement).toBe(plusOf('Sprint 1', 'review'));
   await userEvent.click(plusOf('Sprint 1', 'review'));
   expect(fieldOf('Sprint 1').value).toBe('');
 });

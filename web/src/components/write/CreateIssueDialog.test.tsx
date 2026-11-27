@@ -112,6 +112,24 @@ test('c does nothing while typing or without write access', async () => {
   expect(screen.queryByRole('button', { name: w.newIssue })).toBeNull();
 });
 
+test('closing gives focus back to where the dialog was opened', async () => {
+  const { user } = await setup('/b/acme/backlog');
+  const button = screen.getByRole('button', { name: w.newIssue });
+  await user.click(button);
+  expect(document.activeElement).toBe(titleBox());
+  await user.keyboard('{Escape}');
+  expect(queryDialog()).toBeNull();
+  expect(document.activeElement).toBe(button);
+
+  // Mit `c` ebenso: zurück zum Element, das den Fokus vorher hatte.
+  const sprint = screen.getByRole('button', { name: /^Sprint/ });
+  sprint.focus();
+  await user.keyboard('c');
+  expect(document.activeElement).toBe(titleBox());
+  await user.keyboard('{Escape}');
+  expect(document.activeElement).toBe(sprint);
+});
+
 test('creating posts issue_create and opens the new tab', async () => {
   const { user } = await setup('/b/acme/backlog?project=web');
   await user.click(screen.getByRole('button', { name: w.newIssue }));

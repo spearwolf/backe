@@ -106,8 +106,9 @@ export function QuickCreate(props: {
               disabled={busy}
               onClick={() => {
                 // Der Entwurf gehört ab jetzt dem Dialog; bliebe der Titel hier stehen, legte
-                // ein Enter ihn ein zweites Mal an.
-                create.open(draftForCell(group, lane, column, title.trim()));
+                // ein Enter ihn ein zweites Mal an. Mit dem Feld geht auch dieser Knopf; nach dem
+                // Dialog kehrt der Fokus darum zum `+` der Zelle zurück.
+                create.open(draftForCell(group, lane, column, title.trim()), () => plus.current);
                 setOpen(false);
                 setTitle('');
                 reset();

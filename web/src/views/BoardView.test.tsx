@@ -1,5 +1,5 @@
 import type { StateJson } from '@backe/ui/api.ts';
-import { act, screen, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { m as w } from '../components/write/write.messages.ts';
 import {
@@ -206,8 +206,13 @@ test('a patch moves the card live', () => {
 
 test('new issue only with write access', async () => {
   const first = board([testIssue(1)]);
-  await userEvent.click(screen.getByRole('button', { name: w.newIssue }));
+  const button = screen.getByRole('button', { name: w.newIssue });
+  await userEvent.click(button);
   expect(await screen.findByRole('dialog')).toBeTruthy();
+  // Der Dialog hat keinen eigenen Auslöser; der Fokus kehrt trotzdem zum Knopf zurück.
+  await userEvent.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(document.activeElement).toBe(button);
   first.unmount();
   board([testIssue(1)], { canWrite: false });
   expect(screen.queryByRole('button', { name: w.newIssue })).toBeNull();
