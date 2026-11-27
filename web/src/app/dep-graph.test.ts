@@ -211,7 +211,7 @@ test('a missing prerequisite is a node without issue', () => {
     role: 'up',
     open: true,
     hidden: 0,
-    expanded: true,
+    expanded: false,
   });
   expect(g.edges).toEqual([{ from: GONE, to: tid(1), kind: 'depends_on' }]);
 });
@@ -234,6 +234,7 @@ test('open marks unsettled prerequisites only', () => {
 
 test('a cycle ends and every node appears once', () => {
   const [a, b, c] = [tid(1), tid(2), tid(3)];
+  // `depends_on: [c, c]` lehnt das Schema ab; Robustheit gegen einen solchen Hand-Edit.
   const s = snapshot(
     testIssue(1, { blocked_by: [b], depends_on: [c, c], state: 'blocked' }),
     testIssue(2, { blocked_by: [a], state: 'blocked' }),
@@ -303,38 +304,47 @@ test('the tree opens two levels and toggles by path', () => {
   const t = tree([]);
   expect(shape(t.up)).toEqual([
     [
-      `up:${u1}`,
+      `up:${u1}~depends_on`,
       'depends_on',
       true,
       true,
       false,
-      [[`up:${u1}/${u2}`, 'depends_on', false, true, false, []]],
+      [[`up:${u1}~depends_on/${u2}~depends_on`, 'depends_on', false, true, false, []]],
     ],
   ]);
-  expect(shape(t.down)).toEqual([[`down:${d1}`, 'depends_on', false, false, false, []]]);
+  expect(shape(t.down)).toEqual([[`down:${d1}~depends_on`, 'depends_on', false, false, false, []]]);
   expect(t.more).toBe(0);
   expect(t.up[0]?.issue?.id).toBe(u1);
-  expect(shape(tree([`up:${u1}/${u2}`]).up)).toEqual([
+  expect(shape(tree([`up:${u1}~depends_on/${u2}~depends_on`]).up)).toEqual([
     [
-      `up:${u1}`,
+      `up:${u1}~depends_on`,
       'depends_on',
       true,
       true,
       false,
       [
         [
-          `up:${u1}/${u2}`,
+          `up:${u1}~depends_on/${u2}~depends_on`,
           'depends_on',
           true,
           true,
           false,
-          [[`up:${u1}/${u2}/${u3}`, 'depends_on', false, false, false, []]],
+          [
+            [
+              `up:${u1}~depends_on/${u2}~depends_on/${u3}~depends_on`,
+              'depends_on',
+              false,
+              false,
+              false,
+              [],
+            ],
+          ],
         ],
       ],
     ],
   ]);
-  expect(shape(tree([`up:${u1}`]).up)).toEqual([
-    [`up:${u1}`, 'depends_on', false, true, false, []],
+  expect(shape(tree([`up:${u1}~depends_on`]).up)).toEqual([
+    [`up:${u1}~depends_on`, 'depends_on', false, true, false, []],
   ]);
 });
 
@@ -344,28 +354,62 @@ test('the tree marks a cycle and stops there', () => {
     testIssue(1, { blocked_by: [b], depends_on: [GONE], state: 'blocked' }),
     testIssue(2, { blocked_by: [a], state: 'blocked' }),
   );
-  const t = depTree(s, a, { parents: false, toggled: new Set([`up:${b}/${a}`]) });
+  const t = depTree(s, a, {
+    parents: false,
+    toggled: new Set([`up:${b}~blocked_by/${a}~blocked_by`]),
+  });
   expect(shape(t.up)).toEqual([
-    [`up:${GONE}`, 'depends_on', false, false, false, []],
+    [`up:${GONE}~depends_on`, 'depends_on', false, false, false, []],
     [
-      `up:${b}`,
+      `up:${b}~blocked_by`,
       'blocked_by',
       true,
       true,
       false,
-      [[`up:${b}/${a}`, 'blocked_by', false, false, true, []]],
+      [[`up:${b}~blocked_by/${a}~blocked_by`, 'blocked_by', false, false, true, []]],
     ],
   ]);
   expect(t.up[0]?.issue).toBeUndefined();
   expect(shape(t.down)).toEqual([
     [
-      `down:${b}`,
+      `down:${b}~blocked_by`,
       'blocked_by',
       true,
       true,
       false,
-      [[`down:${b}/${a}`, 'blocked_by', false, false, true, []]],
+      [[`down:${b}~blocked_by/${a}~blocked_by`, 'blocked_by', false, false, true, []]],
     ],
+  ]);
+});
+
+test('a missing parent is neither node nor edge nor row', () => {
+  const s = snapshot(testIssue(1, { parent: GONE, depends_on: [tid(2)] }), testIssue(2));
+  expect(dependentsOf(s, tid(1), true)).toEqual([]);
+  const g = graph(s, tid(1), none, true);
+  expect(nodeIds(g)).toEqual([tid(1), tid(2)]);
+  expect(g.edges).toEqual([{ from: tid(2), to: tid(1), kind: 'depends_on' }]);
+  expect(g.nodes[0]?.hidden).toBe(0);
+  const t = depTree(s, tid(1), { parents: true, toggled: none });
+  expect(t.down).toEqual([]);
+  expect(t.up.map((i) => i.id)).toEqual([tid(2)]);
+});
+
+test('tree keys stay unique when an id is a neighbour through two kinds', () => {
+  const [a, b, x] = [tid(1), tid(2), tid(3)];
+  const s = snapshot(
+    testIssue(1, { depends_on: [b], blocked_by: [b], state: 'blocked' }),
+    testIssue(2, { depends_on: [x] }),
+    testIssue(3),
+  );
+  const rows = (toggled: string[]) =>
+    depTree(s, a, { parents: false, toggled: new Set(toggled) }).up.map((i) => [i.key, i.open]);
+  expect(rows([])).toEqual([
+    [`up:${b}~depends_on`, true],
+    [`up:${b}~blocked_by`, true],
+  ]);
+  expect(rows([`up:${b}~blocked_by`])).toEqual([
+    [`up:${b}~depends_on`, true],
+    [`up:${b}~blocked_by`, false],
   ]);
 });
 
@@ -384,14 +428,14 @@ test('the tree stops at the limit and counts the rest', () => {
   const t = depTree(s, c as string, { parents: false, toggled: none, limit: 3 });
   expect(shape(t.up)).toEqual([
     [
-      `up:${p1}`,
+      `up:${p1}~depends_on`,
       'depends_on',
       true,
       true,
       false,
       [
-        [`up:${p1}/${q1}`, 'depends_on', false, false, false, []],
-        [`up:${p1}/${q2}`, 'depends_on', false, false, false, []],
+        [`up:${p1}~depends_on/${q1}~depends_on`, 'depends_on', false, false, false, []],
+        [`up:${p1}~depends_on/${q2}~depends_on`, 'depends_on', false, false, false, []],
       ],
     ],
   ]);

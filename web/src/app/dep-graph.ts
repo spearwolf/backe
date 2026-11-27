@@ -19,7 +19,11 @@ export type DepEdgeKind = 'depends_on' | 'blocked_by' | 'parent';
 export type DepEdge = { from: string; to: string; kind: DepEdgeKind };
 export type DepNeighbour = { id: string; kind: DepEdgeKind };
 
-/** `depends_on`, dann `blocked_by` (Feldreihenfolge), mit `parents` die Sub-Issues (`graphOf.children`); fehlende IDs inbegriffen. */
+/**
+ * `depends_on`, dann `blocked_by` (Feldreihenfolge), mit `parents` die Sub-Issues
+ * (`graphOf.children`); fehlende IDs inbegriffen. Ein fehlendes Issue hat keine eigenen Felder und
+ * darum keine Voraussetzungen, auch wenn andere noch auf es zeigen (siehe `dependentsOf`).
+ */
 export function prerequisitesOf(s: BacklogSnapshot, id: string, parents: boolean): DepNeighbour[] {
   const issue = s.issues.get(id)?.data;
   if (issue === undefined) return [];
@@ -32,13 +36,18 @@ export function prerequisitesOf(s: BacklogSnapshot, id: string, parents: boolean
   return out;
 }
 
-/** `graphOf.dependents`, dann `blocking`, mit `parents` der Parent (falls vorhanden). */
+/**
+ * `graphOf.dependents`, dann `blocking`, mit `parents` der Parent, falls er als Issue vorhanden ist.
+ * Auch für eine fehlende ID: Andere Issues können weiter auf sie zeigen.
+ */
 export function dependentsOf(s: BacklogSnapshot, id: string, parents: boolean): DepNeighbour[] {
   const out: DepNeighbour[] = [];
   for (const dep of graphOf(s).dependents.get(id) ?? []) out.push({ id: dep, kind: 'depends_on' });
   for (const blocked of blocking(s).get(id) ?? []) out.push({ id: blocked, kind: 'blocked_by' });
   const parent = s.issues.get(id)?.data.parent;
-  if (parents && parent !== undefined) out.push({ id: parent, kind: 'parent' });
+  if (parents && parent !== undefined && s.issues.has(parent)) {
+    out.push({ id: parent, kind: 'parent' });
+  }
   return out;
 }
 
@@ -139,7 +148,7 @@ export function depGraph(
       role,
       open: role === 'up' && (issue === undefined || !isSettled(issue.state)),
       hidden: new Set(outside).size,
-      expanded: x !== id && expanded.has(x),
+      expanded: x !== id && issue !== undefined && expanded.has(x),
     };
   });
 
@@ -152,7 +161,10 @@ export function depGraph(
 }
 
 export type DepTreeItem = {
-  /** Pfad ab der Mitte: `up:<id>/<id>` bzw. `down:…`; Schlüssel für `toggled`. */
+  /**
+   * Pfad ab der Mitte: `up:<id>~<kind>/<id>~<kind>` bzw. `down:…`; Schlüssel für `toggled`. Die
+   * Art je Segment hält Geschwister eindeutig, wenn eine ID über zwei Arten Nachbar ist.
+   */
   key: string;
   id: string;
   issue: Issue | undefined;
@@ -191,11 +203,12 @@ export function depTree(
         continue;
       }
       rows++;
-      const key = `${prefix}${x}`;
+      const key = `${prefix}${x}~${kind}`;
       const issue = s.issues.get(x)?.data;
       const cycle = path.includes(x);
       const expandable = !cycle && issue !== undefined && neighbours(x).length > 0;
-      const open = expandable && path.length < DEP_DEPTH !== toggled.has(key);
+      const openByDefault = path.length < DEP_DEPTH;
+      const open = expandable && openByDefault !== toggled.has(key);
       items.push({
         key,
         id: x,

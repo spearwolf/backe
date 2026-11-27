@@ -537,10 +537,13 @@ describe('blocking', () => {
         { id: I(1) },
         { id: I(2), blocked_by: [I(1)], state: 'blocked' },
         { id: I(3), blocked_by: [I(1)], rank: 5, state: 'blocked' },
+        { id: I(4) },
+        { id: I(5), blocked_by: [I(4), I(1)], rank: 1, state: 'blocked' },
       ],
     });
     const b = blocking(s);
-    expect(b.get(I(1))).toEqual([I(3), I(2)]);
+    expect(b.get(I(1))).toEqual([I(5), I(3), I(2)]);
+    expect(b.get(I(4))).toEqual([I(5)]);
     expect(b.get(I(2))).toBeUndefined();
     expect(blocking(s)).toBe(b);
   });
