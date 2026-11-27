@@ -12,6 +12,7 @@ import { type DepPrefs, readDepPrefs, writeDepPrefs } from '../../app/dep-prefs.
 import { useStore } from '../../data/store-context.tsx';
 import { useSignal } from '../../data/use-signal.ts';
 import { m } from '../../views/deps.messages.ts';
+import { ChunkBoundary } from '../ChunkBoundary.tsx';
 import { Button } from '../ui/button.tsx';
 
 const DepPanel = lazy(async () => ({ default: (await import('../deps/DepPanel.tsx')).DepPanel }));
@@ -114,15 +115,17 @@ export function DependencySection(props: { id: string; backlog: string }) {
       {prefs.open && (
         <div id={bodyId}>
           {seen && (
-            <Suspense
-              fallback={
-                <p role="status" className="text-sm text-muted-foreground">
-                  {app.loading}
-                </p>
-              }
-            >
-              <DepPanel id={id} backlog={backlog} view={prefs.view} parents={prefs.parents} />
-            </Suspense>
+            <ChunkBoundary>
+              <Suspense
+                fallback={
+                  <p role="status" className="text-sm text-muted-foreground">
+                    {app.loading}
+                  </p>
+                }
+              >
+                <DepPanel id={id} backlog={backlog} view={prefs.view} parents={prefs.parents} />
+              </Suspense>
+            </ChunkBoundary>
           )}
         </div>
       )}

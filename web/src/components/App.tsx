@@ -14,6 +14,7 @@ import { useOwned } from '../lib/use-owned.ts';
 import { BacklogView } from '../views/BacklogView.tsx';
 import { IssueView } from '../views/IssueView.tsx';
 import { SettingsView } from '../views/SettingsView.tsx';
+import { ChunkBoundary } from './ChunkBoundary.tsx';
 import { ErrorAlert } from './ErrorPage.tsx';
 import { Header } from './Header.tsx';
 import { PANEL_ID, selectedTabId, TabBar } from './TabBar.tsx';
@@ -51,9 +52,11 @@ function View({
   switch (route.kind) {
     case 'board':
       return (
-        <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">{m.loading}</p>}>
-          <BoardView backlog={route.backlog} />
-        </Suspense>
+        <ChunkBoundary className="p-4">
+          <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">{m.loading}</p>}>
+            <BoardView backlog={route.backlog} />
+          </Suspense>
+        </ChunkBoundary>
       );
     case 'issue':
       return <IssueView backlog={route.backlog} id={route.id} onClose={onClose} />;

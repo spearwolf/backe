@@ -29,6 +29,7 @@ export const m = catalog({
     errorTitle: 'backe ui could not start',
     loadFailed: 'Could not load the backlog',
     unreachable: 'The backe ui server is not reachable.',
+    chunkFailed: 'Could not load this view. Reload the page.',
   },
   de: {
     tagline: 'Backlogs für Menschen',
@@ -58,5 +59,6 @@ export const m = catalog({
     errorTitle: 'backe ui konnte nicht starten',
     loadFailed: 'Backlog konnte nicht geladen werden',
     unreachable: 'Der Server von backe ui ist nicht erreichbar.',
+    chunkFailed: 'Diese Ansicht ließ sich nicht laden. Seite neu laden.',
   },
 });
