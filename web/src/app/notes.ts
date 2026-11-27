@@ -35,7 +35,12 @@ export function issueNotes(
   return notes.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
-/** Konflikte, die nicht in `known` stehen; `known` danach alle aktuellen IDs. */
+/**
+ * Konflikte, die der Notifier seit seinem Start nicht kannte. `known` wächst nur: ein gelöster
+ * Konflikt, der unter derselben ID wiederkehrt, meldet sich nicht noch einmal. Ohne Status
+ * (`null`) bleibt `known` unverändert. Der Aufrufer übergibt für den ersten gesehenen Status die
+ * IDs als Grundlinie (also `known` = dessen Konflikte, ohne Meldung).
+ */
 export function conflictNotes(
   known: ReadonlySet<string>,
   sync: Record<string, unknown> | null,
@@ -45,6 +50,6 @@ export function conflictNotes(
     notes: conflicts
       .filter((c) => !known.has(c.id))
       .map((c): Note => ({ kind: 'conflict', id: c.id, title: c.subject })),
-    known: new Set(conflicts.map((c) => c.id)),
+    known: new Set([...known, ...conflicts.map((c) => c.id)]),
   };
 }

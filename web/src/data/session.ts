@@ -74,6 +74,7 @@ export function openSession(backlog: string, deps: Partial<ConnectionDeps> = {})
    * dem Anwenden fest und meldet nur angewendete Patches (`stale` und `gap` melden nichts).
    */
   const apply = (p: PatchJson): PatchOutcome => {
+    if (listeners.size === 0) return store.applyPatch(p);
     const ids = new Set([
       ...(p.upsert.issues ?? []).map((i) => i.id),
       ...(p.remove.issues ?? []),

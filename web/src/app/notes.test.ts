@@ -67,6 +67,38 @@ describe('issueNotes', () => {
     expect(issueNotes(foreign, lookup(issue(1)), me)).toEqual([]);
   });
 
+  it('a new issue assigned to me by someone else', () => {
+    const p = patchOf({ upsert: { issues: [mine(1)] }, actors: { 'bk-t0001': ['x'] } });
+    expect(issueNotes(p, lookup(), me)).toEqual([
+      { kind: 'assigned', id: 'bk-t0001', title: 'Issue 1', by: ['x'] },
+    ]);
+  });
+
+  it('upsert and remove of the same id in one patch is a deletion if it was mine', () => {
+    const p = patchOf({
+      upsert: { issues: [mine(1)] },
+      remove: { issues: ['bk-t0001'] },
+      actors: { 'bk-t0001': ['x'] },
+    });
+    expect(issueNotes(p, lookup(mine(1)), me)).toEqual([
+      { kind: 'deleted', id: 'bk-t0001', title: 'Issue 1', by: ['x'] },
+    ]);
+  });
+
+  it('ids unknown to the store give no note', () => {
+    const touched = patchOf({ touched: ['bk-t0001'], actors: { 'bk-t0001': ['x'] } });
+    expect(issueNotes(touched, lookup(), me)).toEqual([]);
+    const removed = patchOf({ remove: { issues: ['bk-t0001'] }, actors: { 'bk-t0001': ['x'] } });
+    expect(issueNotes(removed, lookup(), me)).toEqual([]);
+  });
+
+  it('an empty title is kept', () => {
+    const p = patchOf({ touched: ['bk-t0001'], actors: { 'bk-t0001': ['x'] } });
+    expect(issueNotes(p, lookup(mine(1, { title: '' })), me)).toEqual([
+      { kind: 'changed', id: 'bk-t0001', title: '', by: ['x'] },
+    ]);
+  });
+
   it('by is sorted, deduplicated and without me; notes sorted by id', () => {
     const p = patchOf({
       touched: ['bk-t0002', 'bk-t0001'],
@@ -92,8 +124,14 @@ describe('conflictNotes', () => {
     expect(first.known).toEqual(new Set(['a', 'b']));
     expect(conflictNotes(first.known, sync).notes).toEqual([]);
     expect(conflictNotes(new Set(['a']), { conflicts: [conflict('b')] }).known).toEqual(
-      new Set(['b']),
+      new Set(['a', 'b']),
     );
-    expect(conflictNotes(new Set(['a']), null)).toEqual({ notes: [], known: new Set() });
+    expect(conflictNotes(new Set(['a']), null)).toEqual({ notes: [], known: new Set(['a']) });
+    expect(conflictNotes(new Set(), null)).toEqual({ notes: [], known: new Set() });
+  });
+
+  it('a resolved conflict that returns under the same id does not notify again', () => {
+    const gone = conflictNotes(new Set(['a']), { conflicts: [] });
+    expect(conflictNotes(gone.known, { conflicts: [conflict('a')] }).notes).toEqual([]);
   });
 });
