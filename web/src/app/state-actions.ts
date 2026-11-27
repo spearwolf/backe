@@ -54,11 +54,10 @@ export type StateCall =
   | { name: 'issue_resume'; args: ToolArgs['issue_resume'] }
   | { name: 'issue_reopen'; args: ToolArgs['issue_reopen'] };
 
-export function stateCall(
-  id: string,
-  action: StateAction,
-  extra: { reason?: string; blockedBy?: string[]; force?: boolean } = {},
-): StateCall {
+/** Was ein Zustandswechsel außer dem Ziel mitbringt: Begründung, Blocker, `force` (Sub-Issues offen). */
+export type StateExtra = { reason?: string; blockedBy?: string[]; force?: boolean };
+
+export function stateCall(id: string, action: StateAction, extra: StateExtra = {}): StateCall {
   const reason = extra.reason === undefined ? {} : { reason: extra.reason };
   switch (action.tool) {
     case 'issue_resume':
