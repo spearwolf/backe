@@ -65,8 +65,9 @@ test('the config shows read only with declared properties', () => {
   const file = within(section).getByText('.backe/backlog.jsonc');
   expect(file.tagName).toBe('CODE');
   expect(within(section).getByText('backe commit').tagName).toBe('CODE');
+  // Der Satz kommt in Teilen aus dem Katalog; kein Text wird nach den Literalen durchsucht.
   expect(file.parentElement?.textContent).toBe(
-    m.configReadOnly('.backe/backlog.jsonc', 'backe commit'),
+    `${m.configReadOnlyBefore}.backe/backlog.jsonc${m.configReadOnlyBetween}backe commit${m.configReadOnlyAfter}`,
   );
 
   const table = within(section).getByRole('table', { name: m.properties });

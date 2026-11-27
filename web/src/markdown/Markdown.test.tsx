@@ -194,6 +194,15 @@ test('a blocked image in a link whose target fell away keeps its own link', () =
   expect(container.querySelector('img')).toBeNull();
   const link = screen.getByRole('link', { name: 'External image blocked: build' });
   expect(link.getAttribute('href')).toBe('https://img.shields.io/badge/ci-green');
+  // Der Link ohne Ziel bleibt kein <a>: kein <a> in einem <a>.
+  expect(container.querySelector('a a')).toBeNull();
+  expect(container.querySelectorAll('a')).toHaveLength(1);
+});
+
+test('a link whose target fell away renders its text without an anchor', () => {
+  const { container } = setup('Siehe [die Notiz](other.md).');
+  expect(container.querySelector('a')).toBeNull();
+  expect(container.textContent).toContain('Siehe die Notiz.');
 });
 
 test('a blocked image without alt text reads naturally', () => {

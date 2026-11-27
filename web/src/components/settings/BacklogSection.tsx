@@ -77,27 +77,19 @@ function Properties({ props }: { props: Config['props'] }) {
   );
 }
 
-const CONFIG_FILE = '.backe/backlog.jsonc';
-const COMMIT_COMMAND = 'backe commit';
-
-/** Der Hinweis, wie man die Config ändert, mit Datei und Befehl als Code. */
+/**
+ * Der Hinweis, wie man die Config ändert, mit Datei und Befehl als Code. Der Katalog liefert den
+ * Satz in Teilen um beide herum; so muss keine Übersetzung die Literale wörtlich enthalten.
+ */
 function ReadOnlyHint() {
-  const text = m.configReadOnly(CONFIG_FILE, COMMIT_COMMAND);
-  // Datei und Befehl stehen wörtlich im Text; an ihnen wird geteilt, in der Folge, in der die
-  // Übersetzung sie nennt.
-  const at = (s: string) => text.indexOf(s);
-  const [first, second] =
-    at(CONFIG_FILE) <= at(COMMIT_COMMAND)
-      ? [CONFIG_FILE, COMMIT_COMMAND]
-      : [COMMIT_COMMAND, CONFIG_FILE];
   const code = (s: string) => <code className="font-mono text-foreground">{s}</code>;
   return (
     <p className="text-sm text-muted-foreground">
-      {text.slice(0, at(first))}
-      {code(first)}
-      {text.slice(at(first) + first.length, at(second))}
-      {code(second)}
-      {text.slice(at(second) + second.length)}
+      {m.configReadOnlyBefore}
+      {code('.backe/backlog.jsonc')}
+      {m.configReadOnlyBetween}
+      {code('backe commit')}
+      {m.configReadOnlyAfter}
     </p>
   );
 }
