@@ -17,6 +17,10 @@ export default defineConfig({
     outDir: '../dist/ui',
     emptyOutDir: true,
     modulePreload: { polyfill: false },
+    // Das Budget prüft scripts/check-ui-build.ts am initialen Chunk (gzip). Über 500 kB liegen nur
+    // der Einstieg (gzip im Budget) und der Lazy-Chunk von Mermaids ELK-Layout; die Standardwarnung
+    // wäre Dauerrauschen.
+    chunkSizeWarningLimit: 2048,
   },
   server: {
     host: '127.0.0.1',

@@ -40,6 +40,19 @@ STRAY="$(printf '%s\n' "$UI_FILES" | grep -vx -e 'package/dist/ui/index.html' -e
 [ -z "$STRAY" ] || fail "Unerwartete Dateien unter dist/ui:
 $STRAY"
 
+# Anteil von dist/ui am Tarball: entpacken, `package/` zweimal mit gzip -9
+# packen (einmal ohne dist/ui), die Differenz ist der Anteil. Nur Optionen,
+# die GNU tar und bsdtar teilen.
+UI_LIMIT=3145728
+mkdir -p "$T/unpacked"
+tar -xzf "$TARBALL" -C "$T/unpacked"
+TARBALL_SIZE="$(wc -c <"$TARBALL" | tr -d ' ')"
+FULL_SIZE="$(cd "$T/unpacked" && tar -cf - package | gzip -9 | wc -c | tr -d ' ')"
+BASE_SIZE="$(cd "$T/unpacked" && tar -cf - --exclude package/dist/ui package | gzip -9 | wc -c | tr -d ' ')"
+UI_SIZE=$((FULL_SIZE - BASE_SIZE))
+[ "$UI_SIZE" -le "$UI_LIMIT" ] || fail "dist/ui vergrößert den Tarball um $UI_SIZE B, mehr als $UI_LIMIT B (ui.md §4.1)"
+rm -rf "$T/unpacked"
+
 PKG_JSON="$(tar -xOf "$TARBALL" package/package.json)"
 NAME="$(printf '%s' "$PKG_JSON" | node -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).name')"
 [ -n "$NAME" ] || fail "Paketname nicht lesbar"
@@ -131,4 +144,4 @@ SERVER_PID=""
 exec 3<&-
 [ "$SERVER_RC" -eq 0 ] || fail "backe ui endete mit Exit-Code $SERVER_RC"
 
-echo "pack-smoke: ok $VERSION"
+echo "pack-smoke: ok $VERSION (tarball $TARBALL_SIZE B, dist/ui $UI_SIZE B of $UI_LIMIT)"

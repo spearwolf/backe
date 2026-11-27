@@ -215,3 +215,11 @@ export function dropFrom(event: { active: Pick<Active, 'data' | 'rect'>; over: P
 ## Ergebnisse
 
 Wird in Task 2, 5 und 6 gefüllt.
+
+Paket (Task 2, `mise run smoke`, Version 0.4.0):
+
+| Messgröße | Wert | Grenze |
+| --- | --- | --- |
+| Tarball gesamt | 2 310 132 B | |
+| Anteil `dist/ui` (gzip -9, Differenz zweier Packläufe) | 1 991 568 B | 3 145 728 B (ui.md §4.1) |
+| Initialer Chunk (Einstieg plus Modulepreloads, gzip -9) | 244 306 B | 307 200 B |

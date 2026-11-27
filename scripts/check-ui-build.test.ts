@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gzipSync } from 'node:zlib';
 import { checkUiBuild } from './check-ui-build.ts';
 
 const THEME = '<script src="/theme.js"></script>';
@@ -46,35 +47,35 @@ async function writeBuild(
 
 test('a proper build passes', async () => {
   await writeBuild([THEME, ENTRY, PRELOAD, STYLE], { 'vendor.js': 'export {};' });
-  expect(await checkUiBuild(dir)).toEqual([]);
+  expect((await checkUiBuild(dir)).problems).toEqual([]);
 });
 
 test('check-ui-build rejects a missing index.html or theme.js', async () => {
-  expect(await checkUiBuild(dir)).toHaveLength(1);
+  expect((await checkUiBuild(dir)).problems).toHaveLength(1);
   await writeBuild([THEME, ENTRY, STYLE]);
   await rm(join(dir, 'theme.js'));
-  expect(await checkUiBuild(dir)).toHaveLength(1);
+  expect((await checkUiBuild(dir)).problems).toHaveLength(1);
 });
 
 test('a missing favicon is a problem', async () => {
   await writeBuild([THEME, ENTRY, STYLE]);
   await rm(join(dir, 'favicon.svg'));
-  expect(await checkUiBuild(dir)).toEqual(['favicon.svg is missing']);
+  expect((await checkUiBuild(dir)).problems).toEqual(['favicon.svg is missing']);
 });
 
 test('check-ui-build rejects an inline script', async () => {
   await writeBuild([THEME, '<script>document.title = "x";</script>', ENTRY, STYLE]);
-  expect(await checkUiBuild(dir)).toHaveLength(1);
+  expect((await checkUiBuild(dir)).problems).toHaveLength(1);
 });
 
 test('check-ui-build rejects a stylesheet before theme.js', async () => {
   await writeBuild([STYLE, THEME, ENTRY]);
-  expect(await checkUiBuild(dir)).toHaveLength(1);
+  expect((await checkUiBuild(dir)).problems).toHaveLength(1);
 });
 
 test('check-ui-build rejects a module script before theme.js', async () => {
   await writeBuild([ENTRY, THEME, STYLE]);
-  expect(await checkUiBuild(dir)).not.toEqual([]);
+  expect((await checkUiBuild(dir)).problems).not.toEqual([]);
 });
 
 test('check-ui-build rejects a theme.js that does not block', async () => {
@@ -82,13 +83,13 @@ test('check-ui-build rejects a theme.js that does not block', async () => {
     await rm(dir, { recursive: true, force: true });
     await mkdir(dir);
     await writeBuild([`<script ${attr} src="/theme.js"></script>`, ENTRY, STYLE]);
-    expect(await checkUiBuild(dir), attr).not.toEqual([]);
+    expect((await checkUiBuild(dir)).problems, attr).not.toEqual([]);
   }
 });
 
 test('check-ui-build rejects an initial chunk over budget', async () => {
   await writeBuild([THEME, ENTRY, STYLE], { 'index.js': randomBytes(307_201) });
-  expect(await checkUiBuild(dir)).toHaveLength(1);
+  expect((await checkUiBuild(dir)).problems).toHaveLength(1);
 });
 
 test('check-ui-build counts modulepreload chunks into the budget', async () => {
@@ -96,5 +97,13 @@ test('check-ui-build counts modulepreload chunks into the budget', async () => {
     'index.js': randomBytes(160_000),
     'vendor.js': randomBytes(160_000),
   });
-  expect(await checkUiBuild(dir)).toHaveLength(1);
+  expect((await checkUiBuild(dir)).problems).toHaveLength(1);
+});
+
+test('reports the gzip size of the initial chunk', async () => {
+  const entry = 'console.log("entry");'.repeat(200);
+  const vendor = 'export const v = "vendor";'.repeat(300);
+  await writeBuild([THEME, ENTRY, PRELOAD, STYLE], { 'index.js': entry, 'vendor.js': vendor });
+  const want = gzipSync(entry, { level: 9 }).length + gzipSync(vendor, { level: 9 }).length;
+  expect((await checkUiBuild(dir)).initialGzip).toBe(want);
 });

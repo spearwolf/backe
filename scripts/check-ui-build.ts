@@ -5,7 +5,7 @@
  */
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { argv, stderr } from 'node:process';
+import { argv, stderr, stdout } from 'node:process';
 import { gzipSync } from 'node:zlib';
 
 /** Budget des initialen Chunks: Einstiegs-Skript samt Modulepreloads, gzip Level 9. */
@@ -44,10 +44,12 @@ async function exists(path: string): Promise<boolean> {
   );
 }
 
-/** Verstöße des Builds in `dir`; leer heißt: gut. */
-export async function checkUiBuild(dir: string): Promise<string[]> {
+/** Verstöße des Builds in `dir` (leer heißt: gut) und die gzip-Größe des initialen Chunks. */
+export async function checkUiBuild(
+  dir: string,
+): Promise<{ problems: string[]; initialGzip: number }> {
   const index = join(dir, 'index.html');
-  if (!(await exists(index))) return [`${index} is missing`];
+  if (!(await exists(index))) return { problems: [`${index} is missing`], initialGzip: 0 };
   const all = tags(await readFile(index, 'utf8'));
   const problems: string[] = [];
 
@@ -91,12 +93,16 @@ export async function checkUiBuild(dir: string): Promise<string[]> {
       `the initial chunk is ${gzipped} bytes gzip, over the budget of ${INITIAL_CHUNK_BUDGET}`,
     );
   }
-  return problems;
+  return { problems, initialGzip: gzipped };
 }
 
 if (import.meta.main) {
   const dir = argv[2] ?? join(import.meta.dirname, '..', 'dist', 'ui');
-  const problems = await checkUiBuild(dir);
+  const { problems, initialGzip } = await checkUiBuild(dir);
   for (const p of problems) stderr.write(`check-ui-build: ${p}\n`);
   if (problems.length > 0) process.exitCode = 1;
+  else
+    stdout.write(
+      `check-ui-build: initial chunk ${initialGzip} B gzip of ${INITIAL_CHUNK_BUDGET}\n`,
+    );
 }
