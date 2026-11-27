@@ -4,6 +4,7 @@ import { m as app } from '../app/app.messages.ts';
 import { IssueDetailModel } from '../app/issue-detail.ts';
 import { ErrorAlert } from '../components/ErrorPage.tsx';
 import { Attachments } from '../components/issue/Attachments.tsx';
+import { DependencySection } from '../components/issue/DependencySection.tsx';
 import { DescriptionEditor } from '../components/issue/edit/DescriptionEditor.tsx';
 import { IssueActions } from '../components/issue/edit/IssueActions.tsx';
 import { TitleEditor } from '../components/issue/edit/TitleEditor.tsx';
@@ -199,6 +200,8 @@ function IssueBody({ model, backlog, id, onClose }: Props & { model: IssueDetail
             issue={markdownIssue}
             {...(fieldAccess.canWrite ? { uploads } : {})}
           />
+          {/* Ein gelöschtes Issue hat keine Kanten mehr, die der Abschnitt live zeigen könnte. */}
+          {!deleted && <DependencySection id={id} backlog={backlog} />}
           {detail !== undefined && (
             <Timeline
               id={id}

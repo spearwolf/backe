@@ -50,18 +50,24 @@ export function registerReadIssueViewHarness(): void {
 
 export const ID = tid(1);
 
-export function view(issues: IssueJson[], over: Parameters<typeof testState>[1] = {}, id = ID) {
+/** `canWrite` nur für Tests, die zeigen, dass ein Teil mit und ohne Schreibrecht gleich aussieht. */
+export function view(
+  issues: IssueJson[],
+  over: Parameters<typeof testState>[1] = {},
+  id = ID,
+  canWrite = false,
+) {
   window.history.replaceState(null, '', `/b/acme/issue/${id}`);
   const router = new Router(window);
   const store = new Store();
   store.load(testState(issues, over));
   const onClose = vi.fn();
-  // Nur lesend: Die Editoren prüft `components/issue/edit/edit.test.tsx`.
+  // Lesend als Default: Die Editoren prüft `components/issue/edit/edit.test.tsx`.
   const writes = new Writes(store, { call: vi.fn(), upload: vi.fn(), refresh: async () => {} });
   render(
     <RouterContext.Provider value={router}>
       <StoreContext.Provider value={store}>
-        <WriteContext.Provider value={{ backlog: 'acme', canWrite: false, me: 'spw', writes }}>
+        <WriteContext.Provider value={{ backlog: 'acme', canWrite, me: 'spw', writes }}>
           <IssueView backlog="acme" id={id} onClose={onClose} />
         </WriteContext.Provider>
       </StoreContext.Provider>

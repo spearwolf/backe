@@ -4,6 +4,9 @@ import { flush, ID, registerReadIssueViewHarness, served, view } from '../test/r
 import { testConfig, testIssue, testPatch, tid } from '../test/state.ts';
 import { m } from './issue.messages.ts';
 
+// Der Graph-Chunk braucht in jsdom eigene Stubs; ihn prüfen `DependencySection*.test.tsx`.
+vi.mock('../components/deps/DepPanel.tsx', () => ({ DepPanel: () => null }));
+
 // Das Markdown-Chunk testet die Markdown-Komponente selbst; hier zählt, was die Ansicht übergibt.
 // Wie die echte Komponente per `memo` verpackt; `renders` zählt, wie oft ein Text neu gerendert wird.
 const markdownRenders = vi.hoisted(() => ({ count: 0 }));
