@@ -160,16 +160,16 @@ export function writeBenchFiles(root: string, n: number, from: number, to: numbe
 
   `scripts/bench-ui.ts`: Aufruf `node scripts/bench-ui.ts [--issues 10000] [--neighbors 20] [--runs 5]`; legt alles im Temp-Verzeichnis an, räumt in `finally` ab, druckt Rechner-Kontext (CPU, Threads, RAM, OS, Node, Chromium-Version) und eine Markdown-Tabelle `Ziel | Messung | Wert | erreicht`. Kein Teil von `mise run check`.
 
-- [ ] **Step 1: Failing test** `bench-backlog.test.ts`: `the state shares match the plan` (für n = 10 000 je State die Anteile aus den Festlegungen ± 1 Prozentpunkt), `done issues sit in closed sprints`, `dependencies point backwards` (jedes `depends_on`/`blocked_by` < i), `a small bench backlog loads without problems` (`writeBenchFiles` mit n = 60 in ein Temp-Verzeichnis samt `backlog.jsonc` und User → `loadSnapshot` liefert 60 Issues, `problems` leer).
-- [ ] **Step 2:** FAIL → **Step 3:** umsetzen → **Step 4:** PASS.
-- [ ] **Step 5:** `bench-ui.ts` mit den Messungen:
+- [x] **Step 1: Failing test** `bench-backlog.test.ts`: `the state shares match the plan` (für n = 10 000 je State die Anteile aus den Festlegungen ± 1 Prozentpunkt), `done issues sit in closed sprints`, `dependencies point backwards` (jedes `depends_on`/`blocked_by` < i), `a small bench backlog loads without problems` (`writeBenchFiles` mit n = 60 in ein Temp-Verzeichnis samt `backlog.jsonc` und User → `loadSnapshot` liefert 60 Issues, `problems` leer).
+- [x] **Step 2:** FAIL → **Step 3:** umsetzen → **Step 4:** PASS.
+- [x] **Step 5:** `bench-ui.ts` mit den Messungen:
   - `GET /state`: erster Abruf (kalt, ohne Watcher) und Median von `--runs` warmen Abrufen, per `node:http` mit Cookie.
   - Tab Backlog: je Lauf neuer Browser-Kontext, `page.goto('/b/bench/backlog')`; ein Init-Skript nimmt `performance.now()` im ersten rAF, in dem die Liste Zeilen (`li[data-id]`) zeigt und kein Ladehinweis steht. Median ohne Drosselung und mit CDP-Drosselung 4×.
   - CLI-Write: drei Seiten (Backlog, Board mit Gruppierung `none`, Issue-Tab) auf ein Issue in `todo` mit kleinstem `rank`; 10 × `backe issue edit <id> --title "Bench <k>"`, je Write `t1 − t0` je Seite (Median, Maximum) und CLI-Laufzeit; die Writes verteilen sich über mehr als einen 10-s-Takt des Sicherheitsnetzes, die 20 Nachbarn sind beobachtet.
   - Board-Drag: Szenarien Default und `none`; Zug einer Karte von `todo` nach `in_progress` derselben Bahn per `page.mouse`; im Seitenkontext laufender rAF-Logger; Werte: größter rAF-Abstand beim Start (erste 300 ms nach dem Druck), beim Ziehen, und `pointerup` → erster rAF samt Prüfung, dass die Karte in diesem Frame in der Zielzelle steht. Je 5 Züge, Maximum.
   - Scrollen: Tab Backlog, rAF-Schleife setzt `scrollTop` der Liste je Frame um 48 px weiter, 4 s lang; Anzahl Frame-Drops, p95 und Maximum der Abstände; ohne Drosselung und mit 4×.
-- [ ] **Step 6:** `node scripts/bench-ui.ts` laufen lassen; Tabelle als »vorher« unter »Ergebnisse« eintragen. Ein verfehltes Ziel außer Board-Drag (Task 6) bekommt einen eigenen Task in diesem Plan, sofern es sich ohne Architekturänderung beheben lässt; sonst ist es ein Blocker mit Messung.
-- [ ] **Step 7: Commit** `test: Benchmark der UI gegen die Ziele aus ui.md §2.17` (Body: Kurzfassung der Messung).
+- [x] **Step 6:** `node scripts/bench-ui.ts` laufen lassen; Tabelle als »vorher« unter »Ergebnisse« eintragen. Ein verfehltes Ziel außer Board-Drag (Task 6) bekommt einen eigenen Task in diesem Plan, sofern es sich ohne Architekturänderung beheben lässt; sonst ist es ein Blocker mit Messung.
+- [x] **Step 7: Commit** `test: Benchmark der UI gegen die Ziele aus ui.md §2.17` (Body: Kurzfassung der Messung).
 
 ### Task 6: Board-Drag im selben Frame
 
@@ -223,3 +223,32 @@ Paket (Task 2, `mise run smoke`, Version 0.4.0):
 | Tarball gesamt | 2 310 132 B | |
 | Anteil `dist/ui` (gzip -9, Differenz zweier Packläufe) | 1 991 568 B | 3 145 728 B (ui.md §4.1) |
 | Initialer Chunk (Einstieg plus Modulepreloads, gzip -9) | 244 306 B | 307 200 B |
+
+Benchmark »vorher« (Task 5, `node scripts/bench-ui.ts`: 10 000 Issues, 20 Nachbarn, 5 Läufe je Messung; Laufzeit 241 s samt Aufbau). Rechner: AMD Ryzen 9 7900X3D, 24 Threads, 60 GB RAM, CachyOS (Linux 7.3.6-2-cachyos), Node 26.13.1, Chromium 159.0.8154.6 (`@playwright/test` 1.65.1, headless).
+
+| Ziel | Messung | Wert | erreicht |
+| --- | --- | --- | --- |
+| `GET /state` ≤ 1 s | erster Abruf (kalt, ohne Watcher, 1,7 MB) | 800 ms | ja |
+| `GET /state` ≤ 1 s | Median aus 5 warmen Abrufen | 669 ms | ja |
+| Tab Backlog ≤ 1,5 s | erste Zeilen ohne Ladehinweis, ohne Drosselung, Median aus 5 | 792 ms | ja |
+| Tab Backlog ≤ 1,5 s | dasselbe mit CPU 4× (CDP), Median aus 5 | 1 122 ms | ja |
+| CLI-Write → sichtbar ≤ 300 ms | Backlog: Median / Max ab Prozessende; Max ab Ref-Ereignis | −4 / 4 ms; 46 ms | ja |
+| CLI-Write → sichtbar ≤ 300 ms | Board (`none`, 7 600 Karten): dasselbe | 19 / 27 ms; 69 ms | ja |
+| CLI-Write → sichtbar ≤ 300 ms | Issue-Tab: dasselbe | 3 / 28 ms; 72 ms | ja |
+| (Schreibpfad BK) | Laufzeit des CLI-Prozesses `backe issue edit`: Median / Max | 3 518 / 3 591 ms | – |
+| (Live-Kern) | Server-CPU im Leerlauf, 3 Abonnenten, 20 Nachbarn, je 10 s: Node / git | 20 / 100 ms | – |
+| Board-Drag im selben Frame | Default (Sprint, Bahn `2026-w47`, 3 100 Karten): Start, größter rAF-Abstand | 340 ms | nein |
+| Board-Drag im selben Frame | Default: Ziehen, größter rAF-Abstand | 133 ms | nein |
+| Board-Drag im selben Frame | Default: `pointerup` → erster rAF; Karte dort in der Zielzelle | 133 ms; 5/5 | nein |
+| Board-Drag im selben Frame | `none` (7 600 Karten): Start, größter rAF-Abstand | 787 ms | nein |
+| Board-Drag im selben Frame | `none`: Ziehen, größter rAF-Abstand | 296 ms | nein |
+| Board-Drag im selben Frame | `none`: `pointerup` → erster rAF; Karte dort in der Zielzelle | 296 ms; 5/5 | nein |
+| Scrollen ohne Frame-Drops | Tab Backlog, 4 s, ohne Drosselung: Drops / p95 / Max | 0 von 240 / 17,2 / 18,5 ms | ja |
+| Scrollen ohne Frame-Drops | dasselbe mit CPU 4× (CDP) | 0 von 239 / 19,2 / 24,7 ms | ja |
+
+Zur Lesart:
+
+- CLI-Write: `t0` ist das Ende des CLI-Prozesses. Der Ref steht schon rund 40 ms früher (danach kommen Ausgabe und Exit), darum liegen einzelne Werte unter null; die Angabe »ab Ref-Ereignis« misst ab dem `fs.watch`-Ereignis auf `refs/heads/main` der Arbeitskopie und ist die strengere Zahl. Die zehn Writes verteilen sich über rund 50 s, also über mehrere Takte des Sicherheitsnetzes.
+- Board-Drag: Der lange Frame des Starts beginnt rund 50 ms nach dem Druck, bei der Aktivierung nach 5 px. Mit Gruppierung `none` folgen beim Ziehen Frames von gut 50 ms je Bewegung und 150–300 ms bei jedem Zellwechsel. Die Karte steht zwar im ersten Frame nach `pointerup` in der Zielzelle (5/5), dieser Frame kommt aber 133 bzw. 296 ms nach dem Loslassen. Behebt Task 6.
+- Außer Board-Drag ist kein Ziel verfehlt, darum kein weiterer Task. Am knappsten ist `GET /state` (Reserve rund 20–30 %): Jeder Abruf lädt den Snapshot neu aus dem Arbeitsbaum (`openSnapshot` in `src/ui/state.ts:34`), und laut CPU-Profil des Servers (`--cpu-prof`) entfallen rund 85 % seiner CPU-Zeit auf `parseIssue`, überwiegend auf `parseFrontmatter` (`src/store/frontmatter.ts:91`, YAML-Parser und Composer je `issue.md`). Läuft für das Backlog ein Watcher, hält er denselben Stand schon als fortgeschriebenen Snapshot; `/state` könnte ihn nutzen, statt 10⁴ Dateien neu zu parsen.
+- Live-Kern mit 20 Nachbarn: Im Leerlauf kostet er 20 ms Node-CPU und 100 ms in git-Kindprozessen je 10 s (Sicherheitsnetz: `git rev-parse` je Nachbar, `git status`, `HEAD`). Ein rekursiver `fs.watch` auf `issues/` mit 10⁴ Issues kostet im Leerlauf nichts Messbares (Einzelversuch: 0 ms CPU in 20 s).
