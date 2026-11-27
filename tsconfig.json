@@ -13,5 +13,8 @@
     "resolveJsonModule": true,
     "skipLibCheck": true
   },
-  "include": ["src", "test", "scripts", "*.config.ts"]
+  "include": ["src", "test", "scripts", "*.config.ts"],
+  // Die Browser-Specs reichen Funktionen in die Seite und brauchen dafür die DOM-Typen; die soll der
+  // Node-Code nie sehen. Sie prüft test/browser/tsconfig.json.
+  "exclude": ["test/browser"]
 }

@@ -32,7 +32,7 @@
   },
   "scripts": {
     "prepare": "git config core.hooksPath .githooks",
-    "lint": "biome check . && tsc --noEmit && tsc --noEmit -p web",
+    "lint": "biome check . && tsc --noEmit && tsc --noEmit -p web && tsc --noEmit -p test/browser",
     "test": "vitest run --coverage",
     "test:e2e": "playwright test",
     "build": "tsdown && vite build --config web/vite.config.ts && node scripts/check-ui-build.ts",

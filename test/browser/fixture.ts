@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test as base, expect, type Page, type TestType } from '@playwright/test';
+import { test as base, expect, type Page } from '@playwright/test';
 
 export { expect } from '@playwright/test';
 
@@ -139,7 +139,9 @@ async function makeHome(dir: string): Promise<UiHome> {
   return { dir, env, acme, beta, cli };
 }
 
-export const test: TestType<{ home: UiHome; ui: UiServer; app: Page }, object> = base.extend<{
+// Ohne eigene Typangabe: Specs brauchen neben `home`, `ui` und `app` auch die eingebauten Fixtures
+// und Optionen (`page`, `colorScheme`), um sie zu überschreiben oder per `test.use` zu setzen.
+export const test = base.extend<{
   home: UiHome;
   ui: UiServer;
   app: Page;
