@@ -286,6 +286,24 @@ test('the key stays when only fields change', () => {
   expect(graph(linked, C).key).not.toBe(before);
 });
 
+test('the key knows whether a collector exists, not how many it holds', () => {
+  const fanOut = (n: number) =>
+    snapshot(
+      testIssue(1),
+      ...Array.from({ length: n }, (_, i) => testIssue(i + 2, { depends_on: [tid(1)] })),
+    );
+  const at = (n: number) =>
+    depGraph(fanOut(n), tid(1), { parents: false, expanded: none, limit: 3 });
+  // Ein Issue mehr jenseits des Limits ändert nur die Zahl im Sammelknoten, nicht das Layout.
+  expect(at(4).more).toBe(2);
+  expect(at(5).more).toBe(3);
+  expect(at(5).key).toBe(at(4).key);
+  // Kommt der Sammelknoten erst hinzu, ändert sich die Struktur.
+  expect(at(2).more).toBe(0);
+  expect(at(3).more).toBe(1);
+  expect(at(3).key).not.toBe(at(2).key);
+});
+
 const shape = (items: DepTreeItem[]): unknown[] =>
   items.map((i) => [i.key, i.kind, i.open, i.expandable, i.cycle, shape(i.children)]);
 

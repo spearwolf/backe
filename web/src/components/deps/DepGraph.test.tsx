@@ -341,6 +341,18 @@ test('a new structure sets the start view again, a field change leaves it', asyn
   expect(parseTransform(viewport(container)).zoom).toBe(READABLE_ZOOM);
 });
 
+test('a growing collector updates its count and keeps layout and view', async () => {
+  const { container, rerender } = await show(graphOf(fan(4), tid(1), { limit: 3 }));
+  expect(nodeEl(container, 'more').textContent).toBe(m.more(2));
+  const view = viewport(container);
+  expect(layoutDeps).toHaveBeenCalledTimes(1);
+
+  await rerender(graphOf(fan(5), tid(1), { limit: 3 }));
+  expect(nodeEl(container, 'more').textContent).toBe(m.more(3));
+  expect(layoutDeps).toHaveBeenCalledTimes(1);
+  expect(viewport(container)).toBe(view);
+});
+
 test('xyflow adds no English descriptions to nodes', async () => {
   const { container } = await show(graphOf(chain(), C, { limit: 3 }));
   const wrappers = container.querySelectorAll('.react-flow__node');

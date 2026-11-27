@@ -73,7 +73,10 @@ export type DepGraph = {
   edges: DepEdge[];
   /** Knoten im Sammelknoten; 0 ohne. */
   more: number;
-  /** Knoten-IDs und Kanten; ändert sich nur mit der Struktur, nicht mit Titeln oder States. */
+  /**
+   * Knoten-IDs, Kanten und ob es einen Sammelknoten gibt; ändert sich nur mit der Struktur, nicht
+   * mit Titeln, States oder der Zahl im Sammelknoten.
+   */
   key: string;
 };
 
@@ -152,10 +155,12 @@ export function depGraph(
     };
   });
 
+  // Nur ob es einen Sammelknoten gibt: Seine Zahl erreicht ihn über die Knotendaten. Mit der Zahl
+  // im Schlüssel legte jedes weitere Issue jenseits des Limits neu aus und setzte die Ansicht zurück.
   const key = [
     nodes.map((n) => `${n.id}:${n.role}`).join(','),
     [...seen].join(','),
-    String(more),
+    more > 0 ? 'more' : '',
   ].join('|');
   return { nodes, edges, more, key };
 }
