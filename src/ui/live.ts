@@ -171,6 +171,8 @@ export class LiveBacklog {
 
   #watched: Watched | undefined;
   #neighbors: NeighborWatch | undefined;
+  /** Erfüllt sich, wenn die Nachbar-Watch zu ist und ihr laufender `check` fertig. */
+  #neighborsClosed: Promise<void> = Promise.resolve();
   /** Laufende `scheduleSync` nach einer Bewegung der Nachbarn; `stop` wartet sie ab. */
   readonly #starts = pendingStarts();
   #stopPeriodic: () => void = () => {};
@@ -200,6 +202,7 @@ export class LiveBacklog {
       await live.#open(opts.deps ?? {});
     } catch (err) {
       live.#teardown();
+      await live.#neighborsClosed;
       throw err;
     }
     return live;
@@ -260,7 +263,8 @@ export class LiveBacklog {
 
   /**
    * Nur bei eigener Arbeitskopie, nach ihren Watchern und vor dem Laden von `HEAD`: die
-   * Nachbar-Watch. Ihre Grundlinie steht so vor dem Stand, den der Snapshot zeigt.
+   * Nachbar-Watch. Liegt ein Nachbar schon beim Start vorn, startet ihr erster Durchlauf sofort
+   * einen Sync; dessen Pull bewegt `HEAD` dann nach dem Laden und ergibt einen Patch.
    */
   async #watchNeighbors(deps: LiveDeps): Promise<void> {
     // Pusht ein Nachbar (ui.md §2.4.1 Punkt 3), holt ein Hintergrund-Sync den Stand, statt bis zum
@@ -320,7 +324,7 @@ export class LiveBacklog {
     clearTimeout(this.#lingerTimer);
     clearInterval(this.#safety);
     this.#watched?.close();
-    this.#neighbors?.close();
+    this.#neighborsClosed = this.#neighbors?.close() ?? Promise.resolve();
     this.#stopPeriodic();
     this.#listeners.clear();
   }
@@ -582,15 +586,17 @@ export class LiveBacklog {
 
   /**
    * Beendet Watcher und Timer und meldet den letzten `rev` sofort an `onStop`; wartet danach die
-   * laufende Runde ab, die nichts mehr sendet, und die Prüfungen nach einer Bewegung der Nachbarn,
-   * die nichts mehr starten. So ist nach `stop` (und nach `LiveHub.close`) auch keine Prüfung mehr
-   * offen, die dieser Watcher für einen Sync angestoßen hat. Idempotent.
+   * laufende Runde ab, die nichts mehr sendet, den laufenden Blick der Nachbar-Watch und die
+   * Prüfungen nach einer Bewegung der Nachbarn, die nichts mehr starten. So ist nach `stop` (und
+   * nach `LiveHub.close`) weder ein Git-Prozess der Nachbar-Watch noch eine Prüfung mehr offen, die
+   * dieser Watcher für einen Sync angestoßen hat. Idempotent.
    */
   async stop(): Promise<void> {
     if (this.#stopped) return;
     this.#teardown();
     this.#onStop(this.#rev);
     await this.idle();
+    await this.#neighborsClosed;
     await this.#starts.settled();
   }
 }

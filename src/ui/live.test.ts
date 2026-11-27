@@ -26,7 +26,9 @@ import { executeWrite } from '../services/write.ts';
 import { writeFileAtomic } from '../store/files.ts';
 import { BACKLOG_CONFIG, commentsDir, issueFile } from '../store/layout.ts';
 import * as snapshotModule from '../store/snapshot.ts';
+import type { StateJson } from './api.ts';
 import { LIVE_TIMING, LiveBacklog, type LiveDeps, LiveHub, parseEventId } from './live.ts';
+import { NeighborWatch } from './neighbors.ts';
 import * as stateModule from './state.ts';
 import { stateJson } from './state.ts';
 import type { WatchFn } from './watch.ts';
@@ -634,6 +636,28 @@ describe('neighbours', () => {
     expect(spawn).toHaveBeenCalledTimes(1);
   });
 
+  test('a neighbour ahead at start starts one sync, and its issue arrives as a patch', async () => {
+    const { agentCtx } = await withAgent(3600);
+    const id = await agentPush(agentCtx);
+    const spawn = vi.fn();
+    const live = await startWith(ctx, { sync: { spawn } });
+    const c = collect(live);
+    // Schon der erste Blick der Nachbar-Watch beim Start meldet den Vorsprung, ohne Entprellung.
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1), WAIT);
+    expect(c.patches()).toEqual([]);
+
+    // Der Sync, den `spawn` gestartet hätte, läuft hier in-process.
+    await runBackground(ctx, { spawn: () => {} });
+    await advancing(() => expect(c.patches()).toHaveLength(1));
+    await settle(live);
+    const [patch] = c.patches();
+    expect(c.patches()).toHaveLength(1);
+    expect(patch?.upsert.issues?.map((i) => [i.id, i.title])).toEqual([[id, 'Vom Agent']]);
+    expect(patch?.actors).toEqual({ [id]: ['claude-1'] });
+    expect(live.head).toBe(await revParse(agentCtx.backlog.workingCopy as string, 'HEAD'));
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
   test('manual mode starts no neighbour sync', async () => {
     const { agentCtx } = await withAgent();
     const scheduled = vi.spyOn(scheduleModule, 'scheduleSync');
@@ -714,6 +738,108 @@ describe('neighbours', () => {
     expect(spawn).toHaveBeenCalledTimes(pushes);
     expect(spawn.mock.calls.length).toBeLessThanOrEqual(phases);
   }, 60_000);
+
+  /** Faltet die Patches auf den Anfangsstand und vergleicht mit einem frischen Stand. */
+  async function converged(live: LiveBacklog, initial: StateJson, c: ReturnType<typeof collect>) {
+    await Promise.all(syncs);
+    await settle(live);
+    const fresh = await stateJson(ctx);
+    expect(live.head).toBe(fresh.head);
+    expect(comparable(c.patches().reduce(applyPatch, initial))).toEqual(comparable(fresh));
+  }
+
+  test('two neighbour pushes before a quiet phase start one sync', async () => {
+    const { agentCtx } = await withAgent(3600);
+    const agentWc = agentCtx.backlog.workingCopy as string;
+    const spawn = inProcess(() => ctx);
+    const live = await startWith(ctx, { sync: { spawn } });
+    const initial = await stateJson(ctx, live.rev);
+    const c = collect(live);
+    // Beide Pushes sind fertig, bevor die Zeit läuft: Der erste Blick sieht schon den zweiten Stand.
+    const ids = [await agentPush(agentCtx, 'Erster'), await agentPush(agentCtx, 'Zweiter')];
+    await advancing(() => expect(spawn).toHaveBeenCalledTimes(1));
+    const agentHead = await revParse(agentWc, 'HEAD');
+    await advancing(() => expect(live.head).toBe(agentHead));
+    await converged(live, initial, c);
+    const arrived = c.patches().flatMap((p) => p.upsert.issues?.map((i) => i.id) ?? []);
+    expect(arrived).toEqual(expect.arrayContaining(ids));
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  test('a neighbour push during a running sync is fetched by its dirty re-run', async () => {
+    const { agentCtx } = await withAgent(3600);
+    const agentWc = agentCtx.backlog.workingCopy as string;
+    let fetched!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      fetched = resolve;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const runs: Promise<{ rounds: number; deferred: boolean }>[] = [];
+    // Der erste Sync hält nach seinem Fetch an, mit `sync.lock`; der zweite findet ihn gehalten.
+    const spawn = vi.fn(() => {
+      const hooks =
+        runs.length === 0
+          ? {
+              afterFetch: async () => {
+                fetched();
+                await gate;
+              },
+            }
+          : {};
+      const run = runBackground(ctx, { spawn: () => {}, hooks });
+      runs.push(run);
+      syncs.push(run);
+    });
+    const live = await startWith(ctx, { sync: { spawn } });
+    const initial = await stateJson(ctx, live.rev);
+    const c = collect(live);
+
+    await agentPush(agentCtx, 'Vor dem Sync');
+    await advancing(() => expect(spawn).toHaveBeenCalledTimes(1));
+    await paused;
+    await agentPush(agentCtx, 'Während des Syncs');
+    await advancing(() => expect(spawn).toHaveBeenCalledTimes(2));
+    expect(await runs[1]).toEqual({ rounds: 0, deferred: true });
+
+    release();
+    expect(await runs[0]).toEqual({ rounds: 2, deferred: false });
+    const agentHead = await revParse(agentWc, 'HEAD');
+    await advancing(() => expect(live.head).toBe(agentHead));
+    await converged(live, initial, c);
+    expect(spawn).toHaveBeenCalledTimes(2);
+  });
+
+  test('stop waits until the neighbour watch is closed', async () => {
+    await withAgent();
+    const live = await startWith(ctx, { sync: { spawn: vi.fn() } });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = NeighborWatch.prototype.close;
+    const close = vi.spyOn(NeighborWatch.prototype, 'close').mockImplementation(function (
+      this: NeighborWatch,
+    ) {
+      return original.call(this).then(() => gate);
+    });
+    try {
+      let stopped = false;
+      const stopping = live.stop().then(() => {
+        stopped = true;
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(stopped).toBe(false);
+      release();
+      await stopping;
+      expect(stopped).toBe(true);
+    } finally {
+      close.mockRestore();
+    }
+  });
 
   test('the safety net catches a lost neighbour push', async () => {
     const { agentCtx } = await withAgent();

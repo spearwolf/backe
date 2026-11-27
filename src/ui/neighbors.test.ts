@@ -157,8 +157,8 @@ async function start(
   return w;
 }
 
-afterEach(() => {
-  for (const w of open.splice(0)) w.close();
+afterEach(async () => {
+  await Promise.all(open.splice(0).map((w) => w.close()));
   vi.useRealTimers();
 });
 
@@ -315,14 +315,47 @@ test('a new neighbour at a known state is no move', async () => {
   expect(onMove).toHaveBeenCalledTimes(1);
 });
 
-test('the first glance at start is no move, also on an unknown commit', async () => {
+test('a neighbour ahead at start is a move', async () => {
   const s = await withHub();
   await agentPush(s.agentCtx);
+  const onMove = vi.fn();
+  const w = await start(s, onMove);
+  expect(onMove).toHaveBeenCalledTimes(1);
+
+  await w.check();
+  expect(onMove).toHaveBeenCalledTimes(1);
+});
+
+test('a known value at start is no move', async () => {
+  const s = await withHub();
+  await writeOp(s.ctx, { op: 'issue.create', title: 'Von spw' });
+  await syncNow(s.ctx, { spawn: () => {} });
   const onMove = vi.fn();
   const w = await start(s, onMove);
   await w.check();
 
   expect(onMove).not.toHaveBeenCalled();
+});
+
+test('start still runs its first check when the dir watch fails unexpectedly', async () => {
+  const s = await withHub();
+  await agentPush(s.agentCtx);
+  const rec = recorder();
+  let fail = true;
+  const watch: WatchFn = (path, opts, listener) => {
+    if (fail && path === s.backlogDir) {
+      fail = false;
+      throw new TypeError('bug');
+    }
+    return rec.watch(path, opts, listener);
+  };
+  const onMove = vi.fn();
+  await start(s, onMove, watch);
+
+  expect(fail).toBe(false);
+  expect(rec.has(await refsOf(s.hub))).toBe(true);
+  expect(rec.has(s.backlogDir)).toBe(true);
+  expect(onMove).toHaveBeenCalledTimes(1);
 });
 
 test('a neighbour the first round could not read counts with its first value', async () => {
@@ -382,19 +415,23 @@ test('a neighbour that appears in a trailing round of start counts', async () =>
   const { rec, other } = await startWithTrailingNeighbour(onMove);
 
   expect(rec.has(await refsOf(other))).toBe(true);
-  expect(onMove).toHaveBeenCalledTimes(1);
+  // Der erste Durchlauf meldet den Agenten, der Nachlauf den neuen Nachbarn `other`.
+  expect(onMove).toHaveBeenCalledTimes(2);
 });
 
 test('start resolves even if onMove throws in its trailing round', async () => {
-  const onMove = vi.fn<() => void>().mockImplementationOnce(() => {
-    throw new Error('boom');
-  });
+  const onMove = vi
+    .fn<() => void>()
+    .mockImplementationOnce(() => {})
+    .mockImplementationOnce(() => {
+      throw new Error('boom');
+    });
   const { agentCtx, w } = await startWithTrailingNeighbour(onMove);
-  expect(onMove).toHaveBeenCalledTimes(1);
+  expect(onMove).toHaveBeenCalledTimes(2);
 
   await agentPush(agentCtx);
   await w.check();
-  expect(onMove).toHaveBeenCalledTimes(2);
+  expect(onMove).toHaveBeenCalledTimes(3);
 });
 
 test('a programming error mid-round keeps the moves already read', async () => {
@@ -481,6 +518,7 @@ test('a recreated neighbour gets fresh watches and counts as new', async () => {
   const rec = recorder();
   const onMove = vi.fn();
   const w = await start(s, onMove, rec.watch);
+  expect(onMove).toHaveBeenCalledTimes(1);
   const agentRefs = await refsOf(s.wc);
   const first = rec.at(agentRefs);
 
@@ -492,7 +530,7 @@ test('a recreated neighbour gets fresh watches and counts as new', async () => {
   expect(first.closed).toBe(true);
   expect(rec.at(agentRefs)).not.toBe(first);
   expect(rec.has(agentRefs)).toBe(true);
-  expect(onMove).toHaveBeenCalledTimes(1);
+  expect(onMove).toHaveBeenCalledTimes(2);
 });
 
 test('a replaced git dir gets fresh watches', async () => {
@@ -837,7 +875,7 @@ test('a round running during close does not reopen the dir watch', async () => {
   fail = false;
 
   const running = w.check();
-  w.close();
+  void w.close();
   await running;
 
   expect(rec.all.some((r) => r.path === s.backlogDir)).toBe(false);
@@ -870,7 +908,7 @@ test('close leaves no watch and no timer', async () => {
   fakeTimers();
 
   rec.at(await refsOf(s.hub)).fire('heads/main');
-  w.close();
+  void w.close();
   await vi.advanceTimersByTimeAsync(debounceMs);
 
   expect(onMove).not.toHaveBeenCalled();
@@ -891,7 +929,7 @@ test('a check running during close reports nothing', async () => {
   await agentPush(s.agentCtx);
 
   const running = w.check();
-  w.close();
+  void w.close();
   await running;
 
   expect(onMove).not.toHaveBeenCalled();
@@ -907,7 +945,7 @@ test('close during the last comparison suppresses onMove', async () => {
   // Beide Nachbarn haben sich bewegt; `close` kommt während des Vergleichs des zweiten.
   let compared = 0;
   vi.mocked(git).mockImplementation(async (args, opts) => {
-    if (args[0] === 'merge-base' && ++compared === 2) w.close();
+    if (args[0] === 'merge-base' && ++compared === 2) void w.close();
     return real(args, opts);
   });
   try {
@@ -928,7 +966,7 @@ test('a neighbour found while closing gets no watch', async () => {
   const real = await realGit();
   // Der erste Git-Aufruf des Durchlaufs liest die Git-Dirs des ersten neuen Nachbarn.
   vi.mocked(git).mockImplementationOnce(async (args, opts) => {
-    w.close();
+    void w.close();
     return real(args, opts);
   });
 
@@ -936,4 +974,96 @@ test('a neighbour found while closing gets no watch', async () => {
 
   expect(rec.all.filter((r) => !r.closed)).toEqual([]);
   expect(rec.all).toHaveLength(1);
+});
+
+test('close resolves only after a running check, and swallows its error', async () => {
+  const s = await withHub();
+  const w = await start(s, vi.fn());
+  const real = await realGit();
+  let entered!: () => void;
+  const inside = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  vi.mocked(git).mockImplementation(async (args, opts) => {
+    if (isVerify(args)) {
+      entered();
+      await gate;
+      throw new TypeError('bug');
+    }
+    return real(args, opts);
+  });
+  try {
+    const outcome = w.check().then(
+      () => 'resolved',
+      (err: unknown) => err,
+    );
+    await inside;
+    let closed = false;
+    const closing = w.close().then(() => {
+      closed = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(closed).toBe(false);
+
+    release();
+    await closing;
+    expect(await outcome).toBeInstanceOf(TypeError);
+  } finally {
+    vi.mocked(git).mockImplementation(real);
+  }
+});
+
+test('a round reads its neighbours in parallel', async () => {
+  const s = await withHub();
+  const w = await start(s, vi.fn());
+  const real = await realGit();
+  let reading = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  vi.mocked(git).mockImplementation(async (args, opts) => {
+    if (isVerify(args)) {
+      reading += 1;
+      await gate;
+    }
+    return real(args, opts);
+  });
+  try {
+    const running = w.check();
+    // Hub und Agent: Beide Blicke laufen, bevor einer fertig ist.
+    await vi.waitFor(() => expect(reading).toBe(2));
+    release();
+    await running;
+  } finally {
+    vi.mocked(git).mockImplementation(real);
+  }
+});
+
+test('a rejected candidate is not probed again until it changes', async () => {
+  const s = await withAgent();
+  // Wie bei einem fremden Repository: `hub.git` ist leer, git fände das Repo darüber.
+  const outer = dirname(s.b.homes.backeHome);
+  await git(['init', '-q', outer], { cwd: outer });
+  const hub = join(s.backlogDir, 'hub.git');
+  await mkdir(hub);
+  const rec = recorder();
+  const w = await start(s, vi.fn(), rec.watch);
+  const probes = () =>
+    vi.mocked(git).mock.calls.filter(([args]) => args.includes('--git-common-dir')).length;
+
+  vi.mocked(git).mockClear();
+  await w.check();
+  expect(probes()).toBe(0);
+  expect(rec.all.map((r) => r.path)).toEqual([s.backlogDir]);
+
+  // `git init` behält das Verzeichnis und seinen Inode; geprüft wird trotzdem neu.
+  await git(['init', '--bare', '-q', '-b', 'main', hub], { cwd: s.backlogDir });
+  await w.check();
+  expect(probes()).toBe(1);
+  expect(rec.has(await refsOf(hub))).toBe(true);
 });

@@ -27,7 +27,7 @@ Alle Global Constraints des Gesamtplans und der Pläne U1–U10. Dazu für U11:
 
 | Stelle | Festlegung |
 | --- | --- |
-| »Bewegt sich einer« | Nach 250 ms Ruhe liest `check()` die Werte aller Nachbar-Refs (`git rev-parse --verify -q`); bewegt hat sich ein Ref, dessen Wert vom letzten Blick abweicht und keinen Vorfahren von `HEAD` der eigenen Arbeitskopie bezeichnet (`isAncestor`; fehlt das Objekt dort, gilt er als unbekannt). Der eigene Push in den Hub startet so keine Runde. Der Wert beim Start und bei einem neu entdeckten Nachbarn ist der erste Blick, keine Bewegung. |
+| »Bewegt sich einer« | Nach 250 ms Ruhe liest `check()` die Werte aller Nachbar-Refs (`git rev-parse --verify -q`); bewegt hat sich ein Ref, dessen Wert vom letzten Blick abweicht und keinen Vorfahren von `HEAD` der eigenen Arbeitskopie bezeichnet (`isAncestor`; fehlt das Objekt dort, gilt er als unbekannt). Der eigene Push in den Hub startet so keine Runde. Auch der erste Blick zählt so: Liegt ein Nachbar beim Start der Watch oder beim Entdecken schon vor der eigenen Arbeitskopie, startet er eine Runde; ein bekannter erster Wert wird nur festgehalten. |
 | Neue Nachbarn | Ereignisse im Backlog-Verzeichnis (ein Agent bekommt seine Arbeitskopie, der Hub entsteht) und jeder `check()` lesen die Einträge neu; neue Nachbarn bekommen Watches, verschwundene verlieren sie. |
 | Sicherheitsnetz | Der 10-s-Takt des `LiveBacklog` ruft zusätzlich `neighbors.check()` (ohne Debounce). |
 | `actors` im Patch | `actors?: Record<string, string[]>` — Issue-ID → Handles aus `Backe-Actor` der Commits zwischen altem und neuem `head`, die Pfade unter `issues/<shard>/<id>/` ändern; sortiert, ohne Doppelte; nur für Issues, die im Patch stehen (`upsert.issues`, `remove.issues`, `touched`); fehlt, wenn leer. Hand-Edits im Arbeitsbaum haben keine Actors. Kommt eine Bewegung von `HEAD` erst eine Runde später als Patch heraus (kaputter Stand dazwischen), reisen ihre Actors mit. |
@@ -132,12 +132,12 @@ export type NeighborOptions = {
   onMove: () => void;
 };
 export class NeighborWatch {
-  /** Öffnet die Watches und liest den ersten Blick; ein fehlendes Backlog-Verzeichnis ist kein Fehler. */
+  /** Öffnet die Watches und macht den ersten Durchlauf; ein fehlendes Backlog-Verzeichnis ist kein Fehler. */
   static start(opts: NeighborOptions): Promise<NeighborWatch>;
   /** Nachbarn neu lesen, Refs vergleichen; Single-Flight mit Nachlauf. Wirft nie. */
   check(): Promise<void>;
-  /** Watches und Debounce-Timer abbauen; danach meldet `onMove` nie mehr. */
-  close(): void;
+  /** Watches und Debounce-Timer abbauen; danach meldet `onMove` nie mehr. Erfüllt sich nach einem laufenden `check`. */
+  close(): Promise<void>;
 }
 ```
 
