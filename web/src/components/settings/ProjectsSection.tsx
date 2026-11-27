@@ -142,26 +142,8 @@ export function ProjectsSection({ id, title, folded, onToggle }: SectionFrame) {
     </Button>
   ) : undefined;
 
-  return (
-    <SettingsSection id={id} title={title} folded={folded} onToggle={onToggle} actions={actions}>
-      <div className="max-w-3xl">
-        {rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{m.noProjects}</p>
-        ) : (
-          <ul aria-label={m.projectList} className="space-y-2">
-            {rows.map((row) => (
-              <ProjectItem
-                key={row.project.path}
-                row={row}
-                canWrite={canWrite}
-                onAddChild={openAdd}
-                onMove={openMove}
-                onRemove={openRemove}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
+  const overlays = (
+    <>
       {adding !== undefined && (
         <AddProjectDialog
           section={id}
@@ -187,6 +169,36 @@ export function ProjectsSection({ id, title, folded, onToggle }: SectionFrame) {
           onOpenChange={(open) => !open && setRemoving(undefined)}
         />
       )}
+    </>
+  );
+
+  return (
+    <SettingsSection
+      id={id}
+      title={title}
+      folded={folded}
+      onToggle={onToggle}
+      actions={actions}
+      overlays={overlays}
+    >
+      <div className="max-w-3xl">
+        {rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{m.noProjects}</p>
+        ) : (
+          <ul aria-label={m.projectList} className="space-y-2">
+            {rows.map((row) => (
+              <ProjectItem
+                key={row.project.path}
+                row={row}
+                canWrite={canWrite}
+                onAddChild={openAdd}
+                onMove={openMove}
+                onRemove={openRemove}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
     </SettingsSection>
   );
 }

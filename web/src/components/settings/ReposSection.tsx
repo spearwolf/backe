@@ -348,6 +348,8 @@ export function ReposSection({ id, title, folded, onToggle }: SectionFrame) {
   };
 
   const runCheck = (): void => {
+    // Status und Ergebnis stehen im Körper; ein eingeklappter Abschnitt klappt dafür auf.
+    if (folded) onToggle();
     void check.run(async () =>
       setResult(await writes.run('repo_check', remote ? { remote: true } : {})),
     );
@@ -381,8 +383,29 @@ export function ReposSection({ id, title, folded, onToggle }: SectionFrame) {
     </div>
   ) : undefined;
 
+  const overlays = (
+    <>
+      {adding && <AddDialog section={id} focus={focus} onOpenChange={setAdding} />}
+      {/* Verschwindet das Repo per Patch, schließt sich der Dialog mit ihm. */}
+      {removing !== undefined && keys.includes(removing) && (
+        <RemoveDialog
+          name={removing}
+          focus={focus}
+          onOpenChange={(open) => !open && setRemoving(undefined)}
+        />
+      )}
+    </>
+  );
+
   return (
-    <SettingsSection id={id} title={title} folded={folded} onToggle={onToggle} actions={actions}>
+    <SettingsSection
+      id={id}
+      title={title}
+      folded={folded}
+      onToggle={onToggle}
+      actions={actions}
+      overlays={overlays}
+    >
       <div className="max-w-3xl space-y-4">
         {names.length === 0 ? (
           <p className="text-sm text-muted-foreground">{m.noRepos}</p>
@@ -400,15 +423,6 @@ export function ReposSection({ id, title, folded, onToggle }: SectionFrame) {
         {result !== undefined && <CheckResult result={result} />}
         <ActionError error={check.error} />
       </div>
-      {adding && <AddDialog section={id} focus={focus} onOpenChange={setAdding} />}
-      {/* Verschwindet das Repo per Patch, schließt sich der Dialog mit ihm. */}
-      {removing !== undefined && keys.includes(removing) && (
-        <RemoveDialog
-          name={removing}
-          focus={focus}
-          onOpenChange={(open) => !open && setRemoving(undefined)}
-        />
-      )}
     </SettingsSection>
   );
 }

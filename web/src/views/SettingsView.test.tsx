@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { m as app } from '../app/app.messages.ts';
 import { SETTINGS_SECTIONS } from '../app/settings-model.ts';
 import { readFolded, writeFolded } from '../app/settings-prefs.ts';
-import { region, registerSettingsHarness, scrolled, view } from '../test/settings-view.tsx';
+import { call, region, registerSettingsHarness, scrolled, view } from '../test/settings-view.tsx';
 import { m } from './settings.messages.ts';
 
 registerSettingsHarness();
@@ -133,4 +133,55 @@ test('the view mounts after a section route without stealing focus twice', () =>
   expect(scrolled).toHaveBeenCalledTimes(1);
   act(() => prefs.setLang('de'));
   expect(scrolled).toHaveBeenCalledTimes(1);
+});
+
+describe('header actions of a folded section', () => {
+  const users = [
+    {
+      handle: 'ana',
+      name: 'Ana',
+      kind: 'human' as const,
+      admin: false,
+      fingerprints: ['SHA256:a'],
+    },
+  ];
+  const cases = () => [
+    { section: m.sectionRepositories, action: m.addRepo, dialog: m.addRepoTitle },
+    { section: m.sectionProjects, action: m.addProject, dialog: m.addProjectTitle },
+    { section: m.sectionSprints, action: m.addSprint, dialog: m.addSprintTitle },
+    { section: m.sectionUsers, action: m.addUser, dialog: m.addUserTitle },
+    { section: m.sectionUsers, action: m.createAgent, dialog: m.createAgentTitle },
+  ];
+
+  test('open their dialogs without unfolding', async () => {
+    const user = userEvent.setup();
+    view({ me: 'ana', over: { users } });
+    for (const { section, action, dialog } of cases()) {
+      if (toggle(section).getAttribute('aria-expanded') === 'true') {
+        await user.click(toggle(section));
+      }
+      await user.click(within(region(section)).getByRole('button', { name: action }));
+      expect(screen.getByRole('dialog', { name: dialog })).toBeTruthy();
+      await user.keyboard('{Escape}');
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(toggle(section).getAttribute('aria-expanded')).toBe('false');
+      // Der Fokus kehrt an den Auslöser im Kopf zurück.
+      expect(document.activeElement).toBe(
+        within(region(section)).getByRole('button', { name: action }),
+      );
+    }
+  });
+
+  test('checking repositories unfolds the section and shows the result', async () => {
+    const user = userEvent.setup();
+    view();
+    call.mockResolvedValue({ repos: [{ name: 'web', url: 'u', findings: [] }] });
+    await user.click(toggle(m.sectionRepositories));
+    const repos = () => region(m.sectionRepositories);
+    await user.click(within(repos()).getByRole('button', { name: m.checkRepos }));
+    expect(call).toHaveBeenCalledWith('repo_check', {});
+    expect(toggle(m.sectionRepositories).getAttribute('aria-expanded')).toBe('true');
+    expect(within(repos()).getByRole('status').textContent).toBe(m.checkClean);
+    expect(within(repos()).getByRole('region', { name: m.checkResults })).toBeTruthy();
+  });
 });

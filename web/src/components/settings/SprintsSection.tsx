@@ -118,8 +118,30 @@ export function SprintsSection({ id, title, folded, onToggle }: SectionFrame) {
     </Button>
   ) : undefined;
 
+  const overlays = (
+    <>
+      {adding && <AddSprintDialog section={id} focus={focus} onOpenChange={setAdding} />}
+      {/* Schließt der Sprint per Patch oder verschwindet er, schließt sich sein Dialog mit. */}
+      {closing !== undefined && closingOpen && (
+        <CloseSprintDialog
+          slug={closing}
+          others={openSlugs.filter((s) => s !== closing)}
+          focus={focus}
+          onOpenChange={(o) => !o && setClosing(undefined)}
+        />
+      )}
+    </>
+  );
+
   return (
-    <SettingsSection id={id} title={title} folded={folded} onToggle={onToggle} actions={actions}>
+    <SettingsSection
+      id={id}
+      title={title}
+      folded={folded}
+      onToggle={onToggle}
+      actions={actions}
+      overlays={overlays}
+    >
       <div className="max-w-3xl space-y-4">
         {open.length === 0 && closed.length === 0 ? (
           <p className="text-sm text-muted-foreground">{m.noSprints}</p>
@@ -164,16 +186,6 @@ export function SprintsSection({ id, title, folded, onToggle }: SectionFrame) {
           </div>
         )}
       </div>
-      {adding && <AddSprintDialog section={id} focus={focus} onOpenChange={setAdding} />}
-      {/* Schließt der Sprint per Patch oder verschwindet er, schließt sich sein Dialog mit. */}
-      {closing !== undefined && closingOpen && (
-        <CloseSprintDialog
-          slug={closing}
-          others={openSlugs.filter((s) => s !== closing)}
-          focus={focus}
-          onOpenChange={(o) => !o && setClosing(undefined)}
-        />
-      )}
     </SettingsSection>
   );
 }

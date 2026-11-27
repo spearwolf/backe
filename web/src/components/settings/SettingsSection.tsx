@@ -16,6 +16,10 @@ export type SectionFrame = { id: Section; title: string; folded: boolean; onTogg
 /**
  * Ein einklappbarer Abschnitt der Settings (Skizze `settings.png`): Kopf mit Klappknopf und Titel,
  * rechts daneben Aktionen wie »Hinzufügen«. Eingeklappt steht nur der Kopf da.
+ *
+ * Die Aktionen im Kopf gehen auch eingeklappt. Was sie öffnen, gehört darum nach `overlays`, nicht
+ * in den Körper: Dialoge dort stehen unabhängig vom Klappzustand da (sie rendern ohnehin in ein
+ * Portal), im Körper erst nach dem Aufklappen.
  */
 export function SettingsSection(props: {
   id: Section;
@@ -23,6 +27,7 @@ export function SettingsSection(props: {
   folded: boolean;
   onToggle: () => void;
   actions?: ReactNode;
+  overlays?: ReactNode;
   children: ReactNode;
 }) {
   const { id, title, folded } = props;
@@ -45,7 +50,6 @@ export function SettingsSection(props: {
             {title}
           </button>
         </h2>
-        {/* Die Aktionen gehören zum Kopf: »Hinzufügen« öffnet einen Dialog und geht auch eingeklappt. */}
         {props.actions}
       </div>
       {!folded && (
@@ -53,6 +57,7 @@ export function SettingsSection(props: {
           {props.children}
         </div>
       )}
+      {props.overlays}
     </section>
   );
 }

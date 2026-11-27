@@ -180,34 +180,8 @@ export function UsersSection({ id, title, folded, onToggle }: SectionFrame) {
       </div>
     ) : undefined;
 
-  return (
-    <SettingsSection id={id} title={title} folded={folded} onToggle={onToggle} actions={actions}>
-      <div className="max-w-3xl">
-        {users.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{m.noUsers}</p>
-        ) : (
-          <ul aria-label={m.userList} className="space-y-2">
-            {users.map((user) => (
-              <UserItem
-                key={user.handle}
-                user={user}
-                // `user.admin` folgt nur `admins`; Admin ist aber nur ein Mensch (BK §2.13).
-                admin={isAdmin(admins, user.handle, user)}
-                canRevoke={rights.revokeKey(user)}
-                canRemove={rights.removeUser(user)}
-                onRevoke={(target, trigger) => {
-                  focus.opened(trigger);
-                  setRevoking(target);
-                }}
-                onRemove={(handle, trigger) => {
-                  focus.opened(trigger);
-                  setRemoving(handle);
-                }}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
+  const overlays = (
+    <>
       {adding && me !== null && (
         <AddUserDialog
           section={id}
@@ -235,6 +209,44 @@ export function UsersSection({ id, title, folded, onToggle }: SectionFrame) {
           onOpenChange={(o) => !o && setRemoving(undefined)}
         />
       )}
+    </>
+  );
+
+  return (
+    <SettingsSection
+      id={id}
+      title={title}
+      folded={folded}
+      onToggle={onToggle}
+      actions={actions}
+      overlays={overlays}
+    >
+      <div className="max-w-3xl">
+        {users.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{m.noUsers}</p>
+        ) : (
+          <ul aria-label={m.userList} className="space-y-2">
+            {users.map((user) => (
+              <UserItem
+                key={user.handle}
+                user={user}
+                // `user.admin` folgt nur `admins`; Admin ist aber nur ein Mensch (BK §2.13).
+                admin={isAdmin(admins, user.handle, user)}
+                canRevoke={rights.revokeKey(user)}
+                canRemove={rights.removeUser(user)}
+                onRevoke={(target, trigger) => {
+                  focus.opened(trigger);
+                  setRevoking(target);
+                }}
+                onRemove={(handle, trigger) => {
+                  focus.opened(trigger);
+                  setRemoving(handle);
+                }}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
     </SettingsSection>
   );
 }
