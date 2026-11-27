@@ -1,6 +1,7 @@
 import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { readDepPrefs } from '../../app/dep-prefs.ts';
+import { preload } from '../../test/chunks.ts';
 import {
   flush,
   ID,
@@ -17,6 +18,7 @@ import { m as issueText } from '../../views/issue.messages.ts';
 // gleich. Der Prüfstand stubbt einen, der nie einen Schnitt meldet; hier fällt er weg. Das Laden
 // hinter dem Beobachter prüft `DependencySection.lazy.test.tsx`.
 registerReadIssueViewHarness();
+preload(() => import('../deps/DepPanel.tsx'));
 
 let uninstall: () => void;
 beforeEach(() => {
@@ -45,12 +47,11 @@ const node = (id: string) => document.querySelector<HTMLElement>(`[data-dep-node
 const edge = (id: string) => document.querySelector(`.react-flow__edge[data-id="${id}"]`);
 
 /**
- * Wartet, bis der Graph-Chunk da ist und xyflow vermessen und eingepasst hat. Das erste Laden des
- * Chunks (xyflow und dagre durch den Transform von Vitest) braucht auf den macOS-Runnern der CI
- * über eine Sekunde, die Default-Frist von `waitFor`.
+ * Wartet, bis der Graph gerendert ist und xyflow vermessen und eingepasst hat. Der Chunk ist
+ * vorgeladen; `React.lazy` löst in Mikrotasks auf.
  */
 async function graphShown() {
-  await waitFor(() => expect(node(ID)).not.toBeNull(), { timeout: 10_000 });
+  await waitFor(() => expect(node(ID)).not.toBeNull());
   await act(async () => flushFrames());
 }
 

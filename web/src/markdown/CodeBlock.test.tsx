@@ -1,8 +1,15 @@
 import { act, cleanup, render, waitFor } from '@testing-library/react';
+import { preload } from '../test/chunks.ts';
 import { CodeBlock } from './CodeBlock.tsx';
 import { LANGUAGES, languageOf } from './languages.ts';
 
 afterEach(cleanup);
+// Lowlight und die Sprachen der Tests sind eigene Chunks; vorgeladen kommen sie ohne Wartezeit.
+preload(
+  () => import('lowlight'),
+  () => import('highlight.js/lib/languages/typescript'),
+  () => import('highlight.js/lib/languages/yaml'),
+);
 
 test('unknown language stays plain', async () => {
   const { container } = render(<CodeBlock code="let x = 1" language="klingon" />);

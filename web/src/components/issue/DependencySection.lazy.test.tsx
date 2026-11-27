@@ -2,6 +2,7 @@ import { act, cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { m as app } from '../../app/app.messages.ts';
 import { writeDepPrefs } from '../../app/dep-prefs.ts';
+import { preload } from '../../test/chunks.ts';
 import { flush, ID, registerReadIssueViewHarness, view } from '../../test/read-issue-view.tsx';
 import { testIssue, tid } from '../../test/state.ts';
 import { flushFrames, installXyflowStubs } from '../../test/xyflow.ts';
@@ -28,6 +29,8 @@ type Callback = (entries: { isIntersecting: boolean }[]) => void;
 let observers: { cb: Callback; target: Element | undefined }[] = [];
 
 registerReadIssueViewHarness();
+// Nur das Original: Nach dem Tor löst der Mock sofort auf, ohne auf ein erstes Laden zu warten.
+preload(() => vi.importActual('../deps/DepPanel.tsx'));
 
 let uninstall: () => void;
 beforeEach(() => {

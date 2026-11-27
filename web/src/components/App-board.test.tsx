@@ -1,5 +1,6 @@
 import { act, screen } from '@testing-library/react';
 import { m as app } from '../app/app.messages.ts';
+import { preload } from '../test/chunks.ts';
 import { registerCreateHarness, setup } from '../test/create-issue.tsx';
 import { m } from '../views/board.messages.ts';
 
@@ -20,6 +21,8 @@ vi.mock('../views/BoardView.tsx', async (importOriginal) => {
 });
 
 registerCreateHarness();
+// Nur das Original: Nach dem Tor löst der Mock sofort auf, ohne auf ein erstes Laden zu warten.
+preload(() => vi.importActual('../views/BoardView.tsx'));
 
 test('the board loads as its own chunk behind a fallback', async () => {
   gate.armed = true;

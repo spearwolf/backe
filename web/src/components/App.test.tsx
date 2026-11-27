@@ -9,9 +9,16 @@ import { attachNotifier } from '../app/notifier.ts';
 import { Router } from '../app/router.ts';
 import { Theme } from '../app/theme.ts';
 import { UiPrefs } from '../app/ui-prefs.ts';
+import { preload } from '../test/chunks.ts';
 import { fakeEventSources } from '../test/fake-event-source.ts';
 import { installNotifications } from '../test/notifications.ts';
 import { App } from './App.tsx';
+
+// Board und Settings sind eigene Chunks; vorgeladen kommen sie ohne Wartezeit.
+preload(
+  () => import('../views/BoardView.tsx'),
+  () => import('../views/SettingsView.tsx'),
+);
 
 // Durchgereicht, nur gezählt: Der Lebenszyklus-Test sieht so, wann der Notifier an- und abgehängt
 // wird.
@@ -284,7 +291,7 @@ test('tabs have tab roles and selection', async () => {
   expect(settings.getAttribute('href')).toBe('/b/main/settings');
   await user.click(settings);
   expect(path()).toBe('/b/main/settings');
-  // Settings ist ein eigener Chunk und kommt einen Moment später.
+  // Settings ist ein eigener Chunk und kommt nach dem Rendern des Fallbacks.
   expect(await screen.findByRole('heading', { name: 'Settings', level: 1 })).toBeTruthy();
   expect(tab('Backlog').getAttribute('aria-selected')).toBe('false');
 });
