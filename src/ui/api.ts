@@ -248,16 +248,14 @@ export type ToolArgs = {
   batch: { ops: Record<string, unknown>[] };
 };
 export type UiToolName = keyof ToolArgs;
+/** Tools mit eigener Antwort; alle übrigen antworten mit `WriteResultJson`. */
+type SpecialToolResults = {
+  repo_locate: RepoLocateJson;
+  batch: BatchResultJson;
+  repo_check: RepoCheckJson;
+  sync_now: SyncResultJson;
+  user_create_agent: CreateAgentJson;
+};
 export type ToolResults = {
-  [K in UiToolName]: K extends 'repo_locate'
-    ? RepoLocateJson
-    : K extends 'batch'
-      ? BatchResultJson
-      : K extends 'repo_check'
-        ? RepoCheckJson
-        : K extends 'sync_now'
-          ? SyncResultJson
-          : K extends 'user_create_agent'
-            ? CreateAgentJson
-            : WriteResultJson;
+  [K in UiToolName]: K extends keyof SpecialToolResults ? SpecialToolResults[K] : WriteResultJson;
 };
