@@ -44,10 +44,12 @@ export class BoardPrefs {
   readonly #viewKey: string;
   readonly #foldedKey: string;
 
-  constructor(backlog: string) {
+  /** `defaultGroup` aus Settings gilt nur, solange das Board dieses Backlogs keine eigene Wahl hat. */
+  constructor(backlog: string, defaultGroup: BoardGroup = DEFAULT_BOARD_VIEW.group) {
     this.#viewKey = `backe-ui:${backlog}:board-view`;
     this.#foldedKey = `backe-ui:${backlog}:board-lanes`;
-    this.view = createSignal<BoardView>(readJson(this.#viewKey, DEFAULT_BOARD_VIEW, isBoardView), {
+    const fallback: BoardView = { ...DEFAULT_BOARD_VIEW, group: defaultGroup };
+    this.view = createSignal<BoardView>(readJson(this.#viewKey, fallback, isBoardView), {
       attach: this,
     });
     this.folded = createSignal<Folded>(readJson<Folded>(this.#foldedKey, {}, isFoldedMap), {

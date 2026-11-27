@@ -1,4 +1,3 @@
-import { setLocale } from '@backe/i18n/locale.ts';
 import type { BacklogsJson } from '@backe/ui/api.ts';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -9,6 +8,7 @@ import type { ConnectionDeps } from '../data/connection.ts';
 import { guardFileDrops } from './file-drop-guard.ts';
 import { Router } from './router.ts';
 import { Theme } from './theme.ts';
+import { UiPrefs } from './ui-prefs.ts';
 
 export type BootDeps = Partial<ConnectionDeps> & { win?: Window };
 
@@ -38,19 +38,20 @@ export async function mountApp(root: HTMLElement, deps: BootDeps = {}): Promise<
     };
   }
 
-  setLocale(list.lang);
-  win.document.documentElement.lang = list.lang;
+  // Setzt Locale und `<html lang>` sofort: Server-Sprache, außer in Settings ist eine gewählt.
+  const prefs = new UiPrefs(list.lang, win.document.documentElement);
   const router = new Router(win);
   const theme = new Theme(win, win.document.documentElement);
   reactRoot.render(
     <StrictMode>
-      <App backlogs={list.backlogs} router={router} theme={theme} deps={connection} />
+      <App backlogs={list.backlogs} router={router} theme={theme} prefs={prefs} deps={connection} />
     </StrictMode>,
   );
   return () => {
     reactRoot.unmount();
     router.dispose();
     theme.dispose();
+    prefs.dispose();
     unguard();
   };
 }

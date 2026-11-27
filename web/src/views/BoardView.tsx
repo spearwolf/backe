@@ -11,12 +11,14 @@ import {
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { m as app } from '../app/app.messages.ts';
 import {
+  type BoardGroup,
   boardColumns,
   type BoardCard as Card,
   type BoardLane as Lane,
 } from '../app/board-model.ts';
 import type { BoardDrop } from '../app/board-move.ts';
 import { BoardModel, BoardPrefs } from '../app/board-state.ts';
+import { useUiPrefs } from '../app/ui-context.tsx';
 import { BoardCardCopy } from '../components/board/BoardCard.tsx';
 import {
   BoardLane,
@@ -44,8 +46,8 @@ class BoardViewState {
   readonly prefs: BoardPrefs;
   readonly model: BoardModel;
 
-  constructor(store: Store, backlog: string) {
-    this.prefs = new BoardPrefs(backlog);
+  constructor(store: Store, backlog: string, defaultGroup?: BoardGroup) {
+    this.prefs = new BoardPrefs(backlog, defaultGroup);
     this.model = new BoardModel(store, this.prefs.view.get);
   }
 
@@ -61,7 +63,13 @@ class BoardViewState {
  */
 export function BoardView({ backlog }: { backlog: string }) {
   const store = useStore();
-  const create = useCallback(() => new BoardViewState(store, backlog), [store, backlog]);
+  const ui = useUiPrefs();
+  // Die Default-Gruppierung zählt nur beim Aufbau: Ein Wechsel in Settings stellt kein offenes
+  // Board um.
+  const create = useCallback(
+    () => new BoardViewState(store, backlog, ui?.boardGroup.value),
+    [store, backlog, ui],
+  );
   const state = useOwned(backlog, create);
   const loaded = useSignal(store.loaded);
   if (state === undefined || !loaded) {

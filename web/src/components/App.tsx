@@ -1,10 +1,12 @@
 import type { BacklogEntryJson } from '@backe/ui/api.ts';
-import { lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo } from 'react';
+import { Fragment, lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo } from 'react';
 import { m } from '../app/app.messages.ts';
 import { type Router, RouterContext } from '../app/router.ts';
 import { canonicalPath, type Route, routeHref } from '../app/routes.ts';
 import { TabModel } from '../app/tabs.ts';
 import type { Theme } from '../app/theme.ts';
+import { type UiAccess, UiContext } from '../app/ui-context.tsx';
+import type { UiPrefs } from '../app/ui-prefs.ts';
 import type { ConnectionDeps } from '../data/connection.ts';
 import { openSession, type Session } from '../data/session.ts';
 import { StoreContext } from '../data/store-context.tsx';
@@ -25,6 +27,7 @@ type Props = {
   backlogs: readonly BacklogEntryJson[];
   router: Router;
   theme: Theme;
+  prefs: UiPrefs;
   deps: Partial<ConnectionDeps>;
 };
 
@@ -116,7 +119,9 @@ function Notice({ children }: { children: ReactNode }) {
 }
 
 /** Die Hülle (ui.md §2.6): Routing, je Backlog-Route genau eine Sitzung, Kopfzeile, Tabs. */
-export function App({ backlogs, router, theme, deps }: Props) {
+export function App({ backlogs, router, theme, prefs, deps }: Props) {
+  const lang = useSignal(prefs.lang);
+  const ui = useMemo<UiAccess>(() => ({ theme, prefs }), [theme, prefs]);
   const route = useSignal(router.route);
   const location = useSignal(router.location);
   const start = backlogs.find((b) => b.current);
@@ -199,11 +204,17 @@ export function App({ backlogs, router, theme, deps }: Props) {
   }
 
   return (
-    <RouterContext.Provider value={router}>
-      <div className="flex h-svh flex-col">
-        <Header backlogs={backlogs} current={current} session={session} theme={theme} />
-        {body}
-      </div>
-    </RouterContext.Provider>
+    <UiContext.Provider value={ui}>
+      <RouterContext.Provider value={router}>
+        <div className="flex h-svh flex-col">
+          {/* Ein Sprachwechsel baut Kopfzeile und Ansichten neu auf: Gemerkte Komponenten und
+              Caches je Locale lesen ihre Texte sonst nie neu. Die Sitzung oben bleibt. */}
+          <Fragment key={lang}>
+            <Header backlogs={backlogs} current={current} session={session} theme={theme} />
+            {body}
+          </Fragment>
+        </div>
+      </RouterContext.Provider>
+    </UiContext.Provider>
   );
 }

@@ -1,4 +1,5 @@
 import type { Attachment } from '@backe/core/schemas.ts';
+import { ImageOff } from 'lucide-react';
 import {
   Children,
   type ComponentProps,
@@ -14,11 +15,13 @@ import remarkGemoji from 'remark-gemoji';
 import remarkGfm from 'remark-gfm';
 import { useLinkClick } from '../app/router.ts';
 import { routeHref } from '../app/routes.ts';
+import { useExternalImages } from '../app/ui-context.tsx';
 import { useStore } from '../data/store-context.tsx';
 import { useSignal } from '../data/use-signal.ts';
 import { CodeBlock } from './CodeBlock.tsx';
 import { rehypeIssueLinks } from './issue-links.ts';
 import { MermaidBlock } from './MermaidBlock.tsx';
+import { m } from './markdown.messages.ts';
 import { rehypeStripSrcset } from './strip-srcset.ts';
 import { issueUrlTransform } from './url-transform.ts';
 import './markdown.css';
@@ -83,7 +86,25 @@ function Pre({ node: _node, children, ...rest }: ComponentProps<'pre'> & { node?
   return <pre {...rest}>{children}</pre>;
 }
 
-const components: Components = { a: Anchor, code: Code, pre: Pre };
+/**
+ * Externe Bilder können den Leser verfolgen (ui.md §4.1). Ist der Schalter in Settings aus, steht
+ * statt des Bilds ein Link darauf; Anhänge, `blob:`- und `data:`-Bilder bleiben, denn sie verlassen
+ * den Rechner nicht.
+ */
+function Image({ node: _node, src, alt, ...rest }: ComponentProps<'img'> & { node?: unknown }) {
+  const allowed = useExternalImages();
+  if (!allowed && typeof src === 'string' && /^https?:/i.test(src)) {
+    return (
+      <a href={src} target="_blank" rel="noopener noreferrer">
+        <ImageOff aria-hidden="true" className="inline size-4 align-text-bottom" />{' '}
+        {m.imageBlocked(alt ?? '')}
+      </a>
+    );
+  }
+  return <img {...rest} src={src} alt={alt} />;
+}
+
+const components: Components = { a: Anchor, code: Code, img: Image, pre: Pre };
 
 const remarkPlugins = [remarkGfm, remarkGemoji];
 

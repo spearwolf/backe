@@ -43,6 +43,18 @@ test('prefs survive in localStorage and tolerate garbage', () => {
   expect(new BoardPrefs('other').view.value).toEqual(DEFAULT_BOARD_VIEW);
 });
 
+test('the board starts with the default grouping unless it has its own', () => {
+  const fresh = new BoardPrefs('acme', 'project');
+  expect(fresh.view.value).toEqual({ ...DEFAULT_BOARD_VIEW, group: 'project' });
+  fresh.setView({ group: 'repo', showBacklog: false });
+  fresh.dispose();
+
+  const own = new BoardPrefs('acme', 'project');
+  expect(own.view.value.group).toBe('repo');
+  own.dispose();
+  expect(new BoardPrefs('other').view.value).toEqual(DEFAULT_BOARD_VIEW);
+});
+
 test('prefs survive a broken storage', () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   Object.defineProperty(globalThis, 'localStorage', {

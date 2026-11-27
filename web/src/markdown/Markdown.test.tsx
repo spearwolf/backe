@@ -1,27 +1,39 @@
 import type { Attachment } from '@backe/core/schemas.ts';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Router, RouterContext } from '../app/router.ts';
+import type { Theme } from '../app/theme.ts';
+import { UiContext } from '../app/ui-context.tsx';
+import { UiPrefs } from '../app/ui-prefs.ts';
 import { Store } from '../data/store.ts';
 import { StoreContext } from '../data/store-context.tsx';
 import { testIssue, testState } from '../test/state.ts';
 import { Markdown as LazyMarkdown } from './index.tsx';
 import Markdown from './Markdown.tsx';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 const ID = 'bk-7f3k2';
 
 function setup(
   source: string,
-  opts: { attachments?: Attachment[]; noIssue?: boolean; lazy?: boolean } = {},
+  opts: {
+    attachments?: Attachment[];
+    noIssue?: boolean;
+    lazy?: boolean;
+    /** Mit Wert steht ein `UiContext` darüber, dessen Schalter für externe Bilder so steht. */
+    externalImages?: boolean;
+  } = {},
 ) {
   window.history.replaceState(null, '', '/b/acme/issue/bk-t0001');
   const router = new Router(window);
   const store = new Store();
   store.load(testState([testIssue(1, { id: ID } as never), testIssue(2)]));
   const Comp = opts.lazy ? LazyMarkdown : Markdown;
-  const ui = (
+  const markdown = (
     <RouterContext.Provider value={router}>
       <StoreContext.Provider value={store}>
         <Comp
@@ -32,7 +44,15 @@ function setup(
       </StoreContext.Provider>
     </RouterContext.Provider>
   );
-  return { router, ...render(ui) };
+  let prefs: UiPrefs | undefined;
+  let ui = markdown;
+  if (opts.externalImages !== undefined) {
+    prefs = new UiPrefs('en', document.createElement('html'));
+    prefs.setExternalImages(opts.externalImages);
+    // Das Theme liest Markdown nicht; ein leeres Objekt genügt.
+    ui = <UiContext.Provider value={{ theme: {} as Theme, prefs }}>{markdown}</UiContext.Provider>;
+  }
+  return { router, prefs, ...render(ui) };
 }
 
 test('renders gfm', () => {
@@ -132,6 +152,30 @@ test('only own attachment files resolve', () => {
   const withSrc = [...container.querySelectorAll('img')].filter((i) => i.hasAttribute('src'));
   expect(withSrc).toEqual([]);
   expect(container.querySelectorAll('[srcset]')).toHaveLength(0);
+});
+
+test('external images stay blocked when switched off', () => {
+  const attachments: Attachment[] = [{ name: 'trace', file: 'trace.png' }];
+  const { container, prefs } = setup(
+    '![Logo](https://example.com/logo.png) ![t](attachments/trace.png)',
+    { attachments, externalImages: false },
+  );
+  const srcs = [...container.querySelectorAll('img')].map((i) => i.getAttribute('src'));
+  expect(srcs).toEqual([`/api/b/acme/issues/${ID}/attachments/trace`]);
+  const link = screen.getByRole('link', { name: 'External image blocked: Logo' });
+  expect(link.getAttribute('href')).toBe('https://example.com/logo.png');
+  expect(link.getAttribute('target')).toBe('_blank');
+  expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+
+  // Wieder erlaubt: Das Bild erscheint, obwohl `Markdown` selbst gemerkt ist.
+  act(() => prefs?.setExternalImages(true));
+  expect(container.querySelector('img[src="https://example.com/logo.png"]')).not.toBeNull();
+  prefs?.dispose();
+});
+
+test('external images load without a ui context', () => {
+  const { container } = setup('![Logo](https://example.com/logo.png)');
+  expect(container.querySelector('img[src="https://example.com/logo.png"]')).not.toBeNull();
 });
 
 test('relative paths fall away without issue context', () => {
