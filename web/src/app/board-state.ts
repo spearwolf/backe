@@ -85,9 +85,37 @@ export class BoardPrefs {
 const sameProgress = (a: BoardCard['progress'], b: BoardCard['progress']) =>
   a?.settled === b?.settled && a?.total === b?.total;
 
+const sameItems = <T>(a: readonly T[], b: readonly T[]): boolean =>
+  a.length === b.length && a.every((x, i) => x === b[i]);
+
+/**
+ * Die neuen Bahnen, wo nichts anders ist, als die alten Objekte: Eine Zelle mit denselben Karten
+ * bleibt dieselbe, eine Bahn mit denselben Zellen und Werten ebenso, und ändert sich gar nichts,
+ * bleibt die Liste. So rendern Bahnen und Zellen (`memo`) nur, wo ein Patch etwas ändert.
+ */
+function shareLanes(prev: readonly BoardLane[], next: BoardLane[]): readonly BoardLane[] {
+  const old = new Map(prev.map((lane) => [lane.key, lane]));
+  const shared = next.map((lane) => {
+    const was = old.get(lane.key);
+    if (was === undefined) return lane;
+    const cells = lane.cells.map((cell) => {
+      const same = was.cells.find((c) => c.column === cell.column);
+      return same !== undefined && sameItems(same.cards, cell.cards) ? same : cell;
+    });
+    return was.label === lane.label &&
+      was.closed === lane.closed &&
+      was.count === lane.count &&
+      sameItems(was.cells, cells)
+      ? was
+      : { ...lane, cells };
+  });
+  return sameItems(prev, shared) ? prev : shared;
+}
+
 export class BoardModel {
   readonly lanes: SignalReader<readonly BoardLane[]>;
   #cardCache = new Map<string, BoardCard>();
+  #lanes: readonly BoardLane[] = [];
 
   constructor(store: Store, view: SignalReader<BoardView>) {
     this.lanes = createMemo(
@@ -97,7 +125,10 @@ export class BoardModel {
         const projects = store.projects.list();
         const repos = store.repos.list();
         const v = view();
-        if (snapshot === undefined) return [];
+        if (snapshot === undefined) {
+          this.#lanes = [];
+          return this.#lanes;
+        }
         const cache = new Map<string, BoardCard>();
         const lanes = boardLanes({
           snapshot,
@@ -121,7 +152,8 @@ export class BoardModel {
         // Unveränderte Karten bleiben dieselben Objekte, auch über einen Wechsel der Ansicht:
         // Eine Karte als `memo` rendert nur neu, was der Patch wirklich berührt (ui.md §3.6).
         this.#cardCache = cache;
-        return lanes;
+        this.#lanes = shareLanes(this.#lanes, lanes);
+        return this.#lanes;
       },
       { attach: this },
     );

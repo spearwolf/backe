@@ -16,7 +16,7 @@ import { type CardData, ownListeners } from './board-dnd.ts';
 import { BOARD_KEYS, type BoardKey } from './board-keys.ts';
 import { CardMenu } from './CardMenu.tsx';
 import { initialsOf } from './initials.ts';
-import { BoardKeyContext } from './use-board-move.tsx';
+import { BoardKeyContext, type BoardKeys } from './use-board-move.tsx';
 
 /** Marke des Seitenzustands, roh wie im CLI (ui.md §2.8). */
 const MARKS: Partial<Record<Card['issue']['state'], string>> = {
@@ -34,11 +34,16 @@ const boardKey = (e: KeyboardEvent): BoardKey | undefined =>
     : undefined;
 
 /**
- * Karte des Boards (ui.md §2.8). `memo`: `BoardModel` hält unveränderte Karten als dieselben
- * Objekte, ein Patch rendert so nur die Karten neu, die er berührt. Das `<li>` wird gezogen und
- * ist Ziel; der Link darin bleibt das fokussierbare Element und zieht nicht selbst
- * (`draggable={false}`). Darum gehen nur die `listeners` von dnd-kit an das `<li>`, nicht seine
- * `attributes` (sie machten das `<li>` zu einem zweiten Tab-Halt mit `role="button"`).
+ * Karte des Boards (ui.md §2.8), zweigeteilt. Die Hülle hält die Hooks von dnd-kit und das `<li>`:
+ * Jedes Ziehen ändert den Kontext von dnd-kit (gezogene Karte, Ziel unter dem Zeiger), und weil
+ * jede Karte Ziel ist, rendern dann alle Hüllen — bei jedem Wechsel des Ziels. Darum ist die Hülle
+ * billig und das Teure (Kartenmenü, Link, Gesicht) ein eigenes `memo`, das nur rendert, wenn sich
+ * die Karte selbst ändert. `memo` auch außen: `BoardModel` hält unveränderte Karten als dieselben
+ * Objekte, ein Patch rendert so nur die Karten neu, die er berührt.
+ *
+ * Das `<li>` wird gezogen und ist Ziel; der Link darin bleibt das fokussierbare Element und zieht
+ * nicht selbst (`draggable={false}`). Darum gehen nur die `listeners` von dnd-kit an das `<li>`,
+ * nicht seine `attributes` (sie machten das `<li>` zu einem zweiten Tab-Halt mit `role="button"`).
  */
 export const BoardCard = memo(function BoardCard(props: {
   backlog: string;
@@ -53,8 +58,6 @@ export const BoardCard = memo(function BoardCard(props: {
 }) {
   const { backlog, card, lane, column, group, choices, drop } = props;
   const { issue } = card;
-  const href = routeHref({ kind: 'issue', backlog, id: issue.id });
-  const go = useLinkClick();
   // Ohne Schreibrecht gibt es keine Tastenzüge und keinen `DndContext`; die Hooks laufen
   // trotzdem (Regeln der Hooks), nur abgeschaltet.
   const disabled = !useWrites().canWrite;
@@ -99,20 +102,50 @@ export const BoardCard = memo(function BoardCard(props: {
         'data-[drop=before]:before:-top-[5px] data-[drop=after]:before:-bottom-[5px]',
       )}
     >
-      <CardMenu issue={issue} lane={lane} column={column} lanes={choices} group={group}>
-        <a
-          href={href}
-          draggable={false}
-          onClick={go(href)}
-          {...(disabled || keys === undefined
-            ? {}
-            : { 'aria-keyshortcuts': KEY_SHORTCUTS, 'aria-describedby': keys.hintId })}
-          className="flex flex-col gap-1.5 rounded-md p-2 text-sm outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <CardFace card={card} />
-        </a>
-      </CardMenu>
+      <CardBody
+        backlog={backlog}
+        card={card}
+        lane={lane}
+        column={column}
+        group={group}
+        choices={choices}
+        keys={disabled ? undefined : keys}
+      />
     </li>
+  );
+});
+
+/**
+ * Das Innere der Karte: Kartenmenü um den Link, darin das Gesicht. Lauter stabile Props, damit es
+ * beim Ziehen nicht mit der Hülle rendert. `keys` nur mit Schreibrecht.
+ */
+const CardBody = memo(function CardBody(props: {
+  backlog: string;
+  card: Card;
+  lane: string;
+  column: State;
+  group: BoardGroup;
+  choices: readonly LaneChoice[];
+  keys: BoardKeys | undefined;
+}) {
+  const { backlog, card, lane, column, group, choices, keys } = props;
+  const { issue } = card;
+  const href = routeHref({ kind: 'issue', backlog, id: issue.id });
+  const go = useLinkClick();
+  return (
+    <CardMenu issue={issue} lane={lane} column={column} lanes={choices} group={group}>
+      <a
+        href={href}
+        draggable={false}
+        onClick={go(href)}
+        {...(keys === undefined
+          ? {}
+          : { 'aria-keyshortcuts': KEY_SHORTCUTS, 'aria-describedby': keys.hintId })}
+        className="flex flex-col gap-1.5 rounded-md p-2 text-sm outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <CardFace card={card} />
+      </a>
+    </CardMenu>
   );
 });
 

@@ -1,7 +1,7 @@
 import type { State } from '@backe/core/state.ts';
 import { useDroppable } from '@dnd-kit/core';
 import { ChevronRight } from 'lucide-react';
-import { useId, useMemo, useState } from 'react';
+import { memo, useId, useMemo, useState } from 'react';
 import {
   type BoardGroup,
   type BoardCell as Cell,
@@ -90,14 +90,17 @@ export function useLaneChoices(group: BoardGroup, lanes: readonly Lane[]): LaneC
 /**
  * Eine Bahn (ui.md §2.8): Kopf mit Klappknopf und Anzahl, darunter je State eine Spalte mit Kopf
  * und Zelle. Bei `none` gibt es nur diese eine Bahn, ohne Kopf. Jede Zelle ist genau ein `<ul>`
- * mit `data-lane`/`data-column` — die Fläche, auf der später abgelegt wird.
+ * mit `data-lane`/`data-column` — die Fläche, auf der abgelegt wird. Bahn und Zelle sind `memo`
+ * mit stabilen Props (`BoardModel` hält Unverändertes als dieselben Objekte): Ein Patch oder eine
+ * wandernde Markierung rendert nur die Bahn und die Zelle, die sie betreffen.
  */
-export function BoardLane(props: {
+export const BoardLane = memo(function BoardLane(props: {
   backlog: string;
   group: BoardGroup;
   lane: Lane;
   folded: boolean;
-  onFold: (folded: boolean) => void;
+  /** Klappt die Bahn `key` auf oder zu; über Renders dieselbe Funktion. */
+  onFold: (key: string, folded: boolean) => void;
   marker?: LaneMarker | undefined;
   /** Die Bahnen fürs Kartenmenü (`useLaneChoices`). */
   choices: readonly LaneChoice[];
@@ -121,7 +124,7 @@ export function BoardLane(props: {
               type="button"
               aria-expanded={!folded}
               aria-controls={folded ? undefined : cellsId}
-              onClick={() => onFold(!folded)}
+              onClick={() => onFold(lane.key, !folded)}
               className="inline-flex items-center gap-1 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <ChevronRight
@@ -170,10 +173,10 @@ export function BoardLane(props: {
       )}
     </section>
   );
-}
+});
 
 /** Eine Zelle (Bahn × Spalte): Ziel für Karten aus anderen Zellen und für »ans Ende«. */
-function BoardCell(props: {
+const BoardCell = memo(function BoardCell(props: {
   backlog: string;
   label: string;
   laneName: string;
@@ -221,4 +224,4 @@ function BoardCell(props: {
       <QuickCreate group={group} lane={lane} laneName={laneName} column={column} />
     </div>
   );
-}
+});

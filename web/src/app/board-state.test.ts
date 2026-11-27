@@ -121,3 +121,49 @@ test('a patch to one issue keeps the other cards identical', () => {
   model.dispose();
   store.dispose();
 });
+
+test('a patch keeps untouched lanes and cells identical', () => {
+  const store = new Store();
+  store.load(
+    testState(
+      [
+        testIssue(1, { sprints: ['s1'] }),
+        testIssue(2, { sprints: ['s1'], state: 'review' }),
+        testIssue(3, { sprints: ['s2'] }),
+      ],
+      {
+        sprints: [
+          { slug: 's1', title: 'One' },
+          { slug: 's2', title: 'Two' },
+        ],
+      },
+    ),
+  );
+  const view = createSignal<BoardView>(DEFAULT_BOARD_VIEW);
+  const model = new BoardModel(store, view.get);
+  const before = model.lanes();
+  const s1 = before.find((l) => l.key === 's1');
+  const s2 = before.find((l) => l.key === 's2');
+  const review = s1?.cells.find((c) => c.column === 'review');
+
+  store.applyPatch(
+    testPatch(2, { upsert: { issues: [testIssue(1, { sprints: ['s1'], title: 'Neu' })] } }),
+  );
+  const after = model.lanes();
+  const s1After = after.find((l) => l.key === 's1');
+  // Bahn `s2` und die Zelle `review` in `s1` berührt der Patch nicht: dieselben Objekte.
+  expect(after.find((l) => l.key === 's2')).toBe(s2);
+  expect(s1After).not.toBe(s1);
+  expect(s1After?.cells.find((c) => c.column === 'review')).toBe(review);
+  expect(s1After?.cells.find((c) => c.column === 'todo')?.cards[0]?.issue.title).toBe('Neu');
+
+  // Ein Patch, der am Board nichts ändert, liefert die Bahnen selbst unverändert.
+  store.applyPatch(
+    testPatch(3, {
+      upsert: { users: [{ handle: 'neu', name: 'Neu', kind: 'human', admin: false }] },
+    }),
+  );
+  expect(model.lanes()).toBe(after);
+  model.dispose();
+  store.dispose();
+});

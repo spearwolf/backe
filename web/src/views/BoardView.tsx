@@ -101,6 +101,11 @@ function Loaded({ state, backlog }: { state: BoardViewState; backlog: string }) 
     [move, hintId, state],
   );
   const choices = useLaneChoices(group, lanes);
+  // Stabil je Gruppierung: Die Bahnen sind `memo`, ein neuer Rückruf je Render renderte alle.
+  const onFold = useCallback(
+    (key: string, folded: boolean) => state.prefs.setFolded(group, key, folded),
+    [state, group],
+  );
 
   const body = (
     <div style={{ minWidth: boardMinWidth(columns.length) }}>
@@ -111,7 +116,7 @@ function Loaded({ state, backlog }: { state: BoardViewState; backlog: string }) 
           group={group}
           lane={lane}
           folded={group !== 'none' && state.prefs.isFolded(group, lane)}
-          onFold={(folded) => state.prefs.setFolded(group, lane.key, folded)}
+          onFold={onFold}
           marker={drag.markerIn(lane.key)}
           choices={choices}
         />
@@ -223,12 +228,20 @@ function markerOf(drop: BoardDrop | undefined): Marker | undefined {
 }
 
 /**
- * Ziehen mit dem Zeiger (ui.md §2.8): erst ab 5 px Weg, damit ein Klick weiter den Tab öffnet.
+ * Erst ab 5 px Weg zieht der Zeiger, damit ein Klick weiter den Tab öffnet. Eine Konstante, kein
+ * Literal im Render: `useSensor` merkt sich die Optionen nach ihrer Identität, und ein neues Objekt
+ * je Render gäbe dnd-kit neue Aktivatoren und damit jeder Karte einen neuen Kontext — ein Patch
+ * renderte dann alle Karten neu, `memo` hin oder her.
+ */
+const POINTER = { activationConstraint: { distance: 5 } };
+
+/**
+ * Ziehen mit dem Zeiger (ui.md §2.8), ab dem Weg aus `POINTER`.
  * `onDragOver` und `onDragMove` halten das Ziel für die Markierung — `onDragOver` allein meldet nur
  * den Wechsel des Ziels, nicht den der Hälfte über derselben Karte. `onDragEnd` legt ab.
  */
 function useBoardDrag(lanes: readonly Lane[], move: (drop: BoardDrop) => void) {
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const sensors = useSensors(useSensor(PointerSensor, POINTER));
   const [dragged, setDragged] = useState<Card>();
   const [marker, setMarker] = useState<Marker>();
   const current = useRef(lanes);
