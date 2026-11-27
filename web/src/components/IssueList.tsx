@@ -23,8 +23,12 @@ type Follow = { id: string; rows: readonly ListRow[]; scrolled: boolean; waited:
 const linkIn = (scope: HTMLElement | null, id: string) =>
   scope?.querySelector<HTMLElement>(`li[data-id="${id}"] a`) ?? null;
 
-/** Wohin der Fokus nur vorübergehend wandert: Menü und Dialoge geben ihn der Zeile zurück. */
-const BORROWERS = '[role="menu"], [role="dialog"], [role="alertdialog"]';
+/**
+ * Wohin der Fokus nur vorübergehend wandert: Menü und Dialoge geben ihn der Zeile zurück, und die
+ * Fokus-Wächter von Radix (`data-radix-focus-guard`, Spans am Rand des Dokuments) reichen ihn nur
+ * weiter.
+ */
+const BORROWERS = '[role="menu"], [role="dialog"], [role="alertdialog"], [data-radix-focus-guard]';
 
 const gone = (row: ListRow | undefined) => row === undefined || row.live === 'leaving';
 

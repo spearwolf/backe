@@ -16,6 +16,7 @@ import {
 import { testIssue, testPatch, tid } from '../test/state.ts';
 import { m } from '../views/backlog.messages.ts';
 import { m as im } from '../views/issue.messages.ts';
+import { openByKey } from './RowMenu.tsx';
 import { m as w } from './write/write.messages.ts';
 
 registerBacklogViewHarness();
@@ -292,4 +293,59 @@ test('the guard ends with the menu or a pointer press', async () => {
   const afterPointer = createEvent.contextMenu(document.body);
   fireEvent(document.body, afterPointer);
   expect(afterPointer.defaultPrevented).toBe(false);
+});
+
+test('a menu key that opens no menu arms no guard', () => {
+  const el = document.body.appendChild(document.createElement('a'));
+  const key = createEvent.keyDown(el, { key: 'F10', shiftKey: true });
+  // Niemand nimmt das eigene `contextmenu` an: Kein Menü, also nichts zu schlucken.
+  const off = openByKey({
+    ...key,
+    key: 'F10',
+    shiftKey: true,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    currentTarget: el,
+    preventDefault: () => {},
+  } as unknown as React.KeyboardEvent<HTMLElement>);
+  expect(off).toBeUndefined();
+  const later = createEvent.contextMenu(el);
+  fireEvent(el, later);
+  expect(later.defaultPrevented).toBe(false);
+  el.remove();
+});
+
+test.each([
+  ['a key press', (el: HTMLElement) => fireEvent.keyDown(el, { key: 'a' })],
+  ['a focus change', (el: HTMLElement) => fireEvent.focusIn(el)],
+])('the guard ends with %s outside the menu', async (_name, leave) => {
+  view([testIssue(1), testIssue(2)]);
+  const row = linkOf(tid(1));
+  row.focus();
+  fireEvent.keyDown(row, { key: 'ContextMenu' });
+  await waitFor(() => expect(screen.getAllByRole('menu')).toHaveLength(1));
+  // Im Menü bleibt er scharf …
+  fireEvent.keyDown(document.activeElement as Element, { key: 'ArrowDown' });
+  // … eine Taste oder ein Fokus woanders beendet ihn.
+  const other = document.body.appendChild(document.createElement('button'));
+  leave(other);
+  const later = createEvent.contextMenu(other);
+  fireEvent(other, later);
+  expect(later.defaultPrevented).toBe(false);
+  other.remove();
+});
+
+test('focus moving into a Radix focus guard keeps the row as owner', () => {
+  const { store } = view([testIssue(1), testIssue(2), testIssue(3)]);
+  const row = linkOf(tid(2));
+  row.focus();
+  const guard = document.body.appendChild(document.createElement('span'));
+  guard.setAttribute('data-radix-focus-guard', '');
+  fireEvent.focusOut(row, { relatedTarget: guard });
+  act(() => {
+    store.applyPatch(testPatch(2, { remove: { issues: [tid(2)] } }));
+  });
+  expect(document.activeElement).toBe(linkOf(tid(3)));
+  guard.remove();
 });

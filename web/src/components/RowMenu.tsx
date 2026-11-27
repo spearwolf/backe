@@ -110,40 +110,54 @@ const isMenuKey = (e: KeyboardEvent): boolean =>
   !e.metaKey &&
   (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey));
 
+/** Ziel innerhalb eines offenen Menüs (Portal), etwa die Pfeiltasten darin. */
+const inMenu = (target: EventTarget | null): boolean =>
+  target instanceof Element && target.closest('[role="menu"]') !== null;
+
 /**
  * Schluckt das nächste `contextmenu` im Dokument, einmal: Firefox schickt es zur Kontextmenü-Taste
  * erst nach dem Loslassen, wenn der Fokus schon im Menü liegt; sonst erschiene das Menü des Browsers
  * darüber. Nicht beim `keyup` beendet, denn das Ereignis kommt erst danach. Es endet mit dem
- * geschluckten Ereignis, einem Zeiger-Druck (ein Rechtsklick gehört wieder dem Nutzer) oder dem
- * Schließen des Menüs. Liefert die Funktion, die es vorzeitig beendet.
+ * geschluckten Ereignis, einem Zeiger-Druck (ein Rechtsklick gehört wieder dem Nutzer), einer Taste
+ * oder einem Fokus außerhalb des Menüs oder dem Schließen des Menüs. Liefert die Funktion, die es
+ * vorzeitig beendet.
  */
 function swallowNextContextMenu(doc: Document): () => void {
   const off = () => {
     doc.removeEventListener('contextmenu', swallow, true);
     doc.removeEventListener('pointerdown', off, true);
+    doc.removeEventListener('keydown', elsewhere, true);
+    doc.removeEventListener('focusin', elsewhere, true);
   };
   const swallow = (e: Event) => {
     e.preventDefault();
     e.stopPropagation();
     off();
   };
+  const elsewhere = (e: Event) => {
+    if (!inMenu(e.target)) off();
+  };
   doc.addEventListener('contextmenu', swallow, true);
   doc.addEventListener('pointerdown', off, true);
+  doc.addEventListener('keydown', elsewhere, true);
+  doc.addEventListener('focusin', elsewhere, true);
   return off;
 }
 
 /**
  * Öffnet das Menü über die Tastatur: Ob der Browser aus der Taste ein `contextmenu` macht, ist
  * nicht verlässlich (manche nie, manche erst beim Loslassen). Darum geht ein eigenes `contextmenu`
- * an die Zeile, unten links an ihr; `preventDefault` hält das Menü des Browsers fern, und ein
- * spätes natives Ereignis derselben Taste schluckt `swallowNextContextMenu`. Liefert dessen Ende.
+ * an die Zeile, unten links an ihr; `preventDefault` hält das Menü des Browsers fern. Hat das
+ * Menü es angenommen (Radix verhindert dann den Default), schluckt `swallowNextContextMenu` ein
+ * spätes natives Ereignis derselben Taste; liefert dessen Ende. Öffnete sich nichts, gibt es auch
+ * nichts zu schlucken.
  */
-function openByKey(e: KeyboardEvent<HTMLElement>): (() => void) | undefined {
+export function openByKey(e: KeyboardEvent<HTMLElement>): (() => void) | undefined {
   if (!isMenuKey(e)) return undefined;
   e.preventDefault();
   const el = e.currentTarget;
   const box = el.getBoundingClientRect();
-  el.dispatchEvent(
+  const opened = !el.dispatchEvent(
     new MouseEvent('contextmenu', {
       bubbles: true,
       cancelable: true,
@@ -151,7 +165,7 @@ function openByKey(e: KeyboardEvent<HTMLElement>): (() => void) | undefined {
       clientY: box.bottom,
     }),
   );
-  return swallowNextContextMenu(el.ownerDocument);
+  return opened ? swallowNextContextMenu(el.ownerDocument) : undefined;
 }
 
 /**
