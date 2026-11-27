@@ -269,7 +269,7 @@ test('tabs have tab roles and selection', async () => {
   expect(tab('Backlog').getAttribute('aria-selected')).toBe('false');
 });
 
-test('the board tab loads lazily and shows the board', async () => {
+test('the board tab shows its lanes once the backlog is loaded', async () => {
   const { connect } = await setup({ path: '/b/main/board' });
   await connect();
   const lane = await screen.findByRole('region', { name: 'no sprint' });

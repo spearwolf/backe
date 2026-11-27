@@ -1,7 +1,8 @@
 import { useCallback } from 'react';
 import { m as app } from '../app/app.messages.ts';
+import { boardColumns } from '../app/board-model.ts';
 import { BoardModel, BoardPrefs } from '../app/board-state.ts';
-import { BoardLane } from '../components/board/BoardLane.tsx';
+import { BoardLane, boardMinWidth } from '../components/board/BoardLane.tsx';
 import { BoardToolbar } from '../components/board/BoardToolbar.tsx';
 import type { Store } from '../data/store.ts';
 import { useStore } from '../data/store-context.tsx';
@@ -49,16 +50,18 @@ function Loaded({ state, backlog }: { state: BoardViewState; backlog: string }) 
     <div className="flex h-full min-h-0 flex-col">
       <BoardToolbar view={view} onView={(next) => state.prefs.setView(next)} />
       <div className="min-h-0 flex-1 overflow-auto">
-        {lanes.map((lane) => (
-          <BoardLane
-            key={`${group}\n${lane.key}`}
-            backlog={backlog}
-            group={group}
-            lane={lane}
-            folded={group !== 'none' && state.prefs.isFolded(group, lane)}
-            onFold={(folded) => state.prefs.setFolded(group, lane.key, folded)}
-          />
-        ))}
+        <div style={{ minWidth: boardMinWidth(boardColumns(view).length) }}>
+          {lanes.map((lane) => (
+            <BoardLane
+              key={`${group}\n${lane.key}`}
+              backlog={backlog}
+              group={group}
+              lane={lane}
+              folded={group !== 'none' && state.prefs.isFolded(group, lane)}
+              onFold={(folded) => state.prefs.setFolded(group, lane.key, folded)}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );

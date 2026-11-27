@@ -2,7 +2,6 @@ import { catalog } from '@backe/i18n/catalog.ts';
 
 export const m = catalog({
   en: {
-    board: 'Board',
     lanes: 'Lanes',
     groupSprint: 'Sprint',
     groupProject: 'Project',
@@ -17,7 +16,6 @@ export const m = catalog({
     cell: (lane: string, state: string) => `${lane} · ${state}`,
   },
   de: {
-    board: 'Board',
     lanes: 'Bahnen',
     groupSprint: 'Sprint',
     groupProject: 'Projekt',

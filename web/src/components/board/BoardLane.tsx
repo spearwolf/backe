@@ -6,6 +6,29 @@ import { m } from '../../views/board.messages.ts';
 import { StateIcon } from '../StateIcon.tsx';
 import { BoardCard } from './BoardCard.tsx';
 
+/** Mindestbreite einer Spalte; die Abstände in `boardMinWidth` folgen `gap-x-3` und `px-3` des Rasters. */
+const COLUMN_MIN = '16rem';
+
+/**
+ * Mindestbreite des Boards bei `columns` Spalten. Steht sie am gemeinsamen Inhalt der
+ * Scrollfläche, reichen Kopf und Rand jeder Bahn über die ganze gescrollte Breite; liefe nur das
+ * Raster über, endeten sie am Rand des Fensters. `max-content` taugt dafür nicht: Es mäße die
+ * Karten an ihrem ungebrochenen Titel.
+ */
+export function boardMinWidth(columns: number): string {
+  return `calc(${columns} * ${COLUMN_MIN} + ${Math.max(columns - 1, 0)} * 0.75rem + 1.5rem)`;
+}
+
+/** Anzahl: sichtbar die Zahl, für Hilfsmittel als Satz; `title` allein liest nicht jeder vor. */
+function Count({ count }: { count: number }) {
+  return (
+    <span className="text-xs tabular-nums text-muted-foreground">
+      <span aria-hidden="true">{count}</span>
+      <span className="sr-only">{m.cardCount(count)}</span>
+    </span>
+  );
+}
+
 const NO_LANE_LABEL: Record<BoardGroup, () => string> = {
   sprint: () => m.noSprint,
   project: () => m.noProject,
@@ -59,20 +82,17 @@ export function BoardLane(props: {
               <span>{label}</span>
             </button>
           </h2>
-          <span
-            className="text-xs tabular-nums text-muted-foreground"
-            title={m.cardCount(lane.count)}
-          >
-            {lane.count}
-          </span>
+          <Count count={lane.count} />
         </div>
       )}
       {!folded && (
         <div
           id={cellsId}
-          // Feste Mindestbreite je Spalte; reicht die Fläche nicht, scrollt das Board waagerecht.
+          // Mindestbreite je Spalte; reicht die Fläche nicht, scrollt das Board waagerecht.
           className={cn('grid gap-x-3 gap-y-2 px-3 pb-3', headless && 'pt-3')}
-          style={{ gridTemplateColumns: `repeat(${lane.cells.length}, minmax(16rem, 1fr))` }}
+          style={{
+            gridTemplateColumns: `repeat(${lane.cells.length}, minmax(${COLUMN_MIN}, 1fr))`,
+          }}
         >
           {lane.cells.map((cell) => (
             <div
@@ -81,7 +101,7 @@ export function BoardLane(props: {
               className="flex items-center gap-2 px-1 text-muted-foreground"
             >
               <StateIcon state={cell.column} />
-              <span className="text-xs tabular-nums">{cell.cards.length}</span>
+              <Count count={cell.cards.length} />
             </div>
           ))}
           {lane.cells.map((cell) => (

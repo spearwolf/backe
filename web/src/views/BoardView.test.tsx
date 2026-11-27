@@ -6,6 +6,7 @@ import {
   board,
   cardIds,
   cardOf,
+  cellOf,
   columnsOf,
   foldOf,
   laneLabels,
@@ -47,10 +48,16 @@ test('lanes and columns follow the model', () => {
   expect(cardIds('Sprint 2', 'in_progress')).toEqual([tid(3)]);
   expect(cardIds('Sprint 2', 'todo')).toEqual([]);
   expect(cardIds(m.noSprint, 'todo')).toEqual([tid(4)]);
-  expect(within(laneOf('Sprint 1')).getByTitle(m.cardCount(3)).textContent).toBe('3');
+  // Anzahlen lesen Hilfsmittel als Satz, die Zahl daneben ist nur zum Sehen.
+  const count = within(laneOf('Sprint 1')).getByText(m.cardCount(3));
+  expect(count.previousElementSibling?.textContent).toBe('3');
+  expect(count.previousElementSibling?.getAttribute('aria-hidden')).toBe('true');
   // Der Spaltenkopf je Bahn zählt die Karten seiner Zelle.
-  const head = laneOf('Sprint 1').querySelector('[data-head="todo"]');
-  expect(head?.textContent).toBe('todo2');
+  const head = laneOf('Sprint 1').querySelector('[data-head="todo"]') as HTMLElement;
+  expect(within(head).getByText('todo')).toBeTruthy();
+  expect(within(head).getByText(m.cardCount(2))).toBeTruthy();
+  const done = laneOf('Sprint 1').querySelector('[data-head="done"]') as HTMLElement;
+  expect(within(done).getByText(m.cardCount(0))).toBeTruthy();
   expect(cardOf(tid(5))).toBeNull();
   expect(cardOf(tid(6))).toBeNull();
 });
@@ -108,6 +115,27 @@ test('grouping and the backlog column are remembered', async () => {
   expect(laneLabels()).toEqual([m.allIssues]);
   expect(within(laneOf(m.allIssues)).queryByRole('button')).toBeNull();
   expect(cardIds(m.allIssues, 'todo')).toEqual([tid(1), tid(3)]);
+});
+
+test('repo lanes go by name and end with the lane without repo', async () => {
+  board(
+    [
+      testIssue(1, { repos: ['api@main'] }),
+      testIssue(2, { repos: ['web', 'api@dev'], state: 'review' }),
+      testIssue(3),
+    ],
+    { over: { repos: [{ name: 'web' }, { name: 'core' }] as StateJson['repos'] } },
+  );
+  await userEvent.selectOptions(screen.getByLabelText(m.lanes), 'repo');
+  // Bekannte Repos auch ohne Karte, unbekannte Namen aus den Refs, »ohne Repo« zuletzt.
+  expect(laneLabels()).toEqual(['api', 'core', 'web', m.noRepo]);
+  expect(cardIds('api', 'todo')).toEqual([tid(1)]);
+  expect(cardIds('api', 'review')).toEqual([tid(2)]);
+  expect(cardIds('web', 'review')).toEqual([tid(2)]);
+  expect(cardIds('core', 'todo')).toEqual([]);
+  expect(cardIds(m.noRepo, 'todo')).toEqual([tid(3)]);
+  expect(cellOf(m.noRepo, 'todo').dataset.lane).toBe('');
+  expect(cellOf('api', 'todo').dataset.lane).toBe('api');
 });
 
 test('a card shows title, id, initials and its marks', () => {
