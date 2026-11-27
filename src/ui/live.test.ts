@@ -27,6 +27,7 @@ import { writeFileAtomic } from '../store/files.ts';
 import { BACKLOG_CONFIG, commentsDir, issueFile } from '../store/layout.ts';
 import * as snapshotModule from '../store/snapshot.ts';
 import { LIVE_TIMING, LiveBacklog, type LiveDeps, LiveHub, parseEventId } from './live.ts';
+import * as stateModule from './state.ts';
 import { stateJson } from './state.ts';
 import type { WatchFn } from './watch.ts';
 import { fsWatch, slashed } from './watch.ts';
@@ -298,6 +299,33 @@ test('a change before the watchers stand is not lost', async () => {
   await writeFile(file, original);
   await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
   expect(c.patches()[0]?.upsert.issues?.[0]?.title).toBe('Vorher');
+});
+
+test('the initial sync state is read after HEAD', async () => {
+  b = await testBacklog({ remote: true });
+  ctx = await b.context();
+  const real = stateModule.syncJson;
+  // Ein Commit direkt nach dem ersten Blick auf den Sync-Zustand: Läse der Start `HEAD` erst
+  // danach, stünde in `hello` ein Commit, den `unpushed` nicht zählt, und keine Runde holte das nach.
+  const spy = vi.spyOn(stateModule, 'syncJson').mockImplementationOnce(async (c) => {
+    const json = await real(c);
+    await create('Dazwischen');
+    return json;
+  });
+  try {
+    const live = await start();
+    const head = live.head;
+    const c = collect(live);
+    expect(c.events[0]).toMatchObject({ event: 'hello', data: { head } });
+    const sync = c.events.find((e) => e.event === 'sync')?.data as { unpushed: number };
+    const { stdout } = await git(['rev-list', '--count', `refs/remotes/origin/main..${head}`], {
+      cwd: b.root,
+    });
+    expect(spy).toHaveBeenCalled();
+    expect(sync.unpushed).toBe(Number(stdout.trim()));
+  } finally {
+    spy.mockRestore();
+  }
 });
 
 test('a failed start leaves no watcher or timer', async () => {
@@ -666,8 +694,13 @@ describe('neighbours', () => {
         expect(live.head).toBe(agentHead);
         expect(c.patches().at(-1)?.head).toBe(agentHead);
       });
-      // Zwischen zwei Runden: Der Hub packt seine Refs, der Wert bleibt, ein Sync folgt nicht.
-      if (pushes === 5) await git(['pack-refs', '--all'], { cwd: join(backlogDir(), 'hub.git') });
+      if (pushes === 5) {
+        // Zwischen zwei Runden: Der Hub packt seine Refs, der Wert bleibt, ein Sync folgt nicht.
+        // Eine eigene Ruhephase, damit ein Sync daraus nicht in der Entprellung des nächsten
+        // Pushes verschwindet.
+        await git(['pack-refs', '--all'], { cwd: join(backlogDir(), 'hub.git') });
+        await quiet(() => expect(spawn).toHaveBeenCalledTimes(pushes));
+      }
     }
     await quiet(() => {});
     await Promise.all(syncs);

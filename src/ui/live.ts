@@ -237,7 +237,7 @@ export class LiveBacklog {
         },
       },
     );
-    if (ownCopy) await this.#openOwnCopy(deps);
+    if (ownCopy) await this.#watchNeighbors(deps);
     // Sicherheitsnetz: `fs.watch` kann Ereignisse verlieren. Regelmäßig werden `HEAD` und die im
     // Arbeitsbaum geänderten Dateien mit dem letzten Blick verglichen, dazu die Refs der Nachbarn.
     this.#safety = setInterval(() => {
@@ -252,18 +252,17 @@ export class LiveBacklog {
     this.#dirtySigs = await this.#dirtyFiles();
     this.#snapshot = await loadSnapshot(this.#root);
     this.#table = entityTable(this.#snapshot);
+    if (ownCopy) await this.#openSync(deps);
     this.#ready = true;
     this.#linger();
     this.#kick();
   }
 
   /**
-   * Was nur die eigene Arbeitskopie hat, nach ihren Watchern und vor dem Laden von `HEAD`: die
-   * Nachbar-Watch, der Sync-Zustand und der periodische Sync. Ändert sich der Sync-Zustand danach,
-   * meldet ihn der Watcher auf das Sync-Verzeichnis; der erste periodische Takt kommt erst nach
-   * `pull_interval`.
+   * Nur bei eigener Arbeitskopie, nach ihren Watchern und vor dem Laden von `HEAD`: die
+   * Nachbar-Watch. Ihre Grundlinie steht so vor dem Stand, den der Snapshot zeigt.
    */
-  async #openOwnCopy(deps: LiveDeps): Promise<void> {
+  async #watchNeighbors(deps: LiveDeps): Promise<void> {
     // Pusht ein Nachbar (ui.md §2.4.1 Punkt 3), holt ein Hintergrund-Sync den Stand, statt bis zum
     // nächsten `pull_interval` zu warten; der Pull bewegt dann `HEAD` und ergibt den Patch.
     // `sync.remote` und `sync.branch` gelten, wie sie beim Start in `HEAD` stehen: Eine Änderung
@@ -278,6 +277,15 @@ export class LiveBacklog {
       ...(deps.watch === undefined ? {} : { watch: deps.watch }),
       onMove: () => this.#neighborMoved(deps.sync),
     });
+  }
+
+  /**
+   * Nur bei eigener Arbeitskopie, erst nach `HEAD` und Snapshot: Sync-Zustand und periodischer
+   * Sync. Die Reihenfolge zählt: Ein Commit nach dem Lesen von `HEAD` bewegt den Ref, die nächste
+   * Runde liest dann auch den Sync-Zustand neu. Läse der Start `unpushed` vor `HEAD`, stünde ein
+   * Commit dazwischen schon in `hello`, und keine Runde holte `unpushed` nach.
+   */
+  async #openSync(deps: LiveDeps): Promise<void> {
     const sync = await syncJson(this.#ctx);
     if (sync !== null) this.#sync = { json: sync, text: JSON.stringify(sync) };
     this.#stopPeriodic = await startPeriodicSync(this.#ctx, deps.sync);
