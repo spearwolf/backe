@@ -1,13 +1,11 @@
 /**
- * Suche über den Clientzustand (ui.md §2.12): ein vorgefalteter Index je Store, daraus gruppierte
- * Treffer. Rein und ohne Regex auf Nutzereingaben, damit keine Anfrage werfen oder hängen kann.
+ * Suche über den Clientzustand (ui.md §2.11): ein vorgefalteter Index (als Memo siehe
+ * `search-index.ts`), daraus gruppierte Treffer. Rein und ohne Regex auf Nutzereingaben, damit keine Anfrage werfen oder hängen kann.
  */
 import { compareCodeUnits } from '@backe/core/compare.ts';
 import { isSettled } from '@backe/core/state.ts';
 import { compareIssues } from '@backe/ops/order.ts';
 import type { IssueJson, ProjectJson, RepoJson, SprintJson, UserJson } from '@backe/ui/api.ts';
-import { createMemo, type SignalReader } from '@spearwolf/signalize';
-import type { Store } from '../data/store.ts';
 
 export const SEARCH_LIMIT = 8;
 /** Kürzeste Kurzform einer Issue-ID (Zufallsteil), die als ID-Treffer zählt. */
@@ -66,28 +64,6 @@ export function buildSearchIndex(input: {
     repos: input.repos.map((r) => entry(r, [r.name, r.url])),
     users: input.users.map((u) => entry(u, [u.handle, u.name])),
   };
-}
-
-/** Memo je Store; rechnet neu bei jeder Entitätsänderung (die Tabellen-`list()`s sind getrackt). */
-const indexes = new WeakMap<Store, SignalReader<SearchIndex>>();
-
-export function searchIndexOf(store: Store): SignalReader<SearchIndex> {
-  let reader = indexes.get(store);
-  if (reader === undefined) {
-    reader = createMemo(
-      () =>
-        buildSearchIndex({
-          issues: store.issues.list(),
-          projects: store.projects.list(),
-          sprints: store.sprints.list(),
-          repos: store.repos.list(),
-          users: store.users.list(),
-        }),
-      { attach: store },
-    );
-    indexes.set(store, reader);
-  }
-  return reader;
 }
 
 /** Damerau-Levenshtein-Abstand höchstens 1 (Einfügen, Löschen, Ersetzen, Vertauschen), O(n). */
@@ -185,6 +161,12 @@ function group<T>(
   };
 }
 
+/** Ordnung nach einem Schlüsselfeld (Pfad, Slug, Name, Handle) in Codeeinheiten. */
+const byKey =
+  <K extends string>(key: K) =>
+  <T extends Record<K, string>>(a: T, b: T): number =>
+    compareCodeUnits(a[key], b[key]);
+
 function scoreAll<T>(entries: readonly Entry<T>[], tokens: readonly string[]): Scored<T>[] {
   const out: Scored<T>[] = [];
   for (const e of entries) {
@@ -214,44 +196,20 @@ export function searchStore(
     if (score > 0) issues.push({ item: e.item, score, exact });
   }
 
+  // Alle Arten außer Issues: nur Textscore, keine ID-Treffer.
+  const plain = <T>(
+    kind: SearchGroupKind,
+    entries: readonly Entry<T>[],
+    order: (a: T, b: T) => number,
+    hit: (item: T) => SearchHit,
+  ) => group(kind, scoreAll(entries, tokens), order, (s) => hit(s.item));
+
   const groups = [
     group('issue', issues, openFirst, (s) => ({ kind: 'issue', issue: s.item, exact: s.exact })),
-    group(
-      'project',
-      scoreAll(index.projects, tokens),
-      (a, b) => compareCodeUnits(a.path, b.path),
-      (s) => ({
-        kind: 'project',
-        project: s.item,
-      }),
-    ),
-    group(
-      'sprint',
-      scoreAll(index.sprints, tokens),
-      (a, b) => compareCodeUnits(a.slug, b.slug),
-      (s) => ({
-        kind: 'sprint',
-        sprint: s.item,
-      }),
-    ),
-    group(
-      'repo',
-      scoreAll(index.repos, tokens),
-      (a, b) => compareCodeUnits(a.name, b.name),
-      (s) => ({
-        kind: 'repo',
-        repo: s.item,
-      }),
-    ),
-    group(
-      'user',
-      scoreAll(index.users, tokens),
-      (a, b) => compareCodeUnits(a.handle, b.handle),
-      (s) => ({
-        kind: 'user',
-        user: s.item,
-      }),
-    ),
+    plain('project', index.projects, byKey('path'), (project) => ({ kind: 'project', project })),
+    plain('sprint', index.sprints, byKey('slug'), (sprint) => ({ kind: 'sprint', sprint })),
+    plain('repo', index.repos, byKey('name'), (repo) => ({ kind: 'repo', repo })),
+    plain('user', index.users, byKey('handle'), (user) => ({ kind: 'user', user })),
   ];
   return groups.filter((g): g is SearchGroup => g !== undefined);
 }

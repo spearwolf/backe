@@ -1,15 +1,7 @@
 import type { IssueJson, ProjectJson, RepoJson, SprintJson, UserJson } from '@backe/ui/api.ts';
 import { describe, expect, test } from 'vitest';
-import { Store } from '../data/store.ts';
-import { testIssue, testPatch, testState } from '../test/state.ts';
-import {
-  buildSearchIndex,
-  fold,
-  SEARCH_LIMIT,
-  type SearchGroup,
-  searchIndexOf,
-  searchStore,
-} from './search.ts';
+import { testIssue } from '../test/state.ts';
+import { buildSearchIndex, fold, SEARCH_LIMIT, type SearchGroup, searchStore } from './search.ts';
 
 type Data = {
   issues?: IssueJson[];
@@ -165,16 +157,6 @@ describe('search', () => {
     expect(searchStore(idx, '', 'bk')).toEqual([]);
     expect(searchStore(idx, '(*\\[', 'bk')).toEqual([]);
     expect(searchStore(idx, 'a'.repeat(300), 'bk')).toEqual([]);
-  });
-
-  test('the index memo follows the store', () => {
-    const store = new Store();
-    store.load(testState([issue('bk-aaaaa', 'Alt')]));
-    const reader = searchIndexOf(store);
-    expect(searchIndexOf(store)).toBe(reader);
-    expect(idsOf(searchStore(reader(), 'neu', 'bk'))).toEqual([]);
-    store.applyPatch(testPatch(2, { upsert: { issues: [issue('bk-bbbbb', 'Neu')] } }));
-    expect(idsOf(searchStore(searchIndexOf(store)(), 'neu', 'bk'))).toEqual(['bk-bbbbb']);
   });
 });
 

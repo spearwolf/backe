@@ -3,12 +3,20 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { Router, RouterContext } from '../app/router.ts';
+import { buildSearchIndex } from '../app/search.ts';
 import { Store } from '../data/store.ts';
 import { StoreContext } from '../data/store-context.tsx';
 import { type WriteAccess, WriteContext } from '../data/write-context.tsx';
 import { testIssue, testPatch, testState, tid } from '../test/state.ts';
 import { m } from '../views/search.messages.ts';
 import { SearchBox } from './SearchBox.tsx';
+
+// Zählt jeden Aufbau des Suchindex, ohne ihn zu verändern.
+vi.mock('../app/search.ts', async (original) => {
+  const mod = await original<typeof import('../app/search.ts')>();
+  return { ...mod, buildSearchIndex: vi.fn(mod.buildSearchIndex) };
+});
+const builds = vi.mocked(buildSearchIndex);
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -274,15 +282,55 @@ test('description hits show current titles after a patch', async () => {
   expect(screen.getByRole('group', { name: m.groupBodies }).textContent).toContain('Umbenannt');
 });
 
-test('an idle field does not build the search index', async () => {
-  const input = mount();
-  const issues = vi.spyOn(store.users, 'list');
+const patchIssue = (rev: number, n: number, title: string) =>
   act(() => {
-    store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(3, { title: 'Neu' })] } }));
+    store.applyPatch(testPatch(rev, { upsert: { issues: [testIssue(n, { title })] } }));
   });
-  expect(issues).not.toHaveBeenCalled();
+
+test('an idle field does not build the search index', async () => {
+  builds.mockClear();
+  const input = mount();
+  patchIssue(2, 3, 'Neu');
+  expect(builds).not.toHaveBeenCalled();
   await userEvent.type(input, 'neu');
-  expect(issues).toHaveBeenCalled();
+  expect(builds).toHaveBeenCalled();
+});
+
+test('a field gone idle again stops rebuilding the index', async () => {
+  const input = mount();
+  await userEvent.type(input, 'neu');
+  // Erst schließt Escape die Liste, dann leert es das Feld; der Fokus geht danach weg.
+  await userEvent.keyboard('{Escape}{Escape}');
+  expect(input.value).toBe('');
+  await userEvent.click(screen.getByRole('button', { name: 'outside' }));
+  builds.mockClear();
+  patchIssue(2, 3, 'Neu');
+  expect(builds).not.toHaveBeenCalled();
+});
+
+test('the open list follows patches', async () => {
+  const input = mount();
+  await userEvent.type(input, 'neu');
+  expect(screen.queryByRole('group', { name: m.groupIssues })).toBeNull();
+  patchIssue(2, 3, 'Neu');
+  const issues = screen.getByRole('group', { name: m.groupIssues });
+  expect(within(issues).getByRole('option').textContent).toContain('Neu');
+});
+
+test('a late description result is announced after the list closed', async () => {
+  let answer: (r: Response) => void = () => {};
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() => new Promise<Response>((resolve) => (answer = resolve))),
+  );
+  const input = mount();
+  await userEvent.type(input, 'zzz');
+  await userEvent.click(screen.getByRole('option', { name: m.searchBodies }));
+  await userEvent.keyboard('{Escape}');
+  expect(screen.queryByRole('listbox')).toBeNull();
+  await act(async () => answer(json({ issues: [] })));
+  expect(screen.getByRole('status').textContent).toBe(m.noBodyHits);
+  expect(input.value).toBe('zzz');
 });
 
 test('the description query is trimmed', async () => {

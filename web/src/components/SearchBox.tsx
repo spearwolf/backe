@@ -1,8 +1,9 @@
-import type { SignalReader } from '@spearwolf/signalize';
+import { createSignal } from '@spearwolf/signalize';
 import { Search } from 'lucide-react';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -10,17 +11,13 @@ import {
   useState,
 } from 'react';
 import { useRouter } from '../app/router.ts';
-import {
-  type SearchGroup,
-  type SearchHit,
-  type SearchIndex,
-  searchIndexOf,
-  searchStore,
-} from '../app/search.ts';
+import { type SearchGroup, type SearchHit, type SearchIndex, searchStore } from '../app/search.ts';
+import { createSearchIndex } from '../app/search-index.ts';
 import { asApiError } from '../data/api-client.ts';
 import { searchIds } from '../data/search.ts';
 import { useStore } from '../data/store-context.tsx';
 import { useSignal } from '../data/use-signal.ts';
+import { useOwned } from '../lib/use-owned.ts';
 import { cn } from '../lib/utils.ts';
 import { m } from '../views/search.messages.ts';
 import { bodyGroupOf, GROUP_LABEL, HitRow, hitKey, hrefOf, ROW } from './search/hits.tsx';
@@ -36,9 +33,14 @@ type BodyState =
 /** Eine wählbare Zeile: ein Treffer oder die Aufforderung, in den Beschreibungen zu suchen. */
 type Choice = { key: string; hit: SearchHit } | { key: 'bodies' };
 
-const NO_INDEX = { issues: [], projects: [], sprints: [], repos: [], users: [] } as SearchIndex;
-/** Ersatz-Leser, solange das Feld ruht: Der Index wird erst gebaut, wenn jemand sucht. */
-const idleIndex = (() => NO_INDEX) as unknown as SignalReader<SearchIndex>;
+/** Leerer Index, solange das Feld ruht; ein Signal, das sich nie ändert. */
+const NO_INDEX = createSignal<SearchIndex>({
+  issues: [],
+  projects: [],
+  sprints: [],
+  repos: [],
+  users: [],
+});
 
 /**
  * Das Suchfeld der Tab-Leiste (ui.md §2.11) als WAI-ARIA-Combobox mit Listbox: Treffer aus dem
@@ -62,8 +64,10 @@ export function SearchBox({ backlog }: { backlog: string }) {
   const config = useSignal(store.config);
   const prefix = config?.id_prefix;
   const shown = open && query.trim() !== '';
-  // Der Index (und jede Neuberechnung bei Patches) hängt nur an einem Feld, das in Gebrauch ist.
-  const index = useSignal(open || query !== '' ? searchIndexOf(store) : idleIndex);
+  // Der Index (und jede Neuberechnung bei Patches) lebt nur, solange das Feld in Gebrauch ist.
+  const create = useCallback(() => createSearchIndex(store), [store]);
+  const owned = useOwned(open || query !== '' ? 'active' : undefined, create);
+  const index = useSignal(owned?.index ?? NO_INDEX);
 
   const groups = useMemo(() => searchStore(index, query, prefix), [index, query, prefix]);
   const bodyGroup = useMemo(
@@ -247,13 +251,18 @@ export function SearchBox({ backlog }: { backlog: string }) {
           className="h-8 w-40 rounded-md border border-input bg-transparent pr-2 pl-8 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring sm:w-56"
         />
       </div>
-      {/* Immer eingehängt, damit die Statuszeile als Live-Region ihre Änderungen ansagt. Ein Druck
-          auf Überschrift, Restzeile oder Bildlaufleiste darf den Fokus nicht aus dem Feld holen. */}
+      {/* Immer eingehängt, damit die Statuszeile als Live-Region ihre Änderungen ansagt. Ist die
+          Liste zu, ist der Rahmen nur unsichtbar (`sr-only`), nicht `hidden`: Ein Ergebnis der
+          Beschreibungssuche, das nach Escape eintrifft, wird so noch angesagt. Ein Druck auf
+          Überschrift, Restzeile oder Bildlaufleiste darf den Fokus nicht aus dem Feld holen. */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: Nur der Fokus des Feldes wird gehalten. */}
       <div
-        hidden={!shown}
         onMouseDown={(e) => e.preventDefault()}
-        className="absolute right-0 z-50 mt-1 max-h-[70vh] w-[28rem] max-w-[calc(100vw-1rem)] overflow-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+        className={
+          shown
+            ? 'absolute right-0 z-50 mt-1 max-h-[70vh] w-[28rem] max-w-[calc(100vw-1rem)] overflow-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md'
+            : 'sr-only'
+        }
       >
         {listed && (
           <div

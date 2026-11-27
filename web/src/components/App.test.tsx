@@ -153,6 +153,9 @@ const path = () => window.location.pathname;
 const focused = () => document.activeElement?.textContent;
 const tab = (name: string | RegExp) => screen.getByRole('tab', { name });
 
+/** Der Sync-Stand im Kopf; die Suche der Tab-Leiste hat eine eigene Statuszeile. */
+const headerStatus = () => within(screen.getByRole('banner')).getByRole('status');
+
 test('the root redirects to the start backlog', async () => {
   await setup({ path: '/', backlogs: [entry('ops'), entry('main', { current: true })] });
   expect(path()).toBe('/b/main/backlog');
@@ -226,23 +229,23 @@ test('the header shows the sync state', async () => {
     },
   });
   // Vor dem ersten `/state` weiß der Client nichts über den Sync.
-  expect(screen.queryByRole('status')).toBeNull();
+  expect(within(screen.getByRole('banner')).queryByRole('status')).toBeNull();
   await connect();
-  expect(screen.getByRole('status').textContent).toBe('2 unpushed · 1 conflict');
+  expect(headerStatus().textContent).toBe('2 unpushed · 1 conflict');
 
   await emit('sync', syncStatus({ last_error: { message: 'push rejected' } }));
   const failed = screen.getByText('last sync failed');
   expect(failed.getAttribute('title')).toBe('push rejected');
 
   await emit('sync', syncStatus());
-  expect(screen.getByRole('status').textContent).toBe('up to date');
+  expect(headerStatus().textContent).toBe('up to date');
 });
 
 test('the header shows offline', async () => {
   const { connect, live } = await setup({ path: '/b/main/backlog' });
   await connect();
   act(() => live().emitError());
-  expect(screen.getByRole('status').textContent).toBe('offline');
+  expect(headerStatus().textContent).toBe('offline');
 });
 
 test('tabs have tab roles and selection', async () => {
@@ -446,7 +449,7 @@ test('a backlog without a working copy shows its error and hint', async () => {
   expect(screen.queryByText('Loading …')).toBeNull();
   // Die Tabs bleiben, der Fehler steht in ihrer Fläche.
   expect(screen.getByRole('tabpanel').contains(alert)).toBe(true);
-  expect(screen.getByRole('status').textContent).toBe('offline');
+  expect(headerStatus().textContent).toBe('offline');
 });
 
 test('an unreachable server is named as such', async () => {
