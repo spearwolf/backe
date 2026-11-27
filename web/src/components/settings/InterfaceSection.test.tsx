@@ -214,23 +214,33 @@ test('the switch is busy while the browser is asked', async () => {
     requestPermission: () => Promise<NotificationPermission>;
   };
   const real = Note.requestPermission;
+  let asked = 0;
   let release: () => void = () => {};
-  Note.requestPermission = () =>
-    new Promise((resolve) => {
+  Note.requestPermission = () => {
+    asked += 1;
+    return new Promise((resolve) => {
       release = () => resolve(real());
     });
+  };
   const { prefs } = view();
   const box = notesBox();
   await user.click(box);
-  expect(box.disabled).toBe(true);
+  // Nur `aria-disabled`: Ein echtes `disabled` nähme dem Schalter den Tastaturfokus.
+  expect(box.disabled).toBe(false);
+  expect(box.getAttribute('aria-disabled')).toBe('true');
   expect(box.getAttribute('aria-busy')).toBe('true');
+  expect(document.activeElement).toBe(box);
   await user.click(box);
-  expect(fake.requests).toBe(0);
+  await user.keyboard(' ');
+  expect(asked).toBe(1);
+  expect(box.checked).toBe(false);
+  expect(document.activeElement).toBe(box);
   release();
   await waitFor(() => expect(prefs.notifications.value).toBe(true));
   expect(fake.requests).toBe(1);
-  expect(box.disabled).toBe(false);
+  expect(box.hasAttribute('aria-disabled')).toBe(false);
   expect(box.checked).toBe(true);
+  expect(document.activeElement).toBe(box);
 });
 
 test('a stored switch without permission shows off', () => {

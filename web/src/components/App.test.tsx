@@ -5,12 +5,20 @@ import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
 import { afterEach, expect, test } from 'vitest';
 import { mountApp } from '../app/bootstrap.tsx';
+import { attachNotifier } from '../app/notifier.ts';
 import { Router } from '../app/router.ts';
 import { Theme } from '../app/theme.ts';
 import { UiPrefs } from '../app/ui-prefs.ts';
 import { fakeEventSources } from '../test/fake-event-source.ts';
 import { installNotifications } from '../test/notifications.ts';
 import { App } from './App.tsx';
+
+// Durchgereicht, nur gezählt: Der Lebenszyklus-Test sieht so, wann der Notifier an- und abgehängt
+// wird.
+vi.mock('../app/notifier.ts', async (original) => {
+  const real = await original<typeof import('../app/notifier.ts')>();
+  return { ...real, attachNotifier: vi.fn(real.attachNotifier) };
+});
 
 function config() {
   const { $schema: _unused, ...rest } = BacklogConfigSchema.parse({
@@ -701,6 +709,20 @@ test('the notifier attaches once, survives a language change and follows the bac
   const flush = async () => {
     for (let i = 0; i < 10; i++) await Promise.resolve();
   };
+  // Zählt An- und Abhängen: Stünde der Effect im Fragment mit `key={lang}`, hinge ein Sprachwechsel
+  // den Notifier ab und wieder an. Eine Meldung je Patch käme dann trotzdem; nur die Zähler sehen es.
+  const real = (await vi.importActual<typeof import('../app/notifier.ts')>('../app/notifier.ts'))
+    .attachNotifier;
+  let attached = 0;
+  let detached = 0;
+  vi.mocked(attachNotifier).mockImplementation((s, o) => {
+    attached += 1;
+    const off = real(s, o);
+    return () => {
+      detached += 1;
+      off();
+    };
+  });
   const view = render(
     <StrictMode>
       <App
@@ -737,11 +759,16 @@ test('the notifier attaches once, survives a language change and follows the bac
   await emitOn(live(), foreign(2));
   expect(notify).toHaveBeenCalledTimes(1);
 
+  // Auch unter StrictMode hängt jetzt genau einer.
+  expect(attached - detached).toBe(1);
+  const before = { attached, detached };
+
   // Ein Sprachwechsel mountet die Ansichten neu, die Sitzung und der Notifier bleiben.
   await act(async () => {
     prefs.setLang('de');
     await flush();
   });
+  expect({ attached, detached }).toEqual(before);
   await emitOn(live(), foreign(3));
   expect(notify).toHaveBeenCalledTimes(2);
 
@@ -752,8 +779,13 @@ test('the notifier attaches once, survives a language change and follows the bac
     await flush();
   });
   expect(old.closed).toBe(true);
+  expect({ attached, detached }).toEqual({
+    attached: before.attached + 1,
+    detached: before.detached + 1,
+  });
   await emitOn(old, foreign(4));
   expect(notify).toHaveBeenCalledTimes(2);
+  vi.mocked(attachNotifier).mockImplementation(real);
 
   view.unmount();
   router.dispose();

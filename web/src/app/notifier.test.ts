@@ -1,6 +1,7 @@
 import type { IssueJson, PatchJson } from '@backe/ui/api.ts';
 import { expect, test, vi } from 'vitest';
 import { hello, issue, patch, setup, state } from '../test/session-harness.ts';
+import { parseListFilter } from './list-filter.ts';
 import { m } from './notes.messages.ts';
 import { attachNotifier, NOTE_SUMMARY_AFTER } from './notifier.ts';
 
@@ -95,7 +96,10 @@ test('three notes stay single, more become one summary', async () => {
     onClick: expect.any(Function),
   });
   r.show.mock.calls[0]?.[0].onClick();
-  expect(r.open).toHaveBeenCalledWith('/b/main/backlog?assignee=spw');
+  // Alle States: Auch ein Issue, das der Patch geschlossen hat, steht in der Liste.
+  expect(r.open).toHaveBeenCalledWith('/b/main/backlog?state=all&assignee=spw');
+  const search = String(r.open.mock.calls[0]?.[0]).split('?')[1] ?? '';
+  expect(parseListFilter(search)).toMatchObject({ states: ['all'], assignee: 'spw' });
 });
 
 test('a new sync conflict shows a note, the first status none', async () => {

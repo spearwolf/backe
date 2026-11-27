@@ -43,6 +43,8 @@ export function InterfaceSection() {
   const notesReason = useId();
   const [permission, setPermission] = useState(notePermission);
   const [asking, setAsking] = useState(false);
+  // Sperrt auch einen zweiten Klick, der vor dem nächsten Render ankommt.
+  const askingNow = useRef(false);
   const blocked = permission === 'denied' || permission === 'unsupported';
 
   // Die Erlaubnis ändert sich außerhalb der Seite (Browser-Einstellungen): beim Zurückkehren und,
@@ -73,14 +75,19 @@ export function InterfaceSection() {
 
   // Einschalten fragt bei `default` den Browser und gilt nur bei `granted`. Ein gespeichertes
   // `on` ohne Erlaubnis bleibt gespeichert; angezeigt wird es nach der Regel oben als aus.
+  // Während der Frage bleibt der Schalter fokussierbar (`aria-disabled` statt `disabled`, das den
+  // Tastaturfokus nähme) und überhört jede weitere Änderung.
   const switchNotes = async (on: boolean) => {
+    if (askingNow.current) return;
     if (!on) return prefs.setNotifications(false);
+    askingNow.current = true;
     setAsking(true);
     try {
       const answer = await requestNotePermission();
       setPermission(answer);
       prefs.setNotifications(answer === 'granted');
     } finally {
+      askingNow.current = false;
       setAsking(false);
     }
   };
@@ -151,7 +158,8 @@ export function InterfaceSection() {
             type="checkbox"
             className="size-4 accent-primary"
             checked={notes && permission === 'granted'}
-            disabled={blocked || asking}
+            disabled={blocked}
+            aria-disabled={asking || undefined}
             aria-busy={asking}
             aria-describedby={blocked ? `${notesHint} ${notesReason}` : notesHint}
             onChange={(e) => void switchNotes(e.target.checked)}

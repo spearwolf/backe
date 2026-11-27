@@ -6,6 +6,7 @@
 import { createEffect, SignalGroup } from '@spearwolf/signalize';
 import type { Session } from '../data/session.ts';
 import type { ShowNote } from './browser-notes.ts';
+import { EMPTY_FILTER, listFilterSearch } from './list-filter.ts';
 import { m } from './notes.messages.ts';
 import { conflictNotes, isIssueNote, issueNotes } from './notes.ts';
 import { routeHref } from './routes.ts';
@@ -20,6 +21,10 @@ export function attachNotifier(session: Session, opts: Opts): () => void {
   const { me, show, open } = opts;
   const { backlog } = session;
   const tag = (id: string) => `backe:${backlog}:${id}`;
+  // Ziel der Sammelmeldung: meine Issues in allen States. Der Default zeigt nur offene, und ein
+  // Issue, das der Patch geschlossen hat, fehlte dort.
+  const filter = { ...EMPTY_FILTER, states: ['all'], assignee: me };
+  const mine = `${routeHref({ kind: 'backlog', backlog })}${listFilterSearch(filter)}`;
 
   const offApplied = session.onApplied((patch, before) => {
     const notes = issueNotes(patch, (id) => before.get(id), me).filter(isIssueNote);
@@ -29,8 +34,7 @@ export function attachNotifier(session: Session, opts: Opts): () => void {
         title: m.summaryTitle(notes.length),
         body: m.summaryBody(by.join(', ')),
         tag: tag('summary'),
-        onClick: () =>
-          open(`${routeHref({ kind: 'backlog', backlog })}?assignee=${encodeURIComponent(me)}`),
+        onClick: () => open(mine),
       });
       return;
     }

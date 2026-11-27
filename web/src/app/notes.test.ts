@@ -1,7 +1,7 @@
 import type { IssueJson, PatchJson } from '@backe/ui/api.ts';
 import { describe, expect, it } from 'vitest';
 import { issue } from '../test/session-harness.ts';
-import { conflictNotes, issueNotes } from './notes.ts';
+import { conflictNotes, isIssueNote, issueNotes, type Note } from './notes.ts';
 
 const me = 'spw';
 const mine = (n: number, extra: Partial<IssueJson> = {}): IssueJson => ({
@@ -133,5 +133,18 @@ describe('conflictNotes', () => {
   it('a resolved conflict that returns under the same id does not notify again', () => {
     const gone = conflictNotes(new Set(['a']), { conflicts: [] });
     expect(conflictNotes(gone.known, { conflicts: [conflict('a')] }).notes).toEqual([]);
+  });
+});
+
+describe('isIssueNote', () => {
+  it('holds for the issue kinds and not for a conflict', () => {
+    const notes: Note[] = [
+      { kind: 'assigned', id: 'bk-t0001', title: 'A', by: ['zed'] },
+      { kind: 'changed', id: 'bk-t0002', title: 'B', by: ['zed'] },
+      { kind: 'deleted', id: 'bk-t0003', title: 'C', by: ['zed'] },
+      { kind: 'conflict', id: 'c1', title: 'Konflikt' },
+    ];
+    expect(notes.map(isIssueNote)).toEqual([true, true, true, false]);
+    expect(notes.filter(isIssueNote).map((n) => n.by)).toEqual([['zed'], ['zed'], ['zed']]);
   });
 });
