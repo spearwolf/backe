@@ -106,9 +106,15 @@ export function streamRequest(
       for (const chunk of req.chunks) {
         if (answered || r.destroyed) return;
         if (!r.write(chunk)) {
-          await new Promise((done) => {
-            r.once('drain', done);
-            r.once('close', done);
+          // Nach dem ersten Ereignis beide Listener entfernen, sonst sammeln sie sich pro Gegendruck an.
+          await new Promise<void>((done) => {
+            const wake = () => {
+              r.off('drain', wake);
+              r.off('close', wake);
+              done();
+            };
+            r.on('drain', wake);
+            r.on('close', wake);
           });
         }
       }
