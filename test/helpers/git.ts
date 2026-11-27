@@ -185,7 +185,8 @@ export type RawCommitSpec = {
   key?: TestKey;
   /** Author- und Committer-Datum (sonst jetzt). */
   date?: string;
-  actor?: string;
+  /** Mehrere Handles ergeben mehrere `Backe-Actor`-Trailer. */
+  actor?: string | string[];
   op?: string;
   subject?: string;
   parents?: string[];
@@ -250,7 +251,7 @@ export async function rawCommit(wc: string, spec: RawCommitSpec): Promise<string
     const tree = (await git(['write-tree'], { cwd: wc, env })).stdout.trim();
     const subject = spec.subject ?? 'raw';
     const trailers: [string, string][] = [];
-    if (spec.actor !== undefined) trailers.push([TRAILER_ACTOR, spec.actor]);
+    for (const actor of [spec.actor ?? []].flat()) trailers.push([TRAILER_ACTOR, actor]);
     if (spec.op !== undefined) trailers.push([TRAILER_OP, spec.op]);
     const signing = spec.key
       ? ['-c', 'gpg.format=ssh', '-c', `user.signingkey=${spec.key.priv}`]

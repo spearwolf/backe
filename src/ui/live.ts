@@ -22,7 +22,7 @@ import {
   snapshotAt,
 } from '../store/snapshot.ts';
 import { startPeriodicSync } from '../tools/sync.ts';
-import { issueActors } from './actors.ts';
+import { issueActors, mergeActors } from './actors.ts';
 import type { PatchJson, ServerEvent } from './api.ts';
 import {
   BACKLOG_DIRS,
@@ -454,11 +454,7 @@ export class LiveBacklog {
     }
     if (moved) {
       try {
-        for (const [id, handles] of await issueActors(this.#root, this.#head, head)) {
-          const set = this.#actors.get(id) ?? new Set<string>();
-          for (const h of handles) set.add(h);
-          this.#actors.set(id, set);
-        }
+        mergeActors(this.#actors, await issueActors(this.#root, this.#head, head));
       } catch {
         // Ohne Actors bleibt der Patch, was er war: ein Hinweis fehlt, keine Änderung.
       }

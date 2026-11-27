@@ -33,10 +33,29 @@ test('the same head has no actors', async () => {
   expect(await issueActors(b.root, h, h)).toEqual(new Map());
 });
 
-test('paths outside issues and commits without actor add nothing', async () => {
+test('a commit with several actor trailers names all of them', async () => {
+  const b = await testBacklog();
+  const from = await head(b.root);
+  await rawCommit(b.root, {
+    files: { [issueFile('bk-ddddd')]: 'd\n' },
+    actor: ['claude-1', 'spw'],
+    op: 'issue.edit',
+  });
+  expect(await issueActors(b.root, from, await head(b.root))).toEqual(
+    new Map([['bk-ddddd', new Set(['claude-1', 'spw'])]]),
+  );
+});
+
+test('commits outside issues/ are not looked at', async () => {
   const b = await testBacklog();
   const from = await head(b.root);
   await rawCommit(b.root, { files: { 'projects/x.md': 'p\n' }, actor: 'spw', op: 'manual' });
+  expect(await issueActors(b.root, from, await head(b.root))).toEqual(new Map());
+});
+
+test('a commit without an actor trailer adds nothing', async () => {
+  const b = await testBacklog();
+  const from = await head(b.root);
   await rawCommit(b.root, { files: { [issueFile('bk-ccccc')]: 'c\n' }, op: 'manual' });
   expect(await issueActors(b.root, from, await head(b.root))).toEqual(new Map());
 });

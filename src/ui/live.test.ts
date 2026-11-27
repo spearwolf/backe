@@ -2,7 +2,12 @@ import { writeFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { writeOp } from '../../test/helpers/context.ts';
-import { setPullInterval, type TestBacklog, testBacklog } from '../../test/helpers/git.ts';
+import {
+  rawCommit,
+  setPullInterval,
+  type TestBacklog,
+  testBacklog,
+} from '../../test/helpers/git.ts';
 import { applyPatch, collect, comparable, fakeTimers, settle } from '../../test/helpers/live.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
 import { git } from '../git/exec.ts';
@@ -126,6 +131,67 @@ test('a patch names the actors of its issues', async () => {
   const id = await create('Von spw');
   await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
   expect(c.patches()[0]?.actors).toEqual({ [id]: ['spw'] });
+});
+
+test('actors travel along when a round fails after head moved', async () => {
+  const id = await create('Vorher');
+  // Ohne Watcher läuft nur das Sicherheitsnetz: Die Runden sind genau die, die der Test auslöst.
+  const live = await start({ watch: () => ({ close() {} }) });
+  const c = collect(live);
+  const file = join(b.root, issueFile(id));
+  const config = join(b.root, BACKLOG_CONFIG);
+  const issue = await readFile(file, 'utf8');
+  const good = await readFile(config, 'utf8');
+  // Ein Commit mit kaputter Config: HEAD bewegt sich, aber das Neuladen scheitert.
+  await rawCommit(b.root, {
+    files: {
+      [issueFile(id)]: issue.replace('title: Vorher', 'title: Nachher'),
+      [BACKLOG_CONFIG]: '{ kaputt',
+    },
+    actor: 'claude-1',
+    op: 'issue.edit',
+  });
+  await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
+  await live.idle();
+  // Die Runde hat den neuen HEAD gesehen, das Neuladen scheiterte an der kaputten Config.
+  const moved = (await git(['rev-parse', 'HEAD'], { cwd: b.root })).stdout.trim();
+  expect(live.head).toBe(moved);
+  expect(c.patches()).toEqual([]);
+  // Der Fix-Commit fasst kein Issue an; die Actors des gescheiterten Commits kommen mit.
+  await rawCommit(b.root, { files: { [BACKLOG_CONFIG]: good }, actor: 'spw', op: 'config.edit' });
+  await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
+  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
+  expect(c.patches()[0]?.upsert.issues?.[0]?.title).toBe('Nachher');
+  expect(c.patches()[0]?.actors).toEqual({ [id]: ['claude-1'] });
+});
+
+test('actors are cleared after a comparison without a patch', async () => {
+  const id = await create('Vorher');
+  const live = await start({ watch: () => ({ close() {} }) });
+  const c = collect(live);
+  const file = join(b.root, issueFile(id));
+  const issue = await readFile(file, 'utf8');
+  // Änderung und Rücknahme in einer Runde: HEAD bewegt sich, der sichtbare Stand bleibt gleich.
+  await rawCommit(b.root, {
+    files: { [issueFile(id)]: issue.replace('title: Vorher', 'title: Zwischen') },
+    actor: 'claude-1',
+    op: 'issue.edit',
+  });
+  await rawCommit(b.root, {
+    files: { [issueFile(id)]: issue },
+    actor: 'claude-1',
+    op: 'issue.edit',
+  });
+  await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
+  await live.idle();
+  // Die Runde hat den neuen HEAD gesehen (und seine Actors gesammelt), aber keinen Patch ergeben.
+  expect(live.head).toBe((await stateJson(ctx)).head);
+  expect(c.patches()).toEqual([]);
+  await writeFile(file, issue.replace('title: Vorher', 'title: Handgemacht'));
+  await vi.advanceTimersByTimeAsync(LIVE_TIMING.safetyMs);
+  await vi.waitFor(() => expect(c.patches()).toHaveLength(1), WAIT);
+  expect(c.patches()[0]?.upsert.issues?.[0]?.title).toBe('Handgemacht');
+  expect(c.patches()[0]).not.toHaveProperty('actors');
 });
 
 test('a hand edit has no actors', async () => {

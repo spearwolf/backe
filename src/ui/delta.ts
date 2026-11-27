@@ -150,8 +150,8 @@ export function watchedPath(path: string): boolean {
 
 /** `issues/<shard>/<id>/comments|attachments[/…]` → `<id>`, sonst `undefined`. */
 export function touchedIssue(path: string): string | undefined {
-  const [top, shard, id, sub] = path.split('/');
-  if (top !== 'issues' || shard === undefined || id === undefined) return undefined;
+  const id = issueOfPath(path);
+  const sub = path.split('/')[3];
   return sub === 'comments' || sub === 'attachments' ? id : undefined;
 }
 
