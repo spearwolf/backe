@@ -104,7 +104,14 @@ export function QuickCreate(props: {
               size="sm"
               className="h-7 shrink-0 px-2"
               disabled={busy}
-              onClick={() => create.open(draftForCell(group, lane, column, title.trim()))}
+              onClick={() => {
+                // Der Entwurf gehört ab jetzt dem Dialog; bliebe der Titel hier stehen, legte
+                // ein Enter ihn ein zweites Mal an.
+                create.open(draftForCell(group, lane, column, title.trim()));
+                setOpen(false);
+                setTitle('');
+                reset();
+              }}
             >
               {m.more}
             </Button>
