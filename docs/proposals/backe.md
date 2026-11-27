@@ -964,6 +964,8 @@ Umgesetzt nach diesem Plan; Testzahlen und Coverage je Meilenstein stehen im Ges
 
 **Isolation:** Jeder Test läuft mit eigenem `BACKE_HOME` im Temp-Verzeichnis, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`; Test-Keys erzeugt `ssh-keygen` einmal pro Suite.
 
+**Kein Timing:** Kein Test synchronisiert über Wartezeiten oder Fristen. Fristen im Code (Git-Timeouts, Lock-Wartezeit) laufen über Fake Timers oder eine injizierte Uhr; auf einen fremden Prozess wartet ein Test über eine FIFO, die der Prozess offen hält (`test/helpers/process.ts`: PID beim Start, Dateiende beim Ende). Die Datei-Ereignisse von `backe ui` regelt UI §5. Ausgenommen ist nur der E2E-Test, in dem der echte `backe mcp` beim ersten Write des Agents dessen Arbeitskopie klont und daraus den Hintergrund-Sync startet: Dieser Prozess entsteht ohne Zutun des Tests in einem Verzeichnis, das es vorher nicht gibt, und meldet sein Ende nur über seinen Zustand (`sync.json`, `sync.lock`), den der Test darum wiederholt liest.
+
 **Unit** (`core`, `store`, `ops`, `context`):
 
 - Parse/Serialize: Roundtrip-Property-Tests (fast-check) — `parse(serialize(x)) == x`, kanonische Ausgabe idempotent, unbekannte Keys bleiben erhalten.
