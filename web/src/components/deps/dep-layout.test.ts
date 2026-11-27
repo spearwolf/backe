@@ -113,5 +113,5 @@ test('the collector sits below the first dependents, under the centre', () => {
   const firstRow = g.nodes.filter((n) => n.role === 'down').map((n) => pos(m, n.id).y);
   const more = pos(m, DEP_MORE_ID);
   expect(more.y).toBeGreaterThanOrEqual(Math.max(...firstRow) + DEP_NODE_HEIGHT);
-  expect(Math.abs(more.x - pos(m, tid(1)).x)).toBeLessThanOrEqual(DEP_NODE_WIDTH);
+  expect(more.x).toBe(pos(m, tid(1)).x);
 });
