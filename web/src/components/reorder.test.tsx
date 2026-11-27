@@ -241,6 +241,28 @@ test('a second quick move waits for the first to settle and starts from its serv
   expect(rowIds()).toEqual([tid(2), tid(3), tid(1), tid(4)]);
 });
 
+test('a queued move whose predecessor failed plans and previews again from the server', async () => {
+  answerNever();
+  let reject!: (e: unknown) => void;
+  call.mockImplementationOnce(() => new Promise((_, rej) => (reject = rej)));
+  unranked();
+  linkOf(tid(1)).focus();
+  await alt('ArrowDown');
+  await alt('ArrowDown');
+  expect(rowIds()).toEqual([tid(2), tid(3), tid(1), tid(4)]);
+  await act(async () => reject(new ApiError(409, 'precondition', 'Rang veraltet')));
+  // Ohne den ersten Zug liegen 2 und 3 ohne Rang im Weg: Plan und Vorschau rechnen neu.
+  expect(call).toHaveBeenCalledTimes(2);
+  expect(call).toHaveBeenLastCalledWith('batch', {
+    ops: [
+      { op: 'issue.rank', id: tid(2), from: null, bottom: true },
+      { op: 'issue.rank', id: tid(3), from: null, bottom: true },
+      { op: 'issue.rank', id: tid(1), from: 1000, after: tid(3) },
+    ],
+  });
+  expect(rowIds()).toEqual([tid(2), tid(3), tid(1), tid(4)]);
+});
+
 test('a drop on an unranked row sends the same batch', () => {
   answerNever();
   unranked();

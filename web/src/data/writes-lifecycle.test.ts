@@ -1,7 +1,7 @@
 import type { IssueJson } from '@backe/ui/api.ts';
 import { getEffectsCount, getLinksCount, getSignalsCount } from '@spearwolf/signalize';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { committed, flush, id, move, patch, setup } from '../test/writes-harness.ts';
+import { committed, flush, id, issue, move, patch, setup } from '../test/writes-harness.ts';
 import { ApiError } from './api-client.ts';
 import { PENDING_TIMEOUT_MS } from './writes.ts';
 
@@ -120,7 +120,7 @@ describe('Writes: errors and lifecycle', () => {
     const done = writes.runCall(
       () => {
         asked.push(store.rev.value);
-        return { name: 'issue_move', args: { id: id(1), to: 'in_progress' } };
+        return { call: { name: 'issue_move', args: { id: id(1), to: 'in_progress' } } };
       },
       { optimistic: move, after, onSettle: () => settled.push('one') },
     );
@@ -141,13 +141,62 @@ describe('Writes: errors and lifecycle', () => {
     dispose();
   });
 
+  it('runCall replaces its overlay with the one planned at send time', async () => {
+    const { store, writes, calls, dispose } = setup();
+    let open!: () => void;
+    const after = new Promise<void>((r) => {
+      open = r;
+    });
+    void writes.runCall(
+      () => ({
+        call: { name: 'issue_move', args: { id: id(2), to: 'review' } },
+        optimistic: new Map<string, Partial<IssueJson>>([[id(2), { state: 'review' }]]),
+      }),
+      { optimistic: move, after },
+    );
+    expect(store.issues.get(id(1)).value?.state).toBe('in_progress');
+    open();
+    await flush();
+    expect(calls).toHaveLength(1);
+    expect(store.issues.get(id(1)).value?.state).toBe('todo');
+    expect(store.issues.get(id(2)).value?.state).toBe('review');
+    // Die Prüfung auf Serverwerte folgt der neuen Überlagerung.
+    calls[0]?.resolve(committed('c7'));
+    await flush();
+    store.applyPatch(patch(2, 'h2', [issue(2, { state: 'review' })]));
+    expect(store.pendingCount(id(2)).value).toBe(0);
+    dispose();
+  });
+
+  it('a fallback refresh that never ends releases the write after another wait', async () => {
+    const { store, writes, answer, refreshes, dispose } = setup();
+    const settled: string[] = [];
+    void writes.run(
+      'issue_move',
+      { id: id(1), to: 'in_progress' },
+      { optimistic: move, onSettle: () => settled.push('one') },
+    );
+    await answer(committed('c1'));
+    vi.advanceTimersByTime(PENDING_TIMEOUT_MS);
+    expect(refreshes).toHaveLength(1);
+    expect(settled).toEqual([]);
+    // `refresh` antwortet nie: Spätestens nach einer weiteren Frist endet der Write trotzdem.
+    vi.advanceTimersByTime(PENDING_TIMEOUT_MS);
+    expect(settled).toEqual(['one']);
+    expect(store.pendingCount(id(1)).value).toBe(0);
+    refreshes[0]?.();
+    await flush();
+    expect(settled).toEqual(['one']);
+    dispose();
+  });
+
   it('a runCall still waiting when writes end is never sent', async () => {
     const { writes, calls, store } = setup();
     let open!: () => void;
     const after = new Promise<void>((r) => {
       open = r;
     });
-    const request = vi.fn(() => ({ name: 'issue_claim' as const, args: { id: id(1) } }));
+    const request = vi.fn(() => ({ call: { name: 'issue_claim' as const, args: { id: id(1) } } }));
     const done = writes.runCall(request, { after });
     writes.dispose();
     open();

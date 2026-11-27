@@ -17,6 +17,15 @@ export type WriteFailure = { id: number; error: ApiError };
 /** Ein Tool-Aufruf als Wert: Name und Argumente gehören zusammen. */
 export type ToolCall = { [N in UiToolName]: { name: N; args: ToolArgs[N] } }[UiToolName];
 
+/**
+ * Was `runCall` beim Senden rechnet: der Aufruf und, wenn sich die Vorschau dabei ändert, die
+ * Überlagerung, die von da an gilt (eine leere nimmt sie weg).
+ */
+export type PlannedCall = {
+  call: ToolCall;
+  optimistic?: ReadonlyMap<string, Partial<IssueJson>>;
+};
+
 type RunOptions = {
   optimistic?: ReadonlyMap<string, Partial<IssueJson>>;
   /** Läuft genau einmal, sobald der Write endet (siehe `upload`). */
@@ -31,7 +40,8 @@ export type WriteDeps = {
 };
 
 type Pending = {
-  readonly optimistic: ReadonlyMap<string, Partial<IssueJson>> | undefined;
+  /** Beim Senden eines `runCall` ersetzbar: Dann gilt die Überlagerung seines Plans. */
+  optimistic: ReadonlyMap<string, Partial<IssueJson>> | undefined;
   readonly onSettle: (() => void) | undefined;
   /** Jeder `head`, den der Store seit dem Start trug; der Patch kann vor der Antwort kommen. */
   readonly seen: Set<string>;
@@ -50,7 +60,8 @@ function commitOf(result: unknown): string | undefined {
  * überlagert die Issues im Store, bis sein Ergebnis da ist: ein Patch oder `/state` mit dem
  * `commit` der Antwort, oder Serverwerte, die der Überlagerung gleichen (ein Rebase spielt den
  * Commit mit neuem Hash ein). Kommt beides nicht binnen `PENDING_TIMEOUT_MS`, lädt `refresh`
- * den Zustand neu. Ein Fehler nimmt die Überlagerung sofort zurück.
+ * den Zustand neu; endet auch das nicht binnen derselben Frist, endet der Write ohne es. Ein
+ * Fehler nimmt die Überlagerung sofort zurück.
  */
 export class Writes {
   readonly failures: Signal<readonly WriteFailure[]>;
@@ -86,18 +97,33 @@ export class Writes {
 
   /**
    * Wie `run`, nur steht der Aufruf erst fest, wenn `after` erfüllt ist: Die Überlagerung zeigt
-   * sofort, `request` rechnet danach gegen den dann aktuellen Serverstand. Endet `Writes` vorher,
-   * geht nichts hinaus. Ohne `after` wird sofort gerechnet und gesendet.
+   * sofort, `request` rechnet danach gegen den dann aktuellen Serverstand und darf eine neue
+   * Überlagerung mitbringen, die die erste ersetzt. Endet `Writes` vorher, geht nichts hinaus. Ohne
+   * `after` wird sofort gerechnet und gesendet.
    */
   runCall(
-    request: () => ToolCall,
+    request: () => PlannedCall,
     opts: RunOptions & { after?: Promise<unknown> } = {},
   ): Promise<unknown> {
-    const send = (): Promise<unknown> => {
-      const c = request();
-      return this.#deps.call(c.name as never, c.args as never);
-    };
-    return this.#track(opts.optimistic, send, opts.onSettle, opts.after);
+    return this.#track(
+      opts.optimistic,
+      (token) => {
+        const { call, optimistic } = request();
+        if (optimistic !== undefined) this.#replan(token, optimistic);
+        return this.#deps.call(call.name as never, call.args as never);
+      },
+      opts.onSettle,
+      opts.after,
+    );
+  }
+
+  /** Die Überlagerung eines laufenden Writes durch die seines Plans beim Senden ersetzen. */
+  #replan(token: number, optimistic: ReadonlyMap<string, Partial<IssueJson>>): void {
+    const pending = this.#pending.get(token);
+    if (pending === undefined) return;
+    pending.optimistic = optimistic;
+    if (optimistic.size > 0) this.#store.setOverlay(token, optimistic);
+    else this.#store.clearOverlay(token);
   }
 
   /**
@@ -134,7 +160,7 @@ export class Writes {
 
   async #track<R>(
     optimistic: ReadonlyMap<string, Partial<IssueJson>> | undefined,
-    call: () => Promise<R>,
+    call: (token: number) => Promise<R>,
     onSettle?: () => void,
     after?: Promise<unknown>,
   ): Promise<R> {
@@ -151,7 +177,7 @@ export class Writes {
         // `dispose` hat den Write währenddessen beendet: Dann geht er nicht mehr hinaus.
         if (!this.#pending.has(token)) throw new ApiError(0, 'disposed', 'writes are disposed');
       }
-      result = await call();
+      result = await call(token);
     } catch (cause) {
       this.#settle(token);
       throw asApiError(cause);
@@ -165,8 +191,10 @@ export class Writes {
     }
     pending.commit = commit;
     pending.timer = setTimeout(() => {
-      pending.timer = undefined;
       const done = () => this.#settle(token);
+      // Auch ein Neuladen, das nie endet (ein `fetch` ohne Antwort), hält den Write nicht ewig:
+      // Nach einer weiteren Frist endet er trotzdem, und wer auf ihn wartet, kommt weiter.
+      pending.timer = setTimeout(done, PENDING_TIMEOUT_MS);
       this.#deps.refresh().then(done, done);
     }, PENDING_TIMEOUT_MS);
     return result;

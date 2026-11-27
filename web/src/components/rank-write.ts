@@ -3,7 +3,7 @@ import type { BacklogSnapshot } from '@backe/store/snapshot.ts';
 import { preview, rankOverlay } from '../app/optimistic.ts';
 import { type RankMove, rankBatchOps, rankSteps } from '../app/rank-plan.ts';
 import type { Store } from '../data/store.ts';
-import type { ToolCall, Writes } from '../data/writes.ts';
+import type { PlannedCall, ToolCall, Writes } from '../data/writes.ts';
 
 export type { RankMove };
 
@@ -25,15 +25,19 @@ function serverSnapshot(store: Store): BacklogSnapshot | undefined {
 /**
  * Der Aufruf für `id` nach `pos`, gerechnet gegen den Serverstand: `issue_rank`, oder ein `batch`,
  * wenn Issues ohne Rang im Weg liegen (`rankSteps`). `from` ist so immer der Rang, den der Server
- * gerade hat.
+ * gerade hat. Mit `replan` kommt die Vorschau dazu, die zu genau diesem Aufruf gehört.
  */
-function rankCall(store: Store, id: string, pos: RankMove): ToolCall {
+function rankCall(store: Store, id: string, pos: RankMove, replan: boolean): PlannedCall {
   const s = serverSnapshot(store);
   const steps = s === undefined ? { pos, unranked: [] } : rankSteps(s, id, pos);
-  if (steps.unranked.length === 0) return { name: 'issue_rank', args: { id, ...steps.pos } };
+  const call: ToolCall =
+    steps.unranked.length === 0
+      ? { name: 'issue_rank', args: { id, ...steps.pos } }
+      : { name: 'batch', args: { ops: rankBatchOps(id, store.issues.server(id)?.rank, steps) } };
+  if (!replan || s === undefined) return { call };
   return {
-    name: 'batch',
-    args: { ops: rankBatchOps(id, store.issues.server(id)?.rank, steps) },
+    call,
+    optimistic: preview(() => rankOverlay(s, id, steps.pos, steps.unranked)) ?? new Map(),
   };
 }
 
@@ -42,8 +46,10 @@ function rankCall(store: Store, id: string, pos: RankMove): ToolCall {
  * dann weg, die alte Reihenfolge steht wieder). Rank-Writes einer Sitzung gehen nacheinander
  * hinaus: Ein Zug wartet, bis der vorige beendet ist (sein Patch ist da, oder er scheiterte), und
  * rechnet erst dann gegen den Serverstand. Sonst trüge ein schneller zweiter Zug das `from` von
- * vor dem ersten, und der Server lehnte ihn ab. Die Vorschau steht trotzdem sofort. Ergibt, ob sie
- * die Liste umsortiert: Nur dann folgt ihr ein Render, an dem der Fokus der Zeile nachgehen kann.
+ * vor dem ersten, und der Server lehnte ihn ab. Die Vorschau steht trotzdem sofort; ein wartender
+ * Zug rechnet sie beim Senden neu, sodass sie zeigt, was hinausgeht (auch wenn der vorige
+ * scheiterte). Ergibt, ob die erste Vorschau die Liste umsortiert: Nur dann folgt ihr ein Render,
+ * an dem der Fokus der Zeile nachgehen kann.
  */
 export function rank(store: Store, writes: Writes, id: string, pos: RankMove): boolean {
   const snapshot = store.toSnapshot();
@@ -66,7 +72,7 @@ export function rank(store: Store, writes: Writes, id: string, pos: RankMove): b
     done();
   };
   writes
-    .runCall(() => rankCall(store, id, pos), {
+    .runCall(() => rankCall(store, id, pos, after !== undefined), {
       ...(optimistic === undefined ? {} : { optimistic }),
       ...(after === undefined ? {} : { after }),
       onSettle,
