@@ -190,7 +190,8 @@ test('lane keys come from memberships, repo entries by name', () => {
   expect(repoNameOf('api@main')).toBe('api');
   expect(repoNameOf('api')).toBe('api');
   expect(repoNameOf('api@feature/x@2')).toBe('api');
-  expect(repoNameOf('@broken')).toBe('');
+  // Ohne Namen vor dem `@` bleibt der ganze Eintrag der Schlüssel, nie `NO_LANE`.
+  expect(repoNameOf('@broken')).toBe('@broken');
   const issue = testIssue(1, {
     sprints: ['s1', 's2'],
     projects: ['a/x'],
@@ -224,6 +225,27 @@ test('unknown memberships get their own lane', () => {
   const byRepo = lanesOf(issues, { ...known, view: { group: 'repo' } });
   expect(keys(byRepo)).toEqual(['cli', 'web']);
   expect(cell(lane(byRepo, 'cli'), 'todo')).toEqual([tid(1)]);
+});
+
+test('a repo entry without a name gets its own lane', () => {
+  const lanes = lanesOf([testIssue(1, { repos: ['@broken'] }), testIssue(2)], {
+    repos: [repo('web')],
+    view: { group: 'repo' },
+  });
+  expect(keys(lanes)).toEqual(['@broken', 'web', NO_LANE]);
+  expect(cell(lane(lanes, '@broken'), 'todo')).toEqual([tid(1)]);
+  expect(cell(lane(lanes, NO_LANE), 'todo')).toEqual([tid(2)]);
+});
+
+test('unknown keys only come from cards on the board', () => {
+  const issues = [
+    testIssue(1, { state: 'cancelled', sprints: ['ghost'] }),
+    testIssue(2, { state: 'backlog', sprints: ['later'] }),
+  ];
+  const known = { sprints: [sprint('s1')] };
+  expect(keys(lanesOf(issues, known))).toEqual(['s1']);
+  // Mit eingeblendetem `backlog` steht die Karte auf dem Board und nennt ihre Bahn.
+  expect(keys(lanesOf(issues, { ...known, view: { showBacklog: true } }))).toEqual(['later', 's1']);
 });
 
 test('group none has one lane', () => {

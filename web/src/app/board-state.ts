@@ -20,6 +20,7 @@ import {
   type BoardView,
   boardLanes,
   DEFAULT_BOARD_VIEW,
+  newCard,
 } from './board-model.ts';
 
 type Folded = Readonly<Record<string, Readonly<Record<string, boolean>>>>;
@@ -112,7 +113,7 @@ export class BoardModel {
               old.openDeps === openDeps &&
               sameProgress(old.progress, progress)
                 ? old
-                : { issue, openDeps, ...(progress === undefined ? {} : { progress }) };
+                : newCard(issue, openDeps, progress);
             cache.set(issue.id, card);
             return card;
           },

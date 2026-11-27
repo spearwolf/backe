@@ -47,10 +47,12 @@ export function columnOf(issue: IssueJson): State | undefined {
 /**
  * Name eines Repo-Eintrags (`api@main` → `api`), ohne zu werfen. Wie `parseRepoRef`, nur ohne
  * Prüfung: Ein kaputter Eintrag soll das Board nicht sprengen, er bekommt eben seine eigene Bahn.
+ * Ohne Namen vor dem `@` (`@main`) ist das der ganze Eintrag — sonst fiele er still in die Bahn
+ * »ohne Repo« (`NO_LANE`), und ein Bahnwechsel fände ihn nicht mehr zum Entfernen.
  */
 export function repoNameOf(entry: string): string {
   const at = entry.indexOf('@');
-  return at < 0 ? entry : entry.slice(0, at);
+  return at <= 0 ? entry : entry.slice(0, at);
 }
 
 /** Bahn-Schlüssel des Issues; ohne Mitgliedschaft `[NO_LANE]`, bei `none` immer `[NO_LANE]`. */
@@ -68,7 +70,8 @@ export function laneKeysOf(issue: IssueJson, group: BoardGroup): string[] {
   return keys.length === 0 ? [NO_LANE] : keys;
 }
 
-const newCard = (
+/** Karte ohne Cache; `progress` fehlt ohne Sub-Issues ganz, statt `undefined` zu tragen. */
+export const newCard = (
   issue: IssueJson,
   openDeps: boolean,
   progress?: BoardCard['progress'],
@@ -109,6 +112,12 @@ function plainHeads(known: readonly string[], named: ReadonlySet<string>): LaneH
     .map((key) => ({ key, label: key, closed: false }));
 }
 
+/**
+ * Bahnen des Boards: alle bekannten Einträge (auch leere) plus jeder unbekannte Schlüssel, den eine
+ * Karte nennt. Nur Issues, die in einer angezeigten Spalte stehen, nennen Schlüssel: Ein
+ * `cancelled` Issue in Sprint `ghost` oder ein `backlog`-Issue bei ausgeblendetem `backlog` macht
+ * keine leere Bahn `ghost` auf — eine Bahn ohne Store-Eintrag und ohne Karte wäre bloß Rauschen.
+ */
 export function boardLanes(input: {
   snapshot: BacklogSnapshot;
   sprints: readonly SprintJson[];
