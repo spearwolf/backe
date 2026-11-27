@@ -11,6 +11,7 @@ import {
 import { fakeTimers } from '../../test/helpers/live.ts';
 import { setIdentity } from '../context/registry.ts';
 import type { ResolvedContext } from '../context/resolve.ts';
+import { BackeError } from '../core/errors.ts';
 import { git } from '../git/exec.ts';
 import { syncNow } from '../services/sync.ts';
 import { ensureWorkingCopy } from '../services/working-copy.ts';
@@ -1077,7 +1078,8 @@ test('a candidate git rejects outright is not probed again until it changes', as
   const w = await start(s, vi.fn(), rec.watch);
   const probes = () =>
     vi.mocked(git).mock.calls.filter(([args]) => args.includes('--git-common-dir')).length;
-  await expect(gitDirs(hub)).rejects.toThrow();
+  // Eine echte Absage des echten `git()`: mit Exit-Code.
+  await expect(gitDirs(hub)).rejects.toMatchObject({ details: { exitCode: expect.any(Number) } });
 
   vi.mocked(git).mockClear();
   await w.check();
@@ -1090,14 +1092,32 @@ test('a candidate git rejects outright is not probed again until it changes', as
   expect(rec.has(await refsOf(hub))).toBe(true);
 });
 
-test('a system error while probing is not memoised', async () => {
+/**
+ * Fehler von `git()`, die nichts über den Kandidaten sagen, in der Form aus `src/git/exec.ts`:
+ * `BackeError` ohne `exitCode` — git ließ sich nicht starten oder lief in den Timeout.
+ */
+const noAnswers: [string, (args: readonly string[]) => BackeError][] = [
+  [
+    'a start failure',
+    (args) =>
+      new BackeError('unexpected', 'git: spawn EMFILE', {
+        details: { args, cause: 'spawn git EMFILE' },
+      }),
+  ],
+  [
+    'a timeout',
+    (args) => new BackeError('unexpected', 'git timed out', { details: { args, timeoutMs: 1000 } }),
+  ],
+];
+
+test.each(noAnswers)('%s while probing is not memoised', async (_name, failure) => {
   const s = await withHub();
   const hubRefs = await refsOf(s.hub);
   const rec = recorder();
   const real = await realGit();
   let fail = true;
   vi.mocked(git).mockImplementation(async (args, opts) => {
-    if (fail && args.includes('--git-common-dir') && opts.cwd === s.hub) throw emfile();
+    if (fail && args.includes('--git-common-dir') && opts.cwd === s.hub) throw failure(args);
     return real(args, opts);
   });
   let w: NeighborWatch;
@@ -1108,7 +1128,7 @@ test('a system error while probing is not memoised', async () => {
     fail = false;
     vi.mocked(git).mockImplementation(real);
   }
-  // Etwa ein voller Prozess-Tisch beim Start von git: Der nächste Durchlauf prüft erneut.
+  // Der Hub selbst ist unverändert; nur weil nichts gemerkt ist, prüft der nächste Durchlauf neu.
   await w.check();
   expect(rec.has(hubRefs)).toBe(true);
 });

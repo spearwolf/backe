@@ -85,6 +85,16 @@ function skippable(err: unknown): boolean {
   );
 }
 
+/**
+ * git lief und lehnte ab: `git()` legt dann den Exit-Code in `details` (Pfad `m.failed` in
+ * `src/git/exec.ts`). Start-, Timeout- und Signalfehler sind ebenfalls `BackeError`, aber ohne ihn.
+ */
+function refused(err: unknown): boolean {
+  if (!(err instanceof BackeError)) return false;
+  const details = err.details as { exitCode?: unknown } | undefined;
+  return typeof details?.exitCode === 'number';
+}
+
 export class NeighborWatch {
   readonly #opts: NeighborOptions;
   readonly #watch: WatchFn;
@@ -311,15 +321,16 @@ export class NeighborWatch {
    * selbst: Ist er kein Repository, fände git über die Elternverzeichnisse ein fremdes (etwa ein
    * Repo, in dem `BACKE_HOME` liegt). Beim Hub muss das Common-Dir der Hub sein, bei einer
    * Arbeitskopie das Git-Dir `<dir>/.git`. Wer daran scheitert oder den git gar nicht als
-   * Repository annimmt, bleibt verworfen, bis sich sein `probe` ändert. Ein Systemfehler beim Start
-   * von git (etwa `EMFILE`) sagt nichts über den Kandidaten; den prüft der nächste Durchlauf neu.
+   * Repository annimmt, bleibt verworfen, bis sich sein `probe` ändert. Jeder andere Fehler (git
+   * ließ sich nicht starten, Timeout, Signal) sagt nichts über den Kandidaten; den prüft der
+   * nächste Durchlauf neu.
    */
   async #open(dir: string, { hub, id, probe }: Candidate): Promise<Neighbor | undefined> {
     let dirs: { gitDir: string; commonDir: string };
     try {
       dirs = await gitDirs(dir);
     } catch (err) {
-      if (err instanceof BackeError) this.#rejected.set(dir, probe);
+      if (refused(err)) this.#rejected.set(dir, probe);
       throw err;
     }
     const { gitDir, commonDir } = dirs;
