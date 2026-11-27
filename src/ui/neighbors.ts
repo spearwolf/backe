@@ -310,7 +310,9 @@ export class NeighborWatch {
         if (!this.#neighbors.has(dir) && (await physicalPath(dir)) === own) continue;
         const st = await stat(dir);
         const git = hub ? st : await stat(join(dir, '.git'));
-        const id = `${st.dev}:${st.ino}:${git.dev}:${git.ino}`;
+        // Inodes allein tragen nicht: Ein gelöschter und neu geklonter Nachbar bekommt sie oft
+        // gleich wieder (ext4). Die Geburtszeit unterscheidet die beiden Kopien.
+        const id = `${st.dev}:${st.ino}:${st.birthtimeMs}:${git.dev}:${git.ino}:${git.birthtimeMs}`;
         const probe = `${id}:${st.mtimeMs}:${st.nlink}:${git.mtimeMs}:${git.nlink}`;
         found.set(dir, { hub, id, probe });
       } catch (err) {

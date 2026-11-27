@@ -1,4 +1,5 @@
-import { chmod, cp, mkdir, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import type { Stats } from 'node:fs';
+import { chmod, cp, mkdir, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { writeOp } from '../../test/helpers/context.ts';
 import {
@@ -19,6 +20,11 @@ import { executeWrite } from '../services/write.ts';
 import { LIVE_TIMING } from './live.ts';
 import { NeighborWatch } from './neighbors.ts';
 import { fsWatch, gitDirs, type WatchFn } from './watch.ts';
+
+vi.mock('node:fs/promises', async (original) => {
+  const real = await original<typeof import('node:fs/promises')>();
+  return { ...real, stat: vi.fn(real.stat) };
+});
 
 vi.mock('../git/exec.ts', async (original) => {
   const real = await original<typeof import('../git/exec.ts')>();
@@ -543,13 +549,53 @@ test('a recreated neighbour gets fresh watches and counts as new', async () => {
   const agentRefs = await refsOf(s.wc);
   const first = rec.at(agentRefs);
 
-  // Gelöscht und neu geklont zwischen zwei Durchläufen; der Stand ist derselbe, spw kennt ihn nicht.
-  await rm(s.wc, { recursive: true, force: true });
+  // Weggeräumt und neu geklont zwischen zwei Durchläufen; der Stand ist derselbe, spw kennt ihn
+  // nicht. Die alte Kopie bleibt außerhalb des Backlog-Verzeichnisses liegen, damit der neue Klon
+  // sicher andere Inodes bekommt; den wiederverwendeten Inode prüft der Test danach.
+  await rename(s.wc, join(dirname(s.backlogDir), 'old-wc'));
   await agentCopy(s);
   await w.check();
 
   expect(first.closed).toBe(true);
   expect(rec.at(agentRefs)).not.toBe(first);
+  expect(rec.has(agentRefs)).toBe(true);
+  expect(onMove).toHaveBeenCalledTimes(2);
+});
+
+test('a recreated neighbour on reused inodes still counts as new', async () => {
+  const s = await withHub();
+  await agentPush(s.agentCtx);
+  const rec = recorder();
+  const onMove = vi.fn();
+  const w = await start(s, onMove, rec.watch);
+  const agentRefs = await refsOf(s.wc);
+  const first = rec.at(agentRefs);
+  const gitDir = join(s.wc, '.git');
+  const old = new Map([
+    [s.wc, await stat(s.wc)],
+    [gitDir, await stat(gitDir)],
+  ]);
+
+  // Ein Dateisystem darf die Inodes einer gelöschten Kopie sofort wieder vergeben (ext4 tut es).
+  await rm(s.wc, { recursive: true, force: true });
+  await agentCopy(s);
+  const real = (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).stat;
+  vi.mocked(stat).mockImplementation((async (path: string, opts?: object) => {
+    const st = (await real(path, opts as never)) as Stats;
+    const was = old.get(String(path));
+    if (was === undefined) return st;
+    return Object.assign(Object.create(Object.getPrototypeOf(st)), st, {
+      dev: was.dev,
+      ino: was.ino,
+    });
+  }) as typeof stat);
+  try {
+    await w.check();
+  } finally {
+    vi.mocked(stat).mockImplementation(real);
+  }
+
+  expect(first.closed).toBe(true);
   expect(rec.has(agentRefs)).toBe(true);
   expect(onMove).toHaveBeenCalledTimes(2);
 });
