@@ -12,7 +12,7 @@ import {
 import { ActionError } from './ActionError.tsx';
 import { m } from './write.messages.ts';
 
-type Props = {
+type BaseProps = {
   open: boolean;
   title: string;
   description?: string;
@@ -22,18 +22,20 @@ type Props = {
   /** Sperrt nur den Bestätigen-Knopf, etwa solange eine Pflichtangabe fehlt. */
   confirmDisabled?: boolean;
   error: ApiError | undefined;
-  onConfirm: () => void;
   onOpenChange: (open: boolean) => void;
-  /**
-   * Gesetzt, ist Bestätigen der Absende-Knopf des Formulars mit dieser ID: Der Aufrufer legt
-   * `<form id={formId} onSubmit>` um seine Felder, und Enter in einem Feld bestätigt wie der Knopf.
-   * `onConfirm` ruft der Knopf dann nicht selbst, sonst liefe er bei einem Klick doppelt.
-   */
-  formId?: string;
   /** Fokus nach dem Schließen; ohne Angabe der Radix-Default (das zuvor fokussierte Element). */
   onCloseAutoFocus?: (event: Event) => void;
   children?: ReactNode;
 };
+
+/**
+ * Entweder bestätigt der Knopf selbst (`onConfirm`), oder er ist der Absende-Knopf des Formulars
+ * mit der ID `formId`: Der Aufrufer legt `<form id={formId} onSubmit>` um seine Felder, Enter in
+ * einem Feld bestätigt wie der Knopf, und bestätigt wird allein in `onSubmit`. Beides zugleich
+ * gibt es nicht; ein `onConfirm` neben `formId` liefe nie.
+ */
+type Props = BaseProps &
+  ({ formId?: undefined; onConfirm: () => void } | { formId: string; onConfirm?: never });
 
 /**
  * Bestätigung mit eigener Fehlerfläche. Während `busy` läuft der Aufruf schon: Dann bleibt der

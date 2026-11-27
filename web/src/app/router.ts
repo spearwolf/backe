@@ -1,4 +1,5 @@
 import {
+  batch,
   createMemo,
   createSignal,
   type Signal,
@@ -15,18 +16,30 @@ type Win = Pick<Window, 'location' | 'history' | 'addEventListener' | 'removeEve
 export class Router {
   readonly location: Signal<Loc>;
   readonly route: SignalReader<Route>;
+  /**
+   * Zählt jede Navigation: jedes `navigate`, auch auf den Ort, an dem die Seite schon steht, und
+   * jedes `popstate`. `location` wechselt nur, wenn sich Pfad oder Query ändern; wer auch auf einen
+   * Klick auf den aktuellen Ort antworten will (Settings zeigt dann den Abschnitt erneut), liest
+   * diesen Zähler.
+   */
+  readonly navigation: Signal<number>;
   readonly #win: Win;
   readonly #onPop = (): void => this.#sync();
 
   constructor(win: Win = window) {
     this.#win = win;
     this.location = createSignal<Loc>(this.#read(), { attach: this });
+    this.navigation = createSignal(0, { attach: this });
     this.route = createMemo(() => parseRoute(this.location.get().pathname), { attach: this });
     win.addEventListener('popstate', this.#onPop);
   }
 
+  /** Ein Link auf den aktuellen Ort ersetzt den Eintrag, wie der Browser es tut, statt ihn zu stapeln. */
   navigate(href: string, opts: { replace?: boolean } = {}): void {
-    if (opts.replace) this.#win.history.replaceState(null, '', href);
+    const target = new URL(href, this.#win.location.href);
+    const cur = this.location.value;
+    const same = target.pathname === cur.pathname && target.search === cur.search;
+    if (opts.replace || same) this.#win.history.replaceState(null, '', href);
     else this.#win.history.pushState(null, '', href);
     this.#sync();
   }
@@ -41,11 +54,15 @@ export class Router {
     return { pathname, search };
   }
 
-  // Das Signal vergleicht per Identität; ohne Änderung bleibt das alte Objekt, nichts feuert.
+  // Das Signal vergleicht per Identität; ohne Änderung bleibt das alte Objekt, nichts feuert. Der
+  // Zähler steigt in jedem Fall, im selben Batch wie `location`.
   #sync(): void {
     const next = this.#read();
     const cur = this.location.value;
-    if (next.pathname !== cur.pathname || next.search !== cur.search) this.location.set(next);
+    batch(() => {
+      if (next.pathname !== cur.pathname || next.search !== cur.search) this.location.set(next);
+      this.navigation.set(this.navigation.value + 1);
+    });
   }
 }
 

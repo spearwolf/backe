@@ -1,8 +1,18 @@
 import type { BacklogEntryJson } from '@backe/ui/api.ts';
-import { Fragment, lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo } from 'react';
+import {
+  Fragment,
+  lazy,
+  type ReactNode,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import { m } from '../app/app.messages.ts';
 import { type Router, RouterContext } from '../app/router.ts';
 import { canonicalPath, type Route, routeHref } from '../app/routes.ts';
+import type { ShownNavigation } from '../app/settings-model.ts';
 import { TabModel } from '../app/tabs.ts';
 import type { Theme } from '../app/theme.ts';
 import { type UiAccess, UiContext } from '../app/ui-context.tsx';
@@ -48,15 +58,14 @@ function backlogOf(route: Route): string | undefined {
   return route.kind === 'home' || route.kind === 'not-found' ? undefined : route.backlog;
 }
 
-function View({
-  route,
-  me,
-  onClose,
-}: {
+type ViewProps = {
   route: Route;
   me: string | null;
   onClose: (id: string) => void;
-}) {
+  settingsShown: ShownNavigation;
+};
+
+function View({ route, me, onClose, settingsShown }: ViewProps) {
   switch (route.kind) {
     // Eigene Keys: Sonst übernähme die Grenze der einen Ansicht den Fehlerzustand der anderen.
     case 'board':
@@ -73,7 +82,7 @@ function View({
       return (
         <ChunkBoundary key="settings" className="p-4">
           <Suspense fallback={<Loading />}>
-            <SettingsView backlog={route.backlog} section={route.section} />
+            <SettingsView backlog={route.backlog} section={route.section} shown={settingsShown} />
           </Suspense>
         </ChunkBoundary>
       );
@@ -88,13 +97,9 @@ function View({
  * Die Fläche unter den Tabs. Scheitert das Laden, steht dort der Fehler statt der Ansicht: Ohne
  * Arbeitskopie kommt nie ein Zustand, »Lädt …« bliebe für immer stehen.
  */
-function Panel(props: {
-  session: Session;
-  route: Route;
-  me: string | null;
-  onClose: (id: string) => void;
-}) {
-  const { session, route, me, onClose } = props;
+function Panel(props: ViewProps & { session: Session }) {
+  const { session, ...view } = props;
+  const { route } = view;
   const error = useSignal(session.error);
   const labelledBy = selectedTabId(route);
   // Eine eigene Fläche statt `role` am `<main>`: `main` darf seine Rolle nicht tauschen.
@@ -107,7 +112,7 @@ function Panel(props: {
       {...(labelledBy === undefined ? {} : { role: 'tabpanel', 'aria-labelledby': labelledBy })}
     >
       {error === undefined ? (
-        <View route={route} me={me} onClose={onClose} />
+        <View {...view} />
       ) : (
         <div className="max-w-xl p-4">
           <ErrorAlert
@@ -134,6 +139,9 @@ function Notice({ children }: { children: ReactNode }) {
 export function App({ backlogs, router, theme, prefs, deps }: Props) {
   const lang = useSignal(prefs.lang);
   const ui = useMemo<UiAccess>(() => ({ theme, prefs }), [theme, prefs]);
+  // Über dem Fragment mit `key={lang}`: Settings merkt sich hier, welche Navigation es schon
+  // gezeigt hat, und das überlebt das Neumounten beim Sprachwechsel.
+  const [settingsShown] = useState<ShownNavigation>(() => ({ last: undefined }));
   const route = useSignal(router.route);
   const location = useSignal(router.location);
   const start = backlogs.find((b) => b.current);
@@ -201,7 +209,13 @@ export function App({ backlogs, router, theme, prefs, deps }: Props) {
             <WriteFailures writes={session.writes} />
             <TabBar backlog={current.name} route={route} tabs={tabs} onClose={closeTab} />
             <main className="min-h-0 flex-1 overflow-auto">
-              <Panel session={session} route={route} me={current.user} onClose={closeTab} />
+              <Panel
+                session={session}
+                route={route}
+                me={current.user}
+                onClose={closeTab}
+                settingsShown={settingsShown}
+              />
             </main>
           </CreateIssueProvider>
         </WriteContext.Provider>

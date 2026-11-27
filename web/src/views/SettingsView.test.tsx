@@ -74,6 +74,24 @@ test('a section route unfolds, scrolls and focuses it', async () => {
   expect(scrolled).toHaveBeenCalledTimes(3);
 });
 
+test('the link of the current section shows it again', async () => {
+  const user = userEvent.setup();
+  view({ section: 'projects' });
+  expect(scrolled).toHaveBeenCalledTimes(1);
+  // Weggescrollt und eingeklappt; der Fokus steht woanders.
+  await user.click(toggle(m.sectionProjects));
+  await user.click(toggle(m.sectionBacklog));
+  const length = window.history.length;
+
+  await user.click(within(nav()).getByRole('link', { name: m.sectionProjects }));
+  expect(window.location.pathname).toBe('/b/acme/settings/projects');
+  expect(window.history.length).toBe(length);
+  expect(scrolled).toHaveBeenCalledTimes(2);
+  expect(scrolled.mock.contexts[1]).toBe(region(m.sectionProjects));
+  expect(toggle(m.sectionProjects).getAttribute('aria-expanded')).toBe('true');
+  expect(document.activeElement).toBe(toggle(m.sectionProjects));
+});
+
 test('folding is remembered per backlog', async () => {
   const user = userEvent.setup();
   const first = view();

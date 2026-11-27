@@ -32,28 +32,28 @@ test('a sync status reads defensively', () => {
   expect(syncStatusView({}).mode).toBe('');
 });
 
-test('a sync outcome reads the wire format and tolerates others', () => {
+test('a sync outcome reads the wire format of sync_now', () => {
   expect(
     syncOutcomeView({
       fetched: 1,
       replayed: 2,
+      conflicts: ['20261120T100000Z-abc123'],
       pushed: 'a'.repeat(40),
-      notices: [{ message: 'n1' }, 'n2', 3],
+      rounds: 1,
+      notices: [{ message: 'n1' }, { code: 'lfs', message: 'n2' }],
     }),
   ).toEqual({ skipped: false, fetched: 1, replayed: 2, pushed: 'aaaaaaa', notices: ['n1', 'n2'] });
-  expect(syncOutcomeView({ fetched: 'x', pushed: 4 })).toEqual({
-    skipped: false,
-    fetched: 0,
-    replayed: 0,
-    pushed: '4',
-    notices: [],
-  });
-  expect(syncOutcomeView({ skipped: 'no_remote' })).toEqual({ skipped: true, notices: [] });
-  expect(syncOutcomeView(null)).toEqual({
-    skipped: false,
-    fetched: 0,
-    replayed: 0,
-    pushed: null,
-    notices: [],
-  });
+  expect(
+    syncOutcomeView({ fetched: 0, replayed: 0, conflicts: [], pushed: null, rounds: 1 }),
+  ).toEqual({ skipped: false, fetched: 0, replayed: 0, pushed: null, notices: [] });
+  expect(
+    syncOutcomeView({
+      fetched: 0,
+      replayed: 0,
+      conflicts: [],
+      pushed: null,
+      rounds: 0,
+      skipped: 'no_remote',
+    }),
+  ).toEqual({ skipped: true, notices: [] });
 });

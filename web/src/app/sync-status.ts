@@ -1,9 +1,10 @@
 /**
  * Das JSON von `sync status` (backe.md §2.16.2) und das Ergebnis von `sync_now` für die Anzeige in
- * Settings. Beides kommt ungeprüft über die Leitung; was nicht passt, zählt als nicht gesetzt,
+ * Settings. Der Status steht untypisiert im Store; was dort nicht passt, zählt als nicht gesetzt,
  * wie in `sync-display.ts`.
  */
 import { shortSha } from '@backe/core/ids.ts';
+import type { SyncResultJson } from '@backe/ui/api.ts';
 
 export type SyncConflict = { id: string; created: string | null; subject: string; reason: string };
 
@@ -54,26 +55,18 @@ export type SyncOutcomeView =
   | { skipped: true; notices: string[] }
   | { skipped: false; fetched: number; replayed: number; pushed: string | null; notices: string[] };
 
-const count = (v: unknown): number => (typeof v === 'number' ? v : 0);
-
 /**
- * Ergebnis einer Runde `sync_now`. `pushed` ist auf der Leitung der Hash des gepushten Commits
- * (`syncJson` in `src/services/views.ts`); gezeigt wird er wie im CLI gekürzt. Eine Zahl gilt auch.
+ * Ergebnis einer Runde `sync_now` zum Anzeigen; anders als der Status ist es typisiert
+ * (`SyncResultJson`). Den gepushten Commit zeigt die UI wie das CLI gekürzt.
  */
-export function syncOutcomeView(result: unknown): SyncOutcomeView {
-  const r = isRecord(result) ? result : {};
-  const notices = (Array.isArray(r.notices) ? r.notices : [])
-    .map(messageOf)
-    .filter((n) => n !== null);
+export function syncOutcomeView(r: SyncResultJson): SyncOutcomeView {
+  const notices = (r.notices ?? []).map((n) => n.message);
   if (r.skipped === 'no_remote') return { skipped: true, notices };
-  let pushed: string | null = null;
-  if (typeof r.pushed === 'string') pushed = shortSha(r.pushed);
-  else if (typeof r.pushed === 'number') pushed = String(r.pushed);
   return {
     skipped: false,
-    fetched: count(r.fetched),
-    replayed: count(r.replayed),
-    pushed,
+    fetched: r.fetched,
+    replayed: r.replayed,
+    pushed: r.pushed === null ? null : shortSha(r.pushed),
     notices,
   };
 }

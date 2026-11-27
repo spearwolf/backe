@@ -37,6 +37,26 @@ describe('Router', () => {
     expect(router.route()).toEqual({ kind: 'home' });
   });
 
+  it('counts every navigation, also to the current url and by popstate', () => {
+    expect(router.navigation.value).toBe(0);
+    router.navigate('/b/main/board');
+    expect(router.navigation.value).toBe(1);
+
+    // Derselbe Ort: kein neuer `location`, aber eine Navigation; ersetzt statt zu stapeln, wie
+    // der Browser einen Link auf die aktuelle Seite behandelt.
+    const location = router.location.value;
+    const length = window.history.length;
+    router.navigate('/b/main/board');
+    expect(router.navigation.value).toBe(2);
+    expect(router.location.value).toBe(location);
+    expect(window.history.length).toBe(length);
+
+    router.navigate('/b/main/backlog', { replace: true });
+    expect(router.navigation.value).toBe(3);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    expect(router.navigation.value).toBe(4);
+  });
+
   it('dispose stops listening and frees its signals', () => {
     const signals = getSignalsCount();
     const effects = getEffectsCount();

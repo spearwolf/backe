@@ -7,6 +7,7 @@ import {
   isSettingsSection,
   SETTINGS_SECTIONS,
   type SettingsSection as Section,
+  type ShownNavigation,
 } from '../app/settings-model.ts';
 import { type Folded, readFolded, writeFolded } from '../app/settings-prefs.ts';
 import { BacklogSection } from '../components/settings/BacklogSection.tsx';
@@ -29,15 +30,10 @@ const SECTIONS: Record<Section, { title: () => string; Body?: ComponentType }> =
   interface: { title: () => m.sectionInterface, Body: InterfaceSection },
 };
 
-// Orte (`router.location`), deren Abschnitt schon gezeigt wurde. Modulweit, weil ein Sprachwechsel
-// die Ansicht neu mountet (`key={lang}` in `App`): Dasselbe Ziel scrollte sonst noch einmal und
-// nähme der Sprachwahl den Fokus. Ein neuer Ort entsteht nur durch Navigation.
-const shown = new WeakSet<object>();
+type Props = { backlog: string; section: string | undefined; shown: ShownNavigation };
 
-type Props = { backlog: string; section: string | undefined };
-
-function Settings({ backlog, section }: Props) {
-  const location = useSignal(useRouter().location);
+function Settings({ backlog, section, shown }: Props) {
+  const navigation = useSignal(useRouter().navigation);
   const go = useLinkClick();
   const [folded, setFolded] = useState<Folded>(() => readFolded(backlog));
   const known = section !== undefined && isSettingsSection(section) ? section : undefined;
@@ -48,11 +44,12 @@ function Settings({ backlog, section }: Props) {
     writeFolded(backlog, next);
   };
 
-  // Nur bei einem Wechsel der Route: aufklappen, zeigen, den Klappknopf fokussieren. Kopf und
-  // Knopf stehen auch eingeklappt da; die Ansicht rückt also schon vor dem Aufklappen richtig.
+  // Je Navigation einmal, auch per Link auf den Abschnitt, der schon in der URL steht: aufklappen,
+  // zeigen, den Klappknopf fokussieren. Kopf und Knopf stehen auch eingeklappt da; die Ansicht
+  // rückt also schon vor dem Aufklappen richtig.
   useEffect(() => {
-    if (known === undefined || shown.has(location)) return;
-    shown.add(location);
+    if (known === undefined || shown.last === navigation) return;
+    shown.last = navigation;
     if (folded[known] === true) {
       const next = { ...folded, [known]: false };
       setFolded(next);
@@ -60,7 +57,7 @@ function Settings({ backlog, section }: Props) {
     }
     document.getElementById(sectionId(known))?.scrollIntoView?.({ block: 'start' });
     document.getElementById(toggleId(known))?.focus();
-  }, [known, location, folded, backlog]);
+  }, [known, navigation, shown, folded, backlog]);
 
   return (
     <div className="p-4">

@@ -56,7 +56,7 @@ test('the config shows read only with declared properties', () => {
   expect(described(section, m.idPrefix)).toBe('ac');
   expect(described(section, m.admins)).toBe('spw, anna');
   expect(described(section, m.strictWorkflow)).toBe(m.yes);
-  expect(described(section, m.sync)).toBe(m.syncSettings('manual', 'up', 'trunk', 30));
+  expect(described(section, m.sync)).toBe(m.syncSettings('manual', 'up', 'trunk', m.pullEvery(30)));
   expect(described(section, m.verify)).toBe('warn');
   expect(described(section, m.attachments)).toBe(m.maxBytes(formatBytes(1048576)));
   expect(described(section, m.lfs)).toBe(m.yes);
@@ -80,10 +80,21 @@ test('the config shows read only with declared properties', () => {
   expect(within(section).queryByRole('textbox')).toBeNull();
 });
 
-test('defaults read as such: unlimited attachments, no properties', () => {
-  view({ over: { config: testConfig({ attachments: { max_bytes: null, lfs: false } }) } });
+test('defaults read as such: unlimited attachments, no properties, no pull timer', () => {
+  view({
+    over: {
+      config: testConfig({
+        attachments: { max_bytes: null, lfs: false },
+        sync: { pull_interval: 0 },
+      }),
+    },
+  });
   const section = region(m.sectionBacklog);
   expect(described(section, m.attachments)).toBe(m.unlimited);
+  // `pull_interval: 0`: kein Takt, ein Read stößt jedes Mal eine Runde an (backe.md §2.16.3).
+  expect(described(section, m.sync)).toBe(
+    m.syncSettings('auto', 'origin', 'main', m.pullOnEveryRead),
+  );
   expect(described(section, m.strictWorkflow)).toBe(m.no);
   expect(within(section).getByText(m.noProperties)).toBeTruthy();
   expect(within(section).queryByRole('table')).toBeNull();
@@ -127,6 +138,8 @@ test('a sparse sync status reads without gaps', () => {
 
 test('sync now calls the tool and shows the result', async () => {
   const user = userEvent.setup();
+  // React meldet doppelte Keys auf der Konsole.
+  const logged = vi.spyOn(console, 'error');
   const { store } = view({ over: { sync: { ...syncStatus, conflicts: [] } } });
   const section = region(m.sectionBacklog);
   let answer: (v: unknown) => void = () => {};
@@ -147,13 +160,19 @@ test('sync now calls the tool and shows the result', async () => {
       conflicts: [],
       pushed: '0123456789abcdef0123456789abcdef01234567',
       rounds: 1,
-      notices: [{ message: 'LFS-Objekte nachgeladen' }],
+      // Zweimal derselbe Hinweis: beide Zeilen stehen, ohne doppelten Key.
+      notices: [{ message: 'LFS-Objekte nachgeladen' }, { message: 'LFS-Objekte nachgeladen' }],
     }),
   );
   expect(button.disabled).toBe(false);
   const status = within(section).getByRole('status');
   expect(status.textContent).toContain(m.syncDone(2, 1, '0123456'));
-  expect(status.textContent).toContain('LFS-Objekte nachgeladen');
+  expect(
+    within(status)
+      .getAllByRole('listitem')
+      .map((li) => li.textContent),
+  ).toEqual(['LFS-Objekte nachgeladen', 'LFS-Objekte nachgeladen']);
+  expect(logged).not.toHaveBeenCalled();
 
   // Ohne Push und ohne Remote.
   call.mockResolvedValueOnce({ fetched: 0, replayed: 0, conflicts: [], pushed: null, rounds: 1 });
@@ -177,6 +196,7 @@ test('sync now calls the tool and shows the result', async () => {
   expect(within(section).getByRole('status').textContent).toBe('');
   // Der Status selbst kommt über den Store, nicht aus der Antwort.
   expect(store.sync.value).not.toBeNull();
+  logged.mockRestore();
 });
 
 test('without a working copy there is no sync block', () => {

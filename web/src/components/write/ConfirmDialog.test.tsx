@@ -109,7 +109,6 @@ test('with a form id enter in a field confirms', async () => {
       formId="add-repo"
       busy={false}
       error={undefined}
-      onConfirm={confirmed}
       onOpenChange={() => {}}
     >
       <form
@@ -128,9 +127,20 @@ test('with a form id enter in a field confirms', async () => {
   expect(confirm.getAttribute('form')).toBe('add-repo');
   await user.type(screen.getByRole('textbox', { name: 'Name' }), 'core{Enter}');
   expect(confirmed).toHaveBeenCalledTimes(1);
-  // Der Knopf schickt das Formular ab und ruft `onConfirm` nicht noch einmal selbst.
+  // Der Knopf schickt das Formular ab; bestätigt wird allein über `onSubmit`.
   await user.click(confirm);
   expect(confirmed).toHaveBeenCalledTimes(2);
+});
+
+test('form id and onConfirm exclude each other in the types', () => {
+  const props = { open: true, title: 't', confirmLabel: 'ok', busy: false, error: undefined };
+  const close = () => {};
+  // Mit Formular bestätigt `onSubmit`; ein `onConfirm` daneben liefe nie und ist darum verboten.
+  // @ts-expect-error onConfirm with formId
+  const both = <ConfirmDialog {...props} formId="f" onConfirm={close} onOpenChange={close} />;
+  // @ts-expect-error neither onConfirm nor formId
+  const neither = <ConfirmDialog {...props} onOpenChange={close} />;
+  expect([both, neither]).toHaveLength(2);
 });
 
 test('cancel closes the dialog when idle', async () => {

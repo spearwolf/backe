@@ -6,10 +6,11 @@
 import { type Locale, setLocale } from '@backe/i18n/locale.ts';
 import type { StateJson } from '@backe/ui/api.ts';
 import { act, cleanup, render, screen } from '@testing-library/react';
-import { Fragment } from 'react';
+import { Fragment, useState } from 'react';
 import { vi } from 'vitest';
 import { Router, RouterContext } from '../app/router.ts';
 import { routeHref } from '../app/routes.ts';
+import type { ShownNavigation } from '../app/settings-model.ts';
 import { Theme } from '../app/theme.ts';
 import { UiContext } from '../app/ui-context.tsx';
 import { UiPrefs } from '../app/ui-prefs.ts';
@@ -48,9 +49,10 @@ function Host({ prefs, router, backlog }: { prefs: UiPrefs; router: Router; back
   const lang = useSignal(prefs.lang);
   const route = useSignal(router.route);
   const section = route.kind === 'settings' ? route.section : undefined;
+  const [shown] = useState<ShownNavigation>(() => ({ last: undefined }));
   return (
     <Fragment key={lang}>
-      <SettingsView backlog={backlog} section={section} />
+      <SettingsView backlog={backlog} section={section} shown={shown} />
     </Fragment>
   );
 }

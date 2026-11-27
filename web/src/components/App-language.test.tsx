@@ -3,7 +3,7 @@ import { setLocale } from '@backe/i18n/locale.ts';
 import type { BacklogEntryJson, IssueJson, StateJson } from '@backe/ui/api.ts';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { StrictMode } from 'react';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import { mountApp } from '../app/bootstrap.tsx';
 import { Router } from '../app/router.ts';
 import { Theme } from '../app/theme.ts';
@@ -133,4 +133,45 @@ test('a stored language wins over the server at start', async () => {
   expect(document.documentElement.lang).toBe('de');
   expect(screen.getByRole('link', { name: 'Einstellungen' })).toBeTruthy();
   act(() => unmount());
+});
+
+test('a language switch in settings keeps the focus on the language select', async () => {
+  // Die Route zeigt auf den Abschnitt; nach dem Neumounten (`key={lang}`) zeigt Settings ihn nicht
+  // noch einmal, denn die Marke der zuletzt gezeigten Navigation hält `App` über dem Fragment.
+  window.history.replaceState(null, '', '/b/main/settings/interface');
+  const scrolled = vi.fn();
+  Element.prototype.scrollIntoView = scrolled;
+  const sources = fakeEventSources();
+  const router = new Router(window);
+  const theme = new Theme(window, document.documentElement);
+  const prefs = new UiPrefs('en', document.documentElement);
+  const deps = { fetch: fetchFake, eventSource: sources.create };
+  render(
+    <StrictMode>
+      <App backlogs={backlogs} router={router} theme={theme} prefs={prefs} deps={deps} />
+    </StrictMode>,
+  );
+  await act(async () => {
+    sources.all.filter((es) => !es.closed)[0]?.emitOpen();
+    await flush();
+  });
+  const before = (await screen.findByRole('combobox', { name: 'Language' })) as HTMLSelectElement;
+  expect(scrolled).toHaveBeenCalledTimes(1);
+  expect(document.activeElement?.textContent).toBe('Interface');
+
+  await act(async () => {
+    before.value = 'de';
+    before.dispatchEvent(new Event('change', { bubbles: true }));
+    await flush();
+  });
+  const after = screen.getByRole('combobox', { name: 'Sprache' });
+  expect(after).not.toBe(before);
+  expect(document.activeElement).toBe(after);
+  expect(scrolled).toHaveBeenCalledTimes(1);
+
+  cleanup();
+  delete (Element.prototype as Partial<Element>).scrollIntoView;
+  prefs.dispose();
+  theme.dispose();
+  router.dispose();
 });

@@ -16,6 +16,9 @@ type Config = StateJson['config'];
 
 const yesNo = (v: boolean) => (v ? m.yes : m.no);
 
+// `0` heißt kein Timer: Ein Read stößt dann jedes Mal eine Runde an (backe.md §2.16.3, §2.19).
+const pullText = (seconds: number) => (seconds === 0 ? m.pullOnEveryRead : m.pullEvery(seconds));
+
 /** Beschreibungsliste in zwei Spalten; die Einträge sind `[Begriff, Wert]`. */
 function Terms({ items }: { items: ReadonlyArray<readonly [string, ReactNode]> }) {
   return (
@@ -87,7 +90,10 @@ function ConfigBlock({ config }: { config: Config }) {
           ],
           [m.admins, config.admins.join(', ')],
           [m.strictWorkflow, yesNo(config.workflow.strict)],
-          [m.sync, m.syncSettings(sync.mode, sync.remote, sync.branch, sync.pull_interval)],
+          [
+            m.sync,
+            m.syncSettings(sync.mode, sync.remote, sync.branch, pullText(sync.pull_interval)),
+          ],
           [m.verify, config.verify],
           [
             m.attachments,
@@ -132,8 +138,9 @@ function SyncNow() {
             <p>{outcomeText(outcome)}</p>
             {outcome.notices.length > 0 && (
               <ul className="list-disc pl-5 text-muted-foreground">
-                {outcome.notices.map((notice) => (
-                  <li key={notice}>{notice}</li>
+                {outcome.notices.map((notice, i) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: feste Liste einer Antwort, nie umsortiert; Texte können sich wiederholen
+                  <li key={i}>{notice}</li>
                 ))}
               </ul>
             )}

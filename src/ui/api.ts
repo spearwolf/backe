@@ -168,12 +168,16 @@ export type RepoCheckJson = {
   }[];
   notices?: NoticeJson[];
 };
-/** `syncResult` (`sync_now`): `pushed` ist `null` ohne Push, `skipped` nur ohne Git-Remote. */
+/**
+ * `syncResult` (`sync_now`, `src/tools/sync.ts`): `conflicts` sind die IDs der neu abgelegten
+ * Konflikt-Einträge, `pushed` ist der Hash des gepushten Commits oder `null` ohne Push, `skipped`
+ * kommt nur ohne Git-Remote. `notices` fehlt, wenn es keine gibt (`nonEmpty`).
+ */
 export type SyncResultJson = {
   fetched: number;
   replayed: number;
-  conflicts: number;
-  pushed: number | null;
+  conflicts: string[];
+  pushed: string | null;
   rounds: number;
   skipped?: 'no_remote';
   notices?: NoticeJson[];

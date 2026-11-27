@@ -24,8 +24,10 @@ export const m = catalog({
     admins: 'Admins',
     strictWorkflow: 'Strict workflow',
     sync: 'Sync',
-    syncSettings: (mode: string, remote: string, branch: string, seconds: number) =>
-      `${mode}, ${remote}/${branch}, pull every ${seconds} s`,
+    syncSettings: (mode: string, remote: string, branch: string, pull: string) =>
+      `${mode}, ${remote}/${branch}, ${pull}`,
+    pullEvery: (seconds: number) => `pull every ${seconds} s`,
+    pullOnEveryRead: 'pull on every read, no timer',
     verify: 'Commit verification',
     attachments: 'Attachments',
     maxBytes: (size: string) => `up to ${size}`,
@@ -81,8 +83,10 @@ export const m = catalog({
     admins: 'Admins',
     strictWorkflow: 'Strikter Workflow',
     sync: 'Sync',
-    syncSettings: (mode: string, remote: string, branch: string, seconds: number) =>
-      `${mode}, ${remote}/${branch}, Pull alle ${seconds} s`,
+    syncSettings: (mode: string, remote: string, branch: string, pull: string) =>
+      `${mode}, ${remote}/${branch}, ${pull}`,
+    pullEvery: (seconds: number) => `Pull alle ${seconds} s`,
+    pullOnEveryRead: 'Pull bei jedem Lesen, kein Timer',
     verify: 'Prüfung der Commits',
     attachments: 'Anhänge',
     maxBytes: (size: string) => `bis ${size}`,
