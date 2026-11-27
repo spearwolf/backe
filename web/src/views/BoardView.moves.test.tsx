@@ -233,6 +233,52 @@ test('done with open sub-issues offers force for the whole move', async () => {
   expect(document.activeElement).toBe(cardLink(tid(1), 'Sprint 2'));
 });
 
+test('errors of the own batch lose the line prefix', async () => {
+  // Bahn und Spalte zugleich gehen als `batch`; BK nennt dabei die Zeile der Operation.
+  call.mockRejectedValueOnce(
+    new ApiError(400, 'invariant', 'Zeile 2: Nicht erlaubt', 'backe issue move --help', {
+      line: 2,
+    }),
+  );
+  board([testIssue(1, { sprints: ['s1'] })], { over: { sprints } });
+  drop(active(1, 's1', 'todo'), overCell('s2', 'in_progress'));
+  await flush();
+  expect(within(failures()).getByText('Nicht erlaubt')).toBeTruthy();
+  expect(within(failures()).getByText('backe issue move --help')).toBeTruthy();
+  expect(within(failures()).queryByText(/Zeile 2/)).toBeNull();
+});
+
+test('the force dialog of a batch shows the server message without the line', async () => {
+  const open = { reason: 'open_children', ids: [tid(2)], line: 2 };
+  call.mockRejectedValueOnce(
+    new ApiError(
+      400,
+      'invariant',
+      `Zeile 2: ${tid(1)} hat noch offene Sub-Issues`,
+      'mit --force abschließen',
+      open,
+    ),
+  );
+  call.mockRejectedValueOnce(
+    new ApiError(400, 'conflict', 'Zeile 1: Inzwischen geändert', 'neu laden', { line: 1 }),
+  );
+  board(
+    [
+      testIssue(1, { state: 'review', sprints: ['s1'] }),
+      testIssue(2, { title: 'Kind', parent: tid(1) }),
+    ],
+    { over: { sprints } },
+  );
+  drop(active(1, 's1', 'review'), overCell('s2', 'done'));
+  const dialog = await screen.findByRole('dialog', { name: im.stateDialogTitle('done') });
+  expect(within(dialog).getByText(`${tid(1)} hat noch offene Sub-Issues`)).toBeTruthy();
+  expect(within(dialog).queryByText(/Zeile 2/)).toBeNull();
+  // Scheitert auch »Trotzdem abschließen«, steht dessen Meldung ebenso ohne Zeile im Dialog.
+  await userEvent.click(within(dialog).getByRole('button', { name: im.forceDone }));
+  expect(await within(dialog).findByText('Inzwischen geändert')).toBeTruthy();
+  expect(within(dialog).queryByText(/Zeile 1/)).toBeNull();
+});
+
 test('a second drop waits and sends the server state', async () => {
   answerCommitted();
   const { store } = board([testIssue(1)]);

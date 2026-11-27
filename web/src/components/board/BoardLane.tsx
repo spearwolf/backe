@@ -117,7 +117,10 @@ export const BoardLane = memo(function BoardLane(props: {
       className="border-b"
     >
       {!headless && (
-        <div className="flex items-center gap-2 px-3 py-2">
+        // Klebt an der linken Kante der Scrollfläche: Scrollt das Board waagerecht, bleibt der Name
+        // der Bahn zu sehen. Nur so breit wie der Inhalt, sonst hätte `sticky` keinen Weg; der
+        // Rand darunter gehört der `section` und reicht weiter über die ganze Breite.
+        <div className="sticky left-0 flex w-fit items-center gap-2 px-3 py-2">
           <h2 className="text-sm font-semibold">
             <button
               id={labelId}

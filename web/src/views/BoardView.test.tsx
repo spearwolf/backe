@@ -204,6 +204,16 @@ test('a patch moves the card live', () => {
   expect(cardIds(m.noSprint, 'review')).toEqual([tid(1)]);
 });
 
+test('the lane head sticks to the left edge while the board scrolls sideways', () => {
+  board([testIssue(1, { sprints: ['s1'] })], { over: { sprints } });
+  // jsdom rechnet kein Layout; geprüft wird, dass der Kopf (Klappknopf, Name, Anzahl) an der
+  // linken Kante der Scrollfläche klebt und nur so breit ist wie sein Inhalt — sonst hätte
+  // `sticky` keinen Platz zum Verschieben. Der Rand der Bahn bleibt an ihr, über die ganze Breite.
+  const head = foldOf('Sprint 1').closest('h2')?.parentElement as HTMLElement;
+  expect(head.className.split(' ')).toEqual(expect.arrayContaining(['sticky', 'left-0', 'w-fit']));
+  expect(laneOf('Sprint 1').className.split(' ')).toContain('border-b');
+});
+
 test('new issue only with write access', async () => {
   const first = board([testIssue(1)]);
   const button = screen.getByRole('button', { name: w.newIssue });
