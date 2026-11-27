@@ -13,16 +13,14 @@ import { useWrites } from '../../data/write-context.tsx';
 import { formatDate } from '../../lib/format.ts';
 import { Markdown } from '../../markdown/index.tsx';
 import { m } from '../../views/settings.messages.ts';
-import { IssueRef } from '../issue/IssueRef.tsx';
 import { RepoPath } from '../issue/RepoPath.tsx';
 import { Button } from '../ui/button.tsx';
-import { Input } from '../ui/input.tsx';
-import { Textarea } from '../ui/textarea.tsx';
 import { ActionError } from '../write/ActionError.tsx';
 import { ConfirmDialog } from '../write/ConfirmDialog.tsx';
 import { useAction } from '../write/use-action.ts';
 import { type DialogFocus, useDialogFocus } from './dialog-focus.ts';
-import { Field } from './fields.tsx';
+import { TextAreaField, TextField } from './fields.tsx';
+import { ReferenceList, useAllIssues } from './references.tsx';
 import { type SectionFrame, SettingsSection, sectionId } from './SettingsSection.tsx';
 
 type Level = RepoCheckJson['repos'][number]['findings'][number]['level'];
@@ -82,71 +80,29 @@ function AddDialog({
       onCloseAutoFocus={focus.onCloseAutoFocus}
     >
       <form id={formId} onSubmit={submit} className="space-y-3">
-        <Field label={m.repoUrl}>
-          {({ id, describedBy, invalid }) => (
-            <Input
-              id={id}
-              value={url}
-              aria-describedby={describedBy}
-              aria-invalid={invalid}
-              onChange={(e) => setUrl(e.target.value)}
-              disabled={busy}
-              autoFocus
-            />
-          )}
-        </Field>
-        <Field
+        <TextField label={m.repoUrl} value={url} onChange={setUrl} disabled={busy} autoFocus />
+        <TextField
           label={m.repoName}
           hint={m.repoNameHint}
-          {...(nameError ? { error: nameError } : {})}
-        >
-          {({ id, describedBy, invalid }) => (
-            <Input
-              id={id}
-              value={name}
-              aria-describedby={describedBy}
-              aria-invalid={invalid}
-              onChange={(e) => setName(e.target.value)}
-              disabled={busy}
-              className="font-mono"
-            />
-          )}
-        </Field>
-        <Field label={m.repoRef} hint={m.repoRefHint} {...(refError ? { error: refError } : {})}>
-          {({ id, describedBy, invalid }) => (
-            <Input
-              id={id}
-              value={ref}
-              aria-describedby={describedBy}
-              aria-invalid={invalid}
-              onChange={(e) => setRef(e.target.value)}
-              disabled={busy}
-              className="font-mono"
-            />
-          )}
-        </Field>
-        <Field label={m.repoDescription}>
-          {({ id, describedBy, invalid }) => (
-            <Textarea
-              id={id}
-              value={body}
-              aria-describedby={describedBy}
-              aria-invalid={invalid}
-              onChange={(e) => setBody(e.target.value)}
-              disabled={busy}
-              rows={4}
-            />
-          )}
-        </Field>
+          error={nameError}
+          value={name}
+          onChange={setName}
+          disabled={busy}
+          mono
+        />
+        <TextField
+          label={m.repoRef}
+          hint={m.repoRefHint}
+          error={refError}
+          value={ref}
+          onChange={setRef}
+          disabled={busy}
+          mono
+        />
+        <TextAreaField label={m.repoDescription} value={body} onChange={setBody} disabled={busy} />
       </form>
     </ConfirmDialog>
   );
-}
-
-function ReferencingIssue({ id }: { id: string }) {
-  const { backlog } = useWrites();
-  const issue = useSignal(useStore().issues.get(id));
-  return <IssueRef issue={issue ?? { id, missing: true }} backlog={backlog} />;
 }
 
 /** Bestätigung zum Entfernen; solange Issues das Repo nennen, bleibt »Entfernen« gesperrt. */
@@ -160,14 +116,7 @@ function RemoveDialog({
   onOpenChange: (o: boolean) => void;
 }) {
   const { writes } = useWrites();
-  const store = useStore();
-  // Der Snapshot ist ein Memo über alle Issues (stabil, solange sich nichts ändert): Auch ein Patch
-  // auf `repos` eines bestehenden Issues rechnet ihn neu und rendert den Dialog.
-  const snapshot = useSignal(store.toSnapshot);
-  const references = repoReferences(
-    snapshot === undefined ? [] : [...snapshot.issues.values()].map((e) => e.data),
-    name,
-  );
+  const references = repoReferences(useAllIssues(), name);
   const { busy, error, run } = useAction();
   return (
     <ConfirmDialog
@@ -192,13 +141,7 @@ function RemoveDialog({
       {references.length > 0 && (
         <div className="space-y-2">
           <p className="text-sm">{m.repoStillReferenced}</p>
-          <ul className="space-y-1">
-            {references.map((id) => (
-              <li key={id}>
-                <ReferencingIssue id={id} />
-              </li>
-            ))}
-          </ul>
+          <ReferenceList ids={references} />
         </div>
       )}
     </ConfirmDialog>

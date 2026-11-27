@@ -5,12 +5,10 @@ import { type FormEvent, useState } from 'react';
 import type { SettingsSection as Section } from '../../app/settings-model.ts';
 import { useWrites } from '../../data/write-context.tsx';
 import { m } from '../../views/settings.messages.ts';
-import { Input } from '../ui/input.tsx';
-import { Textarea } from '../ui/textarea.tsx';
 import { ConfirmDialog } from '../write/ConfirmDialog.tsx';
 import { useAction } from '../write/use-action.ts';
 import type { DialogFocus } from './dialog-focus.ts';
-import { Field, SELECT_CLASS } from './fields.tsx';
+import { Field, SELECT_CLASS, TextAreaField, TextField } from './fields.tsx';
 import { sectionId } from './SettingsSection.tsx';
 
 /** Dialog »Hinzufügen«; nur zum Öffnen gemountet, damit jedes Mal leer begonnen wird. */
@@ -52,54 +50,6 @@ export function AddSprintDialog({
     });
   };
 
-  const text = (
-    label: string,
-    value: string,
-    set: (v: string) => void,
-    extra: { hint?: string; error?: string; mono?: boolean; autoFocus?: boolean } = {},
-  ) => (
-    <Field
-      label={label}
-      {...(extra.hint === undefined ? {} : { hint: extra.hint })}
-      {...(extra.error === undefined ? {} : { error: extra.error })}
-    >
-      {({ id, describedBy, invalid }) => (
-        <Input
-          id={id}
-          value={value}
-          aria-describedby={describedBy}
-          aria-invalid={invalid}
-          onChange={(e) => set(e.target.value)}
-          disabled={busy}
-          className={extra.mono === true ? 'font-mono' : undefined}
-          autoFocus={extra.autoFocus}
-        />
-      )}
-    </Field>
-  );
-
-  const date = (
-    label: string,
-    value: string,
-    set: (v: string) => void,
-    message: string | undefined,
-  ) => (
-    <Field label={label} {...(message === undefined ? {} : { error: message })}>
-      {({ id, describedBy, invalid }) => (
-        <Input
-          id={id}
-          type="date"
-          value={value}
-          aria-describedby={describedBy}
-          aria-invalid={invalid}
-          onChange={(e) => set(e.target.value)}
-          disabled={busy}
-          className="w-fit"
-        />
-      )}
-    </Field>
-  );
-
   return (
     <ConfirmDialog
       open
@@ -113,29 +63,42 @@ export function AddSprintDialog({
       onCloseAutoFocus={focus.onCloseAutoFocus}
     >
       <form id={formId} onSubmit={submit} className="space-y-3">
-        {text(m.sprintSlug, slug, setSlug, {
-          ...(slugMessage === undefined ? {} : { error: slugMessage }),
-          mono: true,
-          autoFocus: true,
-        })}
-        {text(m.fieldTitle, title, setTitle, { hint: m.sprintTitleHint })}
+        <TextField
+          label={m.sprintSlug}
+          error={slugMessage}
+          value={slug}
+          onChange={setSlug}
+          disabled={busy}
+          mono
+          autoFocus
+        />
+        <TextField
+          label={m.fieldTitle}
+          hint={m.sprintTitleHint}
+          value={title}
+          onChange={setTitle}
+          disabled={busy}
+        />
         <div className="flex flex-wrap gap-3">
-          {date(m.sprintStart, start, setStart, undefined)}
-          {date(m.sprintEnd, end, setEnd, endMessage)}
+          <TextField
+            label={m.sprintStart}
+            type="date"
+            value={start}
+            onChange={setStart}
+            disabled={busy}
+            className="w-fit"
+          />
+          <TextField
+            label={m.sprintEnd}
+            type="date"
+            error={endMessage}
+            value={end}
+            onChange={setEnd}
+            disabled={busy}
+            className="w-fit"
+          />
         </div>
-        <Field label={m.sprintGoal}>
-          {({ id, describedBy, invalid }) => (
-            <Textarea
-              id={id}
-              value={body}
-              aria-describedby={describedBy}
-              aria-invalid={invalid}
-              onChange={(e) => setBody(e.target.value)}
-              disabled={busy}
-              rows={4}
-            />
-          )}
-        </Field>
+        <TextAreaField label={m.sprintGoal} value={body} onChange={setBody} disabled={busy} />
       </form>
     </ConfirmDialog>
   );

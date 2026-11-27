@@ -1,5 +1,8 @@
 import { CircleAlert } from 'lucide-react';
-import { type ReactNode, useId } from 'react';
+import { type FocusEvent, type ReactNode, useId } from 'react';
+import { cn } from '../../lib/utils.ts';
+import { Input } from '../ui/input.tsx';
+import { Textarea } from '../ui/textarea.tsx';
 
 /** Klassen eines nativen `<select>` im Stil von `Input`, wie in der Werkzeugleiste des Boards. */
 export const SELECT_CLASS =
@@ -12,8 +15,8 @@ export const SELECT_CLASS =
  */
 export function Field(props: {
   label: string;
-  hint?: string;
-  error?: string;
+  hint?: string | undefined;
+  error?: string | undefined;
   children: (ids: { id: string; describedBy: string | undefined; invalid: boolean }) => ReactNode;
 }) {
   const id = useId();
@@ -45,5 +48,63 @@ export function Field(props: {
         </p>
       )}
     </div>
+  );
+}
+
+type TextProps = {
+  label: string;
+  hint?: string | undefined;
+  error?: string | undefined;
+  value: string;
+  onChange: (value: string) => void;
+  disabled: boolean;
+};
+
+/** Ein einzeiliges Textfeld im Gerüst von `Field`; `mono` für Namen, Pfade und Refs. */
+export function TextField(
+  props: TextProps & {
+    type?: 'text' | 'date';
+    mono?: boolean;
+    autoFocus?: boolean;
+    className?: string;
+    onFocus?: (event: FocusEvent<HTMLInputElement>) => void;
+  },
+) {
+  return (
+    <Field label={props.label} hint={props.hint} error={props.error}>
+      {({ id, describedBy, invalid }) => (
+        <Input
+          id={id}
+          type={props.type}
+          value={props.value}
+          aria-describedby={describedBy}
+          aria-invalid={invalid}
+          onChange={(e) => props.onChange(e.target.value)}
+          onFocus={props.onFocus}
+          disabled={props.disabled}
+          className={cn(props.mono === true && 'font-mono', props.className)}
+          autoFocus={props.autoFocus}
+        />
+      )}
+    </Field>
+  );
+}
+
+/** Ein mehrzeiliges Textfeld (Beschreibung, Ziel) im Gerüst von `Field`. */
+export function TextAreaField(props: TextProps & { rows?: number }) {
+  return (
+    <Field label={props.label} hint={props.hint} error={props.error}>
+      {({ id, describedBy, invalid }) => (
+        <Textarea
+          id={id}
+          value={props.value}
+          aria-describedby={describedBy}
+          aria-invalid={invalid}
+          onChange={(e) => props.onChange(e.target.value)}
+          disabled={props.disabled}
+          rows={props.rows ?? 4}
+        />
+      )}
+    </Field>
   );
 }

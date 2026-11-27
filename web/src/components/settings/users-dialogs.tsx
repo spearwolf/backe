@@ -15,14 +15,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../ui/dialog.tsx';
-import { Input } from '../ui/input.tsx';
 import { Textarea } from '../ui/textarea.tsx';
 import { ActionError } from '../write/ActionError.tsx';
 import { ConfirmDialog } from '../write/ConfirmDialog.tsx';
 import { useAction } from '../write/use-action.ts';
 import { m as w } from '../write/write.messages.ts';
 import type { DialogFocus } from './dialog-focus.ts';
-import { Field, SELECT_CLASS } from './fields.tsx';
+import { Field, SELECT_CLASS, TextField } from './fields.tsx';
 import { sectionId } from './SettingsSection.tsx';
 
 const KEY_PREFIX = 'ssh-ed25519 ';
@@ -44,39 +43,28 @@ function submitOnEnter(event: KeyboardEvent<HTMLTextAreaElement>): void {
 }
 
 function HandleField(props: { value: string; set: (v: string) => void; busy: boolean }) {
-  const error = handleError(props.value);
   return (
-    <Field label={m.userHandle} {...(error === undefined ? {} : { error })}>
-      {({ id, describedBy, invalid }) => (
-        <Input
-          id={id}
-          value={props.value}
-          aria-describedby={describedBy}
-          aria-invalid={invalid}
-          onChange={(e) => props.set(e.target.value)}
-          disabled={props.busy}
-          className="font-mono"
-          autoFocus
-        />
-      )}
-    </Field>
+    <TextField
+      label={m.userHandle}
+      error={handleError(props.value)}
+      value={props.value}
+      onChange={props.set}
+      disabled={props.busy}
+      mono
+      autoFocus
+    />
   );
 }
 
 function NameField(props: { value: string; set: (v: string) => void; busy: boolean }) {
   return (
-    <Field label={m.userName} hint={m.userNameHint}>
-      {({ id, describedBy, invalid }) => (
-        <Input
-          id={id}
-          value={props.value}
-          aria-describedby={describedBy}
-          aria-invalid={invalid}
-          onChange={(e) => props.set(e.target.value)}
-          disabled={props.busy}
-        />
-      )}
-    </Field>
+    <TextField
+      label={m.userName}
+      hint={m.userNameHint}
+      value={props.value}
+      onChange={props.set}
+      disabled={props.busy}
+    />
   );
 }
 

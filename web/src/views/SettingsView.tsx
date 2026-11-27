@@ -27,14 +27,16 @@ import { cn } from '../lib/utils.ts';
 import { m } from './settings.messages.ts';
 
 /**
- * Titel und Inhalt je Abschnitt, an einer Stelle. Ein Abschnitt ohne `Body` zeigt vorerst nur
- * seinen Rahmen; seinen Inhalt bringt er mit, sobald er gebaut ist. Ein Abschnitt mit Aktionen im
- * Kopf (`Own`) setzt seinen Rahmen selbst, weil Kopf und Inhalt einen Zustand teilen.
+ * Titel und Inhalt je Abschnitt, an einer Stelle. Ein Abschnitt bringt entweder nur seinen Inhalt
+ * (`Body`) in den gemeinsamen Rahmen, oder er setzt seinen Rahmen selbst (`Own`), weil Aktionen im
+ * Kopf und Inhalt einen Zustand teilen.
  */
-const SECTIONS: Record<
-  Section,
-  { title: () => string; Body?: ComponentType; Own?: ComponentType<SectionFrame> }
-> = {
+type SectionEntry = { title: () => string } & (
+  | { Body: ComponentType; Own?: never }
+  | { Own: ComponentType<SectionFrame>; Body?: never }
+);
+
+const SECTIONS: Record<Section, SectionEntry> = {
   repositories: { title: () => m.sectionRepositories, Own: ReposSection },
   projects: { title: () => m.sectionProjects, Own: ProjectsSection },
   sprints: { title: () => m.sectionSprints, Own: SprintsSection },
@@ -107,9 +109,11 @@ function Settings({ backlog, section, shown }: Props) {
             </p>
           )}
           {SETTINGS_SECTIONS.map((id) => {
-            const { title, Body, Own } = SECTIONS[id];
+            const entry = SECTIONS[id];
+            const title = entry.title;
             const isFolded = folded[id] === true;
-            if (Own !== undefined) {
+            if (entry.Own !== undefined) {
+              const { Own } = entry;
               return (
                 <Own
                   key={id}
@@ -128,7 +132,7 @@ function Settings({ backlog, section, shown }: Props) {
                 folded={isFolded}
                 onToggle={() => setFold(id, !isFolded)}
               >
-                {Body !== undefined && <Body />}
+                <entry.Body />
               </SettingsSection>
             );
           })}

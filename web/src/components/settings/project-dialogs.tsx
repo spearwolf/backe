@@ -8,13 +8,11 @@ import { useStore } from '../../data/store-context.tsx';
 import { useSignal } from '../../data/use-signal.ts';
 import { useWrites } from '../../data/write-context.tsx';
 import { m } from '../../views/settings.messages.ts';
-import { IssueRef } from '../issue/IssueRef.tsx';
-import { Input } from '../ui/input.tsx';
-import { Textarea } from '../ui/textarea.tsx';
 import { ConfirmDialog } from '../write/ConfirmDialog.tsx';
 import { useAction } from '../write/use-action.ts';
 import type { DialogFocus } from './dialog-focus.ts';
-import { Field, SELECT_CLASS } from './fields.tsx';
+import { Field, SELECT_CLASS, TextAreaField, TextField } from './fields.tsx';
+import { ReferenceList, useAllIssues } from './references.tsx';
 import { sectionId } from './SettingsSection.tsx';
 import { usersOf } from './settings-memos.ts';
 
@@ -77,44 +75,31 @@ export function AddProjectDialog({
       onCloseAutoFocus={focus.onCloseAutoFocus}
     >
       <form id={formId} onSubmit={submit} className="space-y-3">
-        <Field
+        <TextField
           label={m.projectPath}
           hint={m.projectPathHint}
-          {...(pathMessage ? { error: pathMessage } : {})}
-        >
-          {({ id, describedBy, invalid }) => (
-            <Input
-              id={id}
-              value={path}
-              aria-describedby={describedBy}
-              aria-invalid={invalid}
-              onChange={(e) => setPath(e.target.value)}
-              // Beim vorbelegten Elternpfad tippt man hinten weiter; manche Browser setzen den
-              // Cursor beim ersten Fokus an den Anfang.
-              onFocus={(e) => {
-                if (caretPlaced.current) return;
-                caretPlaced.current = true;
-                const end = e.currentTarget.value.length;
-                e.currentTarget.setSelectionRange(end, end);
-              }}
-              disabled={busy}
-              className="font-mono"
-              autoFocus
-            />
-          )}
-        </Field>
-        <Field label={m.fieldTitle} hint={m.projectTitleHint}>
-          {({ id, describedBy, invalid }) => (
-            <Input
-              id={id}
-              value={title}
-              aria-describedby={describedBy}
-              aria-invalid={invalid}
-              onChange={(e) => setTitle(e.target.value)}
-              disabled={busy}
-            />
-          )}
-        </Field>
+          error={pathMessage}
+          value={path}
+          onChange={setPath}
+          // Beim vorbelegten Elternpfad tippt man hinten weiter; manche Browser setzen den Cursor
+          // beim ersten Fokus an den Anfang.
+          onFocus={(e) => {
+            if (caretPlaced.current) return;
+            caretPlaced.current = true;
+            const end = e.currentTarget.value.length;
+            e.currentTarget.setSelectionRange(end, end);
+          }}
+          disabled={busy}
+          mono
+          autoFocus
+        />
+        <TextField
+          label={m.fieldTitle}
+          hint={m.projectTitleHint}
+          value={title}
+          onChange={setTitle}
+          disabled={busy}
+        />
         <Field label={m.projectLeadLabel}>
           {({ id, describedBy }) => (
             <select
@@ -134,19 +119,12 @@ export function AddProjectDialog({
             </select>
           )}
         </Field>
-        <Field label={m.projectDescription}>
-          {({ id, describedBy, invalid }) => (
-            <Textarea
-              id={id}
-              value={body}
-              aria-describedby={describedBy}
-              aria-invalid={invalid}
-              onChange={(e) => setBody(e.target.value)}
-              disabled={busy}
-              rows={4}
-            />
-          )}
-        </Field>
+        <TextAreaField
+          label={m.projectDescription}
+          value={body}
+          onChange={setBody}
+          disabled={busy}
+        />
       </form>
     </ConfirmDialog>
   );
@@ -195,33 +173,19 @@ export function MoveProjectDialog({
       onCloseAutoFocus={focus.onCloseAutoFocus}
     >
       <form id={formId} onSubmit={submit} className="space-y-3">
-        <Field
+        <TextField
           label={m.moveTo}
           hint={m.moveToHint}
-          {...(pathMessage ? { error: pathMessage } : {})}
-        >
-          {({ id, describedBy, invalid }) => (
-            <Input
-              id={id}
-              value={to}
-              aria-describedby={describedBy}
-              aria-invalid={invalid}
-              onChange={(e) => setTo(e.target.value)}
-              disabled={busy}
-              className="font-mono"
-              autoFocus
-            />
-          )}
-        </Field>
+          error={pathMessage}
+          value={to}
+          onChange={setTo}
+          disabled={busy}
+          mono
+          autoFocus
+        />
       </form>
     </ConfirmDialog>
   );
-}
-
-function ReferencingIssue({ id }: { id: string }) {
-  const { backlog } = useWrites();
-  const issue = useSignal(useStore().issues.get(id));
-  return <IssueRef issue={issue ?? { id, missing: true }} backlog={backlog} />;
 }
 
 type Choice = 'reassign' | 'detach' | undefined;
@@ -243,13 +207,7 @@ export function RemoveProjectDialog({
 }) {
   const { writes } = useWrites();
   const store = useStore();
-  // Der Snapshot ist ein Memo über alle Issues: Auch ein Patch auf `projects` eines bestehenden
-  // Issues rechnet ihn neu und rendert den Dialog.
-  const snapshot = useSignal(store.toSnapshot);
-  const references = projectReferences(
-    snapshot === undefined ? [] : [...snapshot.issues.values()].map((e) => e.data),
-    path,
-  );
+  const references = projectReferences(useAllIssues(), path);
   const others = useSignal(store.projects.keys)
     .filter((p) => p !== path)
     .sort();
@@ -293,13 +251,7 @@ export function RemoveProjectDialog({
       {referenced && (
         <div className="space-y-3">
           <p className="text-sm">{m.projectStillReferenced}</p>
-          <ul className="space-y-1">
-            {references.map((id) => (
-              <li key={id}>
-                <ReferencingIssue id={id} />
-              </li>
-            ))}
-          </ul>
+          <ReferenceList ids={references} />
           <fieldset className="space-y-2 text-sm">
             <legend className="sr-only">{m.referenceChoice}</legend>
             <div className="flex flex-wrap items-center gap-2">
