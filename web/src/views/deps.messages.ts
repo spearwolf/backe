@@ -1,0 +1,53 @@
+import { catalog } from '@backe/i18n/catalog.ts';
+
+/** Abschnitt Abhängigkeiten im Tab Issue: Graph, Baum und ihre Bedienelemente (ui.md §2.9.5). */
+export const m = catalog({
+  en: {
+    title: 'Dependencies',
+    viewGraph: 'Graph',
+    viewTree: 'Tree',
+    showParents: 'Show parent links',
+    prerequisites: 'Prerequisites',
+    dependents: 'Dependents',
+    graphLabel: (id: string) => `Dependency graph of ${id}`,
+    current: 'this issue',
+    openPrerequisite: 'open prerequisite',
+    missing: 'missing',
+    cycle: 'cycle',
+    expand: (id: string, n: number) =>
+      `Show ${n} more ${n === 1 ? 'neighbour' : 'neighbours'} of ${id}`,
+    collapse: (id: string) => `Hide the neighbours of ${id}`,
+    more: (n: number) => `+${n} more ${n === 1 ? 'issue' : 'issues'}`,
+    showTree: (id: string) => `Show the dependencies of ${id}`,
+    hideTree: (id: string) => `Hide the dependencies of ${id}`,
+    legend: 'Legend',
+    zoomIn: 'Zoom in',
+    zoomOut: 'Zoom out',
+    fitView: 'Fit graph to view',
+    controls: 'Graph controls',
+  },
+  de: {
+    title: 'Abhängigkeiten',
+    viewGraph: 'Graph',
+    viewTree: 'Baum',
+    showParents: 'Parent-Kanten zeigen',
+    prerequisites: 'Voraussetzungen',
+    dependents: 'Abhängige',
+    graphLabel: (id: string) => `Abhängigkeitsgraph von ${id}`,
+    current: 'dieses Issue',
+    openPrerequisite: 'offene Voraussetzung',
+    missing: 'fehlt',
+    cycle: 'Zyklus',
+    expand: (id: string, n: number) =>
+      `${n} ${n === 1 ? 'weiteren Nachbarn' : 'weitere Nachbarn'} von ${id} zeigen`,
+    collapse: (id: string) => `Nachbarn von ${id} ausblenden`,
+    more: (n: number) => `+${n} ${n === 1 ? 'weiteres Issue' : 'weitere Issues'}`,
+    showTree: (id: string) => `Abhängigkeiten von ${id} zeigen`,
+    hideTree: (id: string) => `Abhängigkeiten von ${id} ausblenden`,
+    legend: 'Legende',
+    zoomIn: 'Vergrößern',
+    zoomOut: 'Verkleinern',
+    fitView: 'Graph einpassen',
+    controls: 'Graph-Steuerung',
+  },
+});
