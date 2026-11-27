@@ -35,7 +35,9 @@ export function SettingsSection(props: {
   const bodyId = `${sectionId(id)}-body`;
   const Chevron = folded ? ChevronRight : ChevronDown;
   return (
-    <section id={sectionId(id)} aria-labelledby={headingId} className="scroll-mt-4">
+    // Kopf und Körper teilen eine Breite: Sonst stünden die Aktionen auf breiten Schirmen weit
+    // rechts neben dem Inhalt, zu dem sie gehören.
+    <section id={sectionId(id)} aria-labelledby={headingId} className="max-w-3xl scroll-mt-4">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b pb-1">
         <h2 id={headingId} className="flex-1 text-base font-semibold">
           <button

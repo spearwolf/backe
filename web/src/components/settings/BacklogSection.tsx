@@ -19,10 +19,14 @@ const yesNo = (v: boolean) => (v ? m.yes : m.no);
 // `0` heißt kein Timer: Ein Read stößt dann jedes Mal eine Runde an (backe.md §2.16.3, §2.19).
 const pullText = (seconds: number) => (seconds === 0 ? m.pullOnEveryRead : m.pullEvery(seconds));
 
-/** Beschreibungsliste in zwei Spalten; die Einträge sind `[Begriff, Wert]`. */
+/**
+ * Beschreibungsliste in zwei Spalten; die Einträge sind `[Begriff, Wert]`. Die Begriffsspalte hat
+ * eine feste Breite statt `max-content`: Config und Sync-Status stehen untereinander, und ihre
+ * Werte sollen in einer Flucht stehen, egal wie lang der längste Begriff je Liste ist.
+ */
 function Terms({ items }: { items: ReadonlyArray<readonly [string, ReactNode]> }) {
   return (
-    <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1 text-sm">
+    <dl className="grid grid-cols-[9rem_minmax(0,1fr)] gap-x-6 gap-y-1 text-sm sm:grid-cols-[13rem_minmax(0,1fr)]">
       {items.map(([term, value]) => (
         <div key={term} className="contents">
           <dt className="text-muted-foreground">{term}</dt>
@@ -73,12 +77,37 @@ function Properties({ props }: { props: Config['props'] }) {
   );
 }
 
+const CONFIG_FILE = '.backe/backlog.jsonc';
+const COMMIT_COMMAND = 'backe commit';
+
+/** Der Hinweis, wie man die Config ändert, mit Datei und Befehl als Code. */
+function ReadOnlyHint() {
+  const text = m.configReadOnly(CONFIG_FILE, COMMIT_COMMAND);
+  // Datei und Befehl stehen wörtlich im Text; an ihnen wird geteilt, in der Folge, in der die
+  // Übersetzung sie nennt.
+  const at = (s: string) => text.indexOf(s);
+  const [first, second] =
+    at(CONFIG_FILE) <= at(COMMIT_COMMAND)
+      ? [CONFIG_FILE, COMMIT_COMMAND]
+      : [COMMIT_COMMAND, CONFIG_FILE];
+  const code = (s: string) => <code className="font-mono text-foreground">{s}</code>;
+  return (
+    <p className="text-sm text-muted-foreground">
+      {text.slice(0, at(first))}
+      {code(first)}
+      {text.slice(at(first) + first.length, at(second))}
+      {code(second)}
+      {text.slice(at(second) + second.length)}
+    </p>
+  );
+}
+
 /** `backlog.jsonc` lesend; ändern geht nur von Hand und mit `backe commit` (ui.md §2.10). */
 function ConfigBlock({ config }: { config: Config }) {
   const { sync, attachments } = config;
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">{m.configReadOnly}</p>
+      <ReadOnlyHint />
       <Terms
         items={[
           [m.name, config.name],
@@ -203,7 +232,7 @@ export function BacklogSection() {
   const { canWrite } = useWrites();
   if (config === undefined) return <p className="text-sm text-muted-foreground">{app.loading}</p>;
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="space-y-6">
       <ConfigBlock config={config} />
       <div className="space-y-2">
         <h3 className="text-sm font-semibold">{m.syncStatus}</h3>

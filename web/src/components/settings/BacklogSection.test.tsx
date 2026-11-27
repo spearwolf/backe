@@ -61,7 +61,13 @@ test('the config shows read only with declared properties', () => {
   expect(described(section, m.attachments)).toBe(m.maxBytes(formatBytes(1048576)));
   expect(described(section, m.lfs)).toBe(m.yes);
   expect(described(section, m.propsStrict)).toBe(m.no);
-  expect(within(section).getByText(m.configReadOnly)).toBeTruthy();
+  // Datei und Befehl stehen als Code im Hinweis.
+  const file = within(section).getByText('.backe/backlog.jsonc');
+  expect(file.tagName).toBe('CODE');
+  expect(within(section).getByText('backe commit').tagName).toBe('CODE');
+  expect(file.parentElement?.textContent).toBe(
+    m.configReadOnly('.backe/backlog.jsonc', 'backe commit'),
+  );
 
   const table = within(section).getByRole('table', { name: m.properties });
   const rows = within(table)
@@ -110,6 +116,11 @@ test('sync status lists conflicts with the resolve hint', () => {
   expect(described(section, m.lastSuccess)).toBe(formatDate('2026-11-19T09:30:00Z'));
   expect(described(section, m.lastError)).toBe('Push abgelehnt');
   expect(described(section, m.running)).toBe(m.no);
+  // Config und Sync-Status teilen dieselbe Spaltenvorlage, damit die Werte untereinander stehen.
+  const lists = [...section.querySelectorAll('dl')];
+  expect(lists).toHaveLength(2);
+  expect(lists[0]?.className).toBe(lists[1]?.className);
+  expect(lists[0]?.className).not.toContain('max-content');
 
   const conflicts = within(section).getByRole('list', { name: m.conflicts });
   const item = within(conflicts).getByRole('listitem');

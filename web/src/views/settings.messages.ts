@@ -17,8 +17,8 @@ export const m = catalog({
       'Images from other servers reveal to them that you are reading. Switched off, a link stands in their place.',
     boardGroup: 'Default board grouping',
     boardGroupHint: 'Applies to boards without a choice of their own.',
-    configReadOnly:
-      'Read only here: edit .backe/backlog.jsonc by hand and record it with backe commit.',
+    configReadOnly: (file: string, command: string) =>
+      `Read only here: edit ${file} by hand and record it with ${command}.`,
     name: 'Name',
     idPrefix: 'ID prefix',
     admins: 'Admins',
@@ -200,8 +200,8 @@ export const m = catalog({
       'Bilder von fremden Servern verraten diesen, dass du liest. Ausgeschaltet steht an ihrer Stelle ein Link.',
     boardGroup: 'Default-Gruppierung des Boards',
     boardGroupHint: 'Gilt für Boards ohne eigene Wahl.',
-    configReadOnly:
-      'Hier nur lesend: .backe/backlog.jsonc von Hand bearbeiten und mit backe commit festhalten.',
+    configReadOnly: (file: string, command: string) =>
+      `Hier nur lesend: ${file} von Hand bearbeiten und mit ${command} festhalten.`,
     name: 'Name',
     idPrefix: 'ID-Präfix',
     admins: 'Admins',

@@ -181,7 +181,7 @@ export function ProjectsSection({ id, title, folded, onToggle }: SectionFrame) {
       actions={actions}
       overlays={overlays}
     >
-      <div className="max-w-3xl">
+      <div>
         {rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">{m.noProjects}</p>
         ) : (

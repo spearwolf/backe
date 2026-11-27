@@ -221,7 +221,7 @@ export function UsersSection({ id, title, folded, onToggle }: SectionFrame) {
       actions={actions}
       overlays={overlays}
     >
-      <div className="max-w-3xl">
+      <div>
         {users.length === 0 ? (
           <p className="text-sm text-muted-foreground">{m.noUsers}</p>
         ) : (

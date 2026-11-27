@@ -142,7 +142,7 @@ export function SprintsSection({ id, title, folded, onToggle }: SectionFrame) {
       actions={actions}
       overlays={overlays}
     >
-      <div className="max-w-3xl space-y-4">
+      <div className="space-y-4">
         {open.length === 0 && closed.length === 0 ? (
           <p className="text-sm text-muted-foreground">{m.noSprints}</p>
         ) : (

@@ -351,7 +351,7 @@ export function ReposSection({ id, title, folded, onToggle }: SectionFrame) {
       actions={actions}
       overlays={overlays}
     >
-      <div className="max-w-3xl space-y-4">
+      <div className="space-y-4">
         {names.length === 0 ? (
           <p className="text-sm text-muted-foreground">{m.noRepos}</p>
         ) : (
