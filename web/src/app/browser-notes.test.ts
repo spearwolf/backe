@@ -41,6 +41,20 @@ test('a note shows only with permission and clicks through', () => {
   expect(fake.shown[0]?.closed).toBe(true);
   fake.uninstall();
 
+  // Wirft `onClick`, ist die Meldung trotzdem schon geschlossen.
+  fake = installNotifications({ permission: 'granted' });
+  showBrowserNote({
+    title: 'T',
+    body: 'B',
+    tag: 'x',
+    onClick: () => {
+      throw new Error('boom');
+    },
+  });
+  expect(() => fake?.shown[0]?.click()).toThrow('boom');
+  expect(fake.shown[0]?.closed).toBe(true);
+  fake.uninstall();
+
   fake = installNotifications({ permission: 'denied' });
   showBrowserNote({ title: 'T', body: 'B', tag: 'x', onClick });
   expect(fake.shown).toEqual([]);

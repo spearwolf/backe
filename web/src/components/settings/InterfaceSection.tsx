@@ -1,5 +1,5 @@
 import type { Locale } from '@backe/i18n/locale.ts';
-import { useId, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { m as app } from '../../app/app.messages.ts';
 import { BOARD_GROUPS, type BoardGroup } from '../../app/board-groups.ts';
 import { notePermission, requestNotePermission } from '../../app/browser-notes.ts';
@@ -42,14 +42,47 @@ export function InterfaceSection() {
   const notesHint = useId();
   const notesReason = useId();
   const [permission, setPermission] = useState(notePermission);
+  const [asking, setAsking] = useState(false);
   const blocked = permission === 'denied' || permission === 'unsupported';
 
-  // Einschalten fragt bei `default` den Browser und gilt nur bei `granted`.
+  // Die Erlaubnis ändert sich außerhalb der Seite (Browser-Einstellungen): beim Zurückkehren und,
+  // wo es die Permissions-API gibt, auf deren `change` neu lesen. Jeder Zugriff ist geschützt.
+  useEffect(() => {
+    const refresh = () => setPermission(notePermission());
+    document.addEventListener('visibilitychange', refresh);
+    let status: PermissionStatus | undefined;
+    let gone = false;
+    try {
+      navigator.permissions
+        ?.query({ name: 'notifications' })
+        .then((s) => {
+          if (gone) return;
+          status = s;
+          s.addEventListener('change', refresh);
+        })
+        .catch(() => {});
+    } catch {
+      // Kein `navigator.permissions` oder Name unbekannt: dann bleibt es bei `visibilitychange`.
+    }
+    return () => {
+      gone = true;
+      document.removeEventListener('visibilitychange', refresh);
+      status?.removeEventListener('change', refresh);
+    };
+  }, []);
+
+  // Einschalten fragt bei `default` den Browser und gilt nur bei `granted`. Ein gespeichertes
+  // `on` ohne Erlaubnis bleibt gespeichert; angezeigt wird es nach der Regel oben als aus.
   const switchNotes = async (on: boolean) => {
     if (!on) return prefs.setNotifications(false);
-    const answer = await requestNotePermission();
-    setPermission(answer);
-    prefs.setNotifications(answer === 'granted');
+    setAsking(true);
+    try {
+      const answer = await requestNotePermission();
+      setPermission(answer);
+      prefs.setNotifications(answer === 'granted');
+    } finally {
+      setAsking(false);
+    }
   };
 
   // Ein Sprachwechsel baut die App neu auf (`key={lang}` in `App`); die neue Sprachwahl holt sich
@@ -118,7 +151,8 @@ export function InterfaceSection() {
             type="checkbox"
             className="size-4 accent-primary"
             checked={notes && permission === 'granted'}
-            disabled={blocked}
+            disabled={blocked || asking}
+            aria-busy={asking}
             aria-describedby={blocked ? `${notesHint} ${notesReason}` : notesHint}
             onChange={(e) => void switchNotes(e.target.checked)}
           />

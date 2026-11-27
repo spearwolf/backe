@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { m as app } from '../../app/app.messages.ts';
 import { THEME_KEY } from '../../app/theme.ts';
@@ -137,6 +137,100 @@ test('without the api the switch is disabled', () => {
   const box = notesBox();
   expect(box.disabled).toBe(true);
   expect(description(box)).toContain(m.notificationsUnsupported);
+});
+
+test('switching off needs no request', async () => {
+  const user = userEvent.setup();
+  localStorage.setItem(NOTIFICATIONS_KEY, 'on');
+  fake = installNotifications({ permission: 'granted' });
+  const { prefs } = view();
+  const box = notesBox();
+  expect(box.checked).toBe(true);
+  await user.click(box);
+  expect(prefs.notifications.value).toBe(false);
+  expect(box.checked).toBe(false);
+  expect(fake.requests).toBe(0);
+  expect(localStorage.getItem(NOTIFICATIONS_KEY)).toBe('off');
+});
+
+test('a stored switch with an open question asks on the click', async () => {
+  const user = userEvent.setup();
+  localStorage.setItem(NOTIFICATIONS_KEY, 'on');
+  fake = installNotifications({ permission: 'default', answer: 'granted' });
+  const { prefs } = view();
+  const box = notesBox();
+  expect(box.checked).toBe(false);
+  await user.click(box);
+  expect(fake.requests).toBe(1);
+  expect(prefs.notifications.value).toBe(true);
+  expect(box.checked).toBe(true);
+});
+
+test('the permission is re-read when the page becomes visible again', () => {
+  localStorage.setItem(NOTIFICATIONS_KEY, 'on');
+  fake = installNotifications({ permission: 'granted' });
+  view();
+  const box = notesBox();
+  expect(box.checked).toBe(true);
+  expect(box.disabled).toBe(false);
+  (globalThis.Notification as { permission: string }).permission = 'denied';
+  act(() => {
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  expect(box.checked).toBe(false);
+  expect(box.disabled).toBe(true);
+  expect(description(box)).toContain(m.notificationsDenied);
+});
+
+test('the permissions api change event refreshes and is released on unmount', async () => {
+  const listeners = new Set<() => void>();
+  const status = {
+    addEventListener: (_: string, fn: () => void) => listeners.add(fn),
+    removeEventListener: (_: string, fn: () => void) => listeners.delete(fn),
+  };
+  const query = vi.fn(async () => status);
+  Object.defineProperty(navigator, 'permissions', { value: { query }, configurable: true });
+  try {
+    fake = installNotifications({ permission: 'granted' });
+    const { unmount } = view();
+    await waitFor(() => expect(listeners.size).toBe(1));
+    expect(query).toHaveBeenCalledWith({ name: 'notifications' });
+    (globalThis.Notification as { permission: string }).permission = 'denied';
+    act(() => {
+      for (const fn of listeners) fn();
+    });
+    expect(notesBox().disabled).toBe(true);
+    unmount();
+    expect(listeners.size).toBe(0);
+  } finally {
+    delete (navigator as { permissions?: unknown }).permissions;
+  }
+});
+
+test('the switch is busy while the browser is asked', async () => {
+  const user = userEvent.setup();
+  fake = installNotifications({ permission: 'default', answer: 'granted' });
+  const Note = globalThis.Notification as unknown as {
+    requestPermission: () => Promise<NotificationPermission>;
+  };
+  const real = Note.requestPermission;
+  let release: () => void = () => {};
+  Note.requestPermission = () =>
+    new Promise((resolve) => {
+      release = () => resolve(real());
+    });
+  const { prefs } = view();
+  const box = notesBox();
+  await user.click(box);
+  expect(box.disabled).toBe(true);
+  expect(box.getAttribute('aria-busy')).toBe('true');
+  await user.click(box);
+  expect(fake.requests).toBe(0);
+  release();
+  await waitFor(() => expect(prefs.notifications.value).toBe(true));
+  expect(fake.requests).toBe(1);
+  expect(box.disabled).toBe(false);
+  expect(box.checked).toBe(true);
 });
 
 test('a stored switch without permission shows off', () => {

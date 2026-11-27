@@ -31,7 +31,7 @@ export async function requestNotePermission(): Promise<NotePermission> {
   return notePermission();
 }
 
-/** `new Notification(title, {body, tag})`, nur bei `'granted'`; Klick → Fokus, `onClick`, schließen. */
+/** `new Notification(title, {body, tag})`, nur bei `'granted'`; Klick → Fokus, schließen, `onClick`. */
 export const showBrowserNote: ShowNote = ({ title, body, tag, onClick }) => {
   const Note = api();
   if (Note === undefined || notePermission() !== 'granted') return;
@@ -39,8 +39,9 @@ export const showBrowserNote: ShowNote = ({ title, body, tag, onClick }) => {
     const note = new Note(title, { body, tag });
     note.onclick = () => {
       window.focus();
-      onClick();
+      // Erst schließen: Wirft `onClick`, bleibt die Meldung trotzdem nicht stehen.
       note.close();
+      onClick();
     };
   } catch {
     // Manche Browser (Android) erlauben `new Notification` nicht; dann bleibt es still.
