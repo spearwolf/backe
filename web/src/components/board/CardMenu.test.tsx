@@ -18,7 +18,7 @@ import {
   cellOf,
   registerBoardViewHarness,
 } from '../../test/board-view.tsx';
-import { testIssue, tid } from '../../test/state.ts';
+import { testIssue, testPatch, tid } from '../../test/state.ts';
 import { m as b } from '../../views/backlog.messages.ts';
 import { m } from '../../views/board.messages.ts';
 import { m as im } from '../../views/issue.messages.ts';
@@ -174,6 +174,17 @@ test('lane entries swap the membership', async () => {
   expect(cardIds('Sprint 1', 'todo')).toEqual([]);
 });
 
+test('a card with another lane of the grouping is not offered no-lane', async () => {
+  board([testIssue(1, { sprints: ['s1', 's2'] })], { over: { sprints } });
+  // Aus `s1` genommen, stünde sie weiter in `s2`, nie in »ohne Sprint«.
+  const menu = await openSub(tid(1), m.menuLane, 'Sprint 1');
+  expect(
+    within(menu)
+      .getAllByRole('menuitem')
+      .map((i) => i.textContent),
+  ).toEqual(['Sprint 2']);
+});
+
 test('group none has no lane entry', () => {
   localStorage.setItem(
     'backe-ui:acme:board-view',
@@ -204,20 +215,41 @@ test('rank entries move within the cell', async () => {
   expect(call).toHaveBeenCalledExactlyOnceWith('issue_rank', { id: tid(1), bottom: true });
 });
 
-test('rank entries at the edge of the cell are disabled', async () => {
+const disabled = (menu: HTMLElement, name: string) =>
+  within(menu).getByRole('menuitem', { name }).getAttribute('aria-disabled') === 'true';
+
+test('one up and one down are disabled at the edge of the cell, top and bottom never', async () => {
   board([testIssue(1), testIssue(2), testIssue(3, { state: 'review' })]);
-  const disabled = (menu: HTMLElement, name: string) =>
-    within(menu).getByRole('menuitem', { name }).getAttribute('aria-disabled') === 'true';
   let menu = await openSub(tid(1), b.menuRank);
-  expect([disabled(menu, b.rankTop), disabled(menu, m.rankUp)]).toEqual([true, true]);
-  expect([disabled(menu, m.rankDown), disabled(menu, b.rankBottom)]).toEqual([false, false]);
+  expect([disabled(menu, m.rankUp), disabled(menu, m.rankDown)]).toEqual([true, false]);
+  // Ganz oben und ganz unten gelten backlogweit: wählbar wie im Tab Backlog.
+  expect([disabled(menu, b.rankTop), disabled(menu, b.rankBottom)]).toEqual([false, false]);
   await userEvent.keyboard('{Escape}{Escape}');
   await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
-  // Allein in der Zelle: kein Rangzug ändert dort etwas.
+  // Allein in der Zelle: weder hinauf noch hinunter, ganz oben und ganz unten bleiben.
   menu = await openSub(tid(3), b.menuRank);
-  for (const name of [b.rankTop, m.rankUp, m.rankDown, b.rankBottom]) {
-    expect(disabled(menu, name)).toBe(true);
-  }
+  expect([disabled(menu, m.rankUp), disabled(menu, m.rankDown)]).toEqual([true, true]);
+  expect([disabled(menu, b.rankTop), disabled(menu, b.rankBottom)]).toEqual([false, false]);
+  await userEvent.click(within(menu).getByRole('menuitem', { name: b.rankTop }));
+  expect(call).toHaveBeenCalledExactlyOnceWith('issue_rank', { id: tid(3), top: true });
+});
+
+test('the open menu follows a patch that moves a neighbour', async () => {
+  const { store } = board([testIssue(1), testIssue(2)]);
+  const menu = await openSub(tid(1), b.menuRank);
+  expect([disabled(menu, m.rankUp), disabled(menu, m.rankDown)]).toEqual([true, false]);
+  // Jemand anders setzt Karte 2 vor Karte 1, während das Menü offen ist.
+  act(() => {
+    store.applyPatch(testPatch(2, { upsert: { issues: [testIssue(2, { rank: 1 })] } }));
+  });
+  // Das offene Menü blendet den Rest für Hilfsmittel aus, darum über das DOM.
+  const order = [...document.querySelectorAll<HTMLElement>('li[data-card]')].map(
+    (li) => li.dataset.card,
+  );
+  expect(order).toEqual([tid(2), tid(1)]);
+  expect([disabled(menu, m.rankUp), disabled(menu, m.rankDown)]).toEqual([false, true]);
+  await userEvent.click(within(menu).getByRole('menuitem', { name: m.rankUp }));
+  expect(call).toHaveBeenCalledExactlyOnceWith('issue_rank', { id: tid(1), before: tid(2) });
 });
 
 test('shift+f10 opens the menu at the focused card', async () => {

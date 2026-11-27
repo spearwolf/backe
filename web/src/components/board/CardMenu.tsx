@@ -6,7 +6,7 @@
 import { MAIN_LINE, type State } from '@backe/core/state.ts';
 import type { IssueJson } from '@backe/ui/api.ts';
 import { type ReactNode, useContext, useRef } from 'react';
-import type { BoardGroup } from '../../app/board-model.ts';
+import { type BoardGroup, laneKeysOf, NO_LANE } from '../../app/board-model.ts';
 import {
   openChildrenOf,
   type StateAction,
@@ -34,8 +34,9 @@ import {
 } from '../ui/context-menu.tsx';
 import type { LaneChoice } from './BoardLane.tsx';
 import type { CardData } from './board-dnd.ts';
+import { rankDrop } from './board-keys.ts';
 import { sendBoardMove } from './board-write.ts';
-import { BoardKeyContext, useBoardMoves } from './use-board-move.tsx';
+import { BoardKeyContext, type BoardKeys, useBoardMoves } from './use-board-move.tsx';
 
 type CardMenuProps = {
   issue: IssueJson;
@@ -54,9 +55,11 @@ type CardMenuProps = {
 export function CardMenu(props: CardMenuProps) {
   const { children, ...rest } = props;
   const { canWrite } = useWrites();
+  // Den Kontext der Tastenzüge gibt es genau mit Schreibrecht; ohne ihn kein Menü.
+  const keys = useContext(BoardKeyContext);
   const toDialog = useRef(false);
   const key = useMenuKey();
-  if (!canWrite) return children;
+  if (!canWrite || keys === undefined) return children;
   return (
     <ContextMenu onOpenChange={key.onOpenChange}>
       <ContextMenuTrigger asChild onKeyDown={key.onKeyDown}>
@@ -69,21 +72,20 @@ export function CardMenu(props: CardMenuProps) {
           toDialog.current = false;
         }}
       >
-        <CardMenuItems {...rest} toDialog={toDialog} />
+        <CardMenuItems {...rest} keys={keys} toDialog={toDialog} />
       </ContextMenuContent>
     </ContextMenu>
   );
 }
 
 function CardMenuItems(
-  props: Omit<CardMenuProps, 'children'> & { toDialog: { current: boolean } },
+  props: Omit<CardMenuProps, 'children'> & { keys: BoardKeys; toDialog: { current: boolean } },
 ) {
-  const { issue, lane, column, lanes, group, toDialog } = props;
+  const { issue, lane, column, lanes, group, keys, toDialog } = props;
   const store = useStore();
   const { writes } = useWrites();
   const strict = useSignal(store.config)?.workflow.strict ?? false;
   const { move, openState } = useBoardMoves();
-  const keys = useContext(BoardKeyContext);
   const { id } = issue;
   const from = { lane, column };
   const card: CardData = { type: 'card', id, lane, column };
@@ -114,14 +116,19 @@ function CardMenuItems(
     );
   };
 
-  // Wie `Alt+↑/↓`: dieselbe Rechnung, `undefined` am Rand der Zelle. Ganz oben und ganz unten gibt
-  // es nur, wo auch einer nach oben bzw. unten ginge; sonst stünde die Karte schon dort.
-  const up = keys?.drop(card, 'ArrowUp');
-  const down = keys?.drop(card, 'ArrowDown');
+  // Wie `Alt+↑/↓`: dieselbe Rechnung, `undefined` am Rand der Zelle. Live, solange das Menü offen
+  // ist: Ein Patch, der einen Nachbarn verschiebt, schaltet den Eintrag um. Ganz oben und ganz
+  // unten gelten backlogweit (ui.md §2.7) und bleiben darum immer wählbar, wie im Tab Backlog.
+  const model = useSignal(keys.lanes);
+  const up = rankDrop(model, card, 'ArrowUp');
+  const down = rankDrop(model, card, 'ArrowDown');
   const rank = (pos: { top: true } | { bottom: true }) =>
     sendBoardMove(store, writes, id, { kind: 'rank', pos });
 
-  const otherLanes = lanes.filter((c) => c.key !== lane);
+  // »ohne …« nur, wo die Karte dort ankäme: Mit einer weiteren Mitgliedschaft der Gruppierung
+  // nimmt ein Wechsel nur die aus dieser Bahn weg, und die Karte bliebe in der anderen.
+  const elsewhere = laneKeysOf(issue, group).length > 1;
+  const otherLanes = lanes.filter((c) => c.key !== lane && !(elsewhere && c.key === NO_LANE));
 
   return (
     <>
@@ -164,24 +171,17 @@ function CardMenuItems(
       <ContextMenuSub>
         <ContextMenuSubTrigger>{b.menuRank}</ContextMenuSubTrigger>
         <ContextMenuSubContent>
-          <ContextMenuItem disabled={up === undefined} onSelect={() => rank({ top: true })}>
-            {b.rankTop}
-          </ContextMenuItem>
-          <ContextMenuItem
-            disabled={up === undefined}
-            onSelect={() => keys?.onKey(card, 'ArrowUp')}
-          >
+          <ContextMenuItem onSelect={() => rank({ top: true })}>{b.rankTop}</ContextMenuItem>
+          <ContextMenuItem disabled={up === undefined} onSelect={() => keys.onKey(card, 'ArrowUp')}>
             {m.rankUp}
           </ContextMenuItem>
           <ContextMenuItem
             disabled={down === undefined}
-            onSelect={() => keys?.onKey(card, 'ArrowDown')}
+            onSelect={() => keys.onKey(card, 'ArrowDown')}
           >
             {m.rankDown}
           </ContextMenuItem>
-          <ContextMenuItem disabled={down === undefined} onSelect={() => rank({ bottom: true })}>
-            {b.rankBottom}
-          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => rank({ bottom: true })}>{b.rankBottom}</ContextMenuItem>
         </ContextMenuSubContent>
       </ContextMenuSub>
     </>

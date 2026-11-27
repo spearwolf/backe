@@ -4,6 +4,8 @@
  * den State-Dialog, der denselben Zug mit `force` wiederholt. Ziehen, Tastatur und (später) das
  * Kartenmenü gehen alle hier durch.
  */
+
+import type { SignalReader } from '@spearwolf/signalize';
 import {
   createContext,
   type ReactNode,
@@ -13,7 +15,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { type BoardGroup, columnOf, laneKeysOf } from '../../app/board-model.ts';
+import { type BoardGroup, type BoardLane, columnOf, laneKeysOf } from '../../app/board-model.ts';
 import { type BoardDrop, planDrop } from '../../app/board-move.ts';
 import { openChildrenOf, type StateAction, type StateExtra } from '../../app/state-actions.ts';
 import type { ApiError } from '../../data/api-client.ts';
@@ -51,14 +53,14 @@ export const useBoardMoves = (): BoardMoves => useContext(BoardMoveContext);
 
 /**
  * Tastenzüge an der fokussierten Karte und die Id des Hinweises, der sie Hilfsmitteln beschreibt;
- * `undefined` ohne Schreibrecht. `drop` ist das Ablegen, das `onKey` senden würde (`undefined` am
- * Rand) — das Kartenmenü bietet damit dieselben Rangzüge an. Ein eigener Kontext mit stabilem
- * Wert: Die Bahnen ändern sich mit jedem Patch, die Karten (`memo`) sollen deswegen nicht alle neu
- * rendern.
+ * `undefined` ohne Schreibrecht. `lanes` ist das Signal der Bahnen, nicht ihr Wert: Das offene
+ * Kartenmenü abonniert es (und sieht so live, ob »Eine nach oben/unten« etwas ändert), die Karten
+ * nicht. Ein eigener Kontext mit stabilem Wert: Die Bahnen ändern sich mit jedem Patch, die Karten
+ * (`memo`) sollen deswegen nicht alle neu rendern.
  */
 export type BoardKeys = {
   onKey: (card: CardData, key: BoardKey) => void;
-  drop: (card: CardData, key: BoardKey) => BoardDrop | undefined;
+  lanes: SignalReader<readonly BoardLane[]>;
   hintId: string;
 };
 export const BoardKeyContext = createContext<BoardKeys | undefined>(undefined);

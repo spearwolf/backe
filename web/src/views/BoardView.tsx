@@ -89,18 +89,17 @@ function Loaded({ state, backlog }: { state: BoardViewState; backlog: string }) 
     latest.current = { lanes, columns };
   });
   const hintId = useId();
-  const keys = useMemo(() => {
-    const drop = (card: CardData, key: BoardKey) =>
-      keyDrop(latest.current.lanes, card, key, latest.current.columns);
-    return {
+  const keys = useMemo(
+    () => ({
       hintId,
-      drop,
+      lanes: state.model.lanes,
       onKey: (card: CardData, key: BoardKey) => {
-        const next = drop(card, key);
-        if (next !== undefined) move(next, { focus: true });
+        const drop = keyDrop(latest.current.lanes, card, key, latest.current.columns);
+        if (drop !== undefined) move(drop, { focus: true });
       },
-    };
-  }, [move, hintId]);
+    }),
+    [move, hintId, state],
+  );
   const choices = useLaneChoices(group, lanes);
 
   const body = (
