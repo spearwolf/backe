@@ -14,7 +14,7 @@
  */
 import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { existsSync, watch } from 'node:fs';
-import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { request } from 'node:http';
 import { availableParallelism, cpus, release, tmpdir, totalmem, type } from 'node:os';
 import { join } from 'node:path';
@@ -34,7 +34,6 @@ const START_DEADLINE_MS = 60_000;
 /** Frist für Zustände im Browser; mit 4× Drosselung lädt ein Backlog mit 10⁴ Issues deutlich länger. */
 const WAIT_MS = 120_000;
 const THROTTLE = 4;
-const FRAME_MS = 1000 / 60;
 /** Frame-Drop: zwei rAF-Zeitstempel weiter auseinander als 1,5 Frames bei 60 Hz. */
 const DROP_MS = 25;
 const DRAG_START_MS = 300;
@@ -59,14 +58,28 @@ const { values: opts } = parseArgs({
     issues: { type: 'string', default: '10000' },
     neighbors: { type: 'string', default: '20' },
     runs: { type: 'string', default: '5' },
+    // Zeichnet die Board-Szenarien per Chromium-Tracing auf (`board-<Gruppierung>.json` darin),
+    // zum Öffnen in den DevTools (Performance) oder in Perfetto.
+    trace: { type: 'string' },
+    // Nur diese Messungen, durch Komma getrennt: state, backlog, write, board, scroll.
+    only: { type: 'string', default: 'state,backlog,write,board,scroll' },
   },
 });
 const N = Number(opts.issues);
 const NEIGHBORS = Number(opts.neighbors);
 const RUNS = Number(opts.runs);
-if (![N, NEIGHBORS, RUNS].every(Number.isInteger) || N < 100 || NEIGHBORS < 0 || RUNS < 1) {
+const TRACE = opts.trace;
+const MEASURES = ['state', 'backlog', 'write', 'board', 'scroll'] as const;
+const ONLY = new Set(opts.only.split(','));
+if (
+  ![N, NEIGHBORS, RUNS].every(Number.isInteger) ||
+  N < 100 ||
+  NEIGHBORS < 0 ||
+  RUNS < 1 ||
+  [...ONLY].some((m) => !(MEASURES as readonly string[]).includes(m))
+) {
   console.error(
-    'Aufruf: node scripts/bench-ui.ts [--issues <n ≥ 100>] [--neighbors <n ≥ 0>] [--runs <n ≥ 1>]',
+    'Aufruf: node scripts/bench-ui.ts [--issues <n ≥ 100>] [--neighbors <n ≥ 0>] [--runs <n ≥ 1>] [--trace <dir>] [--only state,backlog,write,board,scroll]',
   );
   process.exit(2);
 }
@@ -299,7 +312,16 @@ const RAF_LOGGER = `(() => {
   };
   requestAnimationFrame(loop);
   window.addEventListener('pointerdown', (e) => {
-    if (window.__probe !== null) window.__probe.down = e.timeStamp;
+    if (window.__probe === null) return;
+    window.__probe.down = e.timeStamp;
+    window.__probe.pressed = e.target.closest('li[data-card]')?.dataset.card ?? null;
+  }, true);
+  // Vor dnd-kit (Capture am Fenster): welche Zelle beim Loslassen markiert ist.
+  window.addEventListener('pointerup', () => {
+    const p = window.__probe;
+    if (p === null) return;
+    const over = document.querySelector('ul[data-over]');
+    p.overAtUp = over === null ? null : over.dataset.lane + ':' + over.dataset.column;
   }, true);
   window.addEventListener('pointerup', (e) => {
     const p = window.__probe;
@@ -311,6 +333,21 @@ const RAF_LOGGER = `(() => {
     });
   });
 })();`;
+
+/** Zustand beim Ziehen für Fehlermeldungen: Probe, markierte Zelle, gezogene Karte, Scrollstand, Ziel. */
+const DRAG_STATE = (target: string) => `JSON.stringify({
+  probe: window.__probe,
+  over: [...document.querySelectorAll('ul[data-over]')].map((u) => u.dataset.lane + ':' + u.dataset.column),
+  dragging: [...document.querySelectorAll('li[data-dragging]')].map((li) => li.dataset.card),
+  scroller: (() => {
+    const el = document.querySelector('ul[data-column]')?.closest('.overflow-auto');
+    return el ? { top: el.scrollTop, left: el.scrollLeft, height: el.clientHeight } : null;
+  })(),
+  target: document.querySelector(${JSON.stringify(target)})?.getBoundingClientRect().toJSON() ?? null,
+  source: document.querySelector(${JSON.stringify(target.replace('in_progress', 'todo'))})?.getBoundingClientRect().toJSON() ?? null,
+  page: document.scrollingElement?.scrollTop ?? null,
+  lanes: [...document.querySelectorAll('ul[data-column="todo"]')].map((u) => u.dataset.lane + '@' + Math.round(u.getBoundingClientRect().top)),
+})`;
 
 /** Wartet im Seitenkontext, bis `QUIET_MS` lang kein rAF-Abstand über `DROP_MS` lag. */
 const QUIET = `new Promise((resolve) => {
@@ -507,6 +544,16 @@ type DragResult = {
   long: string[];
 };
 
+/**
+ * Ob die Mitte von `box` in der mittleren Hälfte der Höhe `viewport` liegt: weit genug weg von den
+ * 20 % am Rand des Scrollbereichs, in denen dnd-kit beim Ziehen scrollt. Ganz mittig geht nicht
+ * immer, die erste Karte einer Bahn ganz oben lässt sich nicht weiter herunterscrollen.
+ */
+const centred = (box: { y: number; height: number } | null, viewport: number): boolean =>
+  box !== null &&
+  box.y + box.height / 2 > viewport / 4 &&
+  box.y + box.height / 2 < (viewport * 3) / 4;
+
 /** Fünf (`RUNS`) Züge von `todo` nach `in_progress` derselben Bahn `lane`. */
 async function boardDrag(
   browser: Browser,
@@ -525,26 +572,58 @@ async function boardDrag(
     const source = page.locator(`${sel('todo')} > li[data-card]`).first();
     await source.waitFor({ timeout: WAIT_MS });
     await quiet(page);
-    const cards = await page.locator('li[data-card]').count();
+    // Karten in aufgeklappten Bahnen, aus den Zählern der Spalten: Große Zellen rendern nur die
+    // sichtbaren Karten, das DOM zählt also zu wenig.
+    const cards = (await page.evaluate(
+      `[...document.querySelectorAll('[data-head] [aria-hidden="true"]')].reduce((n, e) => n + Number(e.textContent), 0)`,
+    )) as number;
+    const profiler = TRACE === undefined ? undefined : await page.context().newCDPSession(page);
+    if (TRACE !== undefined && profiler !== undefined) {
+      await mkdir(TRACE, { recursive: true });
+      await profiler.send('Profiler.enable');
+      await profiler.send('Profiler.setSamplingInterval', { interval: 100 });
+      await profiler.send('Profiler.start');
+      await browser.startTracing(page, {
+        path: join(TRACE, `board-${group}.json`),
+        categories: ['devtools.timeline', 'disabled-by-default-devtools.timeline', 'blink', 'v8'],
+      });
+    }
     const results: DragResult[] = [];
     for (let r = 0; r < RUNS; r++) {
       const id = await source.getAttribute('data-card');
       if (id === null) throw new Error('Karte ohne data-card');
-      await source.scrollIntoViewIfNeeded();
-      const from = await source.boundingBox();
+      // Die Karte mittig ins Bild: Nahe am Rand des Scrollbereichs scrollt dnd-kit beim Ziehen von
+      // selbst. Ein Sprung per Skript holt Karten auf einmal ins Bild; bis sie ihre echte Höhe haben
+      // (`content-visibility`), steht die Box noch nicht — darum nach jeder Ruhe nachmessen.
+      const viewport = page.viewportSize()?.height ?? 800;
+      let from = await source.boundingBox();
+      for (let k = 0; k < 5 && !centred(from, viewport); k++) {
+        await source.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+        await quiet(page);
+        from = await source.boundingBox();
+      }
+      if (!centred(from, viewport))
+        throw new Error(`Karte ${id} steht nicht mittig: ${JSON.stringify(from)}`);
       const target = await page.locator(sel('in_progress')).boundingBox();
       if (from === null || target === null) throw new Error('Karte oder Zielzelle ohne Box');
       await page.evaluate(
         `window.__probe = ${JSON.stringify({ lane, column: 'in_progress', id })}; window.__raf.length = 0;`,
       );
-      const written = page.waitForResponse(
-        (res) => res.request().method() === 'POST' && res.url().includes('/tools/'),
-        { timeout: WAIT_MS },
-      );
+      // Ohne Write lehnt das Warten ab; gefangen, damit der Fehler unten mit der Probe kommt.
+      const written = page
+        .waitForResponse(
+          (res) => res.request().method() === 'POST' && res.url().includes('/tools/'),
+          { timeout: WAIT_MS },
+        )
+        .catch((err: unknown) => err as Error);
       const x = from.x + from.width / 2;
       const y = from.y + from.height / 2;
       await page.mouse.move(x, y);
       await page.mouse.down();
+      // Verschiebt sich das Layout zwischen Messen und Druck, träfe der Druck eine andere Karte.
+      const pressed = await page.evaluate('window.__probe.pressed');
+      if (pressed !== id)
+        throw new Error(`gedrückt ${String(pressed)} statt ${id}: Layout verschoben`);
       // Eine Bewegung je Frame wie eine echte Maus. Der PointerSensor von dnd-kit startet erst nach
       // 5 px, darum zuerst drei kleine Schritte; dann in die Polsterung der Zielzelle, nicht auf eine
       // Karte: Dort ist die Zelle selbst das Ziel.
@@ -558,13 +637,33 @@ async function boardDrag(
         await page.mouse.move(px, py);
         await nextFrame(page);
       }
-      await page.locator(`${sel('in_progress')}[data-over]`).waitFor({ timeout: WAIT_MS });
+      // Mit Probe, Zustand und Fehlern der Seite: Ohne sie sagt eine abgelaufene Frist nicht, was fehlte.
+      const failed = async (err: unknown) => {
+        const state = await page.evaluate(DRAG_STATE(sel('in_progress')));
+        const before = JSON.stringify({ from, target });
+        return new Error(
+          `${(err as Error).message}; vorher ${before}; Zustand ${state}; Seite: ${errors.join(' | ')}`,
+        );
+      };
+      try {
+        await until(
+          page,
+          `document.querySelector(${JSON.stringify(`${sel('in_progress')}[data-over]`)}) !== null`,
+        );
+      } catch (err) {
+        throw await failed(err);
+      }
       await page.mouse.up();
-      await until(
-        page,
-        'window.__probe.frame !== undefined && window.__probe.landed !== undefined',
-      );
+      try {
+        await until(
+          page,
+          'window.__probe.frame !== undefined && window.__probe.landed !== undefined',
+        );
+      } catch (err) {
+        throw await failed(err);
+      }
       const res = await written;
+      if (res instanceof Error) throw res;
       if (!res.ok()) throw new Error(`Write nach dem Ablegen: ${res.status()}`);
       const probe = (await page.evaluate('({ ...window.__probe, raf: window.__raf.slice() })')) as {
         down: number;
@@ -603,6 +702,11 @@ async function boardDrag(
       });
       await page.evaluate('window.__probe = null');
       await quiet(page);
+    }
+    if (TRACE !== undefined && profiler !== undefined) {
+      await browser.stopTracing();
+      const { profile } = await profiler.send('Profiler.stop');
+      await writeFile(join(TRACE, `board-${group}.cpuprofile`), JSON.stringify(profile));
     }
     return { cards, drags: results };
   } finally {
@@ -727,7 +831,7 @@ const cleanUp = () => {
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
     console.error(`\n${signal}: räume ab …`);
-    void cleanUp().finally(() => process.exit(130));
+    void cleanUp().finally(() => process.exit(128 + (signal === 'SIGINT' ? 2 : 15)));
   });
 }
 
@@ -748,122 +852,137 @@ try {
   const rows: Row[] = [];
   const errors: string[] = [];
 
-  // GET /state: der erste Abruf, bevor ein Browser abonniert (kein Watcher), dann warm.
-  const cold = await getState(server);
-  if (cold.issues !== N) throw new Error(`/state liefert ${cold.issues} statt ${N} Issues`);
-  const warm: number[] = [];
-  for (let r = 0; r < RUNS; r++) warm.push((await getState(server)).ms);
-  const stateGoal = '`GET /state` ≤ 1 s';
-  rows.push({
-    goal: stateGoal,
-    what: `erster Abruf (kalt, ${(cold.bytes / 1e6).toFixed(1)} MB)`,
-    value: ms(cold.ms),
-    ok: cold.ms <= 1000,
-  });
-  rows.push({
-    goal: stateGoal,
-    what: `Median aus ${RUNS} warmen Abrufen`,
-    value: ms(median(warm)),
-    ok: median(warm) <= 1000,
-  });
-  console.log(`GET /state: kalt ${ms(cold.ms)}, warm ${warm.map(ms).join(', ')}`);
+  if (ONLY.has('state')) {
+    // GET /state: der erste Abruf, bevor ein Browser abonniert (kein Watcher), dann warm.
+    const cold = await getState(server);
+    if (cold.issues !== N) throw new Error(`/state liefert ${cold.issues} statt ${N} Issues`);
+    const warm: number[] = [];
+    for (let r = 0; r < RUNS; r++) warm.push((await getState(server)).ms);
+    const stateGoal = '`GET /state` ≤ 1 s';
+    rows.push({
+      goal: stateGoal,
+      what: `erster Abruf (kalt, ${(cold.bytes / 1e6).toFixed(1)} MB)`,
+      value: ms(cold.ms),
+      ok: cold.ms <= 1000,
+    });
+    rows.push({
+      goal: stateGoal,
+      what: `Median aus ${RUNS} warmen Abrufen`,
+      value: ms(median(warm)),
+      ok: median(warm) <= 1000,
+    });
+    console.log(`GET /state: kalt ${ms(cold.ms)}, warm ${warm.map(ms).join(', ')}`);
+  }
 
   browser = await chromium.launch();
   const context = await machine(browser);
 
-  const renderGoal = 'Tab Backlog ≤ 1,5 s';
-  for (const rate of [1, THROTTLE]) {
-    const times = await backlogRender(browser, server, rate, errors);
-    const label = rate === 1 ? 'ohne Drosselung' : `CPU ${rate}× (CDP)`;
-    rows.push({
-      goal: renderGoal,
-      what: `erste Zeilen ohne Ladehinweis, ${label}, Median aus ${RUNS}`,
-      value: ms(median(times)),
-      ok: median(times) <= 1500,
-    });
-    console.log(`Tab Backlog, ${label}: ${times.map(ms).join(', ')}`);
+  if (ONLY.has('backlog')) {
+    const renderGoal = 'Tab Backlog ≤ 1,5 s';
+    for (const rate of [1, THROTTLE]) {
+      const times = await backlogRender(browser, server, rate, errors);
+      const label = rate === 1 ? 'ohne Drosselung' : `CPU ${rate}× (CDP)`;
+      rows.push({
+        goal: renderGoal,
+        what: `erste Zeilen ohne Ladehinweis, ${label}, Median aus ${RUNS}`,
+        value: ms(median(times)),
+        ok: median(times) <= 1500,
+      });
+      console.log(`Tab Backlog, ${label}: ${times.map(ms).join(', ')}`);
+    }
   }
 
-  const writes = await cliWrites(browser, bench, server, target, errors);
-  const writeGoal = 'CLI-Write → sichtbar ≤ 300 ms';
-  rows.push({
-    goal: writeGoal,
-    what: `Server-CPU im Leerlauf (3 Abonnenten, ${NEIGHBORS} Nachbarn) je 10 s: Node / git`,
-    value:
-      writes.idleCpu === undefined ? '–' : `${ms(writes.idleCpu.node)} / ${ms(writes.idleCpu.git)}`,
-    ok: undefined,
-  });
-  for (const [name, lag] of Object.entries(writes.lag)) {
-    const fromRef = writes.refLag[name] ?? [];
+  if (ONLY.has('write')) {
+    const writes = await cliWrites(browser, bench, server, target, errors);
+    const writeGoal = 'CLI-Write → sichtbar ≤ 300 ms';
     rows.push({
       goal: writeGoal,
-      what: `${name}: Median / Max aus ${CLI_WRITES} ab Prozessende; Max ab Ref (${fromRef.length})`,
-      value: `${ms(median(lag))} / ${ms(max(lag))}; ${ms(max(fromRef))}`,
-      ok: max(lag) <= 300 && !(max(fromRef) > 300),
-    });
-    console.log(
-      `CLI-Write, ${name}: ab Prozessende ${lag.map(ms).join(', ')}; ab Ref ${fromRef.map(ms).join(', ')}`,
-    );
-  }
-  rows.push({
-    goal: writeGoal,
-    what: 'Laufzeit des CLI-Prozesses (Schreibpfad BK, nicht UI): Median / Max',
-    value: `${ms(median(writes.cliMs))} / ${ms(max(writes.cliMs))}`,
-    ok: undefined,
-  });
-
-  const dragGoal = 'Board-Drag im selben Frame';
-  for (const [group, lane, label] of [
-    ['sprint', openLane, `Default (Sprint, Bahn ${openLane})`],
-    ['none', '', 'Gruppierung none'],
-  ] as const) {
-    const { cards, drags } = await boardDrag(browser, server, group, lane, errors);
-    const start = max(drags.map((d) => d.startGap));
-    const drag = max(drags.map((d) => d.dragGap));
-    const up = max(drags.map((d) => d.upToFrame));
-    const inFrame = drags.filter((d) => d.inFrame).length;
-    const landed = max(drags.map((d) => d.upToLanded));
-    const where = `${label}, ${cards} Karten`;
-    rows.push({
-      goal: dragGoal,
-      what: `${where}: Start, größter rAF-Abstand (Max aus ${RUNS})`,
-      value: ms(start),
-      ok: start <= DROP_MS,
-    });
-    rows.push({
-      goal: dragGoal,
-      what: `${where}: Ziehen, größter rAF-Abstand`,
-      value: ms(drag),
-      ok: drag <= DROP_MS,
-    });
-    rows.push({
-      goal: dragGoal,
-      what: `${where}: pointerup → erster rAF; Karte dort in der Zielzelle`,
-      value: `${ms(up)}; ${inFrame}/${drags.length}`,
-      ok: up <= FRAME_MS && inFrame === drags.length,
-    });
-    rows.push({
-      goal: dragGoal,
-      what: `${where}: pointerup → Karte in der Zielzelle (rAF)`,
-      value: ms(landed),
+      what: `Server-CPU im Leerlauf (3 Abonnenten, ${NEIGHBORS} Nachbarn) je 10 s: Node / git`,
+      value:
+        writes.idleCpu === undefined
+          ? '–'
+          : `${ms(writes.idleCpu.node)} / ${ms(writes.idleCpu.git)}`,
       ok: undefined,
     });
-    console.log(
-      `Board-Drag, ${where}: lange Frames je Zug (Abstand@Beginn ab pointerdown, ↑ ab pointerup): ${drags.map((d) => `[${d.long.join(' ')}]`).join(' ')}`,
-    );
+    for (const [name, lag] of Object.entries(writes.lag)) {
+      const fromRef = writes.refLag[name] ?? [];
+      rows.push({
+        goal: writeGoal,
+        what: `${name}: Median / Max aus ${CLI_WRITES} ab Prozessende; Max ab Ref (${fromRef.length})`,
+        value: `${ms(median(lag))} / ${ms(max(lag))}; ${ms(max(fromRef))}`,
+        ok: max(lag) <= 300 && !(max(fromRef) > 300),
+      });
+      console.log(
+        `CLI-Write, ${name}: ab Prozessende ${lag.map(ms).join(', ')}; ab Ref ${fromRef.map(ms).join(', ')}`,
+      );
+    }
+    rows.push({
+      goal: writeGoal,
+      what: 'Laufzeit des CLI-Prozesses (Schreibpfad BK, nicht UI): Median / Max',
+      value: `${ms(median(writes.cliMs))} / ${ms(max(writes.cliMs))}`,
+      ok: undefined,
+    });
   }
 
-  const scrollGoal = 'Scrollen ohne Frame-Drops';
-  for (const rate of [1, THROTTLE]) {
-    const gaps = await scrollList(browser, server, rate, errors);
-    const drops = gaps.filter((g) => g > DROP_MS).length;
-    const label = rate === 1 ? 'ohne Drosselung' : `CPU ${rate}× (CDP)`;
-    rows.push({
-      goal: scrollGoal,
-      what: `Tab Backlog, ${label}, ${(SCROLL_MS / 1000).toFixed(0)} s: Drops / p95 / Max`,
-      value: `${drops} von ${gaps.length} / ${ms(p95(gaps))} / ${ms(max(gaps))}`,
-      ok: drops === 0,
-    });
+  if (ONLY.has('board')) {
+    const dragGoal = 'Board-Drag im selben Frame';
+    for (const [group, lane, label] of [
+      ['sprint', openLane, `Default (Sprint, Bahn ${openLane})`],
+      ['none', '', 'Gruppierung none'],
+    ] as const) {
+      const { cards, drags } = await boardDrag(browser, server, group, lane, errors);
+      const start = max(drags.map((d) => d.startGap));
+      const drag = max(drags.map((d) => d.dragGap));
+      const up = max(drags.map((d) => d.upToFrame));
+      const inFrame = drags.filter((d) => d.inFrame).length;
+      const landed = max(drags.map((d) => d.upToLanded));
+      const where = `${label}, ${cards} Karten`;
+      rows.push({
+        goal: dragGoal,
+        what: `${where}: Start, größter rAF-Abstand (Max aus ${RUNS})`,
+        value: ms(start),
+        ok: start <= DROP_MS,
+      });
+      rows.push({
+        goal: dragGoal,
+        what: `${where}: Ziehen, größter rAF-Abstand`,
+        value: ms(drag),
+        ok: drag <= DROP_MS,
+      });
+      rows.push({
+        goal: dragGoal,
+        what: `${where}: pointerup → erster rAF; Karte dort in der Zielzelle`,
+        value: `${ms(up)}; ${inFrame}/${drags.length}`,
+        // Im selben Frame: Die Karte steht im ersten Frame nach dem Loslassen, und der kommt ohne
+        // Drop. Strenger als `DROP_MS` geht nicht: Das Loslassen fällt irgendwo in einen Frame, und
+        // schon die Abstände zweier Frames schwanken um 16,7 ms.
+        ok: up <= DROP_MS && inFrame === drags.length,
+      });
+      rows.push({
+        goal: dragGoal,
+        what: `${where}: pointerup → Karte in der Zielzelle (rAF)`,
+        value: ms(landed),
+        ok: undefined,
+      });
+      console.log(
+        `Board-Drag, ${where}: lange Frames je Zug (Abstand@Beginn ab pointerdown, ↑ ab pointerup): ${drags.map((d) => `[${d.long.join(' ')}]`).join(' ')}`,
+      );
+    }
+  }
+
+  if (ONLY.has('scroll')) {
+    const scrollGoal = 'Scrollen ohne Frame-Drops';
+    for (const rate of [1, THROTTLE]) {
+      const gaps = await scrollList(browser, server, rate, errors);
+      const drops = gaps.filter((g) => g > DROP_MS).length;
+      const label = rate === 1 ? 'ohne Drosselung' : `CPU ${rate}× (CDP)`;
+      rows.push({
+        goal: scrollGoal,
+        what: `Tab Backlog, ${label}, ${(SCROLL_MS / 1000).toFixed(0)} s: Drops / p95 / Max`,
+        value: `${drops} von ${gaps.length} / ${ms(p95(gaps))} / ${ms(max(gaps))}`,
+        ok: drops === 0,
+      });
+    }
   }
 
   console.log(`\nRechner: ${context}`);
