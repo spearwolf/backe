@@ -216,6 +216,7 @@ Deklariert in `backlog.jsonc` (BK §2.24), alle unter dem Präfix `backstube.`:
 | `backstube.workflow` | string | Workflow des Issues (§2.5.1); fehlt sie, gilt der Default aus der Config | Mensch, beim Anlegen oder später |
 | `backstube.phase` | string | aktuelle Phase, gültig sind die Phasen des Workflows sowie `integrate` und `close`; fehlt sie, gilt dessen erste Phase | Worker beim Abschluss; Backstube bei `integrate`, `close` und Rücksprüngen; Mensch, um später einzusteigen (ein Bug mit klarem Repro startet in `superpowers` bei `plan`) |
 | `backstube.harness` | string | Harness für alle Phasen dieses Issues, überschreibt Workflow und Config | Mensch |
+| `backstube.choices` | json | Antworten auf Prozessfragen, je Frage ein Wert (`{"execution": "subagent"}`, §2.5.6) | Worker beim Abschluss der fragenden Phase; Mensch vorab; Backstube beim Split |
 | `backstube.plan` | string | repo-relativer Pfad des Plans, den dieses Issue umsetzt; fehlt sie, sucht die Session den Plan im Branch | Backstube beim Split (§2.5.5); Mensch |
 | `backstube.repo` | string | Haupt-Repo, wenn `repos` mehrere Einträge hat; sonst gilt der erste (§2.5.3) | Mensch |
 | `backstube.dir` | string | Unterverzeichnis im Repo als Arbeitsverzeichnis, etwa ein Paket im Monorepo (§2.5.3) | Mensch |
@@ -253,7 +254,7 @@ Ein Workflow ist eine benannte, geordnete Liste von Phasen. Er legt fest, welche
 }
 ```
 
-Je Phase: `name`, `role` (`slot`, Default; `reviewer`; `backstube` für die Merge-Phase, die ohne Session und ohne Sprachmodell läuft, §2.6.3), `skills` (Namen, die der Start-Prompt der Session nennt; leer heißt, die Session nutzt, was Repo und Host mitbringen), optional `harness`, `model`, `state_after` (backe-State nach erfolgreichem Abschluss) und `gate` (Rückfrage zur Freigabe am Ende, §3.8). Bei »changes« eines Reviewers springt das Issue in die Phase davor zurück. Jeder Workflow, der Code ändert, endet mit `merge`; die Backstube lehnt Workflows mit `cwd: worktree` ohne `merge`-Phase ab.
+Je Phase: `name`, `role` (`slot`, Default; `reviewer`; `backstube` für die Merge-Phase, die ohne Session und ohne Sprachmodell läuft, §2.6.3), `skills` (Namen, die der Start-Prompt der Session nennt; leer heißt, die Session nutzt, was Repo und Host mitbringen), optional `skills_from` (Prozessfrage, deren Wahl weitere Skills beisteuert, §2.5.6), `harness`, `model`, `state_after` (backe-State nach erfolgreichem Abschluss) und `gate` (Rückfrage zur Freigabe am Ende, §3.8). Bei »changes« eines Reviewers springt das Issue in die Phase davor zurück. Jeder Workflow, der Code ändert, endet mit `merge`; die Backstube lehnt Workflows mit `cwd: worktree` ohne `merge`-Phase ab. Auf Workflow-Ebene deklariert `choices` die Prozessfragen (§2.5.6).
 
 Zwei Phasen gibt es in jedem Workflow, ohne dass er sie nennt: `integrate` (Rückkopplung aus der Merge-Queue, §2.6.4) und `close` (Abschluss eines aufgeteilten Issues, §2.5.5).
 
@@ -274,8 +275,8 @@ Jedem Workflow lässt sich `intake` als erste Phase voranstellen (§2.5.4). Ein 
 | Phase | Identität | Superpowers-Skills | Artefakt | Erfolg → |
 | --- | --- | --- | --- | --- |
 | `spec` | Slot | `brainstorming` | Spec unter `docs/superpowers/specs/` im Branch, Kurzfassung als Kommentar | `plan` |
-| `plan` | Slot | `writing-plans` | ein Plan oder ein Plansatz unter `docs/superpowers/plans/` im Branch; bei mehr als einem Plan das Manifest `split.json` als Anhang | ein Plan: `build`; Plansatz: Split (§2.5.5); bei aktivem Gate jeweils erst nach der Freigabe |
-| `build` | Slot | `subagent-driven-development` (darin `test-driven-development`), `systematic-debugging`, `verification-before-completion` | Commits im Branch | `review`; State → `review` |
+| `plan` | Slot | `writing-plans`; beantwortet die Prozessfrage `execution` | ein Plan oder ein Plansatz unter `docs/superpowers/plans/` im Branch; bei mehr als einem Plan das Manifest `split.json` als Anhang | ein Plan: `build`; Plansatz: Split (§2.5.5); bei aktivem Gate jeweils erst nach der Freigabe |
+| `build` | Slot | je nach Prozessfrage `execution` (§2.5.6) `subagent-driven-development` oder `executing-plans`, dazu `test-driven-development`, `systematic-debugging`, `verification-before-completion` | Commits im Branch | `review`; State → `review` |
 | `review` | `bs-review` | `requesting-code-review`, `verification-before-completion` | Urteil als Kommentar | »approve« → `merge`; »changes« → `build`, State → `in_progress`, `round + 1` |
 | `merge` | `backstube` | keine, Merge-Queue (§2.6.3) | Squash-Commit im Ziel-Branch | `done`; bei Konflikt oder rotem Verify → `integrate` (§2.6.4), State → `in_progress` |
 
@@ -312,7 +313,7 @@ Die äußeren Kästen sind die `backe`-States, die inneren die Phasen. Ein Plans
 
 - **States:** Der Claim setzt `in_progress` (BK §2.16.5); `spec`, `plan` und `build` laufen darin. `build` endet mit `review`. Eine Rückweisung im Review geht zurück auf `in_progress`, das erlaubt die Hauptlinie ohne `workflow.strict` (BK §2.6). Während `merge` bleibt das Issue auf `review`; scheitert der Merge, geht es mit `integrate` zurück auf `in_progress`. `done` setzt die Backstube im selben Batch, der den Merge-Commit einträgt.
 - **Worktree:** `superpowers` arbeitet mit `cwd: worktree` (§2.5.3). Spec und Plan liegen dort als Dateien; jede neue Session findet so die Arbeit der vorigen.
-- **Overrides:** Der Workflow gibt `backstube-worker` drei Superpowers-spezifische Regeln mit: `brainstorming` reicht nicht von sich aus an `writing-plans` weiter, die Phase endet mit der committeten Spec; `using-git-worktrees` entfällt, denn der Worktree existiert schon; `finishing-a-development-branch` entfällt, denn gemergt wird ausschließlich über die Merge-Queue.
+- **Overrides:** Was `using-git-worktrees` und `finishing-a-development-branch` fragen würden, beantworten die Prozessfragen `worktree` und `finish` fest: Der Worktree existiert schon, und gemergt wird ausschließlich über die Merge-Queue (§2.5.6). Eine Regel bleibt ohne Prozessfrage: `brainstorming` reicht nicht von sich aus an `writing-plans` weiter, die Phase endet mit der committeten Spec.
 - **Review-Unabhängigkeit:** Der Reviewer ist eine eigene Identität in einer frischen Session, wahlweise mit einem anderen Modell als der Build. Er sieht Spec, Plan und Diff, aber nicht den Verlauf der Build-Session.
 - **Review-Schleife:** Erreicht `round` den Wert `limits.review_rounds`, eskaliert die Backstube statt eines weiteren Builds (§2.7.4).
 - **Plan-Gate:** Ist das Gate aktiv, stellt die `plan`-Session am Ende die Frage »Plan freigeben?« mit den Optionen Freigeben, Überarbeiten (mit Hinweis) und Abbrechen. Bei einem Plansatz gilt die Freigabe für den ganzen Satz, nicht je Plan. Das Gate ist eine gewöhnliche Rückfrage und folgt dem Modus aus `questions` (§3.8).
@@ -374,7 +375,7 @@ Je Teil: `key`, `title`, bei `plans` der Pfad `plan`, bei `intake` ein `body`, o
 1. **Plan-Gate:** Ist es aktiv, wartet der Split auf die Freigabe des ganzen Plansatzes.
 2. **Doku zuerst:** Trägt der Branch des Issues Commits (bei `plans` immer: Spec und Pläne), stellt die Backstube einen Doku-Job in die Merge-Queue (`merge_jobs.kind = docs`, §2.6.3). Er läuft wie jeder Merge-Job mit Verify und CAS und hat als Commit-Titel »Spec und Pläne: <Titel>« mit dem Trailer `Backe-Issue: <id>`. Erst danach liegen Spec und Pläne im Ziel-Branch, und jeder Worktree eines Sub-Issues findet sie. Scheitert der Doku-Job, gilt §2.6.4 wie bei jedem Merge.
 3. **Split als ein Batch** von `backstube`:
-   - je Teil ein `issue.create` mit `parent`, den Projekten, Sprints und Repos des Issues (wie `issue create --parent`, BK §2.23), `rank` in Manifest-Reihenfolge, `depends_on` laut Manifest (über Platzhalter), `backstube.workflow` des Issues bzw. des Teils, bei `plans` zusätzlich `backstube.phase: build` und `backstube.plan`;
+   - je Teil ein `issue.create` mit `parent`, den Projekten, Sprints und Repos des Issues (wie `issue create --parent`, BK §2.23), `rank` in Manifest-Reihenfolge, `depends_on` laut Manifest (über Platzhalter), `backstube.workflow` des Issues bzw. des Teils, `backstube.choices` des Issues, bei `plans` zusätzlich `backstube.phase: build` und `backstube.plan`;
    - für das Issue selbst: Assignee entfernen, `todo`, `backstube.phase: close`, `backstube.status: done` und ein Kommentar mit der Liste der Teile.
    
    Branch und Worktree des Issues räumt die Backstube danach ab; ihr Inhalt liegt im Ziel-Branch.
@@ -399,6 +400,46 @@ flowchart TD
   p2 -->|"im Ziel-Branch"| pn["… Teil n"]
   pn --> close["Parent bereit<br/>close: Kommentar, done"]
 ```
+
+#### 2.5.6 Prozessfragen
+
+Skills fragen nicht nur, was entstehen soll, sondern auch, wie der Agent arbeiten soll: ob ein Plan mit frischen Subagents je Task oder inline umgesetzt wird, wo ein Worktree hingehört, was mit dem fertigen Branch passiert. Solche **Prozessfragen** beantwortet in der Fabrik kein Mensch. Es sind genau die Pings, die man ohne Nachdenken beantwortet (§0.4), und ihre Antwort bestimmt, welche Skills die nächste Phase lädt. Deshalb gehören sie in die Konfiguration und ans Issue, nicht in einen Dialog.
+
+Ein Workflow deklariert seine Prozessfragen unter `choices`. Eingebaut für `superpowers`:
+
+```jsonc
+"choices": {
+  "execution": {                       // Umsetzung eines Plans
+    "asked_by": "writing-plans",
+    "policy": "recommended",           // recommended | fixed | ask
+    "default": "subagent",
+    "values": {
+      "subagent": { "skills": ["subagent-driven-development"] },
+      "inline":   { "skills": ["executing-plans"] }
+    }
+  },
+  "worktree": {
+    "asked_by": "using-git-worktrees",
+    "policy": "fixed",
+    "default": "existing",
+    "values": { "existing": { "note": "Der Worktree existiert schon; keinen neuen anlegen." } }
+  },
+  "finish": {
+    "asked_by": "finishing-a-development-branch",
+    "policy": "fixed",
+    "default": "keep",
+    "values": { "keep": { "note": "Branch behalten; gemergt wird nur über die Merge-Queue." } }
+  }
+}
+```
+
+Die Phase `build` von `superpowers` nennt dazu `"skills_from": "execution"` und als feste Skills `test-driven-development`, `systematic-debugging` und `verification-before-completion`.
+
+- **Wer antwortet:** Steht in `backstube.choices` schon ein Wert für die Frage, gilt er, ob ihn der Mensch vorab gesetzt hat oder das Issue ihn aus einem Split geerbt hat (§2.5.5). Sonst entscheidet `policy`: `recommended` folgt der Option, die der Skill als Empfehlung markiert, ohne Empfehlung gilt `default`; `fixed` nimmt immer `default`; `ask` stellt die Frage wie jede andere Rückfrage (§2.10).
+- **Festhalten:** Die Session schreibt die Wahl im Abschluss-Batch nach `backstube.choices` und nennt im Ergebnis-Kommentar Frage, Wahl und Herkunft (Empfehlung des Skills, Default oder Wert am Issue). So bleibt nachvollziehbar, warum ein Build inline lief.
+- **Wirkung:** Nennt eine Phase `skills_from`, ergänzt die Backstube beim Start deren `skills` um die Skills des gewählten Werts. Das ist eine Tabellenauflösung im Orchestrator, kein Urteil. Fehlt der Wert noch, etwa weil der Mensch das Issue direkt bei `build` einsteigen ließ, gilt `default`. Ein `note` gibt der Start-Prompt der Phase mit, deren Skill die Frage stellt.
+- **Prüfung:** Ein Wert, den `values` nicht kennt, führt wie ein unbekannter Workflow zu `on_hold` mit Begründung (§2.4).
+- **Abgrenzung:** Prozessfragen sind nur die deklarierten. Alles andere, insbesondere jede Designfrage aus `brainstorming`, bleibt eine Rückfrage nach §2.10, auch wenn der Skill eine Empfehlung markiert (§3.18).
 
 ### 2.6 Integration und Auto-Merge
 
@@ -563,6 +604,7 @@ Die Backstube startet jede Session mit einem minimalen Prompt: »Worker der Back
 5. **Scheitern:** `backstube.status: failed` plus Kommentar mit Grund und letztem Stand. Kein State-Move, die Wiederholung entscheidet die Backstube.
 6. **Nie:** fremde Issues claimen oder ändern (Ausnahme: Fragen anlegen, §2.10.2), Sub-Issues selbst anlegen (aufgeteilt wird nur per Manifest, §2.5.5), mergen oder auf den Ziel-Branch pushen (das macht allein die Merge-Queue, §2.6.3), eigene Phasen überspringen, Tests abschalten.
 7. **Rückfragen** nach dem Modus aus `questions` (§2.10). In Stufe 1 hält der Ergebnis-Kommentar zusätzlich jede gestellte Frage samt Antwort fest. Was am Handy entschieden wurde, landet so trotzdem im Backlog.
+8. **Prozessfragen** (§2.5.6) beantwortet die Session selbst nach deren `policy` und schreibt die Wahl nach `backstube.choices`. Sie gelten nicht als Rückfrage.
 
 ### 2.9 Workflow-Engine
 
@@ -678,7 +720,7 @@ Alle `tick_s` Sekunden:
    9. **Merge-Job abgebrochen:** Ein Job steht auf `running` ohne lebenden Ausführungsstrang → zurück auf `pending` (§2.6.3, Wiederaufnahme).
 3. **Dispatch.** Erst fertig machen, dann neu anfangen:
    1. Issues in Arbeit, deren Phase `done` oder `failed` (mit Restbudget) ist und die keine Session haben → nächste bzw. dieselbe Phase im selben Slot starten. Hat die nächste Phase `role: reviewer`, übernimmt `bs-review`, sofern frei. Ist die nächste Phase `merge`, wird ein Job in `merge_jobs` eingestellt. Liegt ein gültiges `split.json` vor, beginnt stattdessen der Split (§2.5.5).
-   2. Freie Slots → `backe next --claim --as <slot>` je `watch`-Eintrag in Reihenfolge, gefiltert um `backstube.skip` und um Issues auf Phase `close`; in Einträgen mit `level: top` Sub-Issues aufgeteilter Issues nach §2.5.5; Workflow und Harness bestimmen, Arbeitsverzeichnis vorbereiten (§2.5.3), Phase aus `backstube.phase` starten. Ein Issue, dessen Workflow `cwd: repo` verlangt, wartet, solange im selben Repo schon eine solche Session läuft.
+   2. Freie Slots → `backe next --claim --as <slot>` je `watch`-Eintrag in Reihenfolge, gefiltert um `backstube.skip` und um Issues auf Phase `close`; in Einträgen mit `level: top` Sub-Issues aufgeteilter Issues nach §2.5.5; Workflow, Harness und Skills (§2.5.6) bestimmen, Arbeitsverzeichnis vorbereiten (§2.5.3), Phase aus `backstube.phase` starten. Ein Issue, dessen Workflow `cwd: repo` verlangt, wartet, solange im selben Repo schon eine solche Session läuft.
    3. **Merge-Queues:** je Queue ohne laufenden Job den ältesten Job auf `pending` starten, sofern die Queue nicht pausiert ist, `backstube.merge` nicht `manual` ohne Freigabe steht und der Verify-Semaphor frei ist. Merge-Jobs belegen keinen Slot.
    4. **Sprint-Merge:** Ziel `sprint`, keine offenen Issues des Sprints im Repo mehr → Sprint-Branch in die Queue des `default_ref` stellen, mit `gates.sprint` erst nach der Freigabe.
 4. Aktionen ausführen, jede mit Journal-Eintrag davor und danach; `heartbeat_at` der lebenden Runs fortschreiben.
@@ -841,7 +883,7 @@ Die Backstube selbst ruft den Service-Layer im Prozess auf (§3.3); MCP ist die 
 | `backe loop queue [--repo <name>]` | Merge-Queues: wartende Jobs, laufender Job mit `baseSha`, letzter Merge |
 | `backe loop pause` / `resume [--repo <name>]` | Notbremse für Merge-Queues und Dispatch (§2.6.5) |
 | `backe loop revert <id> [--cascade]` | Merge eines Issues über die Queue rückgängig machen und das Issue wieder öffnen |
-| `backe loop workflows` | eingebaute und konfigurierte Workflows mit Phasen, Skills, Harness und `cwd` |
+| `backe loop workflows` | eingebaute und konfigurierte Workflows mit Phasen, Skills, Prozessfragen, Harness und `cwd` |
 | `backe loop doctor [--fix]` | Identitäten und Keys, deklarierte Properties, Datenbank und Schema-Version, tmux, Harnesses und ihre ACP-Befehle, Skills je Harness samt Fassung (§2.14), Remote Control, lokale Pfade der Repos, ihre `local_files`, Kontextdateien, `verify` und Merge-Worktrees, Push-Rechte auf die Ziel-Branches, ausgecheckte Ziel-Branches bei Repos ohne Remote. `--fix` legt fehlende oder kaputte Merge-Worktrees neu an und installiert Skills nach Bestätigung |
 
 ### 2.14 Einbettung in `backe`
@@ -944,6 +986,10 @@ Merges im Checkout des Menschen verändern dessen Arbeitsverzeichnis; Merges im 
 
 Alles, was ein Mensch sehen, ändern oder später nachvollziehen soll, steht im Backlog; alles, was nur die Ausführung auf diesem Host betrifft, in SQLite. Widersprechen sich beide, gewinnt das Backlog, weil dort Menschen eingreifen (§2.9.3, Punkt 2.1). Zähler, die Grenzen tragen (`round`, `attempts`), stehen deshalb im Backlog und nicht nur in der Datenbank: Eine verlorene Datenbank darf Geschichte kosten, aber keine Grenze zurücksetzen. Verworfen: alles im Backlog (jeder Heartbeat wäre ein signierter Commit); alles in der Datenbank (der Mensch sähe nicht, was die Fabrik tut, und ein zweiter Host sähe es auch nicht).
 
+### 3.18 Prozessfragen folgen der Empfehlung, Designfragen nicht
+
+Bei »Subagents oder inline?« ist die Empfehlung des Skills eine gute Antwort: Der Skill kennt die Abwägung besser als ein Mensch, der am Handy auf »1« tippt, und ob die Wahl taugte, zeigen Review und Verify. Bei einer Designfrage ist die Empfehlung ein Vorschlag, über den der Mensch entscheiden soll; sie automatisch zu übernehmen hieße, die Spec an das Modell abzugeben. Wo die Grenze verläuft, legt die Deklaration in `choices` fest, nicht das Modell. Verworfen: jeder markierten Empfehlung folgen (der Mensch verliert die Spec); Prozessfragen als Freitextregeln im Worker-Vertrag (nicht prüfbar, und die nächste Phase könnte ihre Skills nicht daraus ableiten).
+
 ## 4. Was offen bleibt
 
 ### 4.1 Offene Entscheidungen
@@ -977,7 +1023,7 @@ Alles, was ein Mensch sehen, ändern oder später nachvollziehen soll, steht im 
 ## 5. Tests
 
 - **Reconcile tabellengetrieben:** jede Regel aus §2.9.3 als Fall `Snapshot → Aktionen`, inklusive Neustart der Backstube mitten in jeder Phase und Widerspruch zwischen Backlog und Datenbank.
-- **Workflows und Arbeitsverzeichnis tabellengetrieben:** Auflösung von Workflow, Harness (Issue, Phase, global) und Phase, Rücksprung bei »changes«, Wechsel des Workflows, `intake` mit allen drei Ergebnissen; Auflösung von Haupt-Repo, Modus, `backstube.dir`, `local_files` und `add_dirs`, inklusive fehlender lokaler Pfade und `repo: none`.
+- **Workflows und Arbeitsverzeichnis tabellengetrieben:** Auflösung von Workflow, Harness (Issue, Phase, global) und Phase, Rücksprung bei »changes«, Wechsel des Workflows, `intake` mit allen drei Ergebnissen; Prozessfragen (Wert am Issue, `recommended` mit und ohne Empfehlung, `fixed`, `ask`, unbekannter Wert), Skills aus `skills_from` samt Default und Vererbung beim Split; Auflösung von Haupt-Repo, Modus, `backstube.dir`, `local_files` und `add_dirs`, inklusive fehlender lokaler Pfade und `repo: none`.
 - **Split tabellengetrieben:** Prüfung des Manifests (doppelte Keys, unbekannte Abhängigkeit, Zyklus, fehlender Plan, zu viele Teile, genau ein Teil), Kette als Default bei Plansätzen, Batch für Teile und Parent, `close` mit allen Teilen `done` und mit einem Teil `cancelled`, Dispatch in `watch`-Einträgen mit `level: top`.
 - **Circuit Breaker tabellengetrieben:** Normalisierung der Fingerprints (gleiche Fehler mit anderen Zeitstempeln, Zeilennummern und Pfaden ergeben denselben Hash, verschiedene Fehler verschiedene), Wiederholung, Oszillation A → B → A, jede Rundengrenze.
 - **Engine gegen echtes SQLite:** Absturz nach jedem `started` im Journal (simuliert durch einen Test-Hook, der die Aktion abbricht) und Wiederaufnahme ohne doppelte Wirkung; zweite Instanz wird abgewiesen; verlorene Datenbank wird aus Backlog und Fake-Runtime rekonstruiert, Rundenzähler und Budget bleiben.
