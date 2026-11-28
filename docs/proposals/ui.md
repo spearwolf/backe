@@ -1,7 +1,7 @@
 # backe ui — lokale Web-Oberfläche für ein Backlog
 
-> **Status: gebaut.** Offen sind zwei Entscheidungen in §4.1 (Backlog-Config aus der UI, Fehlertexte in der UI-Sprache), der Wunsch an BK in §4.2 und der spätere Ausbau in §4.3.
-> Bezug: Adapter über den Service-Layer von BK (`backe.md`), vor allem BK §2.14 (Kontext), §2.16 (Schreibpfad und Sync), §2.18 (Ausgabe), §2.19 (MCP als Vorbild des Adapters), §2.22–§2.24 (Abhängigkeiten, Sub-Issues, Properties).
+> **Status: in Umsetzung.** Gebaut ist alles außer dem Tab Loop (§2.18), der mit der Backstube kommt (BS §6). Offen sind außerdem zwei Entscheidungen in §4.1 (Backlog-Config aus der UI, Fehlertexte in der UI-Sprache), der Wunsch an BK in §4.2 und der spätere Ausbau in §4.3.
+> Bezug: Adapter über den Service-Layer von BK (`backe.md`), vor allem BK §2.14 (Kontext), §2.16 (Schreibpfad und Sync), §2.18 (Ausgabe), §2.19 (MCP als Vorbild des Adapters), §2.22–§2.24 (Abhängigkeiten, Sub-Issues, Properties); für den Tab Loop das Lesemodell der Backstube (`backstube.md` §2.14).
 > Skizzen: [`layout-tabs.png`](../assets/layout-tabs.png), [`backlog.png`](../assets/backlog.png), [`board.png`](../assets/board.png), [`issue-details.png`](../assets/issue-details.png), [`settings.png`](../assets/settings.png).
 
 ## 0. Problem & Abgrenzung
@@ -10,13 +10,14 @@
 
 Ein Backlog, an dem mehrere Agents parallel arbeiten, ändert sich im Minutentakt. Über das CLI sieht ein Mensch davon nur, was er gerade abfragt: `issue list` ist eine Momentaufnahme, `sprint show` auch. Wer wissen will, was gerade läuft, was blockiert ist und was sich seit vorhin bewegt hat, fragt immer wieder dieselben Befehle ab.
 
-`backe ui` startet eine lokale Web-Oberfläche für genau ein Backlog: eine Liste, ein Board, eine Detailansicht pro Issue und die Verwaltung von Projekten, Sprints, Repos und Usern. Jede Änderung am Backlog — aus dem CLI, aus einem MCP-Agent, aus einem anderen Clone oder aus der UI selbst — erscheint dort sofort ohne Reload.
+`backe ui` startet eine lokale Web-Oberfläche für genau ein Backlog: eine Liste, ein Board, eine Detailansicht pro Issue und die Verwaltung von Projekten, Sprints, Repos und Usern. Jede Änderung am Backlog — aus dem CLI, aus einem MCP-Agent, aus einem anderen Clone oder aus der UI selbst — erscheint dort sofort ohne Reload. Betreibt das Backlog eine Backstube (`backe loop`), zeigt der Tab Loop ihren Zustand ebenso live (§2.18).
 
 ### 0.2 Ziele
 
 - **Live-Übersicht.** Jede Änderung, die die Arbeitskopie erreicht, ist in jeder offenen Ansicht sichtbar, ohne Reload und ohne Polling durch den Nutzer (§2.4). Das ist der Hauptzweck der UI.
 - **Lesen und Schreiben.** Issues anlegen, bearbeiten, verschieben, umsortieren, kommentieren, Anhänge hinzufügen; Projekte, Sprints, Repos und User verwalten. Jeder Write ist ein signierter Commit der Identität, als die die UI läuft (BK §2.12).
 - **Ein dritter Adapter, kein eigener Datenpfad.** Die UI nutzt denselben Service-Layer wie CLI und MCP (BK §3.7). Sie kann nichts, was das CLI nicht kann, und sie umgeht keine Prüfung (§3.3).
+- **Blick in die Fabrik.** Läuft `backe loop` für das Backlog, zeigt der Tab Loop, welche Phase wo läuft, worauf was wartet und was den Menschen braucht, und bietet die Notbremse (§2.18).
 - **Ein Backlog im Fokus**, mit Umschalter zwischen den registrierten Backlogs (§2.6).
 - **Ruhige, klare Oberfläche:** neutral hell oder dunkel, Zustände über Icon und Text statt über Farbe (§2.13).
 - **Keine neue Runtime-Abhängigkeit für das CLI.** Der Server läuft auf `node:http`, das Frontend wird vorgebaut ausgeliefert (§2.16).
@@ -88,6 +89,8 @@ Alle Endpunkte liegen unter `/api` und verlangen das Sitzungs-Cookie (§2.15). J
 | `GET /api/b/<b>/issues/<id>/attachments` | wie `attach list <id> --format json`: Name, Datei oder URL, Größe; `not_loaded` bei nicht geladenen LFS-Anhängen (BK §2.8) |
 | `GET /api/b/<b>/issues/<id>/attachments/<name>` | Dateibytes eines Anhangs (§2.9.4, Header nach §2.15); ein URL-Anhang hat keine Bytes → 404 |
 | `GET /api/b/<b>/search?q=<text>` | Volltextsuche wie `issue list -q <text> --state all --all`; ohne `q` → 400 |
+| `GET /api/b/<b>/loop` | Loop-Zustand wie `backe loop status --format json` (BS §2.14); 404 `not_found`, wenn für das Backlog keine Loop-Config existiert |
+| `GET /api/b/<b>/loop/journal?issue=<id>&before=<n>&limit=<n>` | Journal wie `backe loop log --format json` (BS §2.9.2), neueste zuerst; `limit` Default 100, höchstens 1000; `before` ist eine Journal-ID |
 | `GET /api/b/<b>/events` | Event-Stream (§2.4.3) |
 
 #### 2.3.2 Schreiben
@@ -104,6 +107,7 @@ Alle Endpunkte liegen unter `/api` und verlangen das Sitzungs-Cookie (§2.15). J
 | `sprint_create`, `sprint_close` | `sprint create`, `sprint close` |
 | `repo_add`, `repo_rm`, `repo_check` | `repo add`, `rm`, `check` |
 | `user_add`, `user_create_agent`, `user_revoke_key`, `user_rm` | die gleichnamigen `user`-Befehle |
+| `loop_pause`, `loop_resume` | `backe loop pause`, `backe loop resume` mit `repo?` (BS §2.6.5); Ergebnis `{paused}` wie `--format json`, ohne `commit`, denn der Pause-Zustand liegt in der Datenbank der Backstube, nicht im Backlog |
 
 Außer `issue_delete`, das MCP mit `--allow-delete` registriert, gibt es diese Tools nur in der UI. Für alle Tools gilt:
 
@@ -138,6 +142,7 @@ Für jedes Backlog, das mindestens ein Browser-Tab abonniert hat, beobachtet der
    Nach 250 ms Ruhe liest der Server die Werte aller Nachbar-Refs. Bewegt hat sich ein Ref, dessen Wert vom letzten Blick abweicht und kein Vorfahre von `HEAD` der eigenen Arbeitskopie ist; fehlt das Objekt dort, gilt er als unbekannt. Das gilt auch für den ersten Wert, beim Start des Watchers wie bei einem neu entdeckten Nachbarn: Liegt er schon vorn, startet eine Runde, ein bekannter erster Wert wird nur festgehalten. Der eigene Push in den Hub startet so nichts. Eine Bewegung startet eine Hintergrund-Sync-Runde der eigenen Arbeitskopie (BK §2.16.2) über denselben Start wie der periodische Sync: nur bei wirksamem `sync.mode: auto`, vorhandenem Remote `sync.remote` und Arbeitskopie, ohne Prüfung von `pull_interval`. `sync.remote` und `sync.branch` gelten, wie sie beim Start des Watchers in `HEAD` stehen. Git- und Dateisystemfehler kosten nur den betroffenen Nachbarn oder Durchlauf.
 4. **Entfernte Änderungen** auf einem echten Remote lassen sich nicht beobachten. Der Server synchronisiert im Takt von `pull_interval` wie der MCP-Server (BK §2.19, »Hintergrund-Sync«).
 5. **Sicherheitsnetz:** `fs.watch` kann Ereignisse verlieren (Netzlaufwerke, Überlauf, FSEvents unter macOS, das Änderungen zusammenfasst). Alle 10 s vergleicht der Server `HEAD` mit dem zuletzt gesehenen Stand und die gegenüber `HEAD` geänderten, neuen und gelöschten Dateien der Backlog-Verzeichnisse (`git --no-optional-locks status`) nach Inhalt mit dem letzten Blick; was abweicht, lädt er nach wie ein Ereignis des Arbeitsbaums. So kommt auch ein Hand-Edit ohne Commit an, dessen Ereignis verloren ging. Im selben Takt liest er die Nachbarn und ihre Refs wie nach einem Ereignis (Punkt 3), ohne Entprellung.
+6. **Loop-Zustand.** Hat das Backlog eine Loop-Config (BS §2.3), beobachtet der Server zusätzlich `<BACKE_HOME>/loop/<backlog>/` flach. Ein Ereignis dort (meist auf `state.db-wal`) und der Takt des Sicherheitsnetzes lassen ihn über seine lesende Verbindung `PRAGMA data_version` abfragen; nur wenn sich der Wert geändert hat, liest er das Lesemodell (BS §2.14) neu, entprellt über 250 ms, und schickt, was sich geändert hat, als `loop` bzw. `loop_journal` (§2.4.3). Ob der Loop-Prozess lebt, prüft er im selben Takt über Host und PID der Instanz (BS §2.9.1). Entsteht die Loop-Config erst, während der Watcher läuft, bemerkt er das über denselben Takt.
 
 Was ein System zu einer Änderung meldet, unterscheidet sich: inotify nennt die Datei, FSEvents oft nur ein Verzeichnis, manche Systeme gar keinen Namen. Ein Ereignis auf einem beobachteten Verzeichnis selbst (libuv meldet es unter dessen eigenem Namen, Nodes rekursiver Watch unter Linux mit leerem) zählt wie eines ohne Namen, bei jeder Quelle oben: als Bewegung eines Refs, als unbekannter Pfad im Arbeitsbaum, als Anlass für einen Blick auf die Nachbarn.
 
@@ -165,11 +170,13 @@ Abgeleitete Werte (`dependents`, `children`, offene Abhängigkeiten, Bereitschaf
 | `hello` | `{rev, head}` direkt nach dem Verbinden |
 | `patch` | `{rev, head, upsert: {issues?, projects?, sprints?, repos?, users?, config?}, remove: {issues?: [id], …}, touched?: [id], actors?: {id: [handle]}, problems?}` |
 | `sync` | JSON von `sync status` |
+| `loop` | Loop-Zustand wie `GET …/loop`, vollständig, nur bei Änderung |
+| `loop_journal` | `{entries: […]}`: neue Journal-Einträge seit dem letzten Ereignis, älteste zuerst |
 | `reset` | `{}` — der Client lädt `/state` neu |
 
 - **`actors`** nennt je Issue die Handles aus `Backe-Actor` der Commits seit dem letzten `head`, die Pfade dieses Issues ändern, sortiert und ohne Doppelte; nur für Issues, die im Patch stehen (`upsert`, `remove`, `touched`), und es fehlt, wenn leer. Hand-Edits im Arbeitsbaum haben keine Actors. Kommt eine Bewegung von `HEAD` erst eine Runde später als Patch heraus (kaputter Stand dazwischen), reisen ihre Actors mit. Der Client trennt damit fremde Änderungen von eigenen (§2.10, »Browser-Benachrichtigungen«).
 - Jedes Ereignis trägt `id: <boot>:<rev>`; `boot` sind 8 Hex-Zeichen Zufall je Serverprozess, `rev` zählt je Backlog ab 0. Nur `patch` erhöht `rev`; `hello`, `sync` und `reset` tragen den aktuellen. Der Server hält die letzten 200 Patches. Verbindet sich ein Client mit `Last-Event-ID` neu, bekommt er die verpassten Patches; liegt `rev` außerhalb des Puffers oder stammt die ID aus einem früheren Serverprozess (anderes `boot`), bekommt er `reset`, ebenso bei einer ungültigen ID.
-- **Reihenfolge beim Verbinden:** zuerst `hello`, dann die verpassten Patches oder `reset`, dann `sync` mit dem aktuellen Zustand, falls es eine eigene Arbeitskopie gibt.
+- **Reihenfolge beim Verbinden:** zuerst `hello`, dann die verpassten Patches oder `reset`, dann `sync` mit dem aktuellen Zustand, falls es eine eigene Arbeitskopie gibt, dann `loop`, falls das Backlog eine Loop-Config hat. `loop` und `loop_journal` zählen wie `sync` nicht zu `rev` und stehen nicht im Puffer; verpasste Journal-Einträge holt der Client über `GET …/loop/journal`.
 - **Client-Protokoll:** Der Client verbindet zuerst den Event-Stream und lädt `/state` nach `hello`. `/state.rev` ist der `rev` des Watchers, gelesen vor dem Laden des Zustands; der Zustand ist damit mindestens so neu wie `rev`, und Patches mit `rev` ≤ `state.rev` verwirft der Client. Ohne laufenden Watcher ist `rev` der zuletzt erreichte, sonst 0.
 - **Neustart des Watchers:** Endet ein Watcher (30 s nach dem letzten Abonnenten) und startet derselbe Serverprozess später einen neuen, beginnt dieser mit dem `rev` nach dem letzten und leerem Puffer. Eine ältere `Last-Event-ID` ergibt so `reset`, nie fremde Patches.
 - Alle 15 s ein Kommentar-Heartbeat (`: ping`), damit die Verbindung nicht stillschweigend abreißt.
@@ -196,8 +203,8 @@ backe · Backlogs for humans                         [Backlog ▾]  spw  ● syn
 ```
 
 - **Kopfzeile:** Wortmarke; Backlog-Umschalter (Name und ID-Präfix aller registrierten Backlogs); Identität (Handle, bei fehlendem Key mit Marke »nur lesen«); Sync-Anzeige (`up to date`, `<n> unpushed`, `<n> conflict(s)`, `last sync failed`, `offline` — dieselben Zustände wie die Kopfzeile des CLI, BK §2.16.2); Theme-Umschalter.
-- **Tab-Leiste:** `Backlog` und `Board` sind immer da und nicht schließbar. Issue-Tabs (§2.9) öffnen sich aus jeder Ansicht per Klick und schließen per `×` oder Mittelklick; passen sie nicht in die Breite, scrollt die Leiste. Rechts das Suchfeld (§2.11) und `⚙` für Settings (§2.10), ebenfalls immer da.
-- **Routing:** `/b/<backlog>/backlog`, `/b/<backlog>/board`, `/b/<backlog>/issue/<id>`, `/b/<backlog>/settings/<abschnitt>`. Jede Ansicht ist per Link und nach Reload erreichbar. Ein Backlog-Wechsel ist ein Routenwechsel; offene Issue-Tabs gelten je Backlog.
+- **Tab-Leiste:** `Backlog` und `Board` sind immer da und nicht schließbar. `Loop` steht dahinter, sobald für das Backlog eine Loop-Config existiert (§2.18), und ist ebenfalls nicht schließbar. Issue-Tabs (§2.9) öffnen sich aus jeder Ansicht per Klick und schließen per `×` oder Mittelklick; passen sie nicht in die Breite, scrollt die Leiste. Rechts das Suchfeld (§2.11) und `⚙` für Settings (§2.10), ebenfalls immer da.
+- **Routing:** `/b/<backlog>/backlog`, `/b/<backlog>/board`, `/b/<backlog>/loop`, `/b/<backlog>/issue/<id>`, `/b/<backlog>/settings/<abschnitt>`. Jede Ansicht ist per Link und nach Reload erreichbar. Ein Backlog-Wechsel ist ein Routenwechsel; offene Issue-Tabs gelten je Backlog.
 - **Gelöschtes Issue** in einem offenen Tab: Der Tab bleibt, zeigt »gelöscht« und schließt erst auf Wunsch.
 - **Tastatur:** `⌘K`/`Ctrl-K` fokussiert die Suche (nicht bei offenem Dialog oder Menü), `c` neues Issue, `Esc` schließt Dialoge. Alle Aktionen sind ohne Maus erreichbar.
 
@@ -365,10 +372,45 @@ Prüfbar mit einem Benchmark-Backlog von 10⁴ Issues auf localhost:
 | Write im CLI bis zur sichtbaren Änderung in allen offenen Ansichten (eigene Arbeitskopie) | ≤ 300 ms | höchstens 6 ms nach dem Ende des CLI-Prozesses, 44 ms nach der Bewegung des Refs (Backlog, Board, Issue-Tab) |
 | Board-Drag bis zur optimistischen Anzeige | im selben Frame | im ersten Frame nach dem Loslassen (16,4 ms), kein Frame über 17 ms bei Start und Ziehen, auch mit 7 600 Karten in einer Bahn |
 | Scrollen durch die Liste | ohne Frame-Drops bei 60 Hz | 0 Drops in 4 s, auch mit CPU-Drosselung 4× |
+| Commit in `state.db` bis zur sichtbaren Änderung im Tab Loop | ≤ 500 ms | noch nicht gebaut |
 
 Gemessen mit `scripts/bench-ui.ts` (§5 »Performance«): 10⁴ Issues, 20 Nachbarn, je fünf Läufe, Chromium headless auf einem Ryzen 9 7900X3D (24 Threads, 60 GB RAM, Linux), Node 26. »Im selben Frame« heißt: Im ersten `requestAnimationFrame` nach dem Loslassen steht die Karte in der Zielzelle, und dieser Frame kommt ohne Frame-Drop (≤ 25 ms); ein Frame-Drop ist ein Abstand zweier Frames über 25 ms. Der CLI-Prozess eines Writes selbst braucht in diesem Backlog rund 3,5 s; das ist der Schreibpfad von BK (Snapshot und Policy-Prüfung), nicht die UI.
 
 Verfehlt die Umsetzung ein Ziel, ist das ein offener Punkt mit Messung, kein stilles Nachgeben.
+
+### 2.18 Tab Loop
+
+Der Tab zeigt den Zustand der Backstube (BS) für dieses Backlog, live: was läuft, worauf was wartet, was den Menschen braucht. Er erscheint, sobald `<BACKE_HOME>/loop/<backlog>/config.jsonc` existiert, und zeigt den Zustand auch dann, wenn `backe loop run` gerade nicht läuft, dann als letzten bekannten Stand mit der Marke »Loop läuft nicht«.
+
+```
+┌ Slots ────────────────┐ ┌ Graph ────────────────────────────────────────────┐
+│ bs-w1  bk-7f3k  build │ │   [bk-1a2b  ✓ gemergt]                            │
+│ bs-w2  bk-9c2e  spec  │ │          │                                        │
+│ bs-rv  bk-4d1f  review│ │   [bk-7f3k  spec ✓ plan ✓ ▶ build · r1/3 · w1]    │
+├ Merge-Queues ─────────┤ │        │                    │                     │
+│ webapp → main         │ │   [bk-8e0c ⧗ wartet]   [bk-2b9a ⧗ wartet]         │
+│ ▶ bk-4d1f  4/6 verify │ │                                                   │
+│   bk-5aa0  wartet     │ └───────────────────────────────────────────────────┘
+├ Braucht dich ─────────┤ ┌ Journal ──────────────────────────────────────────┐
+│ ⚠ bk-3f07 eskaliert   │ │ 10:42:07  spawn   bk-9c2e spec   Dispatch 3.2  ✓  │
+│ ? bk-6c11 Rückfrage   │ │ 10:41:55  verify  bk-4d1f        Merge 4       ✓  │
+└───────────────────────┘ └───────────────────────────────────────────────────┘
+ Loop läuft · letzter Tick vor 12 s · [⏸ Pause]
+```
+
+- **Statuszeile:** Loop läuft oder läuft nicht (Instanz, BS §2.9.1), Zeit seit dem letzten Tick, pausiert (alles oder einzelne Repos), der Knopf Pause bzw. Weiter.
+- **Graph** (Hauptansicht): die Issues im Bereich des Loops, also offene Issues der `watch`-Einträge und alle Issues, die ein Slot, der Reviewer oder die Triage hält (`scope` im Lesemodell, BS §2.14). Erledigte Issues stehen nur da, solange sie direkte Voraussetzung eines offenen sind, abgeschwächt wie in §2.9.5. Kanten wie in §2.9.5: `depends_on` durchgezogen, `parent` gepunktet; ein aufgeteiltes Issue (BS §2.5.5) steht über seinen Teilen und zeigt ihren Fortschritt (`3/8`). Layout von oben nach unten mit derselben Graph-Komponente und demselben Chunk wie §2.9.5, ebenso Schwenken, Zoomen und die Grenze von 150 Knoten mit Sammelknoten. Ein Auswahlfeld beschränkt den Graphen auf einen `watch`-Eintrag; »Nur aktiv« zeigt nur Issues mit laufender Phase und ihre direkten Nachbarn.
+- **Knoten:** ID, gekürzter Titel, ein Phasen-Stepper des Workflows (erledigte Phasen mit Haken, die aktuelle mit dem Icon ihres `backstube.status`: läuft, wartet, hängt, gescheitert), Slot bzw. Reviewer, Laufzeit der Phase, Runde `r<round>/<limit>` ab der ersten Runde, Marken für eskaliert, `on_hold`, `blocked`, »Merge wartet auf Freigabe« und »in der Merge-Queue« mit Position. Wie überall Icon und Text statt Farbe (§2.13); das Icon einer laufenden Phase bewegt sich dezent, außer bei `prefers-reduced-motion`.
+- **Liste:** dieselben Issues als Tabelle (ID, Titel, Phase, Status, Slot, Runde, Marken), sortierbar, als zugängliche Alternative zum Graphen wie der Baum in §2.9.5. Graph oder Liste steht je Backlog im `localStorage`.
+- **Seitenleiste:**
+  - **Slots:** je Slot, Reviewer und Triage das gehaltene Issue mit Phase, Runtime, Laufzeit und Alter des letzten Heartbeats, dazu der Link zur Session (`backstube.session`); ein freier Slot heißt »frei«.
+  - **Merge-Queues:** je Repo und Ziel-Branch der laufende Job mit seinem Schritt nach BS §2.6.3 (`4/6 verify`), Art (`issue`, `docs`, `sprint`, `revert`), Basis-Commit und Laufzeit des Verify; darunter die wartenden Jobs in Reihenfolge und der letzte Merge. Eine pausierte Queue trägt die Marke »pausiert« und einen eigenen Knopf Weiter.
+  - **Braucht dich:** eskalierte Issues, Issues auf `stalled`, offene Entscheidungen an `human` aus der Backstube, Merge-Freigaben (`backstube.merge: manual` ohne Freigabe) und Issues, die der Loop auf `on_hold` gesetzt hat, jeweils mit dem Grund aus dem Lesemodell und einem Link auf den Issue-Tab.
+- **Journal:** die Einträge aus BS §2.9.2, neueste oben, je Zeile Zeit, Aktion, Issue, Phase, auslösende Regel und Ergebnis. Ein Klick auf einen Knoten filtert das Journal auf dieses Issue. Der Client hält die letzten 500 Einträge, ältere lädt »Mehr« über `GET …/loop/journal`.
+- **Details eines Knotens** (Seitenpanel, schließbar): die Phasenläufe mit Start, Ende, Slot, Harness und Ergebnis, die Runden mit Art und Fingerprint, die Prozessfragen (`backstube.choices`), Links auf Issue-Tab, Session und die Feedback-Anhänge (BS §2.7.1).
+- **Notbremse:** Pause in der Statuszeile wirkt sofort und ohne Rückfrage auf Dispatch und alle Merge-Queues; je Queue pausiert ein eigener Knopf nur dieses Repo. Weiter fragt nach. Beides ruft `loop_pause` bzw. `loop_resume` (§2.3.2) und damit dieselbe Funktion wie `backe loop pause|resume`. Ohne Schreibrecht gibt es keine Knöpfe. Weitere Steuerung (`kick`, `revert`) bleibt im CLI (§4.3).
+- **Live:** Phase, Status, Runde und Assignee sind Properties der Issues und kommen mit den Patches (§2.4.2); Slots, Queues, Läufe und Journal kommen mit `loop` und `loop_journal`. Was sich ändert, hebt sich 1,5 s lang dezent ab wie in §2.7. Der Zustand des Tabs liegt wie alles andere in signalize, ein Signal je Slot, Queue und Lauf (ADR-002).
+- **Chunk:** Der Tab lädt als eigener Chunk erst beim Öffnen; Backlog, Board und Issue-Tab tragen seinen Code nicht mit.
 
 ## 3. Designentscheidungen
 
@@ -418,6 +460,14 @@ Vite, React und alle Frontend-Bibliotheken sind Werkzeuge zur Build-Zeit. Ausgel
 
 Verwaltet werden sie in den Settings (§2.10), gefunden über Suche und Filter. Eigene feste Tabs, wie die Skizze `backlog.png` sie zeigt, verdoppelten, was die Filter des Tabs Backlog schon leisten.
 
+### 3.11 Loop-Zustand aus `state.db`, nicht vom Loop-Prozess
+
+Der Server liest die Datenbank der Backstube über deren Lesemodell (BS §2.14) mit einer eigenen lesenden Verbindung; WAL erlaubt Leser neben dem schreibenden Loop. So zeigt der Tab auch den letzten Stand eines gestoppten Loops, zwischen den beiden Prozessen gibt es weder Port noch Protokoll, und `backe loop status` liest genau dasselbe. Verworfen: ein Endpunkt im Loop-Prozess, den die UI abfragt (ein zweiter Server, und ohne laufenden Loop bliebe der Tab leer); das Journal ins Backlog spiegeln (jeder Tick ein signierter Commit). Begründung und Folgen: ADR-003.
+
+### 3.12 Graph statt Phasen-Spalten
+
+Im Loop ist die wichtigste Frage nicht, wo ein Issue steht, sondern warum es nicht startet. Das zeigen die Kanten des Graphen; Spalten je Phase zeigen es nicht. Der Phasen-Stepper im Knoten trägt die Information, die Spalten gezeigt hätten. Die Liste bleibt als zugängliche Alternative.
+
 ## 4. Was offen bleibt
 
 ### 4.1 Offene Entscheidungen
@@ -438,7 +488,7 @@ Verbindlich erst, wenn BK sie aufnimmt:
 - `SharedWorker`, der eine Event-Verbindung für alle Browser-Tabs hält (§3.1).
 - Serverseitiges Paging und Filtern bei sehr großen Backlogs (Bedingung in §3.4).
 - Zugriff von anderen Rechnern mit echter Authentifizierung.
-- Ansicht für die Backstube (Phasen, Merge-Queue, Rückfragen; BS).
+- Weitere Steuerung im Tab Loop (`kick`, `revert`; BS §2.13), sobald die Notbremse nicht mehr genügt.
 
 ## 5. Tests
 
@@ -455,6 +505,7 @@ Verbindlich erst, wenn BK sie aufnimmt:
 - Sitzung: Token-Tausch gegen Cookie, 401 ohne Cookie, 403 bei fremdem `Host` oder `Origin`, CSP- und Anhang-Header.
 - API-Parität: Jedes Tool liefert dasselbe JSON wie das MCP-Tool bzw. der CLI-Befehl mit `--format json`; Fehler-Mapping Exit-Code → HTTP-Status.
 - Upload: Größenlimit greift während des Uploads, Temp-Datei ist danach weg.
+- Loop: `GET …/loop` und `…/loop/journal` liefern dasselbe JSON wie `backe loop status` bzw. `log` mit `--format json` auf Fixture-Datenbanken; ohne Loop-Config 404; `loop_pause` und `loop_resume` wirken wie im CLI; ein Commit in `state.db`, gemeldet über den injizierten Watcher, ergibt genau ein `loop`-Ereignis, ein Ereignis ohne geänderte `data_version` keins; tote Instanz → »läuft nicht«.
 
 **Live-Updates** (echtes Git, Temp-Backlogs, Bare-Remote bzw. Hub):
 
@@ -471,7 +522,8 @@ Verbindlich erst, wenn BK sie aufnimmt:
 - Store: Patches anwenden, abgeleitete Werte gegen dieselben Fixtures wie die Unit-Tests von `src/ops/graph.ts`; ein Patch auf ein Issue rendert nur dessen Abonnenten neu.
 - Filter-Parität: Client-Filter gegen `issue list --format json` auf Fixture-Backlogs.
 - Markdown: Bereinigung (Skripte, Event-Handler, `javascript:`-Links fallen weg), relative Bildpfade, Issue-ID-Links.
+- Tab Loop: Knoten und Kanten aus Store und Lesemodell gegen Fixtures, Bereich und »Nur aktiv«, Liste mit denselben Issues, Journal-Filter.
 
-**E2E** (Playwright gegen das gebaute `backe ui`, `test/browser/*.spec.ts`, in Chromium, Firefox und WebKit; lokal `mise run e2e`, in der CI der Job `e2e`, BK §2.21): anlegen, bearbeiten, verschieben per Drag & Drop und per Tastatur, Live-Update nach parallelem CLI-Write, Theme-Wechsel ohne Aufblitzen, Mermaid-Rendering, Anhang hochladen und anzeigen, Backlog-Wechsel. Jeder Test bekommt ein eigenes Zuhause (isoliert wie oben) mit zwei Backlogs und einen eigenen `backe ui --port 0`, wartet auf Zustände statt auf Zeit und endet ohne Konsolenfehler und ohne Antwort ≥ 400 der App.
+**E2E** (Playwright gegen das gebaute `backe ui`, `test/browser/*.spec.ts`, in Chromium, Firefox und WebKit; lokal `mise run e2e`, in der CI der Job `e2e`, BK §2.21): anlegen, bearbeiten, verschieben per Drag & Drop und per Tastatur, Live-Update nach parallelem CLI-Write, Theme-Wechsel ohne Aufblitzen, Mermaid-Rendering, Anhang hochladen und anzeigen, Backlog-Wechsel, Tab Loop gegen einen Fake-Loop, dessen Datenbank der Test schreibt (Slot wechselt, Job rückt vor, Notbremse greift). Jeder Test bekommt ein eigenes Zuhause (isoliert wie oben) mit zwei Backlogs und einen eigenen `backe ui --port 0`, wartet auf Zustände statt auf Zeit und endet ohne Konsolenfehler und ohne Antwort ≥ 400 der App.
 
 **Performance:** `scripts/bench-ui.ts` prüft die Ziele aus §2.17 gegen ein generiertes Backlog mit 10⁴ Issues (`scripts/bench-backlog.ts`) samt 20 Nachbarn; es läuft auf Anfrage (`node scripts/bench-ui.ts`), nicht in jedem CI-Lauf. Gemessen wird im Browser über `requestAnimationFrame`, gedrosselt nur per CDP auf der Messseite.

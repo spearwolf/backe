@@ -10,7 +10,7 @@ sonst.
 
 ### Backstube (BS)
 
-Spec im Entwurf, offene Entscheidungen in BS §4.1; Umsetzung nach BS §6.
+Spec im Entwurf, offene Entscheidungen in BS §4.1; Umsetzung nach BS §6. Der Tab Loop in `backe ui` (UI §2.18) gehört zu F1.
 
 ## Offene Entscheidungen
 
@@ -22,7 +22,6 @@ Spec im Entwurf, offene Entscheidungen in BS §4.1; Umsetzung nach BS §6.
 | Vertrauen und MCP-Freigabe in frischen Worktrees | BS §4.1       | wird in F1 geprüft                |
 | Kontext aus zusätzlichen Verzeichnissen          | BS §4.1       | zu prüfen                         |
 | Vorgabe für `gates.paths`                        | BS §4.1       | Vorschlag leer, Beispiel in Doku  |
-| Beobachtbarkeit: CLI oder UI                     | BS §4.1       | Vorschlag CLI in F1               |
 | Modell je Phase                                  | BS §4.1       | nach Messung in F1                |
 | `.backe/backlog.jsonc` aus der UI bearbeiten     | UI §4.1, §4.2 | erst mit einer Operation in BK    |
 | Fehlertexte in der UI-Sprache                    | UI §4.1       | erst mit Messages je Aufruf       |
@@ -51,7 +50,7 @@ Spec im Entwurf, offene Entscheidungen in BS §4.1; Umsetzung nach BS §6.
 - Standalone-Binaries (BK §4.2)
 - Lokalen Hub auf ein später ergänztes Remote umhängen (BK §4.2)
 - Zugriff auf die UI von anderen Rechnern mit echter Authentifizierung (UI §4.3)
-- Ansicht für die Backstube in der UI (UI §4.3)
+- Weitere Steuerung im Tab Loop: `kick`, `revert` (UI §4.3)
 - `next` mit `--prop`-Filter (BS §4.2)
 - Weitere Harnesses über ACP, Kosten je Issue (BS §4.2)
 - CI als Verify, Container je Worktree, `watch`-Liste ins Backlog (BS §4.2)

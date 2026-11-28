@@ -22,7 +22,11 @@ wenn BK es aufnimmt.
 
 BK vor UI. UI ist ein Adapter über den Service-Layer wie CLI und MCP; was UI
 zusätzlich braucht, steht in UI §4.2 und wird erst verbindlich, wenn BK es
-aufnimmt. BS und UI berühren sich nicht.
+aufnimmt.
+
+BS und UI berühren sich nur im Tab Loop (UI §2.18): Was der Zustand der
+Backstube bedeutet und welche Felder ihr Lesemodell trägt, regelt BS (§2.14);
+wie die UI ihn überträgt und darstellt, regelt UI.
 
 Wird `backe.md` in Domains aufgeteilt (naheliegend: Datenmodell, Signaturen &
 Sync, CLI & MCP), legt dieser Abschnitt die Reihenfolge innerhalb von BK fest.

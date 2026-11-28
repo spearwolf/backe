@@ -37,7 +37,7 @@ Der Name: In der Backstube wird gebacken (BK, »Der Name«).
 - Keine Workflow-Engine als Server (Temporal, Restate) und kein Agent-Framework als Runtime, auch nicht Hermes (§3.2, §3.14).
 - Keine Sandbox. Agents laufen als lokale Prozesse im Worktree; ob und wann Container kommen, ist offen (§4.1).
 - Kein eigenes Paket und kein eigenes Repo. Die Backstube ist der Befehl `backe loop` in `@spearwolf/backe` und nutzt dessen Service-Layer direkt (§2.14, §3.3). Was sie darüber hinaus vom Kern braucht, steht als Wunsch an BK in §4.2.
-- Keine eigene UI. Der Mensch arbeitet mit der Claude-App, dem `backe`-CLI und `backe loop status`; eine Ansicht in `backe ui` folgt später (UI §4.3).
+- Keine eigene UI. Der Mensch arbeitet mit der Claude-App, dem `backe`-CLI und dem Tab Loop in `backe ui` (UI §2.18), der den Zustand der Backstube live zeigt.
 
 ### 0.4 Anti-Ziele
 
@@ -518,7 +518,7 @@ Jede `integrate`-Runde erhöht `backstube.round`. Grenze, Wiederholung und Pende
 
 - **Freigabe je Issue:** `backstube.merge: manual` hält das Issue vor der Queue an und stellt die Rückfrage »Mergen?«. Gesetzt vom Menschen für heikle Änderungen, von der Triage bei den Themen ihrer Pflicht-Eskalation (§2.10.3) und von der Backstube selbst, wenn der Diff einen Pfad aus `gates.paths` berührt (§2.6.3, Schritt 3). Die Pfadliste ist deterministisch: Schema-Migrationen, Lockfiles, CI-Konfiguration oder sicherheitsrelevante Verzeichnisse erzwingen eine Freigabe, ohne dass ein Modell das erkennen muss.
 - **Freigabe je Sprint:** `gates.sprint` mit Ziel `sprint` (§2.6.1).
-- **Notbremse:** `backe loop pause [--repo <name>]` hält Queues und Dispatch an; laufende Jobs enden vor dem Veröffentlichen.
+- **Notbremse:** `backe loop pause [--repo <name>]` hält Queues und Dispatch an; laufende Jobs enden vor dem Veröffentlichen. Der Pause-Zustand steht in `kv` der Datenbank (§2.9.1), die Schleife liest ihn vor jedem Dispatch und vor jedem Veröffentlichen. Er wirkt damit auch, wenn `backe loop run` gerade nicht läuft, und dieselbe Funktion bedient den Knopf im Tab Loop (UI §2.18).
 - **Rückgängig:** `backe loop revert <id>` erzeugt über dieselbe Queue einen Revert-Commit des Squash-Commits und öffnet das Issue wieder (`backe issue reopen`). Hängen erledigte Issues per `depends_on` daran, nennt die Backstube sie und revertiert nichts ohne `--cascade`.
 - **PR nur als Transportmittel:** Verbietet eine Branch-Protection Pushes auf den Ziel-Branch, öffnet die Backstube mit `merge.via: "github-pr"` einen PR und aktiviert GitHubs Auto-Merge. Die Status-Checks ersetzen dann Schritt 4 oder ergänzen ihn, und `done` folgt erst auf den Merge. Der PR ist kein Arbeitsauftrag an den Menschen.
 
@@ -676,7 +676,7 @@ CREATE TABLE failures (           -- Fingerprint-Historie je Issue (§2.7.2)
   created_at    TEXT NOT NULL
 );
 
-CREATE TABLE kv (                 -- Instanz-Lock, Schema-Version, Hashes für prepare (§2.6.2)
+CREATE TABLE kv (                 -- Instanz, letzter Tick, Pause-Zustand, Schema-Version, Hashes für prepare (§2.6.2)
   key           TEXT PRIMARY KEY,
   value         TEXT NOT NULL
 );
@@ -877,7 +877,7 @@ Die Backstube selbst ruft den Service-Layer im Prozess auf (§3.3); MCP ist die 
 | `backe loop run` | die Schleife im Vordergrund; Betrieb als systemd-User-Unit |
 | `backe loop tick` | genau ein Durchlauf, für Tests und Cron |
 | `backe loop plan` | Trockenlauf: die Aktionen des nächsten Ticks samt auslösender Regel, ohne sie auszuführen |
-| `backe loop status` | Slots, Sessions, Harnesses, Phasen, Runden, Links, `stalled`- und eskalierte Issues |
+| `backe loop status` | Slots, Sessions, Harnesses, Phasen, Runden, Links, Queues, `stalled`- und eskalierte Issues; mit `--format json` das Lesemodell aus §2.14 |
 | `backe loop log <id>` | Journal eines Issues: welche Regel welche Aktion ausgelöst hat, mit Ergebnis (§2.9.2) |
 | `backe loop kick <id> [--workflow <w>] [--phase <p>] [--harness <h>]` | Phase von Hand starten oder zurücksetzen; `attempts`, `round` und Fingerprint-Historie auf 0 |
 | `backe loop queue [--repo <name>]` | Merge-Queues: wartende Jobs, laufender Job mit `baseSha`, letzter Merge |
@@ -888,7 +888,10 @@ Die Backstube selbst ruft den Service-Layer im Prozess auf (§3.3); MCP ist die 
 
 ### 2.14 Einbettung in `backe`
 
-- **Schicht:** Der Code liegt unter `src/loop/`, über `services/` und unter `cli/`. Er nutzt die Use-Cases des Service-Layers und die Git-Bausteine aus `git/`, aber nie `store/` oder `ops/` direkt, damit jeder Write durch dieselben Prüfungen geht wie bei CLI und MCP. Die Befehle unter `backe loop` sind ein dünner Teil des CLI-Adapters. MCP-Tools und UI-Endpunkte für den Loop gibt es nicht; eine spätere Ansicht in der UI (UI §4.3) liest, was `backe loop status` liest.
+- **Schicht:** Der Code liegt unter `src/loop/`, über `services/` und unter `cli/`. Er nutzt die Use-Cases des Service-Layers und die Git-Bausteine aus `git/`, aber nie `store/` oder `ops/` direkt, damit jeder Write durch dieselben Prüfungen geht wie bei CLI und MCP. Die Befehle unter `backe loop` sind ein dünner Teil des CLI-Adapters. MCP-Tools für den Loop gibt es nicht.
+- **Lesemodell:** Ein Modul in `src/loop/` öffnet `state.db` lesend und setzt zusammen mit dem Backlog den Zustand zusammen, den `backe loop status`, `queue` und `log` mit `--format json` ausgeben und den der Tab Loop zeigt (UI §2.18):
+  `{instance: {running, host, pid, last_tick}, paused: {all, repos}, scope: [id], slots: [{handle, role, issue?, phase?, run?}], runs: [{id, issue, phase, slot, harness, status, started_at, heartbeat_at}], queues: [{repo, target, paused, running?: {issue, kind, step, base_sha, started_at}, pending: [id], last_merge?}], attention: [{issue, kind, reason}]}`. `attention.kind` ist `escalated`, `stalled`, `decision`, `merge_approval` oder `on_hold`. Das Journal liefert dasselbe Modul seitenweise (§2.9.2). Was das Schema der Datenbank bedeutet, steht damit an genau einer Stelle; CLI und UI lesen nie selbst SQL.
+- **Steuerung von außen:** `pause` und `resume` sind eine Funktion des Moduls, die nur den Pause-Zustand in `kv` schreibt (§2.6.5). Die UI ruft sie als Tools `loop_pause` und `loop_resume` auf (UI §2.3.2); weitere Endpunkte für den Loop hat sie nicht.
 - **Identitäten im Prozess:** Jede Operation löst ihren Kontext mit der Rolle auf, als die sie schreibt, wie `--as <handle>` (BK §2.14). Jede Rolle schreibt in ihre eigene Arbeitskopie (BK §2.16.1); der Prozess hält keine eigenen Keys, sondern nutzt die `identities` der User-Config.
 - **Kosten für alle anderen:** Der Loop ist ein eigener Chunk im Bundle, den nur `backe loop` lädt. Andere Befehle starten nicht langsamer, und `node:sqlite` wird nur dort geöffnet. Neue Runtime-Abhängigkeiten kommen nur, wo Node keine Bordmittel hat; ob der ACP-Client ein SDK braucht oder ein schlanker eigener JSON-RPC-Client über stdio genügt, entscheidet F2 nach BK §2.20 (»klein halten«).
 - **Skills im Paket:** `backstube-worker` und `backstube-intake` liegen im Paket unter `skills/`. `backe loop doctor` prüft, ob die installierte Fassung je Harness zur Paketversion passt; `--fix` kopiert sie nur nach ausdrücklicher Bestätigung in das Skill-Verzeichnis des Harness, denn das ist Konfiguration des Menschen.
@@ -1005,7 +1008,6 @@ Bei »Subagents oder inline?« ist die Empfehlung des Skills eine gute Antwort: 
 - **Vertrauen und MCP-Freigabe in frischen Worktrees** (§2.5.3, Punkt 7): Kandidaten sind die Vorab-Freigabe des Verzeichnisses in der Claude-Code-Konfiguration und eine Settings-Datei, die die Projekt-MCP-Server des Repos ausdrücklich freigibt. Für ACP-Agents ist zu prüfen, ob sie in einem unbekannten Verzeichnis überhaupt fragen. Kipp-Punkt: Geht es nur über das pauschale Abschalten der Abfragen, beschränkt sich die Backstube auf Repos, die der Mensch per `repos.<name>` ausdrücklich freigegeben hat.
 - **Kontext aus zusätzlichen Verzeichnissen:** Ob und welche Kontextdateien, Skills und MCP-Konfigurationen ein Harness aus `--add-dir` bzw. dem ACP-Gegenstück lädt, ist zu prüfen. Bis dahin gelten weitere Repos nur als lesbarer Code, nicht als Kontext.
 - **Vorgabe für `gates.paths`:** Vorschlag ist eine leere Vorgabe mit der Beispielliste aus §2.3 in der Doku, weil sichere Pfade repo-spezifisch sind. Kipp-Punkt: Im Betrieb landet eine Migration oder eine Dependency-Änderung ohne Freigabe im Ziel-Branch.
-- **Beobachtbarkeit:** Vorschlag: `status`, `log` und `queue` auf Basis der SQLite-Tabellen genügen für F1; eine Ansicht in `backe ui` folgt später (UI §4.3). Kipp-Punkt: Der Mensch öffnet für eine Eskalation regelmäßig die Datenbank von Hand.
 - **Modell je Phase** (etwa das stärkste Modell für `spec` und `review`, ein schnelleres für `build`): nur Konfiguration, entschieden wird nach Messung in F1.
 
 ### 4.2 Späterer Ausbau
@@ -1037,7 +1039,7 @@ Bei »Subagents oder inline?« ist die Empfehlung des Skills eine gute Antwort: 
 
 | Schritt | Inhalt | Fertig, wenn |
 | --- | --- | --- |
-| **F1 — MVP** | Config, `doctor`, Identitäten, SQLite-Engine mit Journal und Wiederaufnahme, Reconcile und Dispatch, Reaper, Runtime `remote-control`, Skill `backstube-worker` mit `questions: interactive`, Workflows `superpowers` (samt Plansatz-Split und `close`, §2.5.5), `direct` und `task`, Arbeitsverzeichnis nach §2.5.3 samt `local_files` und Vertrauensfreigabe, Merge-Worktree und Merge-Queue mit `verify`, Squash, CAS und Ziel `default`, Phase `integrate` mit Feedback-Objekt und Circuit Breaker, Pfad-Gates, Port-Variablen und Verify-Semaphor, `pause` und `revert`, `status`, `log`, `plan`, `queue` und `workflows` | Ein Sprint mit mindestens drei Issues, davon eines per `depends_on` abhängig und zwei mit Überschneidung in denselben Dateien, landet vollständig im Ziel-Branch, ohne einen einzigen Merge von Hand; der Mensch hat dafür nur am Handy Fragen beantwortet. Ein `direct`-Issue kommt ohne Spec und Plan in den Ziel-Branch; eine `task`-Session nutzt einen repo-lokalen Skill und einen Projekt-MCP-Server. Ein Spec mit drei aufeinander aufbauenden Plänen landet als Doku-Commit und drei Squash-Commits in dieser Reihenfolge im Ziel-Branch, danach ist der Parent `done`. Ein absichtlich unlösbarer Konflikt eskaliert spätestens nach `integrate_rounds` Runden, ein wiederholter Fehler schon in der zweiten. Ein Neustart der Backstube mitten im Merge-Job erzeugt keinen Doppel-Commit |
+| **F1 — MVP** | Config, `doctor`, Identitäten, SQLite-Engine mit Journal und Wiederaufnahme, Reconcile und Dispatch, Reaper, Runtime `remote-control`, Skill `backstube-worker` mit `questions: interactive`, Workflows `superpowers` (samt Plansatz-Split und `close`, §2.5.5), `direct` und `task`, Arbeitsverzeichnis nach §2.5.3 samt `local_files` und Vertrauensfreigabe, Merge-Worktree und Merge-Queue mit `verify`, Squash, CAS und Ziel `default`, Phase `integrate` mit Feedback-Objekt und Circuit Breaker, Pfad-Gates, Port-Variablen und Verify-Semaphor, `pause` und `revert`, `status`, `log`, `plan`, `queue` und `workflows`, Lesemodell und Tab Loop in `backe ui` (UI §2.18) | Ein Sprint mit mindestens drei Issues, davon eines per `depends_on` abhängig und zwei mit Überschneidung in denselben Dateien, landet vollständig im Ziel-Branch, ohne einen einzigen Merge von Hand; der Mensch hat dafür nur am Handy Fragen beantwortet und den Lauf im Tab Loop live verfolgt. Ein `direct`-Issue kommt ohne Spec und Plan in den Ziel-Branch; eine `task`-Session nutzt einen repo-lokalen Skill und einen Projekt-MCP-Server. Ein Spec mit drei aufeinander aufbauenden Plänen landet als Doku-Commit und drei Squash-Commits in dieser Reihenfolge im Ziel-Branch, danach ist der Parent `done`. Ein absichtlich unlösbarer Konflikt eskaliert spätestens nach `integrate_rounds` Runden, ein wiederholter Fehler schon in der zweiten. Ein Neustart der Backstube mitten im Merge-Job erzeugt keinen Doppel-Commit |
 | **F2 — Fragen als Issues, ACP** | `questions: issues`, Batch-Protokoll, Wiedereinstieg, Runtime `acp` mit Claude Code als Referenz-Harness (§2.11.2), Phase `intake` mit `backstube-intake`, Benachrichtigung nach §4.1 | Eine Rückfrage blockiert nur ihr Issue, nicht ihren Slot, und die Antwort steht als Entscheidung im Backlog. Ein Issue läuft über ACP ohne Terminal und ohne Rückfrage im Session-Kanal durch alle Phasen bis in den Ziel-Branch |
 | **F3 — Triage** | `bs-triage`, Quellen, Pflicht-Eskalation, Veto, Veto-Quote | Über zwei Wochen Betrieb landen messbar weniger Fragen beim Menschen, bei einer Veto-Quote, die der Mensch akzeptiert |
 | **F4 — Rundum** | Ziel `sprint` mit `gates.sprint`, `merge.via: github-pr`, Batch-Merges, CI als Verify, Container je Worktree, weitere Harnesses, Kosten je Issue, mehrere Hosts nach BK-Lease | je Punkt aus §4.2 |
