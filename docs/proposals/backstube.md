@@ -65,25 +65,69 @@ Das Projekt ist gescheitert, auch wenn alles technisch funktioniert, wenn …
 
 ### 2.1 Überblick
 
-```
-             ┌──────────────── Service-Layer von backe (im Prozess) ──────┐
-             ▼                                                             │
-   backe-Backlog (Git) ◄── Macro-State                      backe loop (ein Node-Prozess, deterministisch)
-     ▲          ▲                                             │  Reconcile · Dispatch · Reaper
-     │          │                                             │  state.db (SQLite WAL) ◄── Micro-State
-     │          │                                             │  runs · step_events · merge_jobs · failures
-     │          │ signierte Writes über backe mcp             ▼
-     │          └──── Worker-Session, eine Phase, im Repo-Kontext
-     │                  Runtime remote-control (Claude Code, Stufe 1) | acp (beliebiger Harness)
-     │                  └─ Skill backstube-worker → Skills des Workflows
-     │                                                 Merge-Queue je Repo und Ziel-Branch
-     │                                   Merge-Worktree: squash · verify · CAS-Push ──► Code-Repo
-     └── Mensch: Claude-App (Stufe 1) · backe CLI (ab Stufe 2) · Freigaben · Notbremse
+```mermaid
+flowchart TB
+  human(["Mensch<br/>Claude-App · backe CLI"])
+  subgraph bl["Backlog · Macro-State"]
+    issues[("Issues · Properties · Kommentare<br/>Entscheidungen · Anhänge")]
+  end
+  subgraph lp["backe loop"]
+    direction LR
+    tick["Tick<br/>Reconcile → Dispatch"] <--> db[("state.db<br/>SQLite WAL · Micro-State")]
+    tick --> queue["Merge-Queue<br/>je Repo und Ziel-Branch"]
+  end
+  subgraph ss["Worker-Sessions"]
+    sess["Claude Code<br/>remote-control (Stufe 1) · acp (ab Stufe 2)"]
+  end
+  subgraph repo["Code-Repo"]
+    direction LR
+    wt["Issue-Worktrees<br/>backstube/&lt;id&gt;"] ~~~ mwt["Merge-Worktree"]
+    mwt -->|"CAS-Push"| target["Ziel-Branch"]
+  end
+  human <-->|"Fragen · Freigaben · Notbremse"| issues
+  human <-.->|"Stufe 1: Remote Control"| sess
+  tick <-->|"Service-Layer"| issues
+  tick -->|"spawn · kill · Reaper"| sess
+  sess -->|"backe mcp · signierte Writes"| issues
+  sess -->|"Commits"| wt
+  queue -->|"squash · verify"| mwt
 ```
 
 **Macro-State im Backlog.** Phase, Status, Versuche, Session-Link, Ergebnisse, Rückfragen, Eskalationen und der Merge-Commit stehen als `backe`-Writes am Issue. Worker melden ihr Ergebnis ausschließlich darüber und über den Branch. Die Backstube wertet von einer Session nur technische Signale aus: lebt der Prozess, und wie endete der Prompt-Turn. Den Inhalt einer Session parst sie nie.
 
 **Micro-State in SQLite.** `<BACKE_HOME>/loop/<backlog>/state.db` hält, was nur die Ausführung auf diesem Host betrifft: laufende Runs mit Prozess-Handles und Heartbeat, das Journal aller Schritte (`step_events`), die Merge-Jobs samt Basis- und Ergebnis-Commit, und die Fingerprints früherer Fehler. Geht die Datenbank verloren, baut die Backstube Runs und Queues aus Backlog und Runtime wieder auf (§2.9.4); verloren ist dann nur die Fehlerhistorie, nicht die Arbeit.
+
+**Ein Issue im Durchlauf** (Workflow `superpowers`, ohne Rückfragen):
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor M as Mensch
+  participant B as backe-Backlog
+  participant L as backe loop
+  participant W as Slot bs-w1
+  participant R as bs-review
+  participant Q as Merge-Queue
+  participant G as Ziel-Branch
+  M->>B: Issue anlegen, Sprint in watch
+  L->>B: next --claim als bs-w1
+  L->>L: Worktree vom Ziel-Branch anlegen
+  loop je Phase spec, plan, build
+    L->>W: Session starten
+    W->>B: Ergebnis als Batch, nächste Phase
+    L->>W: Session beenden
+  end
+  L->>R: Review-Session starten
+  alt changes
+    R->>B: Urteil changes, zurück zu build
+  else approve
+    R->>B: Urteil approve, Phase merge
+  end
+  L->>Q: Job einstellen
+  Q->>G: squash, verify, CAS-Push
+  Q->>B: Merge-Commit eintragen, done
+  Note over B,L: abhängige Issues sind jetzt bereit
+```
 
 ### 2.2 Rollen und Identitäten
 
@@ -231,9 +275,36 @@ Jedem Workflow lässt sich `intake` als erste Phase voranstellen (§2.5.4). Ein 
 | `plan` | Slot | `writing-plans` | Plan unter `docs/superpowers/plans/` im Branch | `build`, bei aktivem Gate erst nach der Freigabe |
 | `build` | Slot | `subagent-driven-development` (darin `test-driven-development`), `systematic-debugging`, `verification-before-completion` | Commits im Branch | `review`; State → `review` |
 | `review` | `bs-review` | `requesting-code-review`, `verification-before-completion` | Urteil als Kommentar | »approve« → `merge`; »changes« → `build`, State → `in_progress`, `round + 1` |
-| `merge` | `backstube` | keine, Merge-Queue (§2.6.3) | Squash-Commit im Ziel-Branch | `done`; bei Konflikt oder rotem Verify → `integrate` (§2.6.4) |
+| `merge` | `backstube` | keine, Merge-Queue (§2.6.3) | Squash-Commit im Ziel-Branch | `done`; bei Konflikt oder rotem Verify → `integrate` (§2.6.4), State → `in_progress` |
 
-- **States:** Der Claim setzt `in_progress` (BK §2.16.5); `spec`, `plan` und `build` laufen darin. `build` endet mit `review`. Eine Rückweisung im Review geht zurück auf `in_progress`, das erlaubt die Hauptlinie ohne `workflow.strict` (BK §2.6). Während `merge` bleibt das Issue auf `review`; `done` setzt die Backstube im selben Batch, der den Merge-Commit einträgt.
+```mermaid
+stateDiagram-v2
+  direction LR
+  state "Eskalation: on_hold bzw. Entscheidung an den Menschen" as esc
+  [*] --> spec: next --claim
+  state in_progress {
+    spec --> plan
+    plan --> build: Plan freigegeben
+    integrate
+  }
+  state review {
+    rev: review
+    merge
+  }
+  build --> rev
+  rev --> build: changes, round + 1
+  rev --> merge: approve
+  merge --> integrate: Konflikt oder Verify rot
+  integrate --> rev: integriert, lokal grün
+  merge --> done: Squash-Commit im Ziel-Branch
+  rev --> esc: review_rounds erreicht
+  integrate --> esc: Wiederholung, Oszillation, Grenze
+  done --> [*]
+```
+
+Die äußeren Kästen sind die `backe`-States, die inneren die Phasen.
+
+- **States:** Der Claim setzt `in_progress` (BK §2.16.5); `spec`, `plan` und `build` laufen darin. `build` endet mit `review`. Eine Rückweisung im Review geht zurück auf `in_progress`, das erlaubt die Hauptlinie ohne `workflow.strict` (BK §2.6). Während `merge` bleibt das Issue auf `review`; scheitert der Merge, geht es mit `integrate` zurück auf `in_progress`. `done` setzt die Backstube im selben Batch, der den Merge-Commit einträgt.
 - **Worktree:** `superpowers` arbeitet mit `cwd: worktree` (§2.5.3). Spec und Plan liegen dort als Dateien; jede neue Session findet so die Arbeit der vorigen.
 - **Overrides:** Der Workflow gibt `backstube-worker` drei Superpowers-spezifische Regeln mit: `brainstorming` reicht nicht von sich aus an `writing-plans` weiter, die Phase endet mit der committeten Spec; `using-git-worktrees` entfällt, denn der Worktree existiert schon; `finishing-a-development-branch` entfällt, denn gemergt wird ausschließlich über die Merge-Queue.
 - **Review-Unabhängigkeit:** Der Reviewer ist eine eigene Identität in einer frischen Session, wahlweise mit einem anderen Modell als der Build. Er sieht Spec, Plan und Diff, aber nicht den Verlauf der Build-Session.
@@ -310,13 +381,30 @@ Die Phase `merge` läuft ohne Session und ohne Sprachmodell, als Hintergrundjob 
    Schlägt der CAS fehl, geht der Job zurück an Schritt 1 und die Queue-Position bleibt; nach `limits.push_retries` Runden `on_hold` mit Begründung.
 6. **Abschluss als ein Batch:** `repos` auf `<repo>@<newSha>`, Kommentar mit Commit und Verify-Ergebnis, `done`. Danach Worktree und Branch des Issues abräumen.
 
+```mermaid
+flowchart TD
+  start(["Job pending"]) --> base["1 · fetch, baseSha festhalten<br/>Merge-Worktree hart zurücksetzen"]
+  base --> apply["2 · git merge --squash<br/>Commit mit Trailer Backe-Issue"]
+  apply -->|"Konflikt"| conflict["Status conflict"] --> integ[["Phase integrate"]]
+  apply --> gate{"3 · Diff berührt<br/>gates.paths?"}
+  gate -->|"ja, ohne Freigabe"| ask["Rückfrage »Mergen?«<br/>Queue frei"]
+  ask -.->|"nach Freigabe"| base
+  gate -->|"nein"| verify["4 · prepare nach Bedarf<br/>verify mit Timeout und Semaphor"]
+  verify -->|"rot oder Timeout"| vfail["Status verify_failed<br/>Log als Anhang"] --> integ
+  verify -->|"grün"| cas{"5 · Compare-and-Swap<br/>Push ohne Force bzw. update-ref"}
+  cas -->|"abgelehnt, Runden übrig"| base
+  cas -->|"abgelehnt, push_retries erschöpft"| hold["on_hold"]
+  cas -->|"ok"| fin["6 · Batch: repos, Kommentar, done<br/>Worktree und Branch abräumen"]
+  fin --> merged(["merged"])
+```
+
 Weil die Queue seriell ist und jeder Job auf der aktuellen Spitze verifiziert, ist der Ziel-Branch nach jedem Merge grün, soweit `verify` reicht.
 
 **Wiederaufnahme:** Beim Start der Backstube gehen alle Jobs im Status `running` zurück auf `pending`. Weil jeder Job mit Fetch und hartem Reset beginnt und nur per CAS veröffentlicht, ist das gefahrlos. Ein schon veröffentlichter Commit wird über den Trailer `Backe-Issue` im Ziel-Branch erkannt; dann schreibt die Backstube nur noch den Abschluss-Batch.
 
 #### 2.6.4 Phase `integrate`
 
-Bei einem Konflikt oder rotem Verify startet die Backstube eine Session im Worktree des Issues, im Slot, der es hält:
+Bei einem Konflikt oder rotem Verify geht das Issue zurück auf `in_progress`, und die Backstube startet eine Session im Worktree des Issues, im Slot, der es hält:
 
 1. **Worktree synchronisieren:** Vorher merged die Backstube den aktuellen Ziel-Branch in den Issue-Branch. Konfliktmarker oder der semantische Bruch sind damit lokal reproduzierbar. Konfliktmarker bleiben für die Session im Arbeitsverzeichnis stehen.
 2. **Feedback statt Log:** Die Session bekommt das Feedback-Objekt aus §2.7.1 als Anhang am Issue und die Specs beider Seiten: das eigene Issue und die Issues, deren Commits seit dem Abzweigen in den Ziel-Branch gekommen sind (über den Trailer `Backe-Issue`).
@@ -387,6 +475,21 @@ Der Reviewer der folgenden `review`-Phase prüft den Integrations-Diff ausdrück
 
 Wiederholung und Oszillation eskalieren sofort, ohne das Rundenbudget auszuschöpfen.
 
+```mermaid
+flowchart TD
+  fail["Merge-Job scheitert<br/>conflict oder verify_failed"] --> fp["Fingerprint bilden<br/>SHA-256 über den normalisierten Fehler"]
+  fp --> same{"gleich der<br/>vorigen Runde?"}
+  same -->|"ja: Wiederholung"| esc["Eskalation"]
+  same -->|"nein"| osc{"gleich einer<br/>früheren Runde?"}
+  osc -->|"ja: A → B → A"| esc
+  osc -->|"nein"| lim{"round ≥<br/>integrate_rounds?"}
+  lim -->|"ja"| esc
+  lim -->|"nein"| fb["Feedback-Objekt als Anhang<br/>Ziel-Branch in den Issue-Branch mergen"]
+  fb --> integ[["integrate, round + 1"]]
+  esc --> s1["Stufe 1: on_hold mit Begründung"]
+  esc --> s2["ab Stufe 2: Entscheidung an human<br/>Arbeits-Issue blocked"]
+```
+
 **Eskalation:** ein Batch als `backstube`: Kommentar mit Grund, Runde, letztem Fingerprint und Verweis auf die Anhänge; in Stufe 1 `on_hold` mit dieser Begründung, ab Stufe 2 zusätzlich eine Entscheidung »Issue X kommt nicht weiter« an `human` und `blocked` mit `blocked_by` darauf. Branch und Worktree bleiben stehen, die Zwischenergebnisse gehen nicht verloren. Der Assignee bleibt, damit der Wiedereinstieg im selben Slot und Worktree erfolgt; `backe loop kick` setzt Zähler und Rundenhistorie zurück.
 
 ### 2.8 Der Worker-Vertrag: Skill `backstube-worker`
@@ -408,6 +511,16 @@ Die Backstube ist ein einzelner Node-Prozess mit einer eingebetteten SQLite-Date
 #### 2.9.1 SQLite-Datenmodell
 
 `<BACKE_HOME>/loop/<backlog>/state.db` über `node:sqlite`, beim Öffnen mit `journal_mode = WAL`, `synchronous = FULL` und `foreign_keys = ON`. Die Schreiblast ist klein (einige Zeilen je Tick), deshalb kostet die volle Synchronisation nichts Messbares.
+
+```mermaid
+erDiagram
+  ISSUE_IM_BACKLOG ||--o{ runs : "eine Zeile je Phasenlauf"
+  ISSUE_IM_BACKLOG ||--o{ merge_jobs : "Merge-Versuche"
+  ISSUE_IM_BACKLOG ||--o{ failures : "Fingerprint-Historie"
+  runs ||--o{ step_events : "Journal"
+```
+
+`ISSUE_IM_BACKLOG` ist keine Tabelle: Die Datenbank verweist per `issue_id` auf das Issue in `backe`.
 
 ```sql
 CREATE TABLE runs (               -- eine Zeile je Phase eines Issues, die gerade läuft oder lief
@@ -478,6 +591,17 @@ Einträge älter als 90 Tage räumt der Reaper ab; die Fingerprints in `failures
 
 #### 2.9.3 Die Schleife
 
+```mermaid
+flowchart LR
+  sync["Sync des Backlogs"] --> snap["Snapshot<br/>Issues · runs · merge_jobs<br/>failures · Runtimes"]
+  snap --> rec["Reconcile<br/>reine Funktion<br/>Snapshot, jetzt → Aktionen"]
+  rec --> disp["Dispatch<br/>erst fertig machen,<br/>dann neu anfangen"]
+  disp --> exec["Aktionen ausführen<br/>Journal: started → succeeded · failed"]
+  exec --> wait(["tick_s warten"])
+  wait --> sync
+  rec -.->|"backe loop plan"| show["nur anzeigen"]
+```
+
 Alle `tick_s` Sekunden:
 
 1. Sync des Backlogs, dann ein **Snapshot**: die beobachteten Issues (Semantik von `issue list` je `watch`-Eintrag, dazu alle Issues mit Assignee aus `slots`, `reviewer` und `triage`), die Tabellen `runs`, `merge_jobs` und `failures`, die laufenden Sessions der Runtimes.
@@ -510,6 +634,36 @@ Alle `tick_s` Sekunden:
   - Merge-Worktrees, deren Reset scheitert, werden neu angelegt (§2.6.2).
 
 ### 2.10 Rückfragen
+
+Ab Stufe 2 läuft jede Rückfrage über das Backlog, ab Stufe 3 sortiert die Triage vor:
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant W as Worker im Slot
+  participant B as backe-Backlog
+  participant L as backe loop
+  participant T as bs-triage
+  actor M as Mensch
+  W->>B: Batch: Fragen als Issues, Arbeits-Issue blocked, status waiting
+  L->>W: Session beenden, Slot frei
+  alt Stufe 3 mit Triage
+    L->>T: Triage-Session je Frage
+    alt Antwort folgt zwingend aus einer Quelle
+      T->>B: answered mit Beleg, done
+    else Pflichtfall oder unklar
+      T->>B: escalated als decision an human
+      B-->>M: Benachrichtigung
+      M->>B: Antwort, decision.chosen, done
+    end
+  else Stufe 2
+    B-->>M: Benachrichtigung
+    M->>B: Antwort, decision.chosen, done
+  end
+  L->>B: Issue ist unblockable, resume
+  L->>W: dieselbe Phase neu starten
+  W->>B: Zwischenstand und Antworten lesen
+```
 
 #### 2.10.1 Stufe 1: interaktiv über Remote Control
 
@@ -573,6 +727,27 @@ Die Backstube ist ACP-Client. Je Run startet sie den Agent-Prozess aus `harnesse
 - **Ende des Turns:** Endet der Prompt-Turn, ohne dass der Worker seine Phase abgeschlossen hat (`backstube.status` noch `running`), schickt die Backstube genau einen Folge-Prompt »Schließe die Phase nach dem Vertrag ab oder melde `failed`.« Endet auch dieser ohne Abschluss, gilt die Phase als `failed`.
 - **Fortschritt:** Updates der Session zählen als Lebenszeichen für `heartbeat_at`; ihr Inhalt wird nicht ausgewertet.
 - **Referenz-Harness** der ersten ACP-Version ist Claude Code über seinen ACP-Adapter. Zu prüfen sind dabei Start per ACP, Laden von `CLAUDE.md` und Skills, Permission-Anfragen und das Verhalten in einem nicht vertrauten Verzeichnis. Weitere Harnesses stehen in §4.2.
+
+```mermaid
+sequenceDiagram
+  participant L as backe loop
+  participant A as ACP-Agent Claude Code
+  participant X as backe mcp als Slot
+  L->>A: Prozess in eigener Prozessgruppe starten, initialize
+  L->>A: session/new mit cwd und MCP-Servern
+  L->>A: session/prompt mit dem Start-Prompt
+  loop Arbeit an der Phase
+    A-->>L: session/update als Lebenszeichen
+    A->>L: session/request_permission
+    L-->>A: Allowlist erlaubt oder lehnt ab
+    A->>X: issue_get, batch und weitere Tools
+  end
+  A-->>L: Turn endet
+  opt backstube.status noch running
+    L->>A: ein Folge-Prompt: Phase abschließen oder failed melden
+  end
+  L->>A: Session und Prozessgruppe beenden
+```
 
 #### 2.11.3 Werkzeuge über MCP
 
