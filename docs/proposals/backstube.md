@@ -135,8 +135,8 @@ Alle Rollen sind Agent-Identitäten mit dem Menschen als `operator`, angelegt pe
 
 | Handle | Rolle | Schreibt |
 | --- | --- | --- |
-| `backstube` | Orchestrator und Merge-Queue | `resume`, Recovery-Moves, Zähler und Status bei Abstürzen, Eskalationen, `on_hold` bei erschöpftem Budget, Feedback-Anhänge, `done` nach dem Merge |
-| `bs-w1` … `bs-wN` | Worker-Slots | Claim (`next --claim --as bs-wK`), Ergebnisse aller Phasen, die der Workflow nicht dem Reviewer zuweist, Sub-Issues aus `intake` |
+| `backstube` | Orchestrator und Merge-Queue | Split in Sub-Issues und Abschluss `close` (§2.5.5), `resume`, Recovery-Moves, Zähler und Status bei Abstürzen, Eskalationen, `on_hold` bei erschöpftem Budget, Feedback-Anhänge, `done` nach dem Merge |
+| `bs-w1` … `bs-wN` | Worker-Slots | Claim (`next --claim --as bs-wK`), Ergebnisse aller Phasen, die der Workflow nicht dem Reviewer zuweist |
 | `bs-review` | Reviewer | Urteil der Phasen mit `role: reviewer` |
 | `bs-triage` | Triage (Stufe 3) | Antworten oder Eskalationen auf Fragen |
 
@@ -191,6 +191,7 @@ Host-lokal je Backlog unter `<BACKE_HOME>/loop/<backlog>/config.jsonc` (§3.9). 
     "review_rounds": 3,               // Rückweisungen im Review je Issue
     "integrate_rounds": 3,            // Fix-Runden nach Konflikt oder rotem Verify je Issue
     "push_retries": 3,                // abgelehnte Pushes je Merge-Job
+    "split_parts": 12,                // höchstens so viele Sub-Issues je Split (§2.5.5)
     "phase_timeout_min": 240,
     "verify_timeout_min": 30,
     "verify_concurrency": 1,          // gleichzeitige Verify-Läufe über alle Queues
@@ -215,6 +216,7 @@ Deklariert in `backlog.jsonc` (BK §2.24), alle unter dem Präfix `backstube.`:
 | `backstube.workflow` | string | Workflow des Issues (§2.5.1); fehlt sie, gilt der Default aus der Config | Mensch, beim Anlegen oder später |
 | `backstube.phase` | string | aktuelle Phase, gültig sind die Phasen des Workflows sowie `integrate` und `close`; fehlt sie, gilt dessen erste Phase | Worker beim Abschluss; Backstube bei `integrate`, `close` und Rücksprüngen; Mensch, um später einzusteigen (ein Bug mit klarem Repro startet in `superpowers` bei `plan`) |
 | `backstube.harness` | string | Harness für alle Phasen dieses Issues, überschreibt Workflow und Config | Mensch |
+| `backstube.plan` | string | repo-relativer Pfad des Plans, den dieses Issue umsetzt; fehlt sie, sucht die Session den Plan im Branch | Backstube beim Split (§2.5.5); Mensch |
 | `backstube.repo` | string | Haupt-Repo, wenn `repos` mehrere Einträge hat; sonst gilt der erste (§2.5.3) | Mensch |
 | `backstube.dir` | string | Unterverzeichnis im Repo als Arbeitsverzeichnis, etwa ein Paket im Monorepo (§2.5.3) | Mensch |
 | `backstube.status` | enum `running`, `waiting`, `done`, `failed`, `stalled` | Zustand der Phase | `running`: Backstube beim Start; `done`, `failed`, `waiting`: Worker; `stalled`: Backstube bei Timeout |
@@ -253,7 +255,7 @@ Ein Workflow ist eine benannte, geordnete Liste von Phasen. Er legt fest, welche
 
 Je Phase: `name`, `role` (`slot`, Default; `reviewer`; `backstube` für die Merge-Phase, die ohne Session und ohne Sprachmodell läuft, §2.6.3), `skills` (Namen, die der Start-Prompt der Session nennt; leer heißt, die Session nutzt, was Repo und Host mitbringen), optional `harness`, `model`, `state_after` (backe-State nach erfolgreichem Abschluss) und `gate` (Rückfrage zur Freigabe am Ende, §3.8). Bei »changes« eines Reviewers springt das Issue in die Phase davor zurück. Jeder Workflow, der Code ändert, endet mit `merge`; die Backstube lehnt Workflows mit `cwd: worktree` ohne `merge`-Phase ab.
 
-Zwei Phasen gibt es in jedem Workflow, ohne dass er sie nennt: `integrate` (Rückkopplung aus der Merge-Queue, §2.6.4) und `close` (Abschluss eines aufgeteilten Issues, §2.5.4).
+Zwei Phasen gibt es in jedem Workflow, ohne dass er sie nennt: `integrate` (Rückkopplung aus der Merge-Queue, §2.6.4) und `close` (Abschluss eines aufgeteilten Issues, §2.5.5).
 
 **Eingebaute Workflows.** Die Backstube bringt drei mit, die Config kann sie überschreiben oder eigene hinzufügen:
 
@@ -272,7 +274,7 @@ Jedem Workflow lässt sich `intake` als erste Phase voranstellen (§2.5.4). Ein 
 | Phase | Identität | Superpowers-Skills | Artefakt | Erfolg → |
 | --- | --- | --- | --- | --- |
 | `spec` | Slot | `brainstorming` | Spec unter `docs/superpowers/specs/` im Branch, Kurzfassung als Kommentar | `plan` |
-| `plan` | Slot | `writing-plans` | Plan unter `docs/superpowers/plans/` im Branch | `build`, bei aktivem Gate erst nach der Freigabe |
+| `plan` | Slot | `writing-plans` | ein Plan oder ein Plansatz unter `docs/superpowers/plans/` im Branch; bei mehr als einem Plan das Manifest `split.json` als Anhang | ein Plan: `build`; Plansatz: Split (§2.5.5); bei aktivem Gate jeweils erst nach der Freigabe |
 | `build` | Slot | `subagent-driven-development` (darin `test-driven-development`), `systematic-debugging`, `verification-before-completion` | Commits im Branch | `review`; State → `review` |
 | `review` | `bs-review` | `requesting-code-review`, `verification-before-completion` | Urteil als Kommentar | »approve« → `merge`; »changes« → `build`, State → `in_progress`, `round + 1` |
 | `merge` | `backstube` | keine, Merge-Queue (§2.6.3) | Squash-Commit im Ziel-Branch | `done`; bei Konflikt oder rotem Verify → `integrate` (§2.6.4), State → `in_progress` |
@@ -281,6 +283,7 @@ Jedem Workflow lässt sich `intake` als erste Phase voranstellen (§2.5.4). Ein 
 stateDiagram-v2
   direction LR
   state "Eskalation: on_hold bzw. Entscheidung an den Menschen" as esc
+  state "Split: Doku mergen, Sub-Issues anlegen, Parent auf todo" as split
   [*] --> spec: next --claim
   state in_progress {
     spec --> plan
@@ -297,19 +300,23 @@ stateDiagram-v2
   merge --> integrate: Konflikt oder Verify rot
   integrate --> rev: integriert, lokal grün
   merge --> done: Squash-Commit im Ziel-Branch
+  plan --> split: Plansatz
+  split --> close: alle Teile erledigt
+  close --> done
   rev --> esc: review_rounds erreicht
   integrate --> esc: Wiederholung, Oszillation, Grenze
   done --> [*]
 ```
 
-Die äußeren Kästen sind die `backe`-States, die inneren die Phasen.
+Die äußeren Kästen sind die `backe`-States, die inneren die Phasen. Ein Plansatz verlässt die Hauptlinie über den Split; jedes Sub-Issue durchläuft danach selbst `build` → `review` → `merge` (§2.5.5).
 
 - **States:** Der Claim setzt `in_progress` (BK §2.16.5); `spec`, `plan` und `build` laufen darin. `build` endet mit `review`. Eine Rückweisung im Review geht zurück auf `in_progress`, das erlaubt die Hauptlinie ohne `workflow.strict` (BK §2.6). Während `merge` bleibt das Issue auf `review`; scheitert der Merge, geht es mit `integrate` zurück auf `in_progress`. `done` setzt die Backstube im selben Batch, der den Merge-Commit einträgt.
 - **Worktree:** `superpowers` arbeitet mit `cwd: worktree` (§2.5.3). Spec und Plan liegen dort als Dateien; jede neue Session findet so die Arbeit der vorigen.
 - **Overrides:** Der Workflow gibt `backstube-worker` drei Superpowers-spezifische Regeln mit: `brainstorming` reicht nicht von sich aus an `writing-plans` weiter, die Phase endet mit der committeten Spec; `using-git-worktrees` entfällt, denn der Worktree existiert schon; `finishing-a-development-branch` entfällt, denn gemergt wird ausschließlich über die Merge-Queue.
 - **Review-Unabhängigkeit:** Der Reviewer ist eine eigene Identität in einer frischen Session, wahlweise mit einem anderen Modell als der Build. Er sieht Spec, Plan und Diff, aber nicht den Verlauf der Build-Session.
 - **Review-Schleife:** Erreicht `round` den Wert `limits.review_rounds`, eskaliert die Backstube statt eines weiteren Builds (§2.7.4).
-- **Plan-Gate:** Ist das Gate aktiv, stellt die `plan`-Session am Ende die Frage »Plan freigeben?« mit den Optionen Freigeben, Überarbeiten (mit Hinweis) und Abbrechen. Das Gate ist eine gewöhnliche Rückfrage und folgt dem Modus aus `questions` (§3.8).
+- **Plan-Gate:** Ist das Gate aktiv, stellt die `plan`-Session am Ende die Frage »Plan freigeben?« mit den Optionen Freigeben, Überarbeiten (mit Hinweis) und Abbrechen. Bei einem Plansatz gilt die Freigabe für den ganzen Satz, nicht je Plan. Das Gate ist eine gewöhnliche Rückfrage und folgt dem Modus aus `questions` (§3.8).
+- **Plansatz:** Schreibt `writing-plans` mehrere aufeinander aufbauende Pläne, wird jeder Plan ein eigenes Sub-Issue mit eigenem Build, Review und Merge (§2.5.5). Ein Issue setzt höchstens einen Plan um.
 
 #### 2.5.3 Arbeitsverzeichnis und Projektkontext
 
@@ -333,12 +340,65 @@ Die optionale Phase `intake` prüft ein Issue, bevor Arbeit hineinfließt. Sie l
 | Ergebnis | Wann | Write |
 | --- | --- | --- |
 | `proceed` | Ziel, Scope und prüfbare Akzeptanzkriterien sind erkennbar | Kommentar mit den Akzeptanzkriterien, wie die Session sie versteht; nächste Phase |
-| `split` | Das Issue ist für eine Session zu groß oder berührt mehrere Repos | ein Batch: Sub-Issues mit `parent`, Projekten, Sprints und Workflow des Issues, nötige `depends_on` untereinander; das Issue selbst geht auf `blocked` mit `blocked_by` auf die neuen Sub-Issues, `backstube.phase: close` |
+| `split` | Das Issue ist für eine Session zu groß oder berührt mehrere Repos | Manifest `split.json` mit den Teilen (Titel, Body, optional Repo, Workflow, Abhängigkeiten) als Anhang; den Split führt die Backstube aus (§2.5.5) |
 | `ask` | Anforderungen sind unklar oder widersprüchlich | Rückfrage nach dem Modus aus `questions` (§2.10) |
 
-Ein aufgeteiltes Issue trägt selbst keinen Code. Sind alle Sub-Issues erledigt, findet die Backstube es über `--unblockable`, setzt es per `resume` fort und schließt die Phase `close` ohne Session: Kommentar mit den Merge-Commits der Sub-Issues, `done`. Das ist zulässig, weil `done` mit offenen Sub-Issues ohnehin abgelehnt würde (BK §2.6).
+Ein aufgeteiltes Issue trägt selbst keinen Code; es endet mit `close`, sobald seine Sub-Issues erledigt sind (§2.5.5).
 
 Die Eingangsprüfung ist keine Triage im Sinne von §2.10.3: Sie prüft Arbeit, die Triage beantwortet Fragen. `intake` lohnt sich vor allem ab Stufe 2, wenn niemand mehr in der Spec-Session mitliest. Im Workflow `superpowers` übernimmt in Stufe 1 `brainstorming` die Klärung im Dialog.
+
+#### 2.5.5 Aufteilen in Sub-Issues
+
+Zwei Phasen können ein Issue in Sub-Issues zerlegen: `intake` mit dem Ergebnis `split` (§2.5.4) und `plan`, wenn `writing-plans` einen Plansatz statt eines einzelnen Plans schreibt (§2.5.2). Beide nutzen denselben Mechanismus. Wie viele Issues entstehen und wie sie voneinander abhängen, ist eine Strukturentscheidung. Deshalb liefert das Modell nur den Inhalt als Manifest, und die Backstube legt die Sub-Issues deterministisch an.
+
+**Manifest.** Der Worker hängt `split.json` per `attach add` an das Issue und schließt seine Phase wie gewohnt ab:
+
+```jsonc
+{
+  "source": "plans",                  // plans | intake
+  "parts": [
+    { "key": "p1", "title": "Datenmodell für Sessions",
+      "plan": "docs/superpowers/plans/2026-11-28-auth-1-datenmodell.md" },
+    { "key": "p2", "title": "Session-API",
+      "plan": "docs/superpowers/plans/2026-11-28-auth-2-session-api.md", "depends_on": ["p1"] },
+    { "key": "p3", "title": "Login-Formular",
+      "plan": "docs/superpowers/plans/2026-11-28-auth-3-login.md", "depends_on": ["p2"] }
+  ]
+}
+```
+
+Je Teil: `key`, `title`, bei `plans` der Pfad `plan`, bei `intake` ein `body`, optional `depends_on` (Keys anderer Teile), `repo` und `workflow`. Trägt kein Teil eines Plansatzes `depends_on`, gilt die Reihenfolge der Liste als Kette. Die Backstube prüft das Manifest, bevor sie etwas schreibt: Keys eindeutig, Abhängigkeiten nur auf vorhandene Keys und ohne Zyklus, jeder Plan liegt im Branch, höchstens `limits.split_parts` Teile. Ein Manifest mit genau einem Teil ist kein Split; die Arbeit geht im selben Issue weiter. Ein ungültiges Manifest setzt die Phase auf `failed` mit der Begründung als Kommentar.
+
+**Ablauf.**
+
+1. **Plan-Gate:** Ist es aktiv, wartet der Split auf die Freigabe des ganzen Plansatzes.
+2. **Doku zuerst:** Trägt der Branch des Issues Commits (bei `plans` immer: Spec und Pläne), stellt die Backstube einen Doku-Job in die Merge-Queue (`merge_jobs.kind = docs`, §2.6.3). Er läuft wie jeder Merge-Job mit Verify und CAS und hat als Commit-Titel »Spec und Pläne: <Titel>« mit dem Trailer `Backe-Issue: <id>`. Erst danach liegen Spec und Pläne im Ziel-Branch, und jeder Worktree eines Sub-Issues findet sie. Scheitert der Doku-Job, gilt §2.6.4 wie bei jedem Merge.
+3. **Split als ein Batch** von `backstube`:
+   - je Teil ein `issue.create` mit `parent`, den Projekten, Sprints und Repos des Issues (wie `issue create --parent`, BK §2.23), `rank` in Manifest-Reihenfolge, `depends_on` laut Manifest (über Platzhalter), `backstube.workflow` des Issues bzw. des Teils, bei `plans` zusätzlich `backstube.phase: build` und `backstube.plan`;
+   - für das Issue selbst: Assignee entfernen, `todo`, `backstube.phase: close`, `backstube.status: done` und ein Kommentar mit der Liste der Teile.
+   
+   Branch und Worktree des Issues räumt die Backstube danach ab; ihr Inhalt liegt im Ziel-Branch.
+4. **Die Teile sind gewöhnliche Issues.** Jedes Sub-Issue wird bereit, sobald seine Abhängigkeiten `done` sind, also im Ziel-Branch liegen. Ein freier Slot claimt es, es bekommt einen eigenen Worktree vom aktuellen Ziel-Branch und durchläuft `build` → `review` → `merge`. Eine Kette läuft so nacheinander, unabhängige Teile eines Plansatzes laufen parallel in mehreren Slots. Scheitert ein Teil und eskaliert (§2.7.4), bleiben alle Teile, die von ihm abhängen, über `depends_on` von selbst stehen.
+5. **`close`:** Mit offenen Sub-Issues ist das Issue nicht bereit (BK §2.22). Sind alle erledigt, claimt die Backstube es als `backstube` und schließt es ohne Session ab: Kommentar mit jedem Teil und seinem Merge-Commit, `done`. Ist ein Teil `cancelled` oder `rejected`, schließt sie nicht stillschweigend, sondern setzt das Issue auf `on_hold` mit dem Hinweis auf diesen Teil, und der Mensch entscheidet.
+
+**Warum `todo` ohne Assignee.** Ein Parent auf `in_progress` mit Assignee belegt seinen Teilbaum für alle anderen Slots (BK §2.23, »Arbeitseinheit Teilbaum«), und ein Parent auf `blocked` oder `on_hold` macht alle seine Sub-Issues unbereit (BK §2.22). Beides würde den Split blockieren. Ein Parent auf `todo` mit offenen Kindern ist dagegen nur selbst nicht bereit, und BK schlägt ihn von sich aus wieder vor, sobald die Kinder erledigt sind.
+
+**`watch` mit `level: top`.** Dort ist ein oberstes Issue samt Teilbaum die Einheit (BK §2.23). Ein aufgeteiltes Issue dispatcht die Backstube in so einem Eintrag nicht als Einheit, sondern claimt seine Sub-Issues gezielt per `issue claim <id>` in der Reihenfolge von `issue list --parent <id> --ready`.
+
+**Zwischenstände im Ziel-Branch.** Mit Ziel `default` landet jeder Teil einzeln im Hauptzweig. Die Merge-Queue stellt sicher, dass jeder Zwischenstand `verify` besteht; dass er auch fachlich vorzeigbar ist, ist Sache des Plansatzes. Wer halbe Features nie im Hauptzweig sehen will, nutzt Ziel `sprint` (§2.6.1); ein Integrations-Branch je aufgeteiltem Issue steht in §4.2.
+
+```mermaid
+flowchart TD
+  plan["Phase plan<br/>Plansatz + split.json"] --> gate{"Plan-Gate<br/>aktiv?"}
+  gate -->|"ja"| ok["Freigabe für den<br/>ganzen Plansatz"]
+  gate -->|"nein"| docs
+  ok --> docs["Doku-Job in der Merge-Queue<br/>Spec und Pläne in den Ziel-Branch"]
+  docs --> batch["Batch als backstube<br/>Sub-Issues mit depends_on-Kette<br/>Parent: todo, ohne Assignee, Phase close"]
+  batch --> p1["Teil 1<br/>build → review → merge"]
+  p1 -->|"im Ziel-Branch"| p2["Teil 2<br/>build → review → merge"]
+  p2 -->|"im Ziel-Branch"| pn["… Teil n"]
+  pn --> close["Parent bereit<br/>close: Kommentar, done"]
+```
 
 ### 2.6 Integration und Auto-Merge
 
@@ -379,7 +439,7 @@ Die Phase `merge` läuft ohne Session und ohne Sprachmodell, als Hintergrundjob 
    - **Ohne Remote:** `git update-ref refs/heads/<ziel> <newSha> <baseSha>`. Das gelingt nur, wenn der Branch noch auf `baseSha` steht. Ist der Ziel-Branch in irgendeinem Worktree des Clones ausgecheckt, verweigert die Backstube den Auto-Merge, denn ein Ref-Update unter einem Checkout ließe dessen Arbeitsverzeichnis scheinbar rückwärts geändert zurück (Anti-Ziel aus §0.4); `backe loop doctor` prüft das.
    
    Schlägt der CAS fehl, geht der Job zurück an Schritt 1 und die Queue-Position bleibt; nach `limits.push_retries` Runden `on_hold` mit Begründung.
-6. **Abschluss als ein Batch:** `repos` auf `<repo>@<newSha>`, Kommentar mit Commit und Verify-Ergebnis, `done`. Danach Worktree und Branch des Issues abräumen.
+6. **Abschluss als ein Batch:** `repos` auf `<repo>@<newSha>`, Kommentar mit Commit und Verify-Ergebnis, `done`. Danach Worktree und Branch des Issues abräumen. Bei einem Doku-Job (`kind: docs`) folgt statt `done` der Split (§2.5.5).
 
 ```mermaid
 flowchart TD
@@ -496,12 +556,12 @@ flowchart TD
 
 Die Backstube startet jede Session mit einem minimalen Prompt: »Worker der Backstube. Issue `<id>`, Workflow `<workflow>`, Phase `<phase>`. Skills dieser Phase: `<skills>`. Lade den Skill `backstube-worker`.« Den eigentlichen Vertrag trägt der Skill. So bleibt er versioniert und testbar, und Prompts in der Backstube bleiben dünn. Der Skill liegt im Format `SKILL.md` vor und wird für jeden konfigurierten Harness auf User-Ebene installiert; welche Harnesses das Format lesen, klärt F1 (§4.1).
 
-1. **Kontext laden:** `issue_get` mit Kommentaren über `backe mcp`, dazu die Artefakte früherer Phasen im Arbeitsverzeichnis (bei `superpowers` Spec und Plan) und in `integrate` das jüngste Feedback-Objekt. Beim Wiedereinstieg nach einer Rückfrage zusätzlich die Antworten an den Issues aus dem letzten `blocked_by`.
+1. **Kontext laden:** `issue_get` mit Kommentaren über `backe mcp`, dazu die Artefakte früherer Phasen im Arbeitsverzeichnis (bei `superpowers` Spec und Plan; ist `backstube.plan` gesetzt, genau dieser Plan) und in `integrate` das jüngste Feedback-Objekt. Beim Wiedereinstieg nach einer Rückfrage zusätzlich die Antworten an den Issues aus dem letzten `blocked_by`.
 2. **Genau eine Phase.** Kein Vorgreifen, auch wenn ein Skill von sich aus weiterreichen will.
 3. **Workflow-Overrides beachten:** Regeln, die ein Workflow für seine Skills mitbringt, gehen den Skills vor (für `superpowers` §2.5.2, für `integrate` §2.7.3). Unabhängig vom Workflow: Der Ziel-Branch wird nie angefasst, und im Modus `repo` gibt es weder Commits noch Branch-Wechsel (§2.5.3).
 4. **Abschluss als ein Batch** (BK §2.16.6): Ergebnis-Kommentar mit Harness und Modell, `backstube.phase` = nächste Phase, `backstube.status: done`, gegebenenfalls der State-Move. Atomar, damit die Backstube nie einen halben Abschluss sieht.
 5. **Scheitern:** `backstube.status: failed` plus Kommentar mit Grund und letztem Stand. Kein State-Move, die Wiederholung entscheidet die Backstube.
-6. **Nie:** fremde Issues claimen oder ändern (Ausnahmen: Fragen anlegen, §2.10.2; Sub-Issues aus `intake`, §2.5.4), mergen oder auf den Ziel-Branch pushen (das macht allein die Merge-Queue, §2.6.3), eigene Phasen überspringen, Tests abschalten.
+6. **Nie:** fremde Issues claimen oder ändern (Ausnahme: Fragen anlegen, §2.10.2), Sub-Issues selbst anlegen (aufgeteilt wird nur per Manifest, §2.5.5), mergen oder auf den Ziel-Branch pushen (das macht allein die Merge-Queue, §2.6.3), eigene Phasen überspringen, Tests abschalten.
 7. **Rückfragen** nach dem Modus aus `questions` (§2.10). In Stufe 1 hält der Ergebnis-Kommentar zusätzlich jede gestellte Frage samt Antwort fest. Was am Handy entschieden wurde, landet so trotzdem im Backlog.
 
 ### 2.9 Workflow-Engine
@@ -552,6 +612,7 @@ CREATE TABLE step_events (        -- Journal: jede Aktion vor und nach der Ausf�
 CREATE TABLE merge_jobs (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   issue_id      TEXT NOT NULL,
+  kind          TEXT NOT NULL DEFAULT 'issue', -- issue | docs | sprint | revert
   repo          TEXT NOT NULL,
   target        TEXT NOT NULL,
   branch        TEXT NOT NULL,
@@ -610,13 +671,14 @@ Alle `tick_s` Sekunden:
    2. **Phase beendet:** `backstube.status` ist `done`, `failed` oder `waiting`, die Session lebt noch → Session beenden.
    3. **Absturz:** `backstube.status: running`, aber keine lebende Session → `attempts + 1`, `status: failed`. Den Neustart erledigt Schritt 3.
    4. **Budget erschöpft:** `status: failed` mit `attempts ≥ limits.attempts`, eine Rundengrenze erreicht, eine Wiederholung oder Oszillation erkannt → Eskalation nach §2.7.4.
-   5. **Entsperrt:** Ein beobachtetes Issue steht in `issue list --unblockable` → `backe issue resume <id>` als `backstube`; steht es auf Phase `close`, gleich danach der Abschluss aus §2.5.4.
-   6. **Timeout:** `status: running` länger als `phase_timeout_min`. Bei `acp` → Prozessgruppe beenden, `status: stalled`, `attempts + 1`. Bei `remote-control` → nur `status: stalled`; die Session bleibt am Leben, denn in Stufe 1 lässt sich ein Hänger nicht von einem Menschen unterscheiden, der noch nicht geantwortet hat. `backe loop status` zeigt das Issue an, der Mensch entscheidet.
-   7. **Neustart der Backstube:** Ein Issue gehört einem Slot und steht auf `running`, `runs` kennt aber keine lebende Zeile dafür → per Session-Name (`bs-<id>-<phase>`) in der Runtime suchen und übernehmen, sonst gilt Punkt 3.
-   8. **Merge-Job abgebrochen:** Ein Job steht auf `running` ohne lebenden Ausführungsstrang → zurück auf `pending` (§2.6.3, Wiederaufnahme).
+   5. **Entsperrt:** Ein beobachtetes Issue steht in `issue list --unblockable` → `backe issue resume <id>` als `backstube`.
+   6. **Abschlussreif:** Ein Issue steht auf Phase `close`, alle Sub-Issues sind erledigt → als `backstube` claimen und abschließen (§2.5.5). Belegt keinen Slot.
+   7. **Timeout:** `status: running` länger als `phase_timeout_min`. Bei `acp` → Prozessgruppe beenden, `status: stalled`, `attempts + 1`. Bei `remote-control` → nur `status: stalled`; die Session bleibt am Leben, denn in Stufe 1 lässt sich ein Hänger nicht von einem Menschen unterscheiden, der noch nicht geantwortet hat. `backe loop status` zeigt das Issue an, der Mensch entscheidet.
+   8. **Neustart der Backstube:** Ein Issue gehört einem Slot und steht auf `running`, `runs` kennt aber keine lebende Zeile dafür → per Session-Name (`bs-<id>-<phase>`) in der Runtime suchen und übernehmen, sonst gilt Punkt 3.
+   9. **Merge-Job abgebrochen:** Ein Job steht auf `running` ohne lebenden Ausführungsstrang → zurück auf `pending` (§2.6.3, Wiederaufnahme).
 3. **Dispatch.** Erst fertig machen, dann neu anfangen:
-   1. Issues in Arbeit, deren Phase `done` oder `failed` (mit Restbudget) ist und die keine Session haben → nächste bzw. dieselbe Phase im selben Slot starten. Hat die nächste Phase `role: reviewer`, übernimmt `bs-review`, sofern frei. Ist die nächste Phase `merge`, wird ein Job in `merge_jobs` eingestellt.
-   2. Freie Slots → `backe next --claim --as <slot>` je `watch`-Eintrag in Reihenfolge, gefiltert um `backstube.skip`; Workflow und Harness bestimmen, Arbeitsverzeichnis vorbereiten (§2.5.3), Phase aus `backstube.phase` starten. Ein Issue, dessen Workflow `cwd: repo` verlangt, wartet, solange im selben Repo schon eine solche Session läuft.
+   1. Issues in Arbeit, deren Phase `done` oder `failed` (mit Restbudget) ist und die keine Session haben → nächste bzw. dieselbe Phase im selben Slot starten. Hat die nächste Phase `role: reviewer`, übernimmt `bs-review`, sofern frei. Ist die nächste Phase `merge`, wird ein Job in `merge_jobs` eingestellt. Liegt ein gültiges `split.json` vor, beginnt stattdessen der Split (§2.5.5).
+   2. Freie Slots → `backe next --claim --as <slot>` je `watch`-Eintrag in Reihenfolge, gefiltert um `backstube.skip` und um Issues auf Phase `close`; in Einträgen mit `level: top` Sub-Issues aufgeteilter Issues nach §2.5.5; Workflow und Harness bestimmen, Arbeitsverzeichnis vorbereiten (§2.5.3), Phase aus `backstube.phase` starten. Ein Issue, dessen Workflow `cwd: repo` verlangt, wartet, solange im selben Repo schon eine solche Session läuft.
    3. **Merge-Queues:** je Queue ohne laufenden Job den ältesten Job auf `pending` starten, sofern die Queue nicht pausiert ist, `backstube.merge` nicht `manual` ohne Freigabe steht und der Verify-Semaphor frei ist. Merge-Jobs belegen keinen Slot.
    4. **Sprint-Merge:** Ziel `sprint`, keine offenen Issues des Sprints im Repo mehr → Sprint-Branch in die Queue des `default_ref` stellen, mit `gates.sprint` erst nach der Freigabe.
 4. Aktionen ausführen, jede mit Journal-Eintrag davor und danach; `heartbeat_at` der lebenden Runs fortschreiben.
@@ -625,7 +687,7 @@ Alle `tick_s` Sekunden:
 
 #### 2.9.4 Wiederaufnahme und Reaper
 
-- **Neustart:** Merge-Jobs auf `running` gehen auf `pending`; Runs auf `running` gleicht Punkt 2.7 der Schleife mit der Runtime ab. Danach läuft ein normaler Tick.
+- **Neustart:** Merge-Jobs auf `running` gehen auf `pending`; Runs auf `running` gleicht Punkt 2.8 der Schleife mit der Runtime ab. Danach läuft ein normaler Tick.
 - **Datenbank verloren oder beschädigt:** Die Backstube legt sie neu an und rekonstruiert `runs` aus Issues mit Slot-Assignee und laufenden Sessions, `merge_jobs` aus Issues in Phase `merge`. Verloren sind Fingerprints und Journal; `backstube.round` und `backstube.attempts` im Backlog bleiben, und damit greifen die Rundengrenzen weiter.
 - **Reaper**, beim Start und alle zehn Ticks:
   - Prozessgruppen von ACP-Agents, deren Run beendet ist oder deren Issue keine Phase mehr in Arbeit hat, werden beendet (`SIGTERM`, nach 30 s `SIGKILL`). Jeder ACP-Agent startet in einer eigenen Prozessgruppe, damit seine Kindprozesse (Test-Runner, Dev-Server) mit verschwinden.
@@ -820,7 +882,7 @@ Frischer Kontext je Phase (Superpowers setzt mit `subagent-driven-development` s
 
 ### 3.5 Keine Lease in `backe`, solange es einen Host gibt
 
-Ein abgestürzter Worker hinterlässt ein Issue auf `in_progress`. Auf einem Host erkennt die Backstube das ohne Hilfe von `backe`: Der Assignee ist ein Slot, `runs.heartbeat_at` ist die lokale Lease, und die Runtime weiß, ob die Session lebt (§2.9.3, Punkte 2.3 und 2.7). Eine Lease im Backlog braucht es erst, wenn mehrere Backstuben dasselbe Backlog bedienen und keine die Sessions der anderen sieht. Das ist ein Wunsch an BK für später (§4.2).
+Ein abgestürzter Worker hinterlässt ein Issue auf `in_progress`. Auf einem Host erkennt die Backstube das ohne Hilfe von `backe`: Der Assignee ist ein Slot, `runs.heartbeat_at` ist die lokale Lease, und die Runtime weiß, ob die Session lebt (§2.9.3, Punkte 2.3 und 2.8). Eine Lease im Backlog braucht es erst, wenn mehrere Backstuben dasselbe Backlog bedienen und keine die Sessions der anderen sieht. Das ist ein Wunsch an BK für später (§4.2).
 
 ### 3.6 Rückfragen in Stufen
 
@@ -904,6 +966,7 @@ Alles, was ein Mensch sehen, ändern oder später nachvollziehen soll, steht im 
 
 - **Mehrere Hosts:** Die Mechanismen dafür sind schon da. Der Claim gilt erst, wenn sein Push ohne Force gelungen ist (BK §2.16.5); das ist ein verteiltes Compare-and-Swap. Die Merge-Queue veröffentlicht per Push ohne Force (§2.6.3, Schritt 5); ein abgelehnter Push löst auf jedem Host dieselbe Wiederholung aus. Jeder Host behält seine eigene SQLite-Datenbank für die Issues seiner Slots. Es fehlt eine Lease im Backlog, damit ein Host die Issues eines ausgefallenen übernehmen kann: Wunsch an BK, etwa `claimed_at` am Issue, `issue claim --renew` als Heartbeat und eine abgelaufene Lease als claimbar. Dazu je Host eigene Slot-Identitäten und eine Queue je Repo und Ziel-Branch auf genau einem Host. Bedingung: ein zweiter Host im Betrieb.
 - **`next` mit `--prop`-Filter** als Wunsch an BK, damit Triage- und Review-Queues ohne Umweg über `issue list` claimbar werden.
+- **Integrations-Branch je aufgeteiltem Issue:** Die Teile eines Splits mergen in `backstube/feature/<id>` statt in den Ziel-Branch, und `close` merged diesen Branch über die Queue in den Ziel-Branch, wahlweise mit Freigabe, analog zum Sprint-Branch (§2.6.1). Bedingung: Ein Plansatz hinterlässt im Betrieb einen Zwischenstand, der zwar `verify` besteht, aber nicht in den Hauptzweig gehört.
 - **Batch-Merges in der Queue:** mehrere Issues gemeinsam anwenden und verifizieren, bei Rot bisektieren. Bedingung: Issues warten im Mittel länger in der Queue, als ihr Verify dauert.
 - **Weitere Harnesses über ACP** (etwa Codex CLI, Gemini CLI, OpenCode). Je Harness zu prüfen: Start per ACP, Kontextdateien (`harnesses.<name>.context`, §2.5.3), Skills im `SKILL.md`-Format, Permission-Anfragen, Verhalten in einem nicht vertrauten Verzeichnis. Lädt ein Harness keine Skills in diesem Format, bekommt er den Worker-Vertrag als Datei im Start-Prompt. Erst damit lassen sich Build und Review auf verschiedene Harnesses verteilen.
 - **Kosten je Issue**, optional: Token-Zählung je Phase in SQLite und als Property `backstube.tokens` am Issue, dazu ein Budget `limits.tokens_per_issue`, dessen Überschreitung wie eine erschöpfte Rundengrenze eskaliert (§2.7.4). Gilt nur für Runtimes, die Verbrauch zuverlässig melden; das ist für Remote Control und ACP ungeprüft.
@@ -914,20 +977,21 @@ Alles, was ein Mensch sehen, ändern oder später nachvollziehen soll, steht im 
 ## 5. Tests
 
 - **Reconcile tabellengetrieben:** jede Regel aus §2.9.3 als Fall `Snapshot → Aktionen`, inklusive Neustart der Backstube mitten in jeder Phase und Widerspruch zwischen Backlog und Datenbank.
-- **Workflows und Arbeitsverzeichnis tabellengetrieben:** Auflösung von Workflow, Harness (Issue, Phase, global) und Phase, Rücksprung bei »changes«, Wechsel des Workflows, `intake` mit allen drei Ergebnissen samt `close`; Auflösung von Haupt-Repo, Modus, `backstube.dir`, `local_files` und `add_dirs`, inklusive fehlender lokaler Pfade und `repo: none`.
+- **Workflows und Arbeitsverzeichnis tabellengetrieben:** Auflösung von Workflow, Harness (Issue, Phase, global) und Phase, Rücksprung bei »changes«, Wechsel des Workflows, `intake` mit allen drei Ergebnissen; Auflösung von Haupt-Repo, Modus, `backstube.dir`, `local_files` und `add_dirs`, inklusive fehlender lokaler Pfade und `repo: none`.
+- **Split tabellengetrieben:** Prüfung des Manifests (doppelte Keys, unbekannte Abhängigkeit, Zyklus, fehlender Plan, zu viele Teile, genau ein Teil), Kette als Default bei Plansätzen, Batch für Teile und Parent, `close` mit allen Teilen `done` und mit einem Teil `cancelled`, Dispatch in `watch`-Einträgen mit `level: top`.
 - **Circuit Breaker tabellengetrieben:** Normalisierung der Fingerprints (gleiche Fehler mit anderen Zeitstempeln, Zeilennummern und Pfaden ergeben denselben Hash, verschiedene Fehler verschiedene), Wiederholung, Oszillation A → B → A, jede Rundengrenze.
 - **Engine gegen echtes SQLite:** Absturz nach jedem `started` im Journal (simuliert durch einen Test-Hook, der die Aktion abbricht) und Wiederaufnahme ohne doppelte Wirkung; zweite Instanz wird abgewiesen; verlorene Datenbank wird aus Backlog und Fake-Runtime rekonstruiert, Rundenzähler und Budget bleiben.
 - **Merge-Queue gegen echte Git-Repos** (lokaler Bare-Remote): Konflikt → `integrate` → erneutes Review → Merge; rotes Verify mit Feedback-Anhang; Timeout im Verify; abgelehnter Push durch einen parallelen Push von Hand; CAS per `update-ref` ohne Remote und Verweigerung bei ausgechecktem Ziel-Branch; Pfad-Gate; Abbruch des Jobs nach dem Veröffentlichen und Wiederaufnahme ohne Doppel-Commit; Reset des Merge-Worktrees erhält `keep`-Verzeichnisse; `prepare` nur bei geändertem Lockfile; `revert` mit und ohne abhängige Issues.
 - **ACP-Runtime gegen einen Fake-Agent:** ein kleiner ACP-Server im Test, der Session-Anlage, Prompts, Permission-Anfragen, Lebenszeichen und ein Turn-Ende ohne Abschluss skriptgesteuert liefert; Prozessgruppe samt Kindprozess wird beim `kill` und vom Reaper beendet.
-- **Property-Based** (fast-check, wie in `backe`): Für beliebige Snapshots gibt es nie zwei Sessions für dasselbe Issue, nie mehr Sessions als Slots, nie mehr Verify-Läufe als `verify_concurrency`, je Queue höchstens einen laufenden Job, je Repo höchstens eine Session im Modus `repo`; jedes Issue eines Slots auf `in_progress` hat danach eine lebende Session oder eine Recovery-Aktion; jedes `done`-Issue mit Code-Workflow hat einen Commit im Ziel-Branch, der vom Ziel-Branch aus erreichbar ist; kein Issue bekommt nach einer erkannten Oszillation eine weitere `integrate`-Runde.
-- **E2E gegen echtes `backe`** mit lokalem Hub (BK §2.16.1) und einer Fake-Runtime, deren Worker die `backe`-Writes des Vertrags skriptgesteuert ausführen: ein Issue durch alle Phasen bis in den Ziel-Branch, zwei abhängige Issues in Folge, eine Rückweisung im Review, ein Absturz, eine Eskalation nach Oszillation, eine Rückfrage (Stufe 2), ein Veto (Stufe 3).
+- **Property-Based** (fast-check, wie in `backe`): Für beliebige Snapshots gibt es nie zwei Sessions für dasselbe Issue, nie mehr Sessions als Slots, nie mehr Verify-Läufe als `verify_concurrency`, je Queue höchstens einen laufenden Job, je Repo höchstens eine Session im Modus `repo`; jedes Issue eines Slots auf `in_progress` hat danach eine lebende Session oder eine Recovery-Aktion; jedes `done`-Issue mit Code-Workflow hat einen Commit im Ziel-Branch, der vom Ziel-Branch aus erreichbar ist; kein Issue bekommt nach einer erkannten Oszillation eine weitere `integrate`-Runde; kein Sub-Issue eines Plansatzes startet, bevor der Doku-Job seines Parents gemergt ist, und keines vor seinen Abhängigkeiten.
+- **E2E gegen echtes `backe`** mit lokalem Hub (BK §2.16.1) und einer Fake-Runtime, deren Worker die `backe`-Writes des Vertrags skriptgesteuert ausführen: ein Issue durch alle Phasen bis in den Ziel-Branch, zwei abhängige Issues in Folge, ein Plansatz mit drei Plänen als Kette bis `close`, eine Rückweisung im Review, ein Absturz, eine Eskalation nach Oszillation, eine Rückfrage (Stufe 2), ein Veto (Stufe 3).
 - **Skill-Vertrag:** ein Sandbox-Repo mit einem kleinen Issue, das ein echter Claude-Code-Worker bearbeitet, je einmal über `remote-control` und `acp`. Nightly und manuell, nicht in der CI: zu teuer und nicht deterministisch.
 
 ## 6. Umsetzung in Schritten
 
 | Schritt | Inhalt | Fertig, wenn |
 | --- | --- | --- |
-| **F1 — MVP** | Config, `doctor`, Identitäten, SQLite-Engine mit Journal und Wiederaufnahme, Reconcile und Dispatch, Reaper, Runtime `remote-control`, Skill `backstube-worker` mit `questions: interactive`, Workflows `superpowers`, `direct` und `task`, Arbeitsverzeichnis nach §2.5.3 samt `local_files` und Vertrauensfreigabe, Merge-Worktree und Merge-Queue mit `verify`, Squash, CAS und Ziel `default`, Phase `integrate` mit Feedback-Objekt und Circuit Breaker, Pfad-Gates, Port-Variablen und Verify-Semaphor, `pause` und `revert`, `status`, `log`, `plan`, `queue` und `workflows` | Ein Sprint mit mindestens drei Issues, davon eines per `depends_on` abhängig und zwei mit Überschneidung in denselben Dateien, landet vollständig im Ziel-Branch, ohne einen einzigen Merge von Hand; der Mensch hat dafür nur am Handy Fragen beantwortet. Ein `direct`-Issue kommt ohne Spec und Plan in den Ziel-Branch; eine `task`-Session nutzt einen repo-lokalen Skill und einen Projekt-MCP-Server. Ein absichtlich unlösbarer Konflikt eskaliert spätestens nach `integrate_rounds` Runden, ein wiederholter Fehler schon in der zweiten. Ein Neustart der Backstube mitten im Merge-Job erzeugt keinen Doppel-Commit |
+| **F1 — MVP** | Config, `doctor`, Identitäten, SQLite-Engine mit Journal und Wiederaufnahme, Reconcile und Dispatch, Reaper, Runtime `remote-control`, Skill `backstube-worker` mit `questions: interactive`, Workflows `superpowers` (samt Plansatz-Split und `close`, §2.5.5), `direct` und `task`, Arbeitsverzeichnis nach §2.5.3 samt `local_files` und Vertrauensfreigabe, Merge-Worktree und Merge-Queue mit `verify`, Squash, CAS und Ziel `default`, Phase `integrate` mit Feedback-Objekt und Circuit Breaker, Pfad-Gates, Port-Variablen und Verify-Semaphor, `pause` und `revert`, `status`, `log`, `plan`, `queue` und `workflows` | Ein Sprint mit mindestens drei Issues, davon eines per `depends_on` abhängig und zwei mit Überschneidung in denselben Dateien, landet vollständig im Ziel-Branch, ohne einen einzigen Merge von Hand; der Mensch hat dafür nur am Handy Fragen beantwortet. Ein `direct`-Issue kommt ohne Spec und Plan in den Ziel-Branch; eine `task`-Session nutzt einen repo-lokalen Skill und einen Projekt-MCP-Server. Ein Spec mit drei aufeinander aufbauenden Plänen landet als Doku-Commit und drei Squash-Commits in dieser Reihenfolge im Ziel-Branch, danach ist der Parent `done`. Ein absichtlich unlösbarer Konflikt eskaliert spätestens nach `integrate_rounds` Runden, ein wiederholter Fehler schon in der zweiten. Ein Neustart der Backstube mitten im Merge-Job erzeugt keinen Doppel-Commit |
 | **F2 — Fragen als Issues, ACP** | `questions: issues`, Batch-Protokoll, Wiedereinstieg, Runtime `acp` mit Claude Code als Referenz-Harness (§2.11.2), Phase `intake` mit `backstube-intake`, Benachrichtigung nach §4.1 | Eine Rückfrage blockiert nur ihr Issue, nicht ihren Slot, und die Antwort steht als Entscheidung im Backlog. Ein Issue läuft über ACP ohne Terminal und ohne Rückfrage im Session-Kanal durch alle Phasen bis in den Ziel-Branch |
 | **F3 — Triage** | `bs-triage`, Quellen, Pflicht-Eskalation, Veto, Veto-Quote | Über zwei Wochen Betrieb landen messbar weniger Fragen beim Menschen, bei einer Veto-Quote, die der Mensch akzeptiert |
 | **F4 — Rundum** | Ziel `sprint` mit `gates.sprint`, `merge.via: github-pr`, Batch-Merges, CI als Verify, Container je Worktree, weitere Harnesses, Kosten je Issue, mehrere Hosts nach BK-Lease | je Punkt aus §4.2 |
