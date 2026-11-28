@@ -23,7 +23,7 @@ Issues sollen dort leben, wo Code und Agents ohnehin arbeiten: als Dateien in ei
 
 ### 0.3 Nicht-Ziele (v1)
 
-- Kein Server, keine Datenbank, kein Web-UI, kein TUI. Eine lokale Web-Oberfläche als eigener Befehl `backe ui` beschreibt UI (`ui.md`).
+- Kein Server, keine Datenbank, kein Web-UI, kein TUI. Eine lokale Web-Oberfläche als eigener Befehl `backe ui` beschreibt UI (`ui.md`). Den Factory-Loop `backe loop` mit seiner host-lokalen Ausführungsdatenbank beschreibt BS (`backstube.md`); das Backlog selbst bleibt ohne Datenbank.
 - Keine Synchronisation mit GitHub Issues, Jira o. ä.
 - Keine eingebaute Priorität, Labels, Schätzungen, Zeiterfassung. Wer so etwas braucht, legt es als Custom Property ab (§2.24).
 - Keine Verschlüsselung. Signiert heißt authentisch, nicht geheim.

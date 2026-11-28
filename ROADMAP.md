@@ -14,16 +14,18 @@ Spec im Entwurf, offene Entscheidungen in BS §4.1; Umsetzung nach BS §6.
 
 ## Offene Entscheidungen
 
-| Frage                                            | Proposal      | Stand                          |
-| ------------------------------------------------ | ------------- | ------------------------------ |
-| Remote Control aus einem Skript starten          | BS §4.1       | wird in F1 geprüft             |
-| Benachrichtigung ab Stufe 2                      | BS §4.1       | Vorschlag (a) Relay-Session    |
-| Vertrauen und MCP-Freigabe in frischen Worktrees | BS §4.1       | wird in F1 geprüft             |
-| Kontext aus `--add-dir`                          | BS §4.1       | zu prüfen                      |
-| Modell je Phase                                  | BS §4.1       | nach Messung in F1             |
-| Ort des Codes der Backstube                      | BS §4.1       | Vorschlag eigenes Repo         |
-| `.backe/backlog.jsonc` aus der UI bearbeiten     | UI §4.1, §4.2 | erst mit einer Operation in BK |
-| Fehlertexte in der UI-Sprache                    | UI §4.1       | erst mit Messages je Aufruf    |
+| Frage                                            | Proposal      | Stand                             |
+| ------------------------------------------------ | ------------- | --------------------------------- |
+| Remote Control aus einem Skript starten          | BS §4.1       | wird in F1 geprüft                |
+| Benachrichtigung ab Stufe 2                      | BS §4.1       | Vorschlag (a) Relay-Session       |
+| Sandboxing der Agents                            | BS §4.1       | Vorschlag lokal, Container später |
+| Vertrauen und MCP-Freigabe in frischen Worktrees | BS §4.1       | wird in F1 geprüft                |
+| Kontext aus zusätzlichen Verzeichnissen          | BS §4.1       | zu prüfen                         |
+| Vorgabe für `gates.paths`                        | BS §4.1       | Vorschlag leer, Beispiel in Doku  |
+| Beobachtbarkeit: CLI oder UI                     | BS §4.1       | Vorschlag CLI in F1               |
+| Modell je Phase                                  | BS §4.1       | nach Messung in F1                |
+| `.backe/backlog.jsonc` aus der UI bearbeiten     | UI §4.1, §4.2 | erst mit einer Operation in BK    |
+| Fehlertexte in der UI-Sprache                    | UI §4.1       | erst mit Messages je Aufruf       |
 
 ## Später — mit Bedingung
 
@@ -51,4 +53,5 @@ Spec im Entwurf, offene Entscheidungen in BS §4.1; Umsetzung nach BS §6.
 - Zugriff auf die UI von anderen Rechnern mit echter Authentifizierung (UI §4.3)
 - Ansicht für die Backstube in der UI (UI §4.3)
 - `next` mit `--prop`-Filter (BS §4.2)
-- CI als Verify, Kosten je Issue, `watch`-Liste ins Backlog (BS §4.2)
+- Weitere Harnesses über ACP, Kosten je Issue (BS §4.2)
+- CI als Verify, Container je Worktree, `watch`-Liste ins Backlog (BS §4.2)
